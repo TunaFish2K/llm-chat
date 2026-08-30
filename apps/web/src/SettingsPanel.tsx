@@ -32,6 +32,7 @@ import {
   Select,
   Space,
   Switch,
+  Tag,
   Tabs,
   Tooltip,
   Typography
@@ -273,7 +274,7 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
       </Flex>
       <Form.Item name="toolDefaultEnabled" label="默认启用新工具" valuePropName="checked"><Switch /></Form.Item>
       <Form.Item name="enabledTools" label="工具"><Checkbox.Group options={catalog.map((tool) => ({
-        label: <>{tool.label}{!tool.available && <Text type="danger">全局不可用</Text>}</>,
+        label: <Space size={4}>{tool.label}{!tool.available && <Tag color="warning">全局不可用</Tag>}</Space>,
         value: tool.name
       }))} /></Form.Item>
       <Title level={5}>用户设定覆盖</Title>

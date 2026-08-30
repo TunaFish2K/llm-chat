@@ -137,14 +137,15 @@ describe("SettingsPanel", () => {
   });
 
   it("allows unavailable Agent tools to be overridden and saves false", async () => {
+    const user = userEvent.setup();
     renderPanel({ agents: [agent] });
     const unavailableLabel = await screen.findByText("全局不可用");
     const unavailableTool = unavailableLabel.closest("label")?.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(unavailableTool).toBeInTheDocument();
     expect(unavailableTool).toBeChecked();
-    fireEvent.change(unavailableTool, { target: { checked: false } });
+    fireEvent.click(unavailableTool);
     expect(unavailableTool).not.toBeChecked();
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await user.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => expect(api.updateAgent).toHaveBeenCalledWith("agent1", expect.objectContaining({
       execution: expect.objectContaining({
         tools: expect.objectContaining({ overrides: expect.objectContaining({ workspace_shell: false }) })
