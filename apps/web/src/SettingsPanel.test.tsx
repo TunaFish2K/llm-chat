@@ -143,7 +143,7 @@ describe("SettingsPanel", () => {
     const unavailableTool = unavailableLabel.closest("label")?.querySelector("input[type=checkbox]") as HTMLInputElement;
     expect(unavailableTool).toBeInTheDocument();
     expect(unavailableTool).toBeChecked();
-    fireEvent.click(unavailableTool);
+    await user.click(unavailableTool);
     expect(unavailableTool).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => expect(api.updateAgent).toHaveBeenCalledWith("agent1", expect.objectContaining({
