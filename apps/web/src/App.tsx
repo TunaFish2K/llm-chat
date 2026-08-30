@@ -16,6 +16,7 @@ import {
   CheckOutlined,
   CloseOutlined,
   CodeOutlined,
+  ControlOutlined,
   CopyOutlined,
   DeleteOutlined,
   LeftOutlined,
@@ -41,6 +42,7 @@ import {
   InputNumber,
   Layout,
   Modal,
+  Popover,
   Select,
   Space,
   Spin,
@@ -79,6 +81,8 @@ const CONTEXT_POLICIES: Array<{ label: string; value: ContextPolicy }> = [
   { label: "摘要", value: "summarize" },
   { label: "完整", value: "full" }
 ];
+
+const REASONING_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 
 export function App() {
   const [boot, setBoot] = useState<BootData | null>(null);
@@ -378,6 +382,23 @@ export function App() {
     options={CONTEXT_POLICIES}
     onChange={chooseContextPolicy}
   />;
+  const mobileExecutionControl = <MobileExecutionControl
+    reasoningEffort={selectedReasoningEffort}
+    contextPolicy={selectedContextPolicy}
+    onReasoningEffort={chooseReasoningEffort}
+    onContextPolicy={chooseContextPolicy}
+  />;
+  const desktopComposerToolbar = <Flex className="composer-toolbar" align="center" gap={4} wrap>
+    {agentSelector}
+    {modelSelector}
+    {effortControl}
+    {contextSelector}
+  </Flex>;
+  const mobileComposerToolbar = <MobileComposerToolbar
+    agentSelector={agentSelector}
+    modelSelector={modelSelector}
+    executionControl={mobileExecutionControl}
+  />;
   const sidebar = <SidebarContent
     conversations={boot.conversations}
     currentId={currentId}
@@ -551,6 +572,7 @@ export function App() {
                   modelSelector={welcomeModelSelector}
                   effortControl={welcomeEffortControl}
                   contextSelector={contextSelector}
+                  mobileToolbar={mobileComposerToolbar}
                   onGreetingIndex={setGreetingIndex}
                   onDraftChange={setDraft}
                   onSubmit={(value) => void send(value)}
@@ -579,12 +601,7 @@ export function App() {
                       onChange={setDraft}
                       onSubmit={(value) => void send(value)}
                       onCancel={() => liveGenerationId && void api.cancel(liveGenerationId)}
-                      footer={<Flex className="composer-toolbar" align="center" gap={4} wrap>
-                        {agentSelector}
-                        {modelSelector}
-                        {effortControl}
-                        {contextSelector}
-                      </Flex>}
+                      footer={mobileLayout ? mobileComposerToolbar : desktopComposerToolbar}
                     />
                   </div>
                 </>}
@@ -670,7 +687,67 @@ function AgentSelector({ value, agents, onChange }: {
   />;
 }
 
-function WelcomeComposer({ error, draft, ready, mobile, agent, userName, agentSelector, greetingIndex, modelSelector, effortControl, contextSelector, onGreetingIndex, onDraftChange, onSubmit, onDismissError }: {
+function MobileComposerToolbar({ agentSelector, modelSelector, executionControl }: {
+  agentSelector: React.ReactNode;
+  modelSelector: React.ReactNode;
+  executionControl: React.ReactNode;
+}) {
+  return <Flex className="composer-toolbar composer-toolbar-mobile" align="center" gap={4} wrap={false}>
+    <div className="composer-agent-control">{agentSelector}</div>
+    <div className="composer-model-control">{modelSelector}</div>
+    {executionControl}
+  </Flex>;
+}
+
+function MobileExecutionControl({ reasoningEffort, contextPolicy, onReasoningEffort, onContextPolicy }: {
+  reasoningEffort: ReasoningEffort;
+  contextPolicy: ContextPolicy;
+  onReasoningEffort: (value: ReasoningEffort) => void;
+  onContextPolicy: (value: ContextPolicy) => void;
+}) {
+  const content = <Flex vertical gap="small" className="mobile-execution-popover">
+    <label className="mobile-execution-field">
+      <Text type="secondary">推理强度</Text>
+      <Select<ReasoningEffort>
+        className="mobile-reasoning-selector"
+        aria-label="推理强度"
+        value={reasoningEffort}
+        options={REASONING_EFFORTS.map((value) => ({ label: value, value }))}
+        onChange={onReasoningEffort}
+      />
+    </label>
+    <label className="mobile-execution-field">
+      <Text type="secondary">上下文策略</Text>
+      <Select<ContextPolicy>
+        className="mobile-context-selector"
+        aria-label="上下文策略"
+        value={contextPolicy}
+        options={CONTEXT_POLICIES}
+        onChange={onContextPolicy}
+      />
+    </label>
+  </Flex>;
+
+  return <Popover
+    content={content}
+    placement="topRight"
+    trigger="click"
+    arrow={false}
+    styles={{ content: { width: "min(320px, calc(100vw - 24px))" } }}
+  >
+    <Tooltip title="调整推理强度和上下文策略">
+      <Button
+        type="text"
+        size="small"
+        className="mobile-execution-trigger"
+        icon={<ControlOutlined />}
+        aria-label="调整推理强度和上下文策略"
+      />
+    </Tooltip>
+  </Popover>;
+}
+
+function WelcomeComposer({ error, draft, ready, mobile, agent, userName, agentSelector, greetingIndex, modelSelector, effortControl, contextSelector, mobileToolbar, onGreetingIndex, onDraftChange, onSubmit, onDismissError }: {
   error: string;
   draft: string;
   ready: boolean;
@@ -682,6 +759,7 @@ function WelcomeComposer({ error, draft, ready, mobile, agent, userName, agentSe
   modelSelector: React.ReactNode;
   effortControl: React.ReactNode;
   contextSelector: React.ReactNode;
+  mobileToolbar: React.ReactNode;
   onGreetingIndex: (index: number) => void;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
@@ -722,12 +800,7 @@ function WelcomeComposer({ error, draft, ready, mobile, agent, userName, agentSe
           onChange={onDraftChange}
           onSubmit={onSubmit}
           {...(mobile ? {
-            footer: <Flex className="composer-toolbar" align="center" gap={4} wrap>
-              {agentSelector}
-              {modelSelector}
-              {effortControl}
-              {contextSelector}
-            </Flex>
+            footer: mobileToolbar
           } : {})}
         />
       </Flex>

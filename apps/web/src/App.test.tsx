@@ -31,9 +31,12 @@ vi.mock("antd", async (importOriginal) => {
   return {
     ...actual,
     Grid: { ...actual.Grid, useBreakpoint: () => state.screens },
-    Select: (props: Record<string, unknown>) => typeof props["aria-label"] === "string" && props["aria-label"].endsWith("覆盖")
+    Select: (props: Record<string, unknown>) => typeof props["aria-label"] === "string" && (
+      props["aria-label"].endsWith("覆盖") || props["aria-label"] === "推理强度" || props["aria-label"] === "上下文策略"
+    )
       ? createElement("select", {
           "aria-label": props["aria-label"],
+          className: props.className as string,
           value: props.value as string,
           onChange: (event: Event) => (props.onChange as (value: string) => void)((event.target as HTMLSelectElement).value)
         }, ...(props.options as Array<{ label: string; value: string }>).map((option) =>
@@ -265,6 +268,51 @@ describe("App", () => {
     expect(list.style.width).toBe("");
     expect(screen.getByTestId("bubble-scroll").style.paddingBlock).toBe("16px 24px");
     expect(list.querySelector("article")).toHaveStyle({ width: "calc(100% - 8px)", marginInline: "auto" });
+  });
+
+  it("uses a single-row mobile welcome toolbar with a shared execution popup", async () => {
+    const user = userEvent.setup();
+    state.screens = { md: false, lg: false };
+    api.conversations.mockResolvedValue([]);
+    await boot();
+
+    const toolbar = document.querySelector(".composer-toolbar-mobile");
+    expect(toolbar).toBeInTheDocument();
+    expect(toolbar).toHaveClass("composer-toolbar");
+    expect(screen.queryByRole("combobox", { name: /推理:/ })).not.toBeInTheDocument();
+    expect(document.querySelector(".context-selector")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "调整推理强度和上下文策略" }));
+    expect(screen.getByText("推理强度")).toBeInTheDocument();
+    expect(screen.getByText("上下文策略")).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "推理强度" }), "high");
+    await user.selectOptions(screen.getByRole("combobox", { name: "上下文策略" }), "full");
+    expect(screen.getByRole("combobox", { name: "推理强度" })).toHaveValue("high");
+    expect(screen.getByRole("combobox", { name: "上下文策略" })).toHaveValue("full");
+  });
+
+  it("keeps four direct execution controls on desktop", async () => {
+    await boot("/c/a1b2");
+    expect(document.querySelector(".composer-toolbar-mobile")).not.toBeInTheDocument();
+    expect(document.querySelector(".context-selector")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /推理:medium/ })).toBeInTheDocument();
+  });
+
+  it("uses the same mobile execution popup in an existing session", async () => {
+    const user = userEvent.setup();
+    state.screens = { md: false, lg: false };
+    await boot("/c/a1b2");
+    await user.click(screen.getByRole("button", { name: "调整推理强度和上下文策略" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "推理强度" }), "high");
+    await user.selectOptions(screen.getByRole("combobox", { name: "上下文策略" }), "full");
+    await waitFor(() => {
+      expect(api.updateConversation).toHaveBeenCalledWith("a1b2", {
+        executionOverrides: expect.objectContaining({ reasoningEffort: "high" })
+      });
+      expect(api.updateConversation).toHaveBeenCalledWith("a1b2", {
+        executionOverrides: expect.objectContaining({ contextPolicy: "full" })
+      });
+    });
   });
 
   it("keeps the boot surface when boot fails", async () => {

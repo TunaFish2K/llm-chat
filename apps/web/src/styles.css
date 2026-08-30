@@ -51,6 +51,16 @@ body { overflow: hidden; overscroll-behavior: none; }
 .composer-rail { width: min(900px, calc(100% - 32px)); margin-inline: auto; padding-block: 8px 12px; }
 .composer-rail > * + * { margin-top: 8px; }
 .composer-toolbar { width: 100%; }
+.composer-toolbar-mobile { flex-wrap: nowrap; min-width: 0; overflow: hidden; }
+.composer-agent-control, .composer-model-control { min-width: 0; width: 0; flex: 1 1 0; }
+.composer-agent-control > *, .composer-model-control > * { width: 100%; min-width: 0; max-width: 100%; }
+.composer-toolbar-mobile .agent-selector { width: 100%; max-width: none; flex: 1 1 auto; min-width: 0; }
+.composer-toolbar-mobile .model-trigger { width: 100%; max-width: none; min-width: 0; }
+.composer-toolbar-mobile .model-trigger-label { min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-execution-trigger { flex: 0 0 32px; width: 32px; min-width: 32px; height: 32px; padding: 0; }
+.mobile-execution-popover { padding: 4px; }
+.mobile-execution-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.mobile-execution-field .ant-select { width: 100%; }
 
 .empty-state { flex: 1; min-height: 0; width: 100%; padding: 24px; }
 .welcome-stage { flex: 1; min-height: 0; width: 100%; padding: 24px 24px 48px; }
