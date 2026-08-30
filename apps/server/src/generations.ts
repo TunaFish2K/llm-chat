@@ -1,6 +1,13 @@
-import type { GenerationEvent, GenerationStatus, UsageDto } from "@llm-chat/contracts";
-import { adapterFor, ProviderError, type ProviderConnection, type ProviderMessage } from "@llm-chat/providers";
-import { buildContext, ContextError } from "./context";
+import type { GenerationEvent, GenerationStatus, ProviderProtocol, UsageDto } from "@llm-chat/contracts";
+import {
+  adapterFor,
+  ProviderError,
+  type GenerateRequest,
+  type ProviderConnection,
+  type ProviderEvent,
+  type ProviderMessage
+} from "@llm-chat/providers";
+import { buildContext, ContextError, type BuiltContext } from "./context";
 import type { Store } from "./database";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
 
@@ -13,10 +20,35 @@ interface LiveJob {
   latestBlocks: Map<number, Extract<GenerationEvent, { type: "block-delta" }>>;
 }
 
+export interface GenerationRunnerDependencies {
+  buildContext: (
+    store: Store,
+    record: Parameters<typeof buildContext>[1],
+    model: Parameters<typeof buildContext>[2],
+    connection: ProviderConnection,
+    signal: AbortSignal
+  ) => Promise<BuiltContext>;
+  buildTools: (store: Store) => Promise<ServerTool[]>;
+  memoryPrompt: (store: Store) => string;
+  stream: (protocol: ProviderProtocol, request: GenerateRequest) => AsyncIterable<ProviderEvent>;
+  persistToolOutput: (store: Store, callId: string, output: string) => Promise<string>;
+}
+
+const defaultDependencies: GenerationRunnerDependencies = {
+  buildContext,
+  buildTools: buildServerTools,
+  memoryPrompt: toolSystemPrompt,
+  stream: (protocol, request) => adapterFor(protocol).stream(request),
+  persistToolOutput: persistLargeToolOutput
+};
+
 export class GenerationRunner {
   private readonly jobs = new Map<string, LiveJob>();
+  private readonly dependencies: GenerationRunnerDependencies;
 
-  constructor(private readonly store: Store) {}
+  constructor(private readonly store: Store, dependencies: Partial<GenerationRunnerDependencies> = {}) {
+    this.dependencies = { ...defaultDependencies, ...dependencies };
+  }
 
   isConversationActive(conversationId: string): boolean {
     return [...this.jobs.values()].some((job) => job.conversationId === conversationId);
@@ -126,13 +158,13 @@ export class GenerationRunner {
     };
 
     try {
-      const context = await buildContext(this.store, record, model, connection, job.controller.signal);
+      const context = await this.dependencies.buildContext(this.store, record, model, connection, job.controller.signal);
       this.store.setGenerationContext(generationId, context.metadata);
       const tools = model.capabilities.tools
-        ? (await buildServerTools(this.store)).filter((tool) => tool.available)
+        ? (await this.dependencies.buildTools(this.store)).filter((tool) => tool.available)
         : [];
       const toolMap = new Map(tools.map((tool) => [tool.definition.name, tool]));
-      const memoryPrompt = toolSystemPrompt(this.store);
+      const memoryPrompt = this.dependencies.memoryPrompt(this.store);
       const systemPrompt = [context.systemPrompt, memoryPrompt].filter(Boolean).join("\n\n");
       let messages: ProviderMessage[] = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       let usage = this.store.getGeneration(generationId)?.usage ?? {};
@@ -152,11 +184,12 @@ export class GenerationRunner {
       }
 
       for (; stepIndex < 8; stepIndex += 1) {
+        job.controller.signal.throwIfAborted();
         const calls: Array<{ id: string; name: string; arguments: string }> = [];
         let providerContext: unknown;
         let stopReason = "stop";
         let stepUsage: UsageDto = {};
-        for await (const event of adapterFor(record.protocol).stream({
+        for await (const event of this.dependencies.stream(record.protocol, {
           connection,
           modelKey: record.modelKey,
           systemPrompt,
@@ -225,6 +258,7 @@ export class GenerationRunner {
           return;
         }
         await this.executeTools(generationId, persisted, toolMap, job.controller.signal);
+        job.controller.signal.throwIfAborted();
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
       throw new Error("Tool execution exceeded the maximum of 8 model steps");
@@ -265,7 +299,11 @@ export class GenerationRunner {
       this.emit(generationId, { type: "tool-call", generationId, toolCall: running });
       try {
         if (!tool) throw new Error(`Tool ${call.name} is not available`);
-        const output = await persistLargeToolOutput(this.store, call.id, await tool.execute(parseToolArguments(call.arguments), signal));
+        const output = await this.dependencies.persistToolOutput(
+          this.store,
+          call.id,
+          await tool.execute(parseToolArguments(call.arguments), signal)
+        );
         const completed = this.store.updateToolCall(call.id, {
           approvalState: "completed", output, error: null, completedAt: Date.now()
         })!;

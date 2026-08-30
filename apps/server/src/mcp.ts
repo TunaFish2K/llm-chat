@@ -3,10 +3,24 @@ import type { Store } from "./database";
 import type { ServerTool } from "./tools";
 
 interface Session {
-  client: Client;
+  client: McpClient;
   transport: Transport;
   fingerprint: string;
 }
+
+type McpClient = Pick<Client, "connect" | "close" | "listTools" | "callTool" | "getServerVersion">;
+
+export interface McpManagerDependencies {
+  createClient: () => McpClient;
+  createHttpTransport: (url: URL, requestInit: RequestInit) => Transport;
+  createSseTransport: (url: URL, requestInit: RequestInit) => Transport;
+}
+
+const defaultDependencies: McpManagerDependencies = {
+  createClient: () => new Client({ name: "llm-chat", version: "0.1.0" }),
+  createHttpTransport: (url, requestInit) => new StreamableHTTPClientTransport(url, { requestInit }),
+  createSseTransport: (url, requestInit) => new SSEClientTransport(url, { requestInit })
+};
 
 const managers = new WeakMap<Store, McpManager>();
 
@@ -26,8 +40,11 @@ export async function closeMcpManager(store: Store): Promise<void> {
 
 export class McpManager {
   private readonly sessions = new Map<string, Session>();
+  private readonly dependencies: McpManagerDependencies;
 
-  constructor(private readonly store: Store) {}
+  constructor(private readonly store: Store, dependencies: Partial<McpManagerDependencies> = {}) {
+    this.dependencies = { ...defaultDependencies, ...dependencies };
+  }
 
   async tools(): Promise<ServerTool[]> {
     const result: ServerTool[] = [];
@@ -95,14 +112,14 @@ export class McpManager {
     this.invalidate(serverId);
 
     const requestInit: RequestInit = { headers: server.headers };
-    let client = new Client({ name: "llm-chat", version: "0.1.0" });
-    let transport: Transport = new StreamableHTTPClientTransport(new URL(server.url), { requestInit });
+    let client = this.dependencies.createClient();
+    let transport = this.dependencies.createHttpTransport(new URL(server.url), requestInit);
     try {
       await client.connect(transport);
     } catch (firstError) {
       await client.close().catch(() => {});
-      client = new Client({ name: "llm-chat", version: "0.1.0" });
-      transport = new SSEClientTransport(new URL(server.url), { requestInit });
+      client = this.dependencies.createClient();
+      transport = this.dependencies.createSseTransport(new URL(server.url), requestInit);
       try {
         await client.connect(transport);
       } catch {
