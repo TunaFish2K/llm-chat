@@ -18,13 +18,16 @@ describe("server tool catalog", () => {
     const store = createStore();
     store.updateToolSettings({ enabled: { get_time_info: false }, workspaceShellEnabled: false });
     const enabled = await buildServerTools(store);
-    expect(enabled.some((entry) => entry.definition.name === "get_time_info")).toBe(false);
+    expect(enabled.some((entry) => entry.definition.name === "get_time_info")).toBe(true);
     expect(tool(enabled, "search_web").available).toBe(false);
-    expect(tool(enabled, "workspace_shell").available).toBe(false);
+    expect(tool(enabled, "workspace_shell").available).toBe(true);
     expect(tool(enabled, "workspace_shell").requiresApproval({ command: "pwd" })).toBe(true);
     expect(tool(enabled, "workspace_write_file").definition.inputSchema).toMatchObject({
       type: "object", required: ["path", "text"]
     });
+    const withoutWorkspace = await buildServerTools(store, false, { workspacePath: null });
+    expect(tool(withoutWorkspace, "workspace_read_file").available).toBe(false);
+    expect(tool(withoutWorkspace, "workspace_shell").available).toBe(false);
 
     const catalog = await toolCatalog(store);
     expect(catalog.find((entry) => entry.name === "get_time_info")).toBeTruthy();

@@ -36,11 +36,13 @@ describe("Agent prompt compiler", () => {
 function fixture(): AgentSnapshot {
   return {
     agentId: "agent", name: "Mira", revision: 3, baseSystemPrompt: "BASE",
+    workspacePath: null, extensionsPinned: false, skillRevisions: {}, toolRevisions: {},
     userProfile: { displayName: "Lin", description: "A careful tester" },
     execution: {
       modelId: "model", contextPolicy: "trim", reasoningEffort: "none",
       settings: { common: { maxOutputTokens: 100, stopSequences: [] }, protocol: {}, reasoningEffort: "none" },
-      tools: { defaultEnabled: true, overrides: {} }
+      tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} },
+      enabledSkillIds: [], maxToolRounds: 32, maxBackgroundTasks: 2, taskLogLimitBytes: 64 * 1024 * 1024
     },
     card: { spec: "chara_card_v2", spec_version: "2.0", data: {
       name: "Mira", description: "Archivist", personality: "Precise", scenario: "Archive",

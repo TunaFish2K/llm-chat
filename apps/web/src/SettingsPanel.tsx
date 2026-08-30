@@ -12,6 +12,8 @@ import type {
   ModelInput,
   ModelSettings,
   ProviderProtocol,
+  PluginDto,
+  SkillDto,
   ToolCatalogItemDto,
   ToolSettingsDto
 } from "@llm-chat/contracts";
@@ -103,7 +105,7 @@ export function SettingsPanel(props: Props) {
         { key: "agents", label: "Agent", children: <Agents agents={props.agents ?? []} models={props.models} settings={props.settings} busy={busy} mobile={mobile} run={run} /> },
         { key: "connections", label: "连接", children: <Connections connections={props.connections} busy={busy} mobile={mobile} run={run} /> },
         { key: "models", label: "模型", children: <Models connections={props.connections} models={props.models} busy={busy} mobile={mobile} run={run} /> },
-        { key: "tools", label: "工具", children: <Tools /> },
+        { key: "extensions", label: "扩展", children: <Extensions /> },
         { key: "general", label: "通用", children: <General settings={props.settings} models={props.models} onSettings={props.onSettings} uiPreferences={props.uiPreferences} onUiPreferences={props.onUiPreferences} /> }
       ]}
     />
@@ -193,23 +195,28 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   const existing = value === "new" ? null : value;
   const [form] = Form.useForm<AgentForm>();
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
+  const [skills, setSkills] = useState<SkillDto[]>([]);
   const [avatar, setAvatar] = useState<File | null>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
   const { modal } = AntApp.useApp();
   useEffect(() => {
-    void api.toolCatalog().then(setCatalog);
+    void Promise.all([api.toolCatalog(), api.skills()]).then(([tools, nextSkills]) => {
+      setCatalog(tools);
+      setSkills(nextSkills);
+    });
   }, []);
   useEffect(() => {
     const source = value === "new" ? newAgent(fallback) : value;
-    if (source) form.setFieldsValue(agentForm(source, catalog));
+    if (source) form.setFieldsValue(agentForm(source, catalogWithMissing(catalog, source)));
   }, [catalog, fallback, form, value]);
   if (value === null) return <Flex justify="center"><Text type="secondary">正在加载 Agent</Text></Flex>;
   const base = existing ?? newAgent(fallback);
-  const initial = agentForm(base, catalog);
+  const shownCatalog = catalogWithMissing(catalog, base);
+  const initial = agentForm(base, shownCatalog);
   const save = async (values: AgentForm) => {
     let saved: AgentDto | undefined;
     const ok = await run(async () => {
-      const input = agentInput(values, base, catalog);
+      const input = agentInput(values, base, shownCatalog);
       saved = existing ? await api.updateAgent(existing.id, input) : await api.createAgent(input);
       if (avatar && saved) await api.updateAgentAvatar(saved.id, avatar.name, await fileBase64(avatar));
     }, existing ? "Agent 已更新" : "Agent 已创建");
@@ -273,10 +280,38 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
         <Form.Item className="settings-field" name="thinkingBudgetTokens" label="Thinking token 预算"><InputNumber className="settings-number-input" min={1024} placeholder="使用模型默认" /></Form.Item>
       </Flex>
       <Form.Item name="toolDefaultEnabled" label="默认启用新工具" valuePropName="checked"><Switch /></Form.Item>
-      <Form.Item name="enabledTools" label="工具"><Checkbox.Group options={catalog.map((tool) => ({
-        label: <Space size={4}>{tool.label}{!tool.available && <Tag color="warning">全局不可用</Tag>}</Space>,
-        value: tool.name
-      }))} /></Form.Item>
+      <Form.Item name="enabledTools" label="工具">
+        <Checkbox.Group className="agent-tool-grid">
+          {shownCatalog.map((tool) => <Flex key={tool.name} className="agent-tool-row" align="center" gap="small">
+            <Checkbox value={tool.name}><Space size={4}>{tool.label}{!tool.available && <Tag color="warning">不可用</Tag>}</Space></Checkbox>
+            <Form.Item noStyle name={["toolApprovals", tool.name]}>
+              <Select className="agent-tool-approval" aria-label={`${tool.label}审批`} options={[
+                { label: "按工具默认", value: "default" }, { label: "每次审批", value: "always" }, { label: "自动允许", value: "never" }
+              ]} />
+            </Form.Item>
+          </Flex>)}
+        </Checkbox.Group>
+      </Form.Item>
+      <Form.Item name="enabledSkillIds" label="Skills">
+        <Checkbox.Group options={skills.map((skill) => ({
+          value: skill.id,
+          label: <Tooltip title={skill.requiredTools.length ? `需要工具：${skill.requiredTools.join("、")}` : skill.description}>{skill.name}</Tooltip>
+        }))} />
+      </Form.Item>
+      {skills.map((skill) => skill.requiredTools.length || Object.keys(skill.recommendedApprovals).length ? <Flex key={skill.id} className="skill-permission-preview" align="center" justify="space-between" gap="small">
+        <Text type="secondary" ellipsis>{skill.name}：{skill.requiredTools.join("、") || "无额外工具"}</Text>
+        <Button size="small" onClick={() => {
+          const enabled = new Set(form.getFieldValue("enabledTools") ?? []);
+          for (const name of skill.requiredTools) enabled.add(name);
+          form.setFieldValue("enabledTools", [...enabled]);
+          form.setFieldValue("toolApprovals", { ...(form.getFieldValue("toolApprovals") ?? {}), ...skill.recommendedApprovals });
+        }}>应用建议权限</Button>
+      </Flex> : null)}
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="maxToolRounds" label="最大工具轮数"><InputNumber className="settings-number-input" min={1} placeholder="无限制" /></Form.Item>
+        <Form.Item className="settings-field" name="maxBackgroundTasks" label="后台任务并发"><InputNumber className="settings-number-input" min={0} placeholder="无限制" /></Form.Item>
+        <Form.Item className="settings-field" name="taskLogLimitMiB" label="单任务日志上限（MiB）"><InputNumber className="settings-number-input" min={1} placeholder="无限制" /></Form.Item>
+      </Flex>
       <Title level={5}>用户设定覆盖</Title>
       <Flex className="settings-fields-row" gap="middle" wrap>
         <Form.Item className="settings-field" name="userDisplayName" label="显示名称"><Input placeholder="使用全局名称" /></Form.Item>
@@ -301,7 +336,9 @@ interface AgentForm {
   reasoningEffort: AgentInput["execution"]["reasoningEffort"];
   temperature?: number | null | undefined; topP?: number | null | undefined; maxOutputTokens?: number | null | undefined; stopSequences?: string[] | undefined;
   reasoningSummary?: "auto" | "concise" | "detailed" | undefined; thinkingBudgetTokens?: number | null | undefined;
-  toolDefaultEnabled: boolean; enabledTools: string[]; userDisplayName?: string | undefined; userDescription?: string | undefined;
+  toolDefaultEnabled: boolean; enabledTools: string[]; toolApprovals: Record<string, "default" | "always" | "never">;
+  enabledSkillIds: string[]; maxToolRounds: number | null; maxBackgroundTasks: number | null; taskLogLimitMiB: number | null;
+  userDisplayName?: string | undefined; userDescription?: string | undefined;
 }
 
 function newAgent(fallback?: AgentSummaryDto): AgentDto {
@@ -315,7 +352,11 @@ function newAgent(fallback?: AgentSummaryDto): AgentDto {
       creator_notes: "", system_prompt: "{{original}}", post_history_instructions: "", alternate_greetings: [],
       tags: [], creator: "", character_version: "", extensions: {}
     } },
-    execution: fallback?.execution ?? { modelId: null, contextPolicy: "trim", reasoningEffort: "none", generation: {}, tools: { defaultEnabled: true, overrides: {} } },
+    execution: fallback?.execution ?? {
+      modelId: null, contextPolicy: "trim", reasoningEffort: "none", generation: {},
+      tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} }, enabledSkillIds: [],
+      maxToolRounds: 32, maxBackgroundTasks: 2, taskLogLimitBytes: 64 * 1024 * 1024
+    },
     userProfile: {}
   };
 }
@@ -337,6 +378,11 @@ function agentForm(agent: AgentDto, catalog: ToolCatalogItemDto[]): AgentForm {
     thinkingBudgetTokens: agent.execution.generation.protocol?.thinkingBudgetTokens,
     toolDefaultEnabled: policy.defaultEnabled,
     enabledTools: catalog.filter((tool) => policy.overrides[tool.name] ?? policy.defaultEnabled).map((tool) => tool.name),
+    toolApprovals: Object.fromEntries(catalog.map((tool) => [tool.name, policy.approvalOverrides[tool.name] ?? "default"])),
+    enabledSkillIds: agent.execution.enabledSkillIds,
+    maxToolRounds: agent.execution.maxToolRounds,
+    maxBackgroundTasks: agent.execution.maxBackgroundTasks,
+    taskLogLimitMiB: agent.execution.taskLogLimitBytes === null ? null : agent.execution.taskLogLimitBytes / (1024 * 1024),
     userDisplayName: agent.userProfile.displayName, userDescription: agent.userProfile.description
   };
 }
@@ -365,10 +411,26 @@ function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatalogItemD
         ...(values.reasoningSummary ? { reasoningSummary: values.reasoningSummary } : {}),
         ...(values.thinkingBudgetTokens ? { thinkingBudgetTokens: values.thinkingBudgetTokens } : {})
       } },
-      tools: { defaultEnabled: values.toolDefaultEnabled, overrides }
+      tools: { defaultEnabled: values.toolDefaultEnabled, overrides, approvalOverrides: { ...base.execution.tools.approvalOverrides, ...values.toolApprovals } },
+      enabledSkillIds: values.enabledSkillIds ?? [],
+      maxToolRounds: values.maxToolRounds ?? null,
+      maxBackgroundTasks: values.maxBackgroundTasks ?? null,
+      taskLogLimitBytes: values.taskLogLimitMiB ? Math.round(values.taskLogLimitMiB * 1024 * 1024) : null
     },
     userProfile: { ...(values.userDisplayName?.trim() ? { displayName: values.userDisplayName.trim() } : {}), ...(values.userDescription?.trim() ? { description: values.userDescription.trim() } : {}) }
   };
+}
+
+function catalogWithMissing(catalog: ToolCatalogItemDto[], agent: AgentDto): ToolCatalogItemDto[] {
+  const known = new Set(catalog.map((tool) => tool.name));
+  const missing = new Set([
+    ...Object.keys(agent.execution.tools.overrides),
+    ...Object.keys(agent.execution.tools.approvalOverrides)
+  ].filter((name) => !known.has(name)));
+  return [...catalog, ...[...missing].map((name): ToolCatalogItemDto => ({
+    name, label: name, description: "对应扩展当前不可用；设置会保留到扩展恢复。", category: "plugin",
+    requiresApproval: false, available: false, operationalState: "unloaded"
+  }))];
 }
 
 function jsonRule(message: string) {
@@ -386,16 +448,20 @@ async function fileBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-function Tools() {
+function Extensions() {
+  return <Tabs tabPosition="left" items={[
+    { key: "plugins", label: "Plugins", children: <PluginSettings /> },
+    { key: "skills", label: "Skills", children: <SkillSettings /> },
+    { key: "mcp", label: "MCP", children: <McpSettings /> },
+    { key: "services", label: "服务", children: <ToolServices /> }
+  ]} />;
+}
+
+function ToolServices() {
   const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
-  const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
   const [saving, setSaving] = useState(false);
   const { message } = AntApp.useApp();
-  const load = async () => {
-    const [nextSettings, nextCatalog] = await Promise.all([api.toolSettings(), api.toolCatalog()]);
-    setSettings(nextSettings);
-    setCatalog(nextCatalog);
-  };
+  const load = async () => setSettings(await api.toolSettings());
   useEffect(() => { void load().catch((error) => void message.error(error instanceof Error ? error.message : "工具设置加载失败")); }, []);
   if (!settings) return <Flex justify="center"><Text type="secondary">正在加载工具设置</Text></Flex>;
 
@@ -404,8 +470,6 @@ function Tools() {
     try {
       const next = await api.updateToolSettings(patch);
       setSettings(next);
-      const nextCatalog = await api.toolCatalog();
-      setCatalog(nextCatalog);
       if (success) void message.success(success);
     } catch (error) {
       void message.error(error instanceof Error ? error.message : "保存失败");
@@ -415,32 +479,11 @@ function Tools() {
   };
 
   return <Flex vertical gap="large" className="general-settings">
-    <div>
-      <Title level={5}>内置工具</Title>
-      <List
-        dataSource={catalog}
-        renderItem={(item) => <List.Item
-          actions={[<Switch
-            key="enabled"
-            checked={settings.enabled[item.name] !== false}
-            disabled={saving || !item.available}
-            onChange={(enabled) => void update({ enabled: { ...settings.enabled, [item.name]: enabled } })}
-          />]}
-        >
-          <List.Item.Meta
-            avatar={<ApiOutlined />}
-            title={<Flex align="center" gap="small"><Text>{item.label}</Text>{item.requiresApproval && <Text type="warning">需审批</Text>}</Flex>}
-            description={item.available ? item.description : `${item.description}（尚未配置）`}
-          />
-        </List.Item>}
-      />
-    </div>
     <Form
       layout="vertical"
-      initialValues={{ searchBaseUrl: settings.search.baseUrl, searchApiKey: "", workspaceShellEnabled: settings.workspaceShellEnabled }}
+      initialValues={{ searchBaseUrl: settings.search.baseUrl, searchApiKey: "", workspaceShellEnabled: true }}
       onFinish={(values: ToolSettingsForm) => void update({
-        search: { baseUrl: values.searchBaseUrl ?? "", ...(values.searchApiKey ? { apiKey: values.searchApiKey } : {}) },
-        workspaceShellEnabled: values.workspaceShellEnabled
+        search: { baseUrl: values.searchBaseUrl ?? "", ...(values.searchApiKey ? { apiKey: values.searchApiKey } : {}) }
       }, "工具设置已保存")}
     >
       <Title level={5}>服务端配置</Title>
@@ -450,16 +493,74 @@ function Tools() {
       <Form.Item name="searchApiKey" label="搜索服务密钥">
         <Input.Password autoComplete="off" placeholder={settings.search.hasApiKey ? "已保存；留空则不修改" : "可选"} />
       </Form.Item>
-      <Form.Item name="workspaceShellEnabled" label="工作区 Shell" valuePropName="checked" extra="启用后每条命令仍需在消息中批准。">
-        <Switch />
-      </Form.Item>
-      <Text type="secondary">工作区：{settings.workspacePath}</Text><br />
-      <Text type="secondary">Skills：{settings.skillsPath}</Text>
       <div className="settings-actions"><Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>保存</Button></div>
     </Form>
-    <McpSettings />
   </Flex>;
 }
+
+function PluginSettings() {
+  const [plugins, setPlugins] = useState<PluginDto[]>([]);
+  const [sourcePath, setSourcePath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { message, modal } = AntApp.useApp();
+  const load = async () => setPlugins(await api.plugins());
+  useEffect(() => { void load().catch((error) => void message.error(messageText(error))); }, []);
+  const act = async (action: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    try { await action(); await load(); void message.success(success); }
+    catch (error) { void message.error(messageText(error)); }
+    finally { setBusy(false); }
+  };
+  return <Flex vertical gap="middle" className="extension-pane">
+    <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="插件源目录绝对路径" />
+      <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void act(() => api.installPlugin(sourcePath.trim()), "Plugin 已安装")}>安装</Button></Space.Compact>
+    <List locale={{ emptyText: "尚未安装 Plugin" }} dataSource={plugins} renderItem={(plugin) => <List.Item actions={[
+      <Tooltip key="reload" title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={() => void act(() => api.reloadPlugin(plugin.id), "Plugin 已重新加载")} /></Tooltip>,
+      <Switch key="state" checked={plugin.state !== "unloaded"} disabled={busy} onChange={(loaded) => void act(() => loaded ? api.reloadPlugin(plugin.id) : api.unloadPlugin(plugin.id), loaded ? "Plugin 已加载" : "Plugin 已卸载")} />,
+      <Tooltip key="delete" title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({ title: "删除 Plugin", content: plugin.manifest.name, okButtonProps: { danger: true }, onOk: () => act(() => api.deletePlugin(plugin.id), "Plugin 已删除") })} /></Tooltip>
+    ]}><List.Item.Meta avatar={<ApiOutlined />} title={<Space>{plugin.manifest.name}<Tag>{plugin.manifest.version}</Tag><Tag color={plugin.state === "error" ? "error" : plugin.state === "pending-reload" ? "warning" : "default"}>{plugin.state}</Tag></Space>}
+      description={<Flex vertical><Text type="secondary">{plugin.manifest.description || plugin.id} · {plugin.revision}</Text>{plugin.error && <Text type="danger">{plugin.error}</Text>}<PluginConfig plugin={plugin} onSave={(config, secrets) => act(() => api.configurePlugin(plugin.id, config, secrets), "配置已保存，请重新加载")} /></Flex>} /></List.Item>} />
+  </Flex>;
+}
+
+function PluginConfig({ plugin, onSave }: { plugin: PluginDto; onSave: (config: Record<string, unknown>, secrets: Record<string, unknown>) => Promise<unknown> }) {
+  const [config, setConfig] = useState(JSON.stringify(plugin.config, null, 2));
+  const [secrets, setSecrets] = useState("");
+  if (!plugin.manifest.configSchema && !plugin.manifest.secretFields.length) return null;
+  return <Collapse ghost size="small" items={[{ key: "config", label: "配置", children: <Flex vertical gap="small">
+    <TextArea rows={4} value={config} onChange={(event) => setConfig(event.target.value)} aria-label={`${plugin.manifest.name}配置 JSON`} />
+    {plugin.manifest.secretFields.length > 0 && <Input.Password value={secrets} onChange={(event) => setSecrets(event.target.value)} placeholder={`秘密 JSON；已配置 ${plugin.configuredSecretFields.join("、") || "无"}`} />}
+    <Button icon={<SaveOutlined />} onClick={() => void onSave(parseJson(config, {}), parseJson(secrets || "{}", {}))}>保存配置</Button>
+  </Flex> }]} />;
+}
+
+function SkillSettings() {
+  const [skills, setSkills] = useState<SkillDto[]>([]);
+  const [sourcePath, setSourcePath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { message } = AntApp.useApp();
+  const load = async () => setSkills(await api.skills());
+  useEffect(() => { void load().catch((error) => void message.error(messageText(error))); }, []);
+  const install = async () => {
+    setBusy(true);
+    try { await api.installSkill(sourcePath.trim()); await load(); void message.success("Skill 已安装"); }
+    catch (error) { void message.error(messageText(error)); }
+    finally { setBusy(false); }
+  };
+  return <Flex vertical gap="middle" className="extension-pane">
+    <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="Skill 源目录绝对路径" />
+      <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void install()}>安装</Button></Space.Compact>
+    <List dataSource={skills} renderItem={(skill) => <List.Item actions={[
+      <Tooltip key="reload" title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={async () => {
+        setBusy(true); try { await api.reloadSkill(skill.id); await load(); void message.success("Skill 已重新加载"); }
+        catch (error) { void message.error(messageText(error)); } finally { setBusy(false); }
+      }} /></Tooltip>
+    ]}><List.Item.Meta title={<Space>{skill.name}{skill.bundled && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>}
+      description={<Flex vertical><Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>} /></List.Item>} />
+  </Flex>;
+}
+
+function messageText(error: unknown): string { return error instanceof Error ? error.message : "操作失败"; }
 
 interface ToolSettingsForm {
   searchBaseUrl?: string;

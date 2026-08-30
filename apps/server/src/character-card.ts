@@ -76,7 +76,11 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
       contextPolicy: agent.execution.contextPolicy,
       reasoningEffort: agent.execution.reasoningEffort,
       generation: agent.execution.generation,
-      tools: agent.execution.tools
+      tools: agent.execution.tools,
+      enabledSkillIds: agent.execution.enabledSkillIds,
+      maxToolRounds: agent.execution.maxToolRounds,
+      maxBackgroundTasks: agent.execution.maxBackgroundTasks,
+      taskLogLimitBytes: agent.execution.taskLogLimitBytes
     },
     userProfile: agent.userProfile
   };

@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 import type { ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
+import type { AgentSnapshot } from "./database";
+import type { TaskManager } from "./background-tasks";
 import { mcpManager } from "./mcp";
 
 const execFileAsync = promisify(execFile);
@@ -22,12 +24,25 @@ export interface ServerTool {
   label: string;
   category: ToolCatalogItemDto["category"];
   available: boolean;
-  requiresApproval: (input: JsonObject) => boolean;
-  execute: (input: JsonObject, signal: AbortSignal) => Promise<string>;
+  requiresApproval: (input: JsonObject) => boolean | Promise<boolean>;
+  execute: (input: JsonObject, signal: AbortSignal, context?: ToolExecutionContext) => Promise<string>;
+  sourceKind?: "builtin" | "plugin" | "mcp";
+  sourceId?: string;
+  sourceName?: string;
+  revision?: string;
+}
+
+export interface ToolExecutionContext {
+  conversationId: string;
+  generationId: string;
+  toolCallId: string;
+  snapshot: AgentSnapshot;
 }
 
 export interface ToolDependencies {
   lookup?: typeof lookup;
+  taskManager?: TaskManager;
+  workspacePath?: string | null;
 }
 
 export async function buildServerTools(
@@ -36,9 +51,11 @@ export async function buildServerTools(
   dependencies: ToolDependencies = {}
 ): Promise<ServerTool[]> {
   const settings = store.getToolSettings();
-  const workspace = resolve(store.dataDir, "workspace");
+  const workspace = Object.prototype.hasOwnProperty.call(dependencies, "workspacePath")
+    ? dependencies.workspacePath ?? null
+    : resolve(store.dataDir, "workspace");
   const skills = resolve(store.dataDir, "skills");
-  await Promise.all([mkdir(workspace, { recursive: true, mode: 0o700 }), mkdir(skills, { recursive: true, mode: 0o700 })]);
+  await Promise.all([...(workspace ? [mkdir(workspace, { recursive: true, mode: 0o700 })] : []), mkdir(skills, { recursive: true, mode: 0o700 })]);
 
   const tools: ServerTool[] = [
     tool("get_time_info", "当前时间", "local", "Get the server's current local date, time, timezone, UTC offset, and Unix timestamp.", {}, false,
@@ -65,38 +82,40 @@ export async function buildServerTools(
       id: integerProperty("Memory id for edit or delete"),
       content: stringProperty("Memory text for create or edit")
     }, (input) => input.action === "delete", async (input) => memoryAction(store, input)),
-    tool("workspace_list", "列出文件", "workspace", "List files and directories inside the server workspace.", {
+    tool("workspace_list", "列出文件", "workspace", "List files and directories inside the conversation workspace.", {
       path: stringProperty("Workspace path, relative or beginning with /workspace"),
       recursive: booleanProperty("List recursively")
-    }, false, async (input) => listWorkspace(workspace, optionalString(input, "path") ?? "/workspace", Boolean(input.recursive))),
+    }, false, async (input) => listWorkspace(workspace!, optionalString(input, "path") ?? "/workspace", Boolean(input.recursive)), Boolean(workspace)),
     tool("workspace_read_file", "读取文件", "workspace", "Read a UTF-8 text file inside the server workspace (maximum 8 MiB).", {
       path: stringProperty("Workspace path, relative or beginning with /workspace")
-    }, false, async (input) => readWorkspaceFile(workspace, requiredString(input, "path"))),
+    }, false, async (input) => readWorkspaceFile(workspace!, requiredString(input, "path")), Boolean(workspace)),
     tool("workspace_write_file", "写入文件", "workspace", "Write a UTF-8 text file inside the server workspace.", {
       path: stringProperty("Workspace path, relative or beginning with /workspace"),
       text: stringProperty("Complete UTF-8 file content"),
       overwrite: booleanProperty("Whether an existing file may be replaced; defaults to true")
-    }, true, async (input) => writeWorkspaceFile(workspace, requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false)),
+    }, true, async (input) => writeWorkspaceFile(workspace!, requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false), Boolean(workspace)),
     tool("workspace_edit_file", "编辑文件", "workspace", "Replace exact text in a UTF-8 file inside the server workspace.", {
       path: stringProperty("Workspace path, relative or beginning with /workspace"),
       old_text: stringProperty("Exact text to replace"),
       new_text: stringProperty("Replacement text"),
       replace_all: booleanProperty("Replace every occurrence; defaults to false")
-    }, true, async (input) => editWorkspaceFile(workspace, input)),
+    }, true, async (input) => editWorkspaceFile(workspace!, input), Boolean(workspace)),
     tool("workspace_glob", "查找文件", "workspace", "Find workspace paths with a glob pattern such as **/*.ts.", {
       pattern: stringProperty("Glob pattern relative to /workspace")
-    }, false, async (input) => globWorkspace(workspace, requiredString(input, "pattern"))),
+    }, false, async (input) => globWorkspace(workspace!, requiredString(input, "pattern")), Boolean(workspace)),
     tool("workspace_grep", "搜索文件", "workspace", "Search UTF-8 workspace files for plain text or a regular expression.", {
       query: stringProperty("Text or regular expression"),
       pattern: stringProperty("File glob; defaults to **/*"),
       regex: booleanProperty("Treat query as a JavaScript regular expression")
-    }, false, async (input) => grepWorkspace(workspace, input)),
+    }, false, async (input) => grepWorkspace(workspace!, input), Boolean(workspace)),
     tool("workspace_shell", "运行命令", "workspace", "Run a shell command with the working directory confined to the server workspace. Commands require explicit user approval.", {
       command: stringProperty("Shell command"),
       cwd: stringProperty("Working directory inside /workspace"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
-    }, true, async (input, signal) => runShell(workspace, input, signal), settings.workspaceShellEnabled)
+    }, true, async (input, signal) => runShell(workspace!, input, signal), Boolean(workspace))
   ];
+
+  if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager));
 
   const skillList = await listSkills(skills);
   tools.push(tool("use_skill", "加载 Skill", "skill", skillList.length
@@ -108,19 +127,24 @@ export async function buildServerTools(
 
   tools.push(...await mcpManager(store).tools());
 
-  return includeDisabled ? tools : tools.filter((entry) => settings.enabled[entry.definition.name] !== false);
+  return tools;
 }
 
-export async function toolCatalog(store: Store): Promise<ToolCatalogItemDto[]> {
-  const tools = await buildServerTools(store, true);
-  return tools.map((entry) => ({
+export async function toolCatalog(store: Store, dependencies: ToolDependencies = {}): Promise<ToolCatalogItemDto[]> {
+  const tools = await buildServerTools(store, true, dependencies);
+  return Promise.all(tools.map(async (entry): Promise<ToolCatalogItemDto> => ({
     name: entry.definition.name,
     label: entry.label,
     description: TOOL_UI_DESCRIPTIONS[entry.definition.name] ?? entry.definition.description,
     category: entry.category,
-    requiresApproval: entry.requiresApproval({}),
-    available: entry.available
-  }));
+    requiresApproval: await entry.requiresApproval({}),
+    available: entry.available,
+    approvalMode: "dynamic",
+    sourceKind: entry.sourceKind ?? (entry.category === "mcp" ? "mcp" : "builtin"),
+    ...(entry.sourceId ? { sourceId: entry.sourceId } : {}),
+    ...(entry.sourceName ? { sourceName: entry.sourceName } : {}),
+    ...(entry.revision ? { revision: entry.revision } : {})
+  })));
 }
 
 const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
@@ -140,6 +164,83 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_shell: "在沙箱工作区目录中运行 Shell 命令，每次执行均需批准。",
   use_skill: "按需加载服务端 Skills 目录中的专用说明。"
 };
+
+function backgroundTools(manager: TaskManager): ServerTool[] {
+  return [
+    tool("background_start", "启动后台任务", "background", "Start a long-running command in the frozen conversation workspace and return its task id immediately.", {
+      command: stringProperty("Shell command"),
+      mode: { type: "string", enum: ["pipe", "pty"], description: "Use pty for interactive terminal programs" },
+      expected_duration_seconds: integerProperty("Optional expected duration in seconds"),
+      hard_timeout_seconds: integerProperty("Optional hard timeout in seconds")
+    }, true, async (input, _signal, context) => {
+      if (!context) throw new Error("Tool execution context is required");
+      const task = manager.create({
+        conversationId: context.conversationId, generationId: context.generationId, snapshot: context.snapshot,
+        command: requiredString(input, "command"), mode: input.mode === "pty" ? "pty" : "pipe",
+        expectedDurationMs: optionalPositiveSeconds(input, "expected_duration_seconds"),
+        hardTimeoutMs: optionalPositiveSeconds(input, "hard_timeout_seconds")
+      });
+      return JSON.stringify(task);
+    }),
+    tool("background_list", "后台任务列表", "background", "List background tasks for this conversation.", {}, false,
+      async (_input, _signal, context) => JSON.stringify(manager.list(context ? { conversationId: context.conversationId } : {}))),
+    tool("background_status", "后台任务状态", "background", "Read current background task metadata.", {
+      task_id: stringProperty("Background task id")
+    }, false, async (input, _signal, context) => JSON.stringify(requireOwnedTask(manager, requiredString(input, "task_id"), context))),
+    tool("background_read", "读取后台输出", "background", "Read incremental task output from a byte cursor. PTY tasks also return a terminal screen projection.", {
+      task_id: stringProperty("Background task id"), cursor: integerProperty("Last returned cursor"), limit: integerProperty("Maximum bytes, capped at 32768")
+    }, false, async (input, _signal, context) => {
+      const id = requiredString(input, "task_id");
+      requireOwnedTask(manager, id, context);
+      return JSON.stringify(await manager.read(id, optionalInteger(input, "cursor", 0, 0, Number.MAX_SAFE_INTEGER), optionalInteger(input, "limit", MAX_TOOL_OUTPUT, 1, MAX_TOOL_OUTPUT)));
+    }),
+    tool("background_wait", "等待后台输出", "background", "Wait until output settles, task state changes, or timeout expires. Cancelling this call does not stop the task.", {
+      task_id: stringProperty("Background task id"), cursor: integerProperty("Last returned cursor"),
+      timeout_seconds: integerProperty("Wait timeout, 1 to 120 seconds"), quiet_period_ms: integerProperty("Output quiet period")
+    }, false, async (input, signal, context) => {
+      const id = requiredString(input, "task_id");
+      requireOwnedTask(manager, id, context);
+      return JSON.stringify(await abortable(manager.wait(
+      id, optionalInteger(input, "cursor", 0, 0, Number.MAX_SAFE_INTEGER),
+      optionalInteger(input, "timeout_seconds", 30, 1, 120) * 1_000,
+      optionalInteger(input, "quiet_period_ms", 500, 0, 30_000)
+    ), signal));
+    }),
+    tool("background_write", "写入后台终端", "background", "Send raw input to a running background task. A non-empty audit reason is required.", {
+      task_id: stringProperty("Background task id"), data: stringProperty("Raw input"), reason: stringProperty("Audit reason")
+    }, true, async (input, _signal, context) => {
+      const id = requiredString(input, "task_id"); requireOwnedTask(manager, id, context);
+      return JSON.stringify(manager.write(id, requiredString(input, "data"), requiredString(input, "reason")));
+    }),
+    tool("background_stop", "停止后台任务", "background", "Stop a queued or running background task. A non-empty audit reason is required.", {
+      task_id: stringProperty("Background task id"), reason: stringProperty("Audit reason")
+    }, true, async (input, _signal, context) => {
+      const id = requiredString(input, "task_id"); requireOwnedTask(manager, id, context);
+      return JSON.stringify(manager.stop(id, requiredString(input, "reason")));
+    })
+  ];
+}
+
+function requireOwnedTask(manager: TaskManager, id: string, context?: ToolExecutionContext) {
+  const task = manager.get(id);
+  if (!task) throw new Error("Background task not found");
+  if (context && task.conversationId !== context.conversationId) throw new Error("Background task belongs to another conversation");
+  return task;
+}
+
+function optionalPositiveSeconds(input: JsonObject, name: string): number | null {
+  const value = input[name];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value * 1_000) : null;
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolvePromise, reject) => {
+    const abort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(resolvePromise, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
 
 export function toolSystemPrompt(store: Store): string {
   const memories = store.listMemories();
@@ -186,7 +287,9 @@ function inferRequired(name: string): string[] {
     eval_javascript: ["code"], fetch_url: ["url"], search_web: ["query"], conversation_search: ["query"],
     memory_tool: ["action"], workspace_read_file: ["path"], workspace_write_file: ["path", "text"],
     workspace_edit_file: ["path", "old_text", "new_text"], workspace_glob: ["pattern"],
-    workspace_grep: ["query"], workspace_shell: ["command"], use_skill: ["name"]
+    workspace_grep: ["query"], workspace_shell: ["command"], use_skill: ["name"],
+    background_start: ["command"], background_status: ["task_id"], background_read: ["task_id"],
+    background_wait: ["task_id"], background_write: ["task_id", "data", "reason"], background_stop: ["task_id", "reason"]
   } as Record<string, string[]>)[name] ?? [];
 }
 

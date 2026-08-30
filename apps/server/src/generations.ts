@@ -1,4 +1,5 @@
 import type { GenerationEvent, GenerationStatus, ProviderProtocol, UsageDto } from "@llm-chat/contracts";
+import Ajv, { type ValidateFunction } from "ajv";
 import {
   adapterFor,
   ProviderError,
@@ -8,10 +9,12 @@ import {
   type ProviderMessage
 } from "@llm-chat/providers";
 import { buildContext, ContextError, type BuiltContext } from "./context";
-import type { Store } from "./database";
+import type { GenerationRecord, Store } from "./database";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
 
 type Subscriber = (event: GenerationEvent) => void;
+const schemaValidator = new Ajv({ allErrors: true, strict: false });
+const toolValidators = new WeakMap<ServerTool, ValidateFunction>();
 
 interface LiveJob {
   controller: AbortController;
@@ -28,16 +31,18 @@ export interface GenerationRunnerDependencies {
     connection: ProviderConnection,
     signal: AbortSignal
   ) => Promise<BuiltContext>;
-  buildTools: (store: Store) => Promise<ServerTool[]>;
+  buildTools: (store: Store, record: GenerationRecord) => Promise<ServerTool[]>;
   memoryPrompt: (store: Store) => string;
+  runtimePrompt: (store: Store, record: GenerationRecord) => string;
   stream: (protocol: ProviderProtocol, request: GenerateRequest) => AsyncIterable<ProviderEvent>;
   persistToolOutput: (store: Store, callId: string, output: string) => Promise<string>;
 }
 
 const defaultDependencies: GenerationRunnerDependencies = {
   buildContext,
-  buildTools: buildServerTools,
+  buildTools: (store, record) => buildServerTools(store, false, { workspacePath: record.agentSnapshot.workspacePath }),
   memoryPrompt: toolSystemPrompt,
+  runtimePrompt: () => "",
   stream: (protocol, request) => adapterFor(protocol).stream(request),
   persistToolOutput: persistLargeToolOutput
 };
@@ -162,12 +167,11 @@ export class GenerationRunner {
       this.store.setGenerationContext(generationId, context.metadata);
       const toolPolicy = record.agentSnapshot.execution.tools;
       const tools = model.capabilities.tools
-        ? (await this.dependencies.buildTools(this.store)).filter((tool) =>
+        ? (await this.dependencies.buildTools(this.store, record)).filter((tool) =>
             tool.available && (toolPolicy.overrides[tool.definition.name] ?? toolPolicy.defaultEnabled))
         : [];
       const toolMap = new Map(tools.map((tool) => [tool.definition.name, tool]));
       const memoryPrompt = this.dependencies.memoryPrompt(this.store);
-      const systemPrompt = [context.systemPrompt, memoryPrompt].filter(Boolean).join("\n\n");
       let messages: ProviderMessage[] = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       let usage = this.store.getGeneration(generationId)?.usage ?? {};
       let stepIndex = nextStepIndex(this.store.listToolCalls(generationId));
@@ -181,16 +185,19 @@ export class GenerationRunner {
         const executable = existing.filter((call) =>
           call.output === null && call.error === null && (call.approvalState === "approved" || call.approvalState === "denied")
         );
-        await this.executeTools(generationId, executable, toolMap, job.controller.signal);
+        await this.executeTools(record, executable, toolMap, job.controller.signal);
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
 
-      for (; stepIndex < 8; stepIndex += 1) {
+      const maxToolRounds = record.agentSnapshot.execution.maxToolRounds;
+      for (; maxToolRounds === null || stepIndex < maxToolRounds; stepIndex += 1) {
         job.controller.signal.throwIfAborted();
         const calls: Array<{ id: string; name: string; arguments: string }> = [];
         let providerContext: unknown;
         let stopReason = "stop";
         let stepUsage: UsageDto = {};
+        const systemPrompt = [context.systemPrompt, memoryPrompt, this.dependencies.runtimePrompt(this.store, record)]
+          .filter(Boolean).join("\n\n");
         for await (const event of this.dependencies.stream(record.protocol, {
           connection,
           modelKey: record.modelKey,
@@ -248,23 +255,26 @@ export class GenerationRunner {
           return;
         }
 
-        const persisted = calls.map((call, index) => {
+        const persisted = [];
+        for (const [index, call] of calls.entries()) {
           const definition = toolMap.get(call.name);
           const args = parseToolArguments(call.arguments);
-          const requiresApproval = definition?.requiresApproval(args) ?? false;
+          if (definition) validateToolArguments(definition, args);
+          const override = toolPolicy.approvalOverrides[call.name] ?? "default";
+          const requiresApproval = override === "always" || (override === "default" && await (definition?.requiresApproval(args) ?? false));
           const saved = this.store.upsertToolCall(generationId, call, stepIndex * 1000 + index, stepIndex, requiresApproval);
           this.emit(generationId, { type: "tool-call", generationId, toolCall: saved });
-          return saved;
-        });
+          persisted.push(saved);
+        }
         if (persisted.some((call) => call.approvalState === "pending")) {
           this.waitForApproval(generationId);
           return;
         }
-        await this.executeTools(generationId, persisted, toolMap, job.controller.signal);
+        await this.executeTools(record, persisted, toolMap, job.controller.signal);
         job.controller.signal.throwIfAborted();
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
-      throw new Error("Tool execution exceeded the maximum of 8 model steps");
+      throw new Error(`Tool execution exceeded the Agent limit of ${maxToolRounds} model steps`);
     } catch (error) {
       flush();
       if (job.controller.signal.aborted) {
@@ -283,11 +293,12 @@ export class GenerationRunner {
   }
 
   private async executeTools(
-    generationId: string,
+    record: GenerationRecord,
     calls: ReturnType<Store["listToolCalls"]>,
     toolMap: Map<string, ServerTool>,
     signal: AbortSignal
   ): Promise<void> {
+    const generationId = record.id;
     for (const call of calls) {
       if (call.approvalState === "denied") {
         const updated = this.store.updateToolCall(call.id, {
@@ -305,7 +316,12 @@ export class GenerationRunner {
         const output = await this.dependencies.persistToolOutput(
           this.store,
           call.id,
-          await tool.execute(parseToolArguments(call.arguments), signal)
+          await tool.execute(parseToolArguments(call.arguments), signal, {
+            conversationId: record.conversationId,
+            generationId,
+            toolCallId: call.id,
+            snapshot: record.agentSnapshot
+          })
         );
         const completed = this.store.updateToolCall(call.id, {
           approvalState: "completed", output, error: null, completedAt: Date.now()
@@ -370,6 +386,15 @@ function parseToolArguments(value: string): Record<string, unknown> {
   } catch (error) {
     throw new Error(`Invalid tool arguments: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function validateToolArguments(tool: ServerTool, input: Record<string, unknown>): void {
+  let validate = toolValidators.get(tool);
+  if (!validate) {
+    validate = schemaValidator.compile(tool.definition.inputSchema);
+    toolValidators.set(tool, validate);
+  }
+  if (!validate(input)) throw new Error(`Invalid tool arguments for ${tool.definition.name}: ${schemaValidator.errorsText(validate.errors)}`);
 }
 
 function nextStepIndex(calls: ReturnType<Store["listToolCalls"]>): number {

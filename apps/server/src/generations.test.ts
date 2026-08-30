@@ -167,7 +167,9 @@ describe("GenerationRunner lifecycle", () => {
       expect.objectContaining({ index: 1000, content: "done", complete: true })
     ]);
     expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 3, totalTokens: 10 });
-    expect(execute).toHaveBeenCalledWith({ value: 2 }, expect.any(AbortSignal));
+    expect(execute).toHaveBeenCalledWith({ value: 2 }, expect.any(AbortSignal), expect.objectContaining({
+      generationId: generation.generationId, toolCallId: "call-auto"
+    }));
     expect(requests[1]?.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "assistant", toolCalls: [expect.objectContaining({ id: "call-auto" })] }),
       expect.objectContaining({ role: "tool", toolResults: [expect.objectContaining({ content: "tool output" })] })
@@ -278,7 +280,7 @@ describe("GenerationRunner tools and approval", () => {
     expect(existsSync(resolve(store.dataDir, "tool_outputs/call-large.txt"))).toBe(true);
   });
 
-  it("fails after eight consecutive model tool steps", async () => {
+  it("uses the Agent's configurable maximum tool rounds", async () => {
     const store = createStore();
     const generation = seedGeneration(store);
     let step = 0;
@@ -288,12 +290,12 @@ describe("GenerationRunner tools and approval", () => {
     runner.start(generation.generationId);
 
     const result = await terminal(store, generation.generationId);
-    expect(stream).toHaveBeenCalledTimes(8);
+    expect(stream).toHaveBeenCalledTimes(32);
     expect(result).toMatchObject({
       status: "failed",
-      error: { code: "generation_failed", message: "Tool execution exceeded the maximum of 8 model steps" }
+      error: { code: "generation_failed", message: "Tool execution exceeded the Agent limit of 32 model steps" }
     });
-    expect(result.toolCalls).toHaveLength(8);
+    expect(result.toolCalls).toHaveLength(32);
   });
 });
 

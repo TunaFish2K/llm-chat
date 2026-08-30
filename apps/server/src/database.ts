@@ -45,6 +45,7 @@ import {
   modelSettingsSchema,
   reasoningEffortSchema
 } from "@llm-chat/contracts";
+import { processStartIdentity } from "./background-tasks";
 
 interface ConnectionRecord extends ConnectionDto {
   apiKey: string;
@@ -82,12 +83,20 @@ export interface AgentSnapshot {
   card: CharacterCardV2;
   userProfile: { displayName: string; description: string };
   baseSystemPrompt: string;
+  workspacePath: string | null;
+  extensionsPinned: boolean;
+  skillRevisions: Record<string, string>;
+  toolRevisions: Record<string, string>;
   execution: {
     modelId: string;
     contextPolicy: ContextPolicy;
     reasoningEffort: ReasoningEffort;
     settings: GenerationSettings;
     tools: ToolPolicy;
+    enabledSkillIds: string[];
+    maxToolRounds: number | null;
+    maxBackgroundTasks: number | null;
+    taskLogLimitBytes: number | null;
   };
 }
 
@@ -279,7 +288,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 11) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 12) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -491,6 +500,93 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 11;
       `);
     }
+    if (current < 12) {
+      if (!hasColumn(sqlite, "conversations", "workspace_path")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN workspace_path TEXT");
+      }
+      if (!hasColumn(sqlite, "app_settings", "last_workspace_path")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN last_workspace_path TEXT");
+      }
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS plugin_installations (
+          id TEXT PRIMARY KEY,
+          manifest_json TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          active_revision TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'unloaded',
+          error TEXT,
+          config_json TEXT NOT NULL DEFAULT '{}',
+          secrets_json TEXT NOT NULL DEFAULT '{}',
+          installed_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS plugin_revisions (
+          plugin_id TEXT NOT NULL REFERENCES plugin_installations(id) ON DELETE CASCADE,
+          revision TEXT NOT NULL,
+          path TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (plugin_id, revision)
+        );
+        CREATE TABLE IF NOT EXISTS skill_installations (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          source_path TEXT NOT NULL,
+          active_revision TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'loaded',
+          error TEXT,
+          required_tools_json TEXT NOT NULL DEFAULT '[]',
+          recommended_approvals_json TEXT NOT NULL DEFAULT '{}',
+          bundled INTEGER NOT NULL DEFAULT 0,
+          installed_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS skill_revisions (
+          skill_id TEXT NOT NULL REFERENCES skill_installations(id) ON DELETE CASCADE,
+          revision TEXT NOT NULL,
+          path TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (skill_id, revision)
+        );
+        CREATE TABLE IF NOT EXISTS background_tasks (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+          agent_id TEXT,
+          agent_name TEXT NOT NULL,
+          agent_revision INTEGER NOT NULL,
+          command TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          workspace_path TEXT NOT NULL,
+          status TEXT NOT NULL,
+          expected_duration_ms INTEGER,
+          hard_timeout_ms INTEGER,
+          log_limit_bytes INTEGER,
+          output_cursor INTEGER NOT NULL DEFAULT 0,
+          earliest_cursor INTEGER NOT NULL DEFAULT 0,
+          pid INTEGER,
+          process_group_id INTEGER,
+          process_start_identity TEXT,
+          exit_code INTEGER,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          completed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation ON background_tasks(conversation_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_background_tasks_agent_status ON background_tasks(agent_id, status, created_at);
+        CREATE TABLE IF NOT EXISTS background_task_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id TEXT NOT NULL REFERENCES background_tasks(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          reason TEXT,
+          data_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_background_task_events_task ON background_task_events(task_id, id);
+        PRAGMA user_version = 12;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -512,7 +608,14 @@ export class Store {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.sqlite = new DatabaseSync(path, { timeout: 5_000 });
     this.sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    const priorVersion = Number((this.sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
     migrate(this.sqlite);
+    const legacyWorkspace = `${this.dataDir}/workspace`;
+    mkdirSync(legacyWorkspace, { recursive: true, mode: 0o700 });
+    if (priorVersion < 12) {
+      this.sqlite.prepare("UPDATE conversations SET workspace_path = ? WHERE workspace_path IS NULL").run(legacyWorkspace);
+    }
+    this.migrateLegacyToolPolicy();
     this.ensureDefaultAgent();
     try {
       chmodSync(dirname(path), 0o700);
@@ -529,6 +632,16 @@ export class Store {
     this.sqlite
       .prepare("UPDATE generations SET status = 'interrupted', completed_at = ? WHERE status IN ('queued', 'running')")
       .run(Date.now());
+    for (const task of this.sqlite.prepare("SELECT pid, process_group_id, process_start_identity FROM background_tasks WHERE status IN ('starting','running')").all() as Row[]) {
+      const pid = task.pid === null ? null : Number(task.pid);
+      const expected = textOrNull(task.process_start_identity);
+      if (!pid || !expected || processStartIdentity(pid) !== expected) continue;
+      try { process.kill(-Number(task.process_group_id ?? pid), "SIGKILL"); } catch {}
+    }
+    this.sqlite.prepare(`
+      UPDATE background_tasks SET status = 'interrupted', error = '服务重启，后台进程未恢复', completed_at = ?
+      WHERE status IN ('queued', 'starting', 'running')
+    `).run(Date.now());
   }
 
   close(): void {
@@ -549,7 +662,11 @@ export class Store {
         contextPolicy: settings.default_context_policy as ContextPolicy,
         reasoningEffort: reasoningEffortSchema.parse(settings.reasoning_effort),
         generation: {},
-        tools: { defaultEnabled: true, overrides: {} }
+        tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} },
+        enabledSkillIds: [],
+        maxToolRounds: 32,
+        maxBackgroundTasks: 2,
+        taskLogLimitBytes: 64 * 1024 * 1024
       };
       this.sqlite.prepare(`
         INSERT INTO agents (id, card_json, execution_json, user_profile_json, protected, revision, created_at, updated_at)
@@ -569,6 +686,23 @@ export class Store {
     }
   }
 
+  private migrateLegacyToolPolicy(): void {
+    const row = this.sqlite.prepare("SELECT enabled_json, workspace_shell_enabled FROM tool_settings WHERE id = 1").get() as Row;
+    const enabled = parse<Record<string, boolean>>(row.enabled_json, {});
+    if (!Boolean(row.workspace_shell_enabled)) enabled.workspace_shell = false;
+    const disabled = Object.fromEntries(Object.entries(enabled).filter(([, value]) => value === false));
+    if (!Object.keys(disabled).length) return;
+    const agents = this.sqlite.prepare("SELECT id, execution_json FROM agents").all() as Row[];
+    for (const agent of agents) {
+      const raw = parse<Record<string, unknown>>(agent.execution_json, {});
+      const tools = (raw.tools && typeof raw.tools === "object" ? raw.tools : {}) as Record<string, unknown>;
+      const overrides = (tools.overrides && typeof tools.overrides === "object" ? tools.overrides : {}) as Record<string, boolean>;
+      const next = { ...raw, tools: { ...tools, overrides: { ...disabled, ...overrides } } };
+      this.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?").run(json(next), String(agent.id));
+    }
+    this.sqlite.prepare("UPDATE tool_settings SET enabled_json = '{}', workspace_shell_enabled = 1 WHERE id = 1").run();
+  }
+
   getSettings(): AppSettings {
     const row = this.sqlite.prepare("SELECT * FROM app_settings WHERE id = 1").get() as Row;
     return {
@@ -586,7 +720,8 @@ export class Store {
       uiPreferences: {
         sidebarCollapsed: Boolean(row.sidebar_collapsed),
         reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"]
-      }
+      },
+      lastWorkspacePath: textOrNull(row.last_workspace_path)
     };
   }
 
@@ -601,16 +736,17 @@ export class Store {
       defaultAgentId: patch.defaultAgentId ?? current.defaultAgentId,
       lastAgentId: patch.lastAgentId ?? current.lastAgentId,
       userProfile: patch.userProfile ?? current.userProfile,
-      uiPreferences: patch.uiPreferences ?? current.uiPreferences
+      uiPreferences: patch.uiPreferences ?? current.uiPreferences,
+      lastWorkspacePath: patch.lastWorkspacePath === undefined ? current.lastWorkspacePath : patch.lastWorkspacePath
     };
     this.sqlite.prepare(`
       UPDATE app_settings SET default_model_id = ?, default_context_policy = ?, theme = ?, default_system_prompt = ?, reasoning_effort = ?,
         default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
-        sidebar_collapsed = ?, reasoning_collapse_policy = ?
+        sidebar_collapsed = ?, reasoning_collapse_policy = ?, last_workspace_path = ?
       WHERE id = 1
     `).run(next.defaultModelId, next.defaultContextPolicy, next.theme, next.defaultSystemPrompt, next.reasoningEffort,
       next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
-      next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy);
+      next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy, next.lastWorkspacePath);
     if (patch.defaultSystemPrompt !== undefined || patch.userProfile !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries").run();
     }
@@ -895,6 +1031,7 @@ export class Store {
     title?: string | undefined;
     agentId: string;
     executionOverrides?: ConversationExecutionOverrides | undefined;
+    workspacePath?: string | null | undefined;
   } | {
     title?: string | undefined;
     systemPrompt: string;
@@ -916,10 +1053,14 @@ export class Store {
     const contextPolicy = overrides.contextPolicy ?? agent.execution.contextPolicy;
     this.sqlite.prepare(`
       INSERT INTO conversations (id, title, system_prompt, context_policy, model_id, draft, reasoning_effort,
-        agent_id, execution_overrides_json, created_at, updated_at)
-      VALUES (?, ?, '', ?, ?, '', NULL, ?, ?, ?, ?)
-    `).run(id, input.title ?? "新对话", contextPolicy, modelId, agent.id, json(overrides), now, now);
+        agent_id, execution_overrides_json, workspace_path, created_at, updated_at)
+      VALUES (?, ?, '', ?, ?, '', NULL, ?, ?, ?, ?, ?)
+    `).run(id, input.title ?? "新对话", contextPolicy, modelId, agent.id, json(overrides),
+      "workspacePath" in input ? input.workspacePath ?? null : null, now, now);
     this.sqlite.prepare("UPDATE app_settings SET last_agent_id = ? WHERE id = 1").run(agent.id);
+    if ("workspacePath" in input && input.workspacePath) {
+      this.sqlite.prepare("UPDATE app_settings SET last_workspace_path = ? WHERE id = 1").run(input.workspacePath);
+    }
     return this.getConversation(id)!;
   }
 
@@ -928,6 +1069,7 @@ export class Store {
     agentId: string;
     greetingIndex: number;
     executionOverrides?: ConversationExecutionOverrides | undefined;
+    workspacePath?: string | null | undefined;
   } | {
     text: string;
     modelId: string;
@@ -943,7 +1085,8 @@ export class Store {
               modelId: input.modelId,
               contextPolicy: input.contextPolicy,
               reasoningEffort: this.getSettings().reasoningEffort
-            }
+            },
+        workspacePath: "workspacePath" in input ? input.workspacePath : null
       });
       const agent = this.getAgent(conversation.agentId!)!;
       const greetings = [agent.card.data.first_mes, ...agent.card.data.alternate_greetings];
@@ -962,7 +1105,7 @@ export class Store {
   }
 
   updateConversation(id: string, patch: OptionalInput<Pick<ConversationDto,
-    "title" | "agentId" | "executionOverrides" | "draft" | "modelId" | "contextPolicy" | "systemPrompt"
+    "title" | "agentId" | "executionOverrides" | "draft" | "modelId" | "contextPolicy" | "systemPrompt" | "workspacePath"
   >>): ConversationDto | undefined {
     const current = this.getConversation(id);
     if (!current) return undefined;
@@ -987,13 +1130,14 @@ export class Store {
       executionOverrides,
       contextPolicy,
       modelId,
-      draft: patch.draft ?? current.draft
+      draft: patch.draft ?? current.draft,
+      workspacePath: patch.workspacePath === undefined ? current.workspacePath : patch.workspacePath
     };
     this.sqlite.prepare(`
       UPDATE conversations SET title = ?, system_prompt = ?, agent_id = ?, execution_overrides_json = ?, context_policy = ?, model_id = ?,
-        draft = ?, updated_at = ? WHERE id = ?
+        draft = ?, workspace_path = ?, updated_at = ? WHERE id = ?
     `).run(next.title, patch.systemPrompt ?? current.systemPrompt, next.agentId, json(next.executionOverrides), next.contextPolicy,
-      next.modelId, next.draft, Date.now(), id);
+      next.modelId, next.draft, next.workspacePath, Date.now(), id);
     if (switchingAgent || patch.executionOverrides !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(id);
     }
@@ -1038,6 +1182,10 @@ export class Store {
       card: agent.card,
       userProfile: this.resolvedUserProfile(agent),
       baseSystemPrompt: appSettings.defaultSystemPrompt,
+      workspacePath: conversation.workspacePath,
+      extensionsPinned: false,
+      skillRevisions: {},
+      toolRevisions: {},
       execution: {
         modelId,
         contextPolicy: conversation.executionOverrides.contextPolicy ?? agent.execution.contextPolicy,
@@ -1045,8 +1193,13 @@ export class Store {
         settings,
         tools: {
           defaultEnabled: agent.execution.tools.defaultEnabled,
-          overrides: { ...agent.execution.tools.overrides, ...(conversation.executionOverrides.tools ?? {}) }
-        }
+          overrides: { ...agent.execution.tools.overrides, ...(conversation.executionOverrides.tools ?? {}) },
+          approvalOverrides: { ...agent.execution.tools.approvalOverrides }
+        },
+        enabledSkillIds: [...agent.execution.enabledSkillIds],
+        maxToolRounds: agent.execution.maxToolRounds,
+        maxBackgroundTasks: agent.execution.maxBackgroundTasks,
+        taskLogLimitBytes: agent.execution.taskLogLimitBytes
       }
     };
     return { agent, model, connection, snapshot };
@@ -1193,12 +1346,20 @@ export class Store {
       card: currentAgent?.card ?? defaultAgentCard(),
       userProfile: currentAgent ? this.resolvedUserProfile(currentAgent) : this.getSettings().userProfile,
       baseSystemPrompt: this.getSettings().defaultSystemPrompt,
+      workspacePath: conversation?.workspacePath ?? null,
+      extensionsPinned: false,
+      skillRevisions: {},
+      toolRevisions: {},
       execution: {
         modelId: String(row.model_id),
         contextPolicy: conversation?.contextPolicy ?? "trim",
         reasoningEffort: parseGenerationSettings(row.settings_json).reasoningEffort,
         settings: parseGenerationSettings(row.settings_json),
-        tools: { defaultEnabled: true, overrides: {} }
+        tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} },
+        enabledSkillIds: [],
+        maxToolRounds: 8,
+        maxBackgroundTasks: 2,
+        taskLogLimitBytes: 64 * 1024 * 1024
       }
     };
     return {
@@ -1213,6 +1374,10 @@ export class Store {
       agentSnapshot: row.agent_snapshot_json ? parse(row.agent_snapshot_json, legacySnapshot) : legacySnapshot,
       status: row.status as GenerationDto["status"]
     };
+  }
+
+  updateGenerationExtensionSnapshot(id: string, snapshot: AgentSnapshot): void {
+    this.sqlite.prepare("UPDATE generations SET agent_snapshot_json = ? WHERE id = ?").run(json(snapshot), id);
   }
 
   setGenerationRunning(id: string): void {
@@ -1585,6 +1750,7 @@ function conversationDto(row: Row): ConversationDto {
       : agentExecution?.modelId ?? textOrNull(row.model_id),
     agentId: textOrNull(row.agent_id),
     executionOverrides,
+    workspacePath: textOrNull(row.workspace_path),
     draft: String(row.draft),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)

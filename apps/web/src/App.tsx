@@ -1,6 +1,7 @@
 import type {
   AgentSummaryDto,
   AppSettings,
+  BackgroundTaskDto,
   ConnectionDto,
   ContextPolicy,
   ConversationDto,
@@ -19,6 +20,7 @@ import {
   ControlOutlined,
   CopyOutlined,
   DeleteOutlined,
+  FolderOpenOutlined,
   LeftOutlined,
   MenuFoldOutlined,
   MenuOutlined,
@@ -26,13 +28,17 @@ import {
   MoreOutlined,
   RightOutlined,
   SettingOutlined,
+  StopOutlined,
   SyncOutlined
 } from "@ant-design/icons";
 import { Actions, Bubble, Conversations, Sender, Think, Welcome, type BubbleItemType } from "@ant-design/x";
 import {
   Alert,
   Avatar,
+  Badge,
   Button,
+  Breadcrumb,
+  Checkbox,
   Collapse,
   Drawer,
   Dropdown,
@@ -41,21 +47,24 @@ import {
   Input,
   InputNumber,
   Layout,
+  List,
   Modal,
   Popover,
   Select,
   Space,
   Spin,
+  Switch,
   Tag,
   Tooltip,
   Typography
 } from "antd";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, generationEvents } from "./api";
+import { api, appEvents, generationEvents } from "./api";
 import { Markdown } from "./Markdown";
 import { ModelSelector, isModelUsable, protocolShortName } from "./ModelSelector";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
 import { SettingsPanel } from "./SettingsPanel";
+import { TaskTerminal } from "./TaskTerminal";
 import { applyGenerationEvent, blockText, streamEnded } from "./generationState";
 import { AppTheme, resolveColorScheme, type ColorScheme } from "./theme";
 import {
@@ -91,11 +100,15 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [newAgentId, setNewAgentId] = useState<string | null>(null);
   const [newOverrides, setNewOverrides] = useState<ConversationExecutionOverrides>({});
+  const [newWorkspacePath, setNewWorkspacePath] = useState<string | null>(null);
   const [greetingIndex, setGreetingIndex] = useState(0);
   const [liveGenerationId, setLiveGenerationId] = useState<string | null>(null);
   const [toolActionIds, setToolActionIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [executionOpen, setExecutionOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [tasks, setTasks] = useState<BackgroundTaskDto[]>([]);
   const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ConversationDto | null>(null);
   const [error, setError] = useState("");
@@ -115,6 +128,26 @@ export function App() {
   }, []);
 
   useEffect(() => { void refreshBoot().catch((value) => setError(messageOf(value))); }, [refreshBoot]);
+  useEffect(() => {
+    if (!boot || currentId || newWorkspacePath !== null || !boot.settings.lastWorkspacePath) return;
+    setNewWorkspacePath(boot.settings.lastWorkspacePath);
+  }, [boot, currentId, newWorkspacePath]);
+  const refreshTasks = useCallback(async () => setTasks(await api.backgroundTasks(undefined, true)), []);
+  useEffect(() => {
+    void refreshTasks().catch(() => {});
+    return appEvents((event) => {
+      if (event.type === "task") {
+        setTasks((current) => current.some((task) => task.id === event.task.id)
+          ? replace(current, event.task)
+          : [event.task, ...current]);
+      } else if (event.type === "task-output") {
+        setTasks((current) => current.map((task) => task.id === event.taskId ? { ...task, outputCursor: event.cursor } : task));
+      }
+      if ((event.type === "plugin" || event.type === "skill") && (event.state === "pending-reload" || event.state === "error")) {
+        setError(event.message ?? `${event.type === "plugin" ? "Plugin" : "Skill"} 状态已变化，请到扩展设置处理`);
+      }
+    });
+  }, [refreshTasks]);
   useEffect(() => {
     const handler = () => setCurrentId(conversationFromPath());
     window.addEventListener("popstate", handler);
@@ -199,6 +232,7 @@ export function App() {
     setDraft("");
     setNewAgentId(null);
     setNewOverrides({});
+    setNewWorkspacePath(boot?.settings.lastWorkspacePath ?? null);
     setGreetingIndex(0);
     setError("");
     navigate(null);
@@ -294,7 +328,8 @@ export function App() {
           text: content,
           agentId: selectedAgent!.id,
           greetingIndex,
-          executionOverrides: newOverrides
+          executionOverrides: newOverrides,
+          workspacePath: newWorkspacePath
         });
         setBoot((value) => value ? { ...value, conversations: [started.conversation, ...value.conversations] } : value);
         setNewAgentId(null);
@@ -388,16 +423,21 @@ export function App() {
     onReasoningEffort={chooseReasoningEffort}
     onContextPolicy={chooseContextPolicy}
   />;
+  const workspaceControl = <Tooltip title={current?.workspacePath ?? newWorkspacePath ?? "选择工作目录"}>
+    <Button type="text" size="small" className="workspace-trigger" icon={<FolderOpenOutlined />} aria-label="选择工作目录" onClick={() => setWorkspaceOpen(true)} />
+  </Tooltip>;
   const desktopComposerToolbar = <Flex className="composer-toolbar" align="center" gap={4} wrap>
     {agentSelector}
     {modelSelector}
     {effortControl}
     {contextSelector}
+    {workspaceControl}
   </Flex>;
   const mobileComposerToolbar = <MobileComposerToolbar
     agentSelector={agentSelector}
     modelSelector={modelSelector}
     executionControl={mobileExecutionControl}
+    workspaceControl={workspaceControl}
   />;
   const sidebar = <SidebarContent
     conversations={boot.conversations}
@@ -520,6 +560,9 @@ export function App() {
         {persistentSidebarOpen && <Sider width={260} theme={colorScheme}>{sidebar}</Sider>}
         <Layout className="chat-layout">
           <Header className={current ? "chat-header" : "chat-header chat-header-welcome"}>
+            <Badge className="task-badge" count={tasks.filter((task) => ["queued", "starting", "running"].includes(task.status)).length} size="small">
+              <Button className="task-button" type="text" icon={<CodeOutlined />} aria-label="后台任务" onClick={() => setTasksOpen(true)} />
+            </Badge>
             {openSidebarButton && <Button
               className="sidebar-open-button"
               type="text"
@@ -662,6 +705,19 @@ export function App() {
           setExecutionOpen(false);
         }}
       />}
+      <WorkspaceBrowser
+        open={workspaceOpen}
+        value={current?.workspacePath ?? newWorkspacePath}
+        onClose={() => setWorkspaceOpen(false)}
+        onSelect={async (workspacePath) => {
+          if (current) await patchConversation(current, { workspacePath });
+          else setNewWorkspacePath(workspacePath);
+          const settings = await api.updateSettings({ lastWorkspacePath: workspacePath });
+          setBoot((value) => value ? { ...value, settings } : value);
+          setWorkspaceOpen(false);
+        }}
+      />
+      <TaskDrawer open={tasksOpen} tasks={tasks} currentConversationId={currentId} onClose={() => setTasksOpen(false)} onRefresh={refreshTasks} />
   </AppTheme>;
 }
 
@@ -687,15 +743,17 @@ function AgentSelector({ value, agents, onChange }: {
   />;
 }
 
-function MobileComposerToolbar({ agentSelector, modelSelector, executionControl }: {
+function MobileComposerToolbar({ agentSelector, modelSelector, executionControl, workspaceControl }: {
   agentSelector: React.ReactNode;
   modelSelector: React.ReactNode;
   executionControl: React.ReactNode;
+  workspaceControl: React.ReactNode;
 }) {
   return <Flex className="composer-toolbar composer-toolbar-mobile" align="center" gap={4} wrap={false}>
     <div className="composer-agent-control">{agentSelector}</div>
     <div className="composer-model-control">{modelSelector}</div>
     {executionControl}
+    {workspaceControl}
   </Flex>;
 }
 
@@ -1074,6 +1132,107 @@ function MessageFooter({ message, generation, selectedIndex, active, mobile, onR
     {versions}
     {metadata}
   </Flex>;
+}
+
+function WorkspaceBrowser({ open, value, onClose, onSelect }: {
+  open: boolean;
+  value: string | null;
+  onClose: () => void;
+  onSelect: (path: string | null) => Promise<void>;
+}) {
+  const [path, setPath] = useState(value ?? "/");
+  const [listing, setListing] = useState<Awaited<ReturnType<typeof api.directories>> | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [error, setError] = useState("");
+  const load = async (nextPath: string) => {
+    try { const next = await api.directories(nextPath); setListing(next); setPath(next.path); setError(""); }
+    catch (reason) { setError(messageOf(reason)); }
+  };
+  useEffect(() => { if (open) void load(value ?? "/"); }, [open, value]);
+  const segments = path.split("/").filter(Boolean);
+  const breadcrumb = [{ title: <Button type="link" size="small" onClick={() => void load("/")}>/</Button> }, ...segments.map((segment, index) => ({
+    title: <Button type="link" size="small" onClick={() => void load(`/${segments.slice(0, index + 1).join("/")}`)}>{segment}</Button>
+  }))];
+  return <Modal open={open} title="选择工作目录" okText="使用此目录" cancelText="取消" width={720} onCancel={onClose}
+    onOk={() => void onSelect(listing?.path ?? path)} footer={(_, { OkBtn, CancelBtn }) => <Flex justify="space-between">
+      <Button onClick={() => void onSelect(null)}>不绑定目录</Button><Space><CancelBtn /><OkBtn /></Space>
+    </Flex>}>
+    <Flex vertical gap="small" className="workspace-browser">
+      <Input.Search value={path} onChange={(event) => setPath(event.target.value)} onSearch={(next) => void load(next)} enterButton="打开" />
+      <Flex align="center" justify="space-between" gap="small"><Breadcrumb items={breadcrumb} />
+        <Checkbox checked={showHidden} onChange={(event) => setShowHidden(event.target.checked)}>隐藏目录</Checkbox></Flex>
+      {error && <Alert type="error" showIcon message={error} />}
+      <List className="directory-list" bordered dataSource={(listing?.entries ?? []).filter((entry) => showHidden || !entry.hidden)}
+        locale={{ emptyText: "没有子目录" }} renderItem={(entry) => <List.Item onClick={() => void load(entry.path)} className="directory-row">
+          <Space><FolderOpenOutlined /><Text>{entry.name}</Text></Space>
+        </List.Item>} />
+      <Space.Compact block><Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="新目录名称" />
+        <Button icon={<FolderOpenOutlined />} disabled={!newName.trim()} onClick={async () => {
+          try { await api.createDirectory(`${listing?.path ?? path}/${newName.trim()}`); setNewName(""); await load(listing?.path ?? path); }
+          catch (reason) { setError(messageOf(reason)); }
+        }}>创建</Button></Space.Compact>
+    </Flex>
+  </Modal>;
+}
+
+function TaskDrawer({ open, tasks, currentConversationId, onClose, onRefresh }: {
+  open: boolean;
+  tasks: BackgroundTaskDto[];
+  currentConversationId: string | null;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const [all, setAll] = useState(false);
+  const visible = all || !currentConversationId ? tasks : tasks.filter((task) => task.conversationId === currentConversationId);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = visible.find((task) => task.id === selectedId) ?? visible[0] ?? null;
+  const [raw, setRaw] = useState("");
+  const [events, setEvents] = useState<Awaited<ReturnType<typeof api.backgroundTask>>["events"]>([]);
+  useEffect(() => {
+    if (!open || !selected) return;
+    void Promise.all([readRetainedTaskOutput(selected), api.backgroundTask(selected.id)])
+      .then(([output, detail]) => { setRaw(output); setEvents(detail.events); }).catch(() => {});
+  }, [open, selected?.id, selected?.outputCursor, selected?.earliestCursor]);
+  return <Drawer open={open} onClose={onClose} title={<Flex align="center" justify="space-between"><Text strong>后台任务</Text>
+    <Space><Text type="secondary">全部</Text><Switch size="small" checked={all} onChange={setAll} /></Space></Flex>} width="min(920px, 100%)">
+    <Flex className="task-drawer-layout" gap="middle" vertical={false}>
+      <List className="task-list" dataSource={visible} locale={{ emptyText: "没有后台任务" }} renderItem={(task) => <List.Item className={selected?.id === task.id ? "task-row task-row-selected" : "task-row"} onClick={() => setSelectedId(task.id)}>
+        <List.Item.Meta title={<Flex align="center" gap="small"><Tag color={task.overdue ? "warning" : taskStatusColor(task.status)}>{task.status}</Tag><Text ellipsis>{task.command}</Text></Flex>}
+          description={<Text type="secondary" ellipsis>{task.agentName} r{task.agentRevision} · {task.workspacePath}</Text>} />
+      </List.Item>} />
+      <div className="task-detail">
+        {selected ? <Flex vertical gap="small">
+          <Flex align="center" justify="space-between" gap="small"><Text strong ellipsis>{selected.command}</Text>
+            {["queued", "starting", "running"].includes(selected.status) && <Button danger icon={<StopOutlined />} onClick={async () => {
+              await api.stopBackgroundTask(selected.id, "用户从任务抽屉停止"); await onRefresh();
+            }}>停止</Button>}</Flex>
+          <Text type="secondary">{selected.mode.toUpperCase()} · {selected.workspacePath}{selected.overdue ? " · 已超过预期时长" : ""}</Text>
+          {selected.mode === "pty" ? <TaskTerminal raw={raw} /> : <pre className="task-output">{raw || "暂无输出"}</pre>}
+          {events.some((event) => event.reason) && <Collapse size="small" items={[{ key: "audit", label: "审计记录", children: <List size="small" dataSource={events.filter((event) => event.reason)} renderItem={(event) => <List.Item><Text>{event.type}：{event.reason}</Text></List.Item>} /> }]} />}
+        </Flex> : <Flex align="center" justify="center"><Text type="secondary">选择任务查看输出</Text></Flex>}
+      </div>
+    </Flex>
+  </Drawer>;
+}
+
+function taskStatusColor(status: BackgroundTaskDto["status"]): string {
+  if (status === "running" || status === "starting") return "processing";
+  if (status === "completed") return "success";
+  if (status === "failed" || status === "timed_out") return "error";
+  return "default";
+}
+
+async function readRetainedTaskOutput(task: BackgroundTaskDto): Promise<string> {
+  let cursor = task.earliestCursor;
+  let raw = "";
+  while (cursor < task.outputCursor) {
+    const page = await api.backgroundOutput(task.id, cursor, 32 * 1024);
+    raw += page.raw;
+    if (page.cursor <= cursor) break;
+    cursor = page.cursor;
+  }
+  return raw;
 }
 
 function replace<T extends { id: string }>(items: T[], value: T): T[] { return items.map((item) => item.id === value.id ? value : item); }

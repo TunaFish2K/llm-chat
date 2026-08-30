@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import {
@@ -24,8 +24,13 @@ import { z, ZodError } from "zod";
 import { Store, StoreError } from "./database";
 import { exportCharacterCard, importCharacterCard } from "./character-card";
 import { GenerationRunner } from "./generations";
+import { TaskManager } from "./background-tasks";
+import { EventHub } from "./events";
 import { closeMcpManager, mcpManager } from "./mcp";
-import { toolCatalog } from "./tools";
+import { PluginManager } from "./plugins";
+import { SkillManager } from "./skills";
+import { ToolRegistry } from "./tool-registry";
+import { canonicalWorkspace, createDirectory, listDirectories } from "./workspaces";
 
 export interface AppOptions {
   dataFile: string;
@@ -36,7 +41,16 @@ export interface AppOptions {
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? true, bodyLimit: 15 * 1024 * 1024 });
   const store = new Store(options.dataFile);
-  const runner = new GenerationRunner(store);
+  const eventHub = new EventHub();
+  const taskManager = new TaskManager(store, eventHub);
+  const pluginManager = new PluginManager(store, eventHub);
+  const skillManager = new SkillManager(store, eventHub);
+  await skillManager.initialize();
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager);
+  const runner = new GenerationRunner(store, {
+    buildTools: (_currentStore, record) => registry.tools(record),
+    runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId)
+  });
   app.decorate("store", store);
   app.decorate("runner", runner);
 
@@ -92,9 +106,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const patch = agentInputSchema.partial().parse(request.body);
     const agent = store.updateAgent(request.params.id, patch);
     if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    taskManager.notifyAgentPolicyChanged(request.params.id);
     return agent;
   });
   app.delete<{ Params: { id: string } }>("/api/agents/:id", async (request, reply) => {
+    if (taskManager.hasNonterminalForAgent(request.params.id)) {
+      throw new StoreError("agent_busy", "该 Agent 仍有排队或运行中的后台任务");
+    }
     if (!store.deleteAgent(request.params.id)) throw new StoreError("agent_not_found", "Agent 不存在");
     return reply.code(204).send();
   });
@@ -128,7 +146,43 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.get("/api/tools/settings", async () => store.getToolSettings());
   app.patch("/api/tools/settings", async (request) => store.updateToolSettings(toolSettingsInputSchema.parse(request.body)));
-  app.get("/api/tools/catalog", async () => toolCatalog(store));
+  app.get("/api/tools/catalog", async () => registry.catalog());
+  app.get("/api/plugins", async () => pluginManager.list());
+  app.post("/api/plugins/install", async (request, reply) => {
+    const value = z.object({ sourcePath: z.string().min(1).max(4096) }).parse(request.body);
+    return reply.code(201).send(await userOperation("plugin_invalid", () => pluginManager.install(value.sourcePath)));
+  });
+  app.patch<{ Params: { id: string } }>("/api/plugins/:id/config", async (request) => {
+    const value = z.object({ config: z.record(z.string(), z.unknown()).default({}), secrets: z.record(z.string(), z.unknown()).default({}) }).parse(request.body);
+    return userOperation("plugin_invalid", () => pluginManager.configure(request.params.id, value.config, value.secrets));
+  });
+  app.post<{ Params: { id: string } }>("/api/plugins/:id/reload", async (request) => userOperation("plugin_invalid", () => pluginManager.reload(request.params.id)));
+  app.post<{ Params: { id: string } }>("/api/plugins/:id/unload", async (request) => userOperation("plugin_invalid", () => pluginManager.unload(request.params.id)));
+  app.delete<{ Params: { id: string } }>("/api/plugins/:id", async (request, reply) => {
+    await userOperation("plugin_invalid", () => pluginManager.remove(request.params.id));
+    return reply.code(204).send();
+  });
+  app.get("/api/skills", async () => skillManager.list());
+  app.post("/api/skills/install", async (request, reply) => {
+    const value = z.object({ sourcePath: z.string().min(1).max(4096) }).parse(request.body);
+    return reply.code(201).send(await userOperation("skill_invalid", () => skillManager.install(value.sourcePath)));
+  });
+  app.post<{ Params: { id: string } }>("/api/skills/:id/reload", async (request) => userOperation("skill_invalid", () => skillManager.reload(request.params.id)));
+  app.delete<{ Params: { id: string } }>("/api/skills/:id", async (request, reply) => {
+    await userOperation("skill_invalid", () => skillManager.remove(request.params.id));
+    return reply.code(204).send();
+  });
+  app.get<{ Querystring: { path?: string } }>("/api/filesystem/directories", async (request) => {
+    return userOperation("workspace_invalid", () => listDirectories(request.query.path || parsePath(process.cwd()).root));
+  });
+  app.post("/api/filesystem/directories", async (request, reply) => {
+    const value = z.object({ path: z.string().min(1).max(4096) }).parse(request.body);
+    return reply.code(201).send({ path: await userOperation("workspace_invalid", () => createDirectory(value.path)) });
+  });
+  app.post("/api/filesystem/validate", async (request) => {
+    const value = z.object({ path: z.string().min(1).max(4096) }).parse(request.body);
+    return { path: await userOperation("workspace_invalid", () => canonicalWorkspace(value.path)) };
+  });
   app.get("/api/memories", async () => store.listMemories());
   app.get("/api/mcp/servers", async () => store.listMcpServers());
   app.post("/api/mcp/servers", async (request, reply) => {
@@ -209,11 +263,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get("/api/conversations", async () => store.listConversations());
   app.post("/api/conversations", async (request, reply) => {
     const value = conversationInputSchema.parse(request.body ?? {});
-    return reply.code(201).send(store.createConversation(value));
+    const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
+    return reply.code(201).send(store.createConversation({ ...value, workspacePath }));
   });
   app.post("/api/conversations/start", async (request, reply) => {
     const value = startConversationSchema.parse(request.body);
-    const result = store.startConversation(value);
+    const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
+    const result = store.startConversation({ ...value, workspacePath });
     runner.start(result.generation.generationId);
     return reply.code(202).send(result);
   });
@@ -224,13 +280,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.patch<{ Params: { id: string } }>("/api/conversations/:id", async (request) => {
     const value = patchConversationSchema.parse(request.body);
-    const result = store.updateConversation(request.params.id, value);
+    const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : value.workspacePath;
+    const result = store.updateConversation(request.params.id, { ...value, ...(value.workspacePath !== undefined ? { workspacePath } : {}) });
     if (!result) throw new StoreError("conversation_not_found", "会话不存在");
     return result;
   });
   app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (request, reply) => {
     if (store.isConversationBusy(request.params.id)) {
       throw new StoreError("conversation_busy", "请先停止当前生成，再删除会话");
+    }
+    if (taskManager.hasNonterminalForConversation(request.params.id)) {
+      throw new StoreError("conversation_tasks_active", "请先停止该会话的后台任务，再删除会话");
     }
     if (!store.deleteConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return reply.code(204).send();
@@ -255,6 +315,50 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const result = store.createRetryGeneration(request.params.id);
     runner.start(result.generationId);
     return reply.code(202).send(result);
+  });
+
+  app.get<{ Querystring: { conversationId?: string; scope?: "current" | "all" } }>("/api/background-tasks", async (request) => {
+    return taskManager.list(request.query.scope === "all" ? {} : request.query.conversationId ? { conversationId: request.query.conversationId } : {});
+  });
+  app.get<{ Params: { id: string } }>("/api/background-tasks/:id", async (request) => {
+    const task = taskManager.get(request.params.id);
+    if (!task) throw new StoreError("background_task_not_found", "后台任务不存在");
+    return { task, events: taskManager.eventsFor(task.id) };
+  });
+  app.get<{ Params: { id: string }; Querystring: { cursor?: string; limit?: string } }>("/api/background-tasks/:id/output", async (request) => {
+    if (!taskManager.get(request.params.id)) throw new StoreError("background_task_not_found", "后台任务不存在");
+    const query = z.object({
+      cursor: z.coerce.number().int().nonnegative().default(0),
+      limit: z.coerce.number().int().positive().max(32 * 1024).default(32 * 1024)
+    }).parse(request.query);
+    return taskManager.read(request.params.id, query.cursor, query.limit);
+  });
+  app.post<{ Params: { id: string } }>("/api/background-tasks/:id/stop", async (request) => {
+    const value = z.object({ reason: z.string().trim().min(1).max(2_000) }).parse(request.body);
+    if (!taskManager.get(request.params.id)) throw new StoreError("background_task_not_found", "后台任务不存在");
+    return taskManager.stop(request.params.id, value.reason);
+  });
+  app.post<{ Params: { id: string } }>("/api/background-tasks/:id/resize", async (request) => {
+    const value = z.object({ columns: z.number().int().min(20).max(500), rows: z.number().int().min(5).max(200) }).parse(request.body);
+    if (!taskManager.get(request.params.id)) throw new StoreError("background_task_not_found", "后台任务不存在");
+    taskManager.resize(request.params.id, value.columns, value.rows);
+    return { ok: true };
+  });
+  app.get("/api/events", async (request, reply) => {
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no"
+    });
+    const lastId = Number(request.headers["last-event-id"] ?? 0);
+    const send = (event: { id: number; type: string }) => {
+      reply.raw.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    };
+    const unsubscribe = eventHub.subscribe(Number.isFinite(lastId) ? lastId : 0, send);
+    const heartbeat = setInterval(() => reply.raw.write(": heartbeat\n\n"), 15_000);
+    request.raw.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
   });
   app.patch<{ Params: { id: string } }>("/api/messages/:id/active-generation", async (request) => {
     const value = z.object({ generationId: z.string().uuid() }).parse(request.body);
@@ -338,10 +442,21 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.addHook("onClose", async () => {
     runner.stopAll();
+    await taskManager.close();
+    registry.close();
     await closeMcpManager(store);
     store.close();
   });
   return app;
+}
+
+async function userOperation<T>(code: string, operation: () => T | Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof StoreError) throw error;
+    throw new StoreError(code, error instanceof Error ? error.message : "操作失败");
+  }
 }
 
 function defaultModel(connectionId: string, protocol: "openai-responses" | "openai-chat" | "anthropic-messages", modelKey: string, displayName: string) {
@@ -382,6 +497,9 @@ async function registerWeb(app: FastifyInstance): Promise<void> {
   app.setNotFoundHandler((request, reply) => {
     if (request.url.startsWith("/api/")) {
       return reply.code(404).send({ error: { code: "not_found", message: "API 不存在" } });
+    }
+    if (request.url.startsWith("/assets/")) {
+      return reply.code(404).type("text/plain; charset=utf-8").send("Asset not found");
     }
     return reply.sendFile("index.html");
   });

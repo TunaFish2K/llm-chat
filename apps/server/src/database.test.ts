@@ -142,7 +142,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(11);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(12);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -439,7 +439,7 @@ describe("Store", () => {
   it("persists tool, MCP, and memory settings while redacting their secrets", () => {
     const store = createStore();
     expect(store.getToolSettings()).toMatchObject({
-      enabled: {}, search: { baseUrl: "", hasApiKey: false }, workspaceShellEnabled: false
+      enabled: {}, search: { baseUrl: "", hasApiKey: false }, workspaceShellEnabled: true
     });
     expect(store.updateToolSettings({
       enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", apiKey: "search-secret" },

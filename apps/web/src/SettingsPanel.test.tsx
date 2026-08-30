@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   createConnection: vi.fn(), updateConnection: vi.fn(), deleteConnection: vi.fn(), testConnection: vi.fn(), discoverModels: vi.fn(),
   createModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(),
   toolSettings: vi.fn(), updateToolSettings: vi.fn(), toolCatalog: vi.fn(),
+  skills: vi.fn(), plugins: vi.fn(), installPlugin: vi.fn(), reloadPlugin: vi.fn(), unloadPlugin: vi.fn(), deletePlugin: vi.fn(), configurePlugin: vi.fn(),
   mcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(), testMcpServer: vi.fn()
 }));
 
@@ -35,7 +36,7 @@ const settings: AppSettings = {
   defaultModelId: "m1", defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "system",
   reasoningEffort: "medium", defaultAgentId: "agent1", lastAgentId: "agent1",
   userProfile: { displayName: "用户", description: "" },
-  uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
+  uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }, lastWorkspacePath: null
 };
 const connection: ConnectionDto = {
   id: "c1", name: "Primary", protocol: "openai-responses", baseUrl: "https://api.example.com/v1",
@@ -56,7 +57,7 @@ const agent: AgentDto = {
     mes_example: "", creator_notes: "", system_prompt: "{{original}}", post_history_instructions: "",
     alternate_greetings: [], tags: [], creator: "", character_version: "", extensions: {}
   } },
-  execution: { modelId: "m1", contextPolicy: "trim", reasoningEffort: "medium", generation: {}, tools: { defaultEnabled: true, overrides: {} } },
+  execution: { modelId: "m1", contextPolicy: "trim", reasoningEffort: "medium", generation: {}, tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} }, enabledSkillIds: [], maxToolRounds: 32, maxBackgroundTasks: 2, taskLogLimitBytes: 64 * 1024 * 1024 },
   userProfile: {}
 };
 const anthropicModel: ModelDto = {
@@ -95,6 +96,8 @@ function resetApis() {
     { name: "web_search", label: "Web search", description: "Search", category: "web", requiresApproval: false, available: true },
     { name: "workspace_shell", label: "Shell", description: "Run commands", category: "workspace", requiresApproval: true, available: false }
   ]);
+  api.skills.mockResolvedValue([]);
+  api.plugins.mockResolvedValue([]);
   api.mcpServers.mockResolvedValue([{ id: "s1", name: "Docs", url: "https://mcp.example.com", headerNames: [], enabled: true, lastError: "previous error", createdAt: 1, updatedAt: 1 }]);
   api.createMcpServer.mockResolvedValue({});
   api.updateMcpServer.mockResolvedValue({});
@@ -139,7 +142,7 @@ describe("SettingsPanel", () => {
   it("allows unavailable Agent tools to be overridden and saves false", async () => {
     const user = userEvent.setup();
     renderPanel({ agents: [agent] });
-    const unavailableTool = await screen.findByRole("checkbox", { name: /Shell.*全局不可用/ });
+    const unavailableTool = await screen.findByRole("checkbox", { name: /Shell.*不可用/ });
     expect(unavailableTool).toBeChecked();
     await user.click(unavailableTool);
     expect(unavailableTool).not.toBeChecked();
@@ -293,38 +296,25 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(api.deleteModel).toHaveBeenCalledWith("m2"));
   });
 
-  it("loads and updates tools while keeping a blank search secret", async () => {
+  it("loads and updates service settings while keeping a blank search secret", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await selectTab("工具");
-    expect(await screen.findByText("Web search")).toBeInTheDocument();
-    expect(screen.getByText("Run commands（尚未配置）")).toBeInTheDocument();
-    expect(screen.getByText("需审批")).toBeInTheDocument();
-    expect(screen.getByText("工作区：/workspace")).toBeInTheDocument();
-    const webRow = screen.getByText("Web search").closest(".ant-list-item") as HTMLElement;
-    await user.click(within(webRow).getByRole("switch"));
-    await waitFor(() => expect(api.updateToolSettings).toHaveBeenCalledWith({ enabled: { web_search: false, workspace_shell: false } }));
+    await selectTab("扩展");
+    await selectTab("服务");
+    expect(await screen.findByRole("heading", { name: "服务端配置" })).toBeInTheDocument();
+    expect(screen.getByDisplayValue("https://search.example.com")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: /保存/ });
     await user.click(save);
     await waitFor(() => expect(api.updateToolSettings).toHaveBeenLastCalledWith({
-      search: { baseUrl: "https://search.example.com" }, workspaceShellEnabled: false
+      search: { baseUrl: "https://search.example.com" }
     }));
   });
 
-  it("creates, tests, toggles, and deletes MCP servers", async () => {
+  it("loads and creates MCP servers from the extensions page", async () => {
     renderPanel();
-    await selectTab("工具");
-    expect(await screen.findByText("Docs")).toBeInTheDocument();
-    expect(screen.getByText("previous error")).toBeInTheDocument();
-    const serverRow = screen.getByText("Docs").closest(".ant-list-item") as HTMLElement;
-    fireEvent.click(within(serverRow).getByRole("button", { name: "thunderbolt" }));
-    await waitFor(() => expect(api.testMcpServer).toHaveBeenCalledWith("s1"));
-    fireEvent.click(within(serverRow).getByRole("switch"));
-    await waitFor(() => expect(api.updateMcpServer).toHaveBeenCalledWith("s1", { enabled: false }));
-    fireEvent.click(within(serverRow).getByRole("button", { name: "delete" }));
-    await waitFor(() => expect(document.querySelector(".ant-modal-confirm-btns .ant-btn-primary")).toBeTruthy());
-    fireEvent.click(document.querySelector(".ant-modal-confirm-btns .ant-btn-primary") as HTMLElement);
-    await waitFor(() => expect(api.deleteMcpServer).toHaveBeenCalledWith("s1"));
+    fireEvent.click(screen.getByRole("tab", { name: "扩展" }));
+    fireEvent.click(await screen.findByRole("tab", { name: "MCP" }));
+    await waitFor(() => expect(api.mcpServers).toHaveBeenCalled());
 
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "Docs2" } });
     fireEvent.change(screen.getByLabelText("Streamable HTTP / SSE 地址"), { target: { value: "https://new.example.com/mcp" } });
@@ -333,7 +323,7 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(api.createMcpServer).toHaveBeenCalledWith({
       name: "Docs2", url: "https://new.example.com/mcp", headers: { Authorization: "Bearer token", "X-Test": "a:b" }, enabled: true
     }));
-  }, 120_000);
+  });
 
   it("updates general settings and rolls API failures into a message", async () => {
     const user = userEvent.setup();

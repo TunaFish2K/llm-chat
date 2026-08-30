@@ -15,6 +15,7 @@ const api = vi.hoisted(() => ({
   updateConversation: vi.fn(), updateSettings: vi.fn(), startConversation: vi.fn(), send: vi.fn(), retry: vi.fn(),
   selectGeneration: vi.fn(), cancel: vi.fn(), approveTool: vi.fn(), deleteConversation: vi.fn(),
   toolCatalog: vi.fn(),
+  backgroundTasks: vi.fn(), backgroundOutput: vi.fn(), backgroundTask: vi.fn(), stopBackgroundTask: vi.fn(),
   agentAvatarUrl: vi.fn((id: string) => `/api/agents/${id}/avatar`)
 }));
 const generationEvents = vi.hoisted(() => vi.fn((id: string, callback: (event: GenerationEvent) => void) => {
@@ -23,8 +24,9 @@ const generationEvents = vi.hoisted(() => vi.fn((id: string, callback: (event: G
   state.unsubscribes.push(unsubscribe);
   return unsubscribe;
 }));
+const appEvents = vi.hoisted(() => vi.fn(() => vi.fn()));
 
-vi.mock("./api", () => ({ api, generationEvents }));
+vi.mock("./api", () => ({ api, generationEvents, appEvents }));
 vi.mock("antd", async (importOriginal) => {
   const actual = await importOriginal<typeof import("antd")>();
   const { createElement } = await import("react");
@@ -153,7 +155,7 @@ const settings: AppSettings = {
   defaultModelId: "m1", defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
   reasoningEffort: "medium", defaultAgentId: "agent1", lastAgentId: "agent1",
   userProfile: { displayName: "用户", description: "" },
-  uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
+  uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }, lastWorkspacePath: null
 };
 const connection: ConnectionDto = {
   id: "c1", name: "Primary", protocol: "openai-responses", baseUrl: "https://api.example.com",
@@ -166,12 +168,12 @@ const model: ModelDto = {
 };
 const agent: AgentSummaryDto = {
   id: "agent1", name: "默认助手", description: "通用助手", protected: true, revision: 1, hasAvatar: false,
-  modelId: "m1", execution: { modelId: "m1", contextPolicy: "trim", reasoningEffort: "medium", generation: {}, tools: { defaultEnabled: true, overrides: {} } },
+  modelId: "m1", execution: { modelId: "m1", contextPolicy: "trim", reasoningEffort: "medium", generation: {}, tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} }, enabledSkillIds: [], maxToolRounds: 32, maxBackgroundTasks: 2, taskLogLimitBytes: 64 * 1024 * 1024 },
   userProfile: {}, firstMessage: "你好，用户。", alternateGreetings: [], createdAt: 1, updatedAt: 1
 };
 const conversation: ConversationDto = {
   id: "a1b2", title: "First chat", systemPrompt: "", contextPolicy: "trim", modelId: "m1", draft: "",
-  agentId: "agent1", executionOverrides: {},
+  agentId: "agent1", executionOverrides: {}, workspacePath: null,
   createdAt: 1, updatedAt: 1
 };
 const tool = (overrides: Partial<ToolCallDto> = {}): ToolCallDto => ({
@@ -213,6 +215,9 @@ function resetApi() {
   api.approveTool.mockResolvedValue({ toolCall: tool(), generationId: "g-resumed", resumed: true });
   api.deleteConversation.mockResolvedValue(undefined);
   api.toolCatalog.mockResolvedValue([{ name: "web_search", label: "Web search", description: "Search", category: "web", requiresApproval: false, available: true }]);
+  api.backgroundTasks.mockResolvedValue([]);
+  api.backgroundOutput.mockResolvedValue({ task: {}, cursor: 0, earliestCursor: 0, gap: false, raw: "", text: "", screen: null });
+  api.backgroundTask.mockResolvedValue({ task: {}, events: [] });
 }
 
 async function boot(path = "/") {
@@ -364,7 +369,7 @@ describe("App", () => {
     await user.type(input, " hello ");
     await user.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(api.startConversation).toHaveBeenCalledWith({
-      text: "hello", agentId: "agent1", greetingIndex: 0, executionOverrides: {}
+      text: "hello", agentId: "agent1", greetingIndex: 0, executionOverrides: {}, workspacePath: null
     }));
     expect(window.location.pathname).toBe("/c/a1b2");
     expect(generationEvents).toHaveBeenCalledWith("g-live", expect.any(Function));

@@ -3,8 +3,12 @@ import type {
   AgentInput,
   AgentSummaryDto,
   AppSettings,
+  AppEvent,
+  BackgroundTaskDto,
+  BackgroundTaskEventDto,
   ConnectionDto,
   ConnectionInput,
+  DirectoryListingDto,
   ConversationExecutionOverrides,
   ConversationStartedDto,
   ConversationDto,
@@ -17,6 +21,8 @@ import type {
   ModelDto,
   ModelInput,
   PatchConversationInput,
+  PluginDto,
+  SkillDto,
   ToolCallDto,
   ToolCatalogItemDto,
   ToolSettingsDto,
@@ -80,8 +86,8 @@ export const api = {
   agentAvatarUrl: (id: string, revision?: number) => `/api/agents/${id}/avatar${revision ? `?v=${revision}` : ""}`,
   agentExportUrl: (id: string, format: "json" | "png") => `/api/agents/${id}/export?format=${format}`,
   conversations: () => request<ConversationDto[]>("/api/conversations"),
-  createConversation: (input: { agentId: string; executionOverrides?: ConversationExecutionOverrides }) => request<ConversationDto>("/api/conversations", { method: "POST", body: JSON.stringify(input) }),
-  startConversation: (input: { text: string; agentId: string; greetingIndex?: number; executionOverrides?: ConversationExecutionOverrides }) => request<ConversationStartedDto>("/api/conversations/start", { method: "POST", body: JSON.stringify(input) }),
+  createConversation: (input: { agentId: string; executionOverrides?: ConversationExecutionOverrides; workspacePath?: string | null }) => request<ConversationDto>("/api/conversations", { method: "POST", body: JSON.stringify(input) }),
+  startConversation: (input: { text: string; agentId: string; greetingIndex?: number; executionOverrides?: ConversationExecutionOverrides; workspacePath?: string | null }) => request<ConversationStartedDto>("/api/conversations/start", { method: "POST", body: JSON.stringify(input) }),
   updateConversation: (id: string, patch: PatchConversationInput) => request<ConversationDto>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   messages: (id: string) => request<MessageDto[]>(`/api/conversations/${id}/messages`),
@@ -93,6 +99,23 @@ export const api = {
   toolSettings: () => request<ToolSettingsDto>("/api/tools/settings"),
   updateToolSettings: (input: ToolSettingsInput) => request<ToolSettingsDto>("/api/tools/settings", { method: "PATCH", body: JSON.stringify(input) }),
   toolCatalog: () => request<ToolCatalogItemDto[]>("/api/tools/catalog"),
+  plugins: () => request<PluginDto[]>("/api/plugins"),
+  installPlugin: (sourcePath: string) => request<PluginDto>("/api/plugins/install", { method: "POST", body: JSON.stringify({ sourcePath }) }),
+  configurePlugin: (id: string, config: Record<string, unknown>, secrets: Record<string, unknown>) => request<PluginDto>(`/api/plugins/${id}/config`, { method: "PATCH", body: JSON.stringify({ config, secrets }) }),
+  reloadPlugin: (id: string) => request<PluginDto>(`/api/plugins/${id}/reload`, { method: "POST" }),
+  unloadPlugin: (id: string) => request<PluginDto>(`/api/plugins/${id}/unload`, { method: "POST" }),
+  deletePlugin: (id: string) => request<void>(`/api/plugins/${id}`, { method: "DELETE" }),
+  skills: () => request<SkillDto[]>("/api/skills"),
+  installSkill: (sourcePath: string) => request<SkillDto>("/api/skills/install", { method: "POST", body: JSON.stringify({ sourcePath }) }),
+  reloadSkill: (id: string) => request<SkillDto>(`/api/skills/${id}/reload`, { method: "POST" }),
+  deleteSkill: (id: string) => request<void>(`/api/skills/${id}`, { method: "DELETE" }),
+  directories: (path: string) => request<DirectoryListingDto>(`/api/filesystem/directories?path=${encodeURIComponent(path)}`),
+  createDirectory: (path: string) => request<{ path: string }>("/api/filesystem/directories", { method: "POST", body: JSON.stringify({ path }) }),
+  validateWorkspace: (path: string) => request<{ path: string }>("/api/filesystem/validate", { method: "POST", body: JSON.stringify({ path }) }),
+  backgroundTasks: (conversationId?: string, all = false) => request<BackgroundTaskDto[]>(`/api/background-tasks?${all ? "scope=all" : conversationId ? `conversationId=${encodeURIComponent(conversationId)}` : ""}`),
+  backgroundTask: (id: string) => request<{ task: BackgroundTaskDto; events: BackgroundTaskEventDto[] }>(`/api/background-tasks/${id}`),
+  backgroundOutput: (id: string, cursor = 0, limit = 32 * 1024) => request<{ task: BackgroundTaskDto; cursor: number; earliestCursor: number; gap: boolean; raw: string; text: string; screen: string | null }>(`/api/background-tasks/${id}/output?cursor=${cursor}&limit=${limit}`),
+  stopBackgroundTask: (id: string, reason: string) => request<BackgroundTaskDto>(`/api/background-tasks/${id}/stop`, { method: "POST", body: JSON.stringify({ reason }) }),
   approveTool: (id: string, approved: boolean, reason?: string) => request<{ toolCall: ToolCallDto; generationId: string; resumed: boolean }>(`/api/tool-calls/${encodeURIComponent(id)}/approval`, {
     method: "POST", body: JSON.stringify({ approved, ...(reason ? { reason } : {}) })
   }),
@@ -102,6 +125,16 @@ export const api = {
   deleteMcpServer: (id: string) => request<void>(`/api/mcp/servers/${id}`, { method: "DELETE" }),
   testMcpServer: (id: string) => request<{ ok: true; tools: number; serverName: string }>(`/api/mcp/servers/${id}/test`, { method: "POST" })
 };
+
+export function appEvents(onEvent: (event: AppEvent) => void): () => void {
+  const source = new EventSource("/api/events");
+  for (const name of ["task", "task-output", "plugin", "skill"] as const) {
+    source.addEventListener(name, (event) => {
+      try { onEvent(JSON.parse((event as MessageEvent<string>).data) as AppEvent); } catch {}
+    });
+  }
+  return () => source.close();
+}
 
 export function generationEvents(generationId: string, onEvent: (event: GenerationEvent) => void): () => void {
   const source = new EventSource(`/api/generations/${generationId}/events`);

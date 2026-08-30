@@ -118,13 +118,14 @@ describe("contract schemas", () => {
       defaultModelId: null, defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
       reasoningEffort: "none", defaultAgentId: uuid, lastAgentId: uuid,
       userProfile: { displayName: "User", description: "" },
-      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
+      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" },
+      lastWorkspacePath: null
     };
     expect(appSettingsSchema.parse(app)).toEqual(app);
-    expect(conversationInputSchema.parse({ agentId: uuid })).toEqual({ agentId: uuid, executionOverrides: {} });
+    expect(conversationInputSchema.parse({ agentId: uuid })).toEqual({ agentId: uuid, executionOverrides: {}, workspacePath: null });
     expect(sendMessageSchema.parse({ text: "  hello  ", extra: 1 })).toEqual({ text: "hello" });
     expect(startConversationSchema.parse({ text: "hello", agentId: uuid })).toEqual({
-      text: "hello", agentId: uuid, greetingIndex: 0, executionOverrides: {}
+      text: "hello", agentId: uuid, greetingIndex: 0, executionOverrides: {}, workspacePath: null
     });
     expect(retryGenerationSchema.parse({ ignored: true })).toEqual({});
     expect(patchConversationSchema.parse({ agentId: null, draft: "", ignored: true })).toEqual({ agentId: null, draft: "" });

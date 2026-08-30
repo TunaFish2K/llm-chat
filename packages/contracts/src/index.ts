@@ -182,16 +182,22 @@ export type GenerationOverrides = z.infer<typeof generationOverridesSchema>;
 
 export const toolPolicySchema = z.object({
   defaultEnabled: z.boolean().default(true),
-  overrides: z.record(z.string(), z.boolean()).default({})
+  overrides: z.record(z.string(), z.boolean()).default({}),
+  approvalOverrides: z.record(z.string(), z.enum(["default", "always", "never"])).default({})
 });
 export type ToolPolicy = z.infer<typeof toolPolicySchema>;
+export type ApprovalPolicy = "default" | "always" | "never";
 
 export const agentExecutionConfigSchema = z.object({
   modelId: z.string().min(1).max(200).nullable(),
   contextPolicy: contextPolicySchema,
   reasoningEffort: reasoningEffortSchema,
   generation: generationOverridesSchema.default({}),
-  tools: toolPolicySchema
+  tools: toolPolicySchema,
+  enabledSkillIds: z.array(z.string().min(1).max(200)).max(500).default([]),
+  maxToolRounds: z.number().int().positive().max(10_000).nullable().default(32),
+  maxBackgroundTasks: z.number().int().nonnegative().max(1_000).nullable().default(2),
+  taskLogLimitBytes: z.number().int().positive().max(10 * 1024 * 1024 * 1024).nullable().default(64 * 1024 * 1024)
 });
 export type AgentExecutionConfig = z.infer<typeof agentExecutionConfigSchema>;
 
@@ -256,14 +262,16 @@ export const appSettingsSchema = z.object({
   uiPreferences: z.object({
     sidebarCollapsed: z.boolean(),
     reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"])
-  })
+  }),
+  lastWorkspacePath: z.string().max(4096).nullable().default(null)
 });
 export type AppSettings = z.infer<typeof appSettingsSchema>;
 
 export const conversationInputSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   agentId: z.string().uuid(),
-  executionOverrides: conversationExecutionOverridesSchema.default({})
+  executionOverrides: conversationExecutionOverridesSchema.default({}),
+  workspacePath: z.string().max(4096).nullable().default(null)
 });
 
 export interface ConversationDto {
@@ -274,6 +282,7 @@ export interface ConversationDto {
   modelId: string | null;
   agentId: string | null;
   executionOverrides: ConversationExecutionOverrides;
+  workspacePath: string | null;
   draft: string;
   createdAt: number;
   updatedAt: number;
@@ -375,7 +384,8 @@ export const sendMessageSchema = z.object({
 export const startConversationSchema = sendMessageSchema.extend({
   agentId: z.string().uuid(),
   greetingIndex: z.number().int().nonnegative().max(100).default(0),
-  executionOverrides: conversationExecutionOverridesSchema.default({})
+  executionOverrides: conversationExecutionOverridesSchema.default({}),
+  workspacePath: z.string().max(4096).nullable().default(null)
 });
 
 export const retryGenerationSchema = z.object({});
@@ -384,7 +394,8 @@ export const patchConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   agentId: z.string().uuid().nullable().optional(),
   executionOverrides: conversationExecutionOverridesSchema.optional(),
-  draft: z.string().max(1_000_000).optional()
+  draft: z.string().max(1_000_000).optional(),
+  workspacePath: z.string().max(4096).nullable().optional()
 });
 export type PatchConversationInput = z.infer<typeof patchConversationSchema>;
 
@@ -443,10 +454,113 @@ export interface ToolCatalogItemDto {
   name: string;
   label: string;
   description: string;
-  category: "web" | "local" | "workspace" | "memory" | "conversation" | "skill" | "mcp";
+  category: "web" | "local" | "workspace" | "memory" | "conversation" | "skill" | "mcp" | "background" | "plugin";
   requiresApproval: boolean;
   available: boolean;
+  approvalMode?: "always" | "never" | "dynamic";
+  sourceKind?: "builtin" | "plugin" | "mcp";
+  sourceId?: string;
+  sourceName?: string;
+  revision?: string;
+  operationalState?: "loaded" | "pending-reload" | "error" | "unloaded";
+  error?: string | null;
 }
+
+export const pluginManifestSchema = z.object({
+  id: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  name: z.string().trim().min(1).max(200),
+  version: z.string().trim().min(1).max(100),
+  apiVersion: z.literal(1),
+  entry: z.string().min(1).max(500),
+  description: z.string().max(20_000).default(""),
+  configSchema: z.record(z.string(), z.unknown()).optional(),
+  secretFields: z.array(z.string().min(1).max(200)).max(100).default([])
+});
+export type PluginManifest = z.infer<typeof pluginManifestSchema>;
+
+export interface PluginDto {
+  id: string;
+  manifest: PluginManifest;
+  revision: string;
+  sourcePath: string;
+  state: "loaded" | "pending-reload" | "error" | "unloaded";
+  error: string | null;
+  config: Record<string, unknown>;
+  configuredSecretFields: string[];
+  installedAt: number;
+  updatedAt: number;
+}
+
+export interface SkillDto {
+  id: string;
+  name: string;
+  description: string;
+  revision: string;
+  sourcePath: string;
+  state: "loaded" | "pending-reload" | "error" | "unloaded";
+  error: string | null;
+  requiredTools: string[];
+  recommendedApprovals: Record<string, ApprovalPolicy>;
+  bundled: boolean;
+  installedAt: number;
+  updatedAt: number;
+}
+
+export const backgroundTaskStatusSchema = z.enum([
+  "queued", "starting", "running", "completed", "failed", "stopped", "timed_out", "interrupted"
+]);
+export type BackgroundTaskStatus = z.infer<typeof backgroundTaskStatusSchema>;
+
+export interface BackgroundTaskDto {
+  id: string;
+  conversationId: string;
+  generationId: string;
+  agentId: string | null;
+  agentName: string;
+  agentRevision: number;
+  command: string;
+  mode: "pipe" | "pty";
+  workspacePath: string;
+  status: BackgroundTaskStatus;
+  expectedDurationMs: number | null;
+  hardTimeoutMs: number | null;
+  overdue: boolean;
+  exitCode: number | null;
+  error: string | null;
+  outputCursor: number;
+  earliestCursor: number;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
+export interface BackgroundTaskEventDto {
+  id: number;
+  taskId: string;
+  type: "state" | "output" | "write" | "stop" | "warning";
+  reason: string | null;
+  data: Record<string, unknown>;
+  createdAt: number;
+}
+
+export interface DirectoryEntryDto {
+  name: string;
+  path: string;
+  directory: boolean;
+  hidden: boolean;
+}
+
+export interface DirectoryListingDto {
+  path: string;
+  parentPath: string | null;
+  entries: DirectoryEntryDto[];
+}
+
+export type AppEvent =
+  | { id: number; type: "task"; taskId: string; task: BackgroundTaskDto }
+  | { id: number; type: "task-output"; taskId: string; cursor: number }
+  | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
+  | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string };
 
 export const mcpServerInputSchema = z.object({
   name: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9]+$/, "名称只能包含英文字母和数字"),

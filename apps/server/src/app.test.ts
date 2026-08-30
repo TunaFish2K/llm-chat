@@ -237,7 +237,9 @@ describe("server API", () => {
     const app = await testApp();
     const model = await createApiModel(app);
     const started = (await app.inject({
-      method: "POST", url: "/api/conversations/start", payload: agentStartPayload(app, model.id, { text: "写文件" })
+      method: "POST", url: "/api/conversations/start", payload: agentStartPayload(app, model.id, {
+        text: "写文件", workspacePath: join(app.store.dataDir, "workspace")
+      })
     })).json();
     const waiting = await waitForStatus(app, started.generation.generationId, "waiting-approval");
     expect(waiting.toolCalls[0]).toMatchObject({ id: "call_write", approvalState: "pending", requiresApproval: true });
@@ -280,6 +282,17 @@ describe("server API", () => {
     const internal = await app.inject({ method: "GET", url: "/api/memories" });
     expect(internal.statusCode).toBe(500);
     expect(internal.json()).toEqual({ error: { code: "internal_error", message: "服务端发生错误" } });
+  });
+
+  it("returns 404 for stale assets while preserving the SPA route fallback", async () => {
+    const app = await testApp(true);
+    const asset = await app.inject({ method: "GET", url: "/assets/index-stale.js" });
+    expect(asset.statusCode).toBe(404);
+    expect(asset.headers["content-type"]).toContain("text/plain");
+    expect(asset.body).toBe("Asset not found");
+    const route = await app.inject({ method: "GET", url: "/c/00000000-0000-4000-8000-000000000000" });
+    expect(route.statusCode).toBe(200);
+    expect(route.headers["content-type"]).toContain("text/html");
   });
 
   it("covers MCP CRUD, conflicts, invalidation, and test routes without network access", async () => {
@@ -467,12 +480,13 @@ describe("server API", () => {
 function agentStartPayload(
   app: Awaited<ReturnType<typeof testApp>>,
   modelId: string,
-  options: { text: string; contextPolicy?: "trim" | "summarize" | "full"; reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" }
+  options: { text: string; contextPolicy?: "trim" | "summarize" | "full"; reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"; workspacePath?: string | null }
 ) {
   return {
     text: options.text,
     agentId: app.store.getSettings().defaultAgentId,
     greetingIndex: 0,
+    workspacePath: options.workspacePath ?? null,
     executionOverrides: {
       modelId,
       ...(options.contextPolicy ? { contextPolicy: options.contextPolicy } : {}),
@@ -517,10 +531,10 @@ async function createApiModel(app: Awaited<ReturnType<typeof testApp>>) {
   } })).json();
 }
 
-async function testApp() {
+async function testApp(serveWeb = false) {
   const dir = mkdtempSync(join(tmpdir(), "llm-chat-api-"));
   dirs.push(dir);
-  const app = await buildApp({ dataFile: join(dir, "test.sqlite"), logger: false, serveWeb: false });
+  const app = await buildApp({ dataFile: join(dir, "test.sqlite"), logger: false, serveWeb });
   apps.push(app);
   return app;
 }
