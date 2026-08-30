@@ -116,19 +116,24 @@ describe("contract schemas", () => {
   it("validates app, conversation, send, start, retry, and patch inputs", () => {
     const app = {
       defaultModelId: null, defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
-      reasoningEffort: "none", uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
+      reasoningEffort: "none", defaultAgentId: uuid, lastAgentId: uuid,
+      userProfile: { displayName: "User", description: "" },
+      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
     };
     expect(appSettingsSchema.parse(app)).toEqual(app);
-    expect(conversationInputSchema.parse({})).toEqual({ systemPrompt: "" });
+    expect(conversationInputSchema.parse({ agentId: uuid })).toEqual({ agentId: uuid, executionOverrides: {} });
     expect(sendMessageSchema.parse({ text: "  hello  ", extra: 1 })).toEqual({ text: "hello" });
-    expect(startConversationSchema.parse({ text: "hello", modelId: uuid })).toEqual({ text: "hello", modelId: uuid });
+    expect(startConversationSchema.parse({ text: "hello", agentId: uuid })).toEqual({
+      text: "hello", agentId: uuid, greetingIndex: 0, executionOverrides: {}
+    });
     expect(retryGenerationSchema.parse({ ignored: true })).toEqual({});
-    expect(patchConversationSchema.parse({ modelId: null, draft: "", ignored: true })).toEqual({ modelId: null, draft: "" });
+    expect(patchConversationSchema.parse({ agentId: null, draft: "", ignored: true })).toEqual({ agentId: null, draft: "" });
+    expect(patchConversationSchema.parse({ title: "Renamed" })).toEqual({ title: "Renamed" });
     for (const input of [{ text: " " }, { text: "x".repeat(1_000_001) }]) {
       expect(sendMessageSchema.safeParse(input).success).toBe(false);
     }
-    expect(startConversationSchema.safeParse({ text: "x", modelId: "bad" }).success).toBe(false);
-    expect(patchConversationSchema.safeParse({ contextPolicy: "recent" }).success).toBe(false);
+    expect(startConversationSchema.safeParse({ text: "x", agentId: "bad" }).success).toBe(false);
+    expect(patchConversationSchema.safeParse({ executionOverrides: { contextPolicy: "recent" } }).success).toBe(false);
     expect(appSettingsSchema.safeParse({ ...app, theme: "blue" }).success).toBe(false);
   });
 

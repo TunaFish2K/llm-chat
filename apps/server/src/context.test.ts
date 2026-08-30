@@ -54,11 +54,11 @@ describe("context builder", () => {
       store.getConnection(seeded.connection.id)!, new AbortController().signal
     );
     expect(built).toMatchObject({
-      systemPrompt: "system",
       messages: [{ role: "user", text: "question" }, { role: "assistant", text: "answer" }, { role: "user", text: "latest" }],
       metadata: { policy: "full", omittedMessages: 0, summaryUsed: false }
     });
-    expect(built.metadata.estimatedInputTokens).toBe(estimateTokens("system", built.messages));
+    expect(built.systemPrompt).toContain("名称：默认助手");
+    expect(built.metadata.estimatedInputTokens).toBe(estimateTokens(built.systemPrompt, built.messages));
     store.close();
   });
 

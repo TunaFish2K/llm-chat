@@ -60,7 +60,7 @@ describe("server API", () => {
     const startResponse = await app.inject({
       method: "POST",
       url: "/api/conversations/start",
-      payload: { text: "你好", modelId: model.id, contextPolicy: "summarize" }
+      payload: agentStartPayload(app, model.id, { text: "你好", contextPolicy: "summarize", reasoningEffort: "low" })
     });
     expect(startResponse.statusCode).toBe(202);
     const started = startResponse.json();
@@ -68,7 +68,7 @@ describe("server API", () => {
     expect(conversation).toMatchObject({
       title: "你好",
       modelId: model.id,
-      systemPrompt: "系统提示",
+      systemPrompt: "",
       contextPolicy: "summarize"
     });
     const generation = await waitForGeneration(app, started.generation.generationId);
@@ -84,7 +84,7 @@ describe("server API", () => {
     ]));
     const messages = (await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/messages` })).json();
     expect(messages[0].generatedModel).toBeNull();
-    expect(messages[1].generatedModel).toMatchObject({ modelId: model.id, displayName: "Mock" });
+    expect(messages[2].generatedModel).toMatchObject({ modelId: model.id, displayName: "Mock" });
     await app.close();
   });
 
@@ -93,10 +93,7 @@ describe("server API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/conversations/start",
-      payload: {
-        text: "你好",
-        modelId: "00000000-0000-4000-8000-000000000000"
-      }
+      payload: agentStartPayload(app, "00000000-0000-4000-8000-000000000000", { text: "你好" })
     });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ error: { code: "model_not_found" } });
@@ -123,7 +120,7 @@ describe("server API", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/conversations/start",
-      payload: { text: "你好", modelId: model.id }
+      payload: agentStartPayload(app, model.id, { text: "你好", reasoningEffort: "high" })
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ error: { code: "reasoning_not_supported" } });
@@ -133,7 +130,9 @@ describe("server API", () => {
 
   it("requires a conversation model before sending", async () => {
     const app = await testApp();
-    const conversation = (await app.inject({ method: "POST", url: "/api/conversations", payload: { systemPrompt: "" } })).json();
+    const conversation = (await app.inject({ method: "POST", url: "/api/conversations", payload: {
+      agentId: app.store.getSettings().defaultAgentId
+    } })).json();
     const response = await app.inject({
       method: "POST",
       url: `/api/conversations/${conversation.id}/messages`,
@@ -144,7 +143,7 @@ describe("server API", () => {
     await app.close();
   });
 
-  it("uses the global reasoning effort for start, send, and retry", async () => {
+  it("uses conversation reasoning overrides for start, send, and retry", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => sse([
       { choices: [{ delta: { content: "好" }, finish_reason: "stop" }] },
       { choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }
@@ -165,13 +164,15 @@ describe("server API", () => {
     } })).json();
     await app.inject({ method: "PATCH", url: "/api/settings", payload: { reasoningEffort: "medium" } });
     const started = (await app.inject({
-      method: "POST", url: "/api/conversations/start", payload: { text: "你好", modelId: model.id }
+      method: "POST", url: "/api/conversations/start", payload: agentStartPayload(app, model.id, { text: "你好", reasoningEffort: "medium" })
     })).json();
     const conversationId = started.conversation.id as string;
     let generation = await waitForGeneration(app, started.generation.generationId);
     expect(generation.settings.reasoningEffort).toBe("medium");
 
-    await app.inject({ method: "PATCH", url: "/api/settings", payload: { reasoningEffort: "xhigh" } });
+    await app.inject({ method: "PATCH", url: `/api/conversations/${conversationId}`, payload: {
+      executionOverrides: { modelId: model.id, reasoningEffort: "xhigh" }
+    } });
     const sendResponse = await app.inject({
       method: "POST", url: `/api/conversations/${conversationId}/messages`,
       payload: { text: "第二条" }
@@ -181,7 +182,9 @@ describe("server API", () => {
     generation = await waitForGeneration(app, message.generationId);
     expect(generation.settings.reasoningEffort).toBe("xhigh");
 
-    await app.inject({ method: "PATCH", url: "/api/settings", payload: { reasoningEffort: "max" } });
+    await app.inject({ method: "PATCH", url: `/api/conversations/${conversationId}`, payload: {
+      executionOverrides: { modelId: model.id, reasoningEffort: "max" }
+    } });
     const assistantMessageId = started.generation.assistantMessageId as string;
     const retriedResponse = await app.inject({
       method: "POST", url: `/api/messages/${assistantMessageId}/generations`,
@@ -207,7 +210,7 @@ describe("server API", () => {
     const app = await testApp();
     const model = await createApiModel(app);
     const started = (await app.inject({
-      method: "POST", url: "/api/conversations/start", payload: { text: "现在几点", modelId: model.id }
+      method: "POST", url: "/api/conversations/start", payload: agentStartPayload(app, model.id, { text: "现在几点" })
     })).json();
     const generation = await waitForGeneration(app, started.generation.generationId);
     expect(generation.status).toBe("completed");
@@ -234,7 +237,7 @@ describe("server API", () => {
     const app = await testApp();
     const model = await createApiModel(app);
     const started = (await app.inject({
-      method: "POST", url: "/api/conversations/start", payload: { text: "写文件", modelId: model.id }
+      method: "POST", url: "/api/conversations/start", payload: agentStartPayload(app, model.id, { text: "写文件" })
     })).json();
     const waiting = await waitForStatus(app, started.generation.generationId, "waiting-approval");
     expect(waiting.toolCalls[0]).toMatchObject({ id: "call_write", approvalState: "pending", requiresApproval: true });
@@ -382,6 +385,43 @@ describe("server API", () => {
     expect((await app.inject({ method: "POST", url: "/api/tool-calls/not-waiting/approval", payload: {} })).statusCode).toBe(400);
   });
 
+  it("supports Agent CRUD, avatars, and Character Card import/export", async () => {
+    const app = await testApp();
+    const listed = (await app.inject({ method: "GET", url: "/api/agents" })).json();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ name: "默认助手", protected: true });
+    const base = (await app.inject({ method: "GET", url: `/api/agents/${listed[0].id}` })).json();
+    const createdResponse = await app.inject({ method: "POST", url: "/api/agents", payload: {
+      card: { ...base.card, data: { ...base.card.data, name: "Mira" } },
+      execution: base.execution,
+      userProfile: { displayName: "Lin" }
+    } });
+    expect(createdResponse.statusCode).toBe(201);
+    const created = createdResponse.json();
+    const updated = (await app.inject({ method: "PATCH", url: `/api/agents/${created.id}`, payload: {
+      userProfile: { displayName: "Lee" }
+    } })).json();
+    expect(updated).toMatchObject({ revision: 2, userProfile: { displayName: "Lee" } });
+
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    expect((await app.inject({ method: "PUT", url: `/api/agents/${created.id}/avatar`, payload: {
+      fileName: "avatar.png", dataBase64: png
+    } })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: `/api/agents/${created.id}/avatar` })).headers["content-type"]).toContain("image/png");
+    const exported = await app.inject({ method: "GET", url: `/api/agents/${created.id}/export?format=json` });
+    expect(exported.headers["content-disposition"]).toContain("attachment");
+    expect(JSON.parse(exported.body).data.extensions.llm_chat).toMatchObject({ version: 1 });
+
+    const imported = await app.inject({ method: "POST", url: "/api/agents/import", payload: {
+      fileName: "mira.json", dataBase64: Buffer.from(exported.body).toString("base64")
+    } });
+    expect(imported.statusCode).toBe(201);
+    expect(imported.json().name).toBe("Mira (2)");
+    expect((await app.inject({ method: "DELETE", url: `/api/agents/${created.id}` })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/api/agents/${base.id}` })).json()).toMatchObject({ error: { code: "agent_protected" } });
+    await app.close();
+  });
+
   it("returns not-found and busy errors across connection, model, conversation, and generation routes", async () => {
     const app = await testApp();
     for (const [method, url, payload] of [
@@ -423,6 +463,23 @@ describe("server API", () => {
       .toMatchObject({ error: { code: "conversation_busy" } });
   });
 });
+
+function agentStartPayload(
+  app: Awaited<ReturnType<typeof testApp>>,
+  modelId: string,
+  options: { text: string; contextPolicy?: "trim" | "summarize" | "full"; reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max" }
+) {
+  return {
+    text: options.text,
+    agentId: app.store.getSettings().defaultAgentId,
+    greetingIndex: 0,
+    executionOverrides: {
+      modelId,
+      ...(options.contextPolicy ? { contextPolicy: options.contextPolicy } : {}),
+      ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {})
+    }
+  };
+}
 
 async function waitForGeneration(app: Awaited<ReturnType<typeof testApp>>, id: string) {
   for (let attempt = 0; attempt < 100; attempt += 1) {

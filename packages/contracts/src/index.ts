@@ -119,12 +119,140 @@ export interface ModelDto extends ModelInput {
   updatedAt: number;
 }
 
+export const characterBookEntrySchema = z.object({
+  keys: z.array(z.string()).default([]),
+  content: z.string().default(""),
+  extensions: z.record(z.string(), z.unknown()).default({}),
+  enabled: z.boolean().default(true),
+  insertion_order: z.number().int().default(0),
+  case_sensitive: z.boolean().optional(),
+  name: z.string().optional(),
+  priority: z.number().int().optional(),
+  id: z.number().int().optional(),
+  comment: z.string().optional(),
+  selective: z.boolean().optional(),
+  secondary_keys: z.array(z.string()).optional(),
+  constant: z.boolean().optional(),
+  position: z.enum(["before_char", "after_char"]).optional()
+}).passthrough();
+export type CharacterBookEntry = z.infer<typeof characterBookEntrySchema>;
+
+export const characterBookSchema = z.object({
+  name: z.string().optional(),
+  description: z.string().optional(),
+  scan_depth: z.number().int().positive().optional(),
+  token_budget: z.number().int().positive().optional(),
+  recursive_scanning: z.boolean().optional(),
+  extensions: z.record(z.string(), z.unknown()).default({}),
+  entries: z.array(characterBookEntrySchema).default([])
+}).passthrough();
+export type CharacterBook = z.infer<typeof characterBookSchema>;
+
+export const characterCardDataSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  description: z.string().max(200_000).default(""),
+  personality: z.string().max(100_000).default(""),
+  scenario: z.string().max(100_000).default(""),
+  first_mes: z.string().max(200_000).default(""),
+  mes_example: z.string().max(500_000).default(""),
+  creator_notes: z.string().max(200_000).default(""),
+  system_prompt: z.string().max(200_000).default(""),
+  post_history_instructions: z.string().max(200_000).default(""),
+  alternate_greetings: z.array(z.string().max(200_000)).max(100).default([]),
+  character_book: characterBookSchema.optional(),
+  tags: z.array(z.string().max(100)).max(200).default([]),
+  creator: z.string().max(200).default(""),
+  character_version: z.string().max(100).default(""),
+  extensions: z.record(z.string(), z.unknown()).default({})
+}).passthrough();
+export type CharacterCardData = z.infer<typeof characterCardDataSchema>;
+
+export const characterCardV2Schema = z.object({
+  spec: z.literal("chara_card_v2"),
+  spec_version: z.literal("2.0"),
+  data: characterCardDataSchema
+}).passthrough();
+export type CharacterCardV2 = z.infer<typeof characterCardV2Schema>;
+
+export const generationOverridesSchema = z.object({
+  common: commonSettingsSchema.partial().optional(),
+  protocol: protocolSettingsSchema.partial().optional()
+});
+export type GenerationOverrides = z.infer<typeof generationOverridesSchema>;
+
+export const toolPolicySchema = z.object({
+  defaultEnabled: z.boolean().default(true),
+  overrides: z.record(z.string(), z.boolean()).default({})
+});
+export type ToolPolicy = z.infer<typeof toolPolicySchema>;
+
+export const agentExecutionConfigSchema = z.object({
+  modelId: z.string().min(1).max(200).nullable(),
+  contextPolicy: contextPolicySchema,
+  reasoningEffort: reasoningEffortSchema,
+  generation: generationOverridesSchema.default({}),
+  tools: toolPolicySchema
+});
+export type AgentExecutionConfig = z.infer<typeof agentExecutionConfigSchema>;
+
+export const agentUserProfileOverrideSchema = z.object({
+  displayName: z.string().trim().min(1).max(100).optional(),
+  description: z.string().max(20_000).optional()
+});
+export type AgentUserProfileOverride = z.infer<typeof agentUserProfileOverrideSchema>;
+
+export const agentInputSchema = z.object({
+  card: characterCardV2Schema,
+  execution: agentExecutionConfigSchema,
+  userProfile: agentUserProfileOverrideSchema.default({})
+});
+export type AgentInput = z.infer<typeof agentInputSchema>;
+
+export interface AgentSummaryDto {
+  id: string;
+  name: string;
+  description: string;
+  protected: boolean;
+  revision: number;
+  hasAvatar: boolean;
+  modelId: string | null;
+  execution: AgentExecutionConfig;
+  userProfile: AgentUserProfileOverride;
+  firstMessage: string;
+  alternateGreetings: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AgentDto extends AgentSummaryDto, AgentInput {}
+
+export const encodedFileSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  dataBase64: z.string().min(1).max(14_000_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
+});
+export type EncodedFileInput = z.infer<typeof encodedFileSchema>;
+
+export const conversationExecutionOverridesSchema = z.object({
+  modelId: z.string().min(1).max(200).nullable().optional(),
+  contextPolicy: contextPolicySchema.optional(),
+  reasoningEffort: reasoningEffortSchema.optional(),
+  generation: generationOverridesSchema.optional(),
+  tools: z.record(z.string(), z.boolean()).optional()
+});
+export type ConversationExecutionOverrides = z.infer<typeof conversationExecutionOverridesSchema>;
+
 export const appSettingsSchema = z.object({
   defaultModelId: z.string().uuid().nullable(),
   defaultContextPolicy: contextPolicySchema,
   theme: z.enum(["system", "light", "dark"]),
   defaultSystemPrompt: z.string().max(100_000),
   reasoningEffort: reasoningEffortSchema,
+  defaultAgentId: z.string().uuid(),
+  lastAgentId: z.string().uuid(),
+  userProfile: z.object({
+    displayName: z.string().trim().min(1).max(100),
+    description: z.string().max(20_000)
+  }),
   uiPreferences: z.object({
     sidebarCollapsed: z.boolean(),
     reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"])
@@ -134,8 +262,8 @@ export type AppSettings = z.infer<typeof appSettingsSchema>;
 
 export const conversationInputSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  systemPrompt: z.string().max(100_000).default(""),
-  contextPolicy: contextPolicySchema.optional()
+  agentId: z.string().uuid(),
+  executionOverrides: conversationExecutionOverridesSchema.default({})
 });
 
 export interface ConversationDto {
@@ -144,6 +272,8 @@ export interface ConversationDto {
   systemPrompt: string;
   contextPolicy: ContextPolicy;
   modelId: string | null;
+  agentId: string | null;
+  executionOverrides: ConversationExecutionOverrides;
   draft: string;
   createdAt: number;
   updatedAt: number;
@@ -155,6 +285,12 @@ export interface GeneratedModelDto {
   modelKey: string;
   connectionName: string;
   protocol: ProviderProtocol;
+}
+
+export interface GeneratedAgentDto {
+  agentId: string | null;
+  name: string;
+  revision: number;
 }
 
 export interface GenerationBlockDto {
@@ -206,6 +342,7 @@ export interface GenerationDto {
   modelKey: string;
   /** Effective settings actually used for this generation. */
   settings: GenerationSettings;
+  generatedAgent?: GeneratedAgentDto | null;
   blocks: GenerationBlockDto[];
   toolCalls: ToolCallDto[];
   usage: UsageDto;
@@ -236,17 +373,17 @@ export const sendMessageSchema = z.object({
 });
 
 export const startConversationSchema = sendMessageSchema.extend({
-  modelId: z.string().uuid(),
-  contextPolicy: contextPolicySchema.optional()
+  agentId: z.string().uuid(),
+  greetingIndex: z.number().int().nonnegative().max(100).default(0),
+  executionOverrides: conversationExecutionOverridesSchema.default({})
 });
 
 export const retryGenerationSchema = z.object({});
 
 export const patchConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  systemPrompt: z.string().max(100_000).optional(),
-  contextPolicy: contextPolicySchema.optional(),
-  modelId: z.string().uuid().nullable().optional(),
+  agentId: z.string().uuid().nullable().optional(),
+  executionOverrides: conversationExecutionOverridesSchema.optional(),
   draft: z.string().max(1_000_000).optional()
 });
 export type PatchConversationInput = z.infer<typeof patchConversationSchema>;

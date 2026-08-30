@@ -160,8 +160,10 @@ export class GenerationRunner {
     try {
       const context = await this.dependencies.buildContext(this.store, record, model, connection, job.controller.signal);
       this.store.setGenerationContext(generationId, context.metadata);
+      const toolPolicy = record.agentSnapshot.execution.tools;
       const tools = model.capabilities.tools
-        ? (await this.dependencies.buildTools(this.store)).filter((tool) => tool.available)
+        ? (await this.dependencies.buildTools(this.store)).filter((tool) =>
+            tool.available && (toolPolicy.overrides[tool.definition.name] ?? toolPolicy.defaultEnabled))
         : [];
       const toolMap = new Map(tools.map((tool) => [tool.definition.name, tool]));
       const memoryPrompt = this.dependencies.memoryPrompt(this.store);
@@ -193,6 +195,7 @@ export class GenerationRunner {
           connection,
           modelKey: record.modelKey,
           systemPrompt,
+          postHistoryInstructions: context.postHistoryInstructions ?? "",
           messages,
           tools: tools.map((tool) => tool.definition),
           settings: record.settings,

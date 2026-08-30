@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import type { GenerationDto, GenerationSettings, ModelDto, UsageDto } from "@llm-chat/contracts";
 import { adapterFor, type ProviderConnection, type ProviderMessage } from "@llm-chat/providers";
+import { compileAgentPrompt } from "./agent-prompt";
 import type { ContextMessageRecord, GenerationRecord, Store } from "./database";
 
 export interface BuiltContext {
   systemPrompt: string;
   messages: ProviderMessage[];
+  postHistoryInstructions?: string;
   metadata: NonNullable<GenerationDto["context"]>;
 }
 
@@ -16,16 +18,23 @@ export async function buildContext(
   connection: ProviderConnection,
   signal: AbortSignal
 ): Promise<BuiltContext> {
-  const conversation = store.getConversation(record.conversationId);
-  if (!conversation) throw new ContextError("conversation_not_found", "会话不存在");
   const rawMessages = store.contextMessages(record.conversationId, record.assistantMessageId);
-  const providerMessages = rawMessages.flatMap(toProviderMessages);
-  const estimated = estimateTokens(conversation.systemPrompt, providerMessages);
+  const policy = record.agentSnapshot.execution.contextPolicy;
+  const preliminaryBudget = model.contextWindow
+    ? Math.max(256, model.contextWindow - record.settings.common.maxOutputTokens)
+    : 8_000;
+  const compiled = compileAgentPrompt(record.agentSnapshot, rawMessages, preliminaryBudget);
+  const countedPrompt = [compiled.systemPrompt, compiled.postHistoryInstructions].filter(Boolean).join("\n\n");
+  let examples = compiled.exampleMessages;
+  const realMessages = rawMessages.flatMap(toProviderMessages);
+  let providerMessages = [...examples, ...realMessages];
+  let estimated = estimateTokens(countedPrompt, providerMessages);
 
-  if (conversation.contextPolicy === "full") {
+  if (policy === "full") {
     return {
-      systemPrompt: conversation.systemPrompt,
+      systemPrompt: compiled.systemPrompt,
       messages: providerMessages,
+      postHistoryInstructions: compiled.postHistoryInstructions,
       metadata: {
         policy: "full",
         omittedMessages: 0,
@@ -39,35 +48,42 @@ export async function buildContext(
   }
   const budget = model.contextWindow - record.settings.common.maxOutputTokens;
   if (budget < 256) throw new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口");
+  if (estimated > budget && examples.length) {
+    examples = [];
+    providerMessages = realMessages;
+    estimated = estimateTokens(countedPrompt, providerMessages);
+  }
   if (estimated <= budget) {
     return {
-      systemPrompt: conversation.systemPrompt,
+      systemPrompt: compiled.systemPrompt,
       messages: providerMessages,
+      postHistoryInstructions: compiled.postHistoryInstructions,
       metadata: {
-        policy: conversation.contextPolicy,
+        policy,
         omittedMessages: 0,
         estimatedInputTokens: estimated,
         summaryUsed: false
       }
     };
   }
-  if (conversation.contextPolicy === "trim") {
+  if (policy === "trim") {
     let remaining = [...rawMessages];
     let omitted = 0;
-    while (remaining.length > 1 && estimateTokens(conversation.systemPrompt, remaining.flatMap(toProviderMessages)) > budget) {
+    while (remaining.length > 1 && estimateTokens(countedPrompt, remaining.flatMap(toProviderMessages)) > budget) {
       const nextUser = remaining.findIndex((message, index) => index > 0 && message.role === "user");
       const removeCount = nextUser > 0 ? nextUser : 1;
       remaining = remaining.slice(removeCount);
       omitted += removeCount;
     }
     const messages = remaining.flatMap(toProviderMessages);
-    const finalEstimate = estimateTokens(conversation.systemPrompt, messages);
+    const finalEstimate = estimateTokens(countedPrompt, messages);
     if (finalEstimate > budget) {
       throw new ContextError("message_too_large", "最新消息超过模型可用上下文容量");
     }
     return {
-      systemPrompt: conversation.systemPrompt,
+      systemPrompt: compiled.systemPrompt,
       messages,
+      postHistoryInstructions: compiled.postHistoryInstructions,
       metadata: {
         policy: "trim",
         omittedMessages: omitted,
@@ -76,7 +92,7 @@ export async function buildContext(
       }
     };
   }
-  return summarizeContext(store, record, model, connection, rawMessages, conversation.systemPrompt, budget, signal);
+  return summarizeContext(store, record, model, connection, rawMessages, compiled.systemPrompt, compiled.postHistoryInstructions, budget, signal);
 }
 
 async function summarizeContext(
@@ -86,6 +102,7 @@ async function summarizeContext(
   connection: ProviderConnection,
   allMessages: ContextMessageRecord[],
   originalSystemPrompt: string,
+  postHistoryInstructions: string,
   budget: number,
   signal: AbortSignal
 ): Promise<BuiltContext> {
@@ -101,8 +118,9 @@ async function summarizeContext(
   const composedSystem = () => summaryText
     ? `${originalSystemPrompt}\n\n[较早对话摘要]\n${summaryText}`.trim()
     : originalSystemPrompt;
+  const countedSystem = () => [composedSystem(), postHistoryInstructions].filter(Boolean).join("\n\n");
 
-  while (estimateTokens(composedSystem(), remaining.flatMap(toProviderMessages)) > budget) {
+  while (estimateTokens(countedSystem(), remaining.flatMap(toProviderMessages)) > budget) {
     if (remaining.length <= 2) throw new ContextError("message_too_large", "最近一轮对话超过模型可用上下文容量");
     const chunk: ContextMessageRecord[] = [];
     const chunkBudget = Math.max(256, Math.floor(budget * 0.45));
@@ -133,10 +151,11 @@ async function summarizeContext(
   return {
     systemPrompt: composedSystem(),
     messages,
+    postHistoryInstructions,
     metadata: {
       policy: "summarize",
       omittedMessages: allMessages.length - remaining.length,
-      estimatedInputTokens: estimateTokens(composedSystem(), messages),
+      estimatedInputTokens: estimateTokens(countedSystem(), messages),
       summaryUsed: Boolean(summaryText)
     }
   };

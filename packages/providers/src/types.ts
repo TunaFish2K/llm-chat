@@ -46,6 +46,7 @@ export interface GenerateRequest {
   connection: ProviderConnection;
   modelKey: string;
   systemPrompt: string;
+  postHistoryInstructions?: string;
   messages: ProviderMessage[];
   tools?: ProviderToolDefinition[];
   /**

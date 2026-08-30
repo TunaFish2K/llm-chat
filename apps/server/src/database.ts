@@ -4,15 +4,22 @@ import { createRequire } from "node:module";
 import { dirname } from "node:path";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type {
+  AgentDto,
+  AgentExecutionConfig,
+  AgentInput,
+  AgentSummaryDto,
   AppSettings,
+  CharacterCardV2,
   ConnectionDto,
   ConnectionInput,
   ContextPolicy,
   ConversationStartedDto,
   ConversationDto,
+  ConversationExecutionOverrides,
   GenerationCreatedDto,
   GenerationDto,
   GenerationSettings,
+  GenerationOverrides,
   GeneratedModelDto,
   MessageDto,
   ModelDto,
@@ -25,9 +32,19 @@ import type {
   ToolCallDto,
   ToolSettingsDto,
   ToolSettingsInput,
+  ToolPolicy,
   UsageDto
 } from "@llm-chat/contracts";
-import { generationSettingsSchema, modelCapabilitiesSchema, modelSettingsSchema, reasoningEffortSchema } from "@llm-chat/contracts";
+import {
+  agentExecutionConfigSchema,
+  agentUserProfileOverrideSchema,
+  characterCardV2Schema,
+  conversationExecutionOverridesSchema,
+  generationSettingsSchema,
+  modelCapabilitiesSchema,
+  modelSettingsSchema,
+  reasoningEffortSchema
+} from "@llm-chat/contracts";
 
 interface ConnectionRecord extends ConnectionDto {
   apiKey: string;
@@ -54,7 +71,24 @@ export interface GenerationRecord {
   modelKey: string;
   protocol: ProviderProtocol;
   settings: GenerationSettings;
+  agentSnapshot: AgentSnapshot;
   status: GenerationDto["status"];
+}
+
+export interface AgentSnapshot {
+  agentId: string | null;
+  name: string;
+  revision: number;
+  card: CharacterCardV2;
+  userProfile: { displayName: string; description: string };
+  baseSystemPrompt: string;
+  execution: {
+    modelId: string;
+    contextPolicy: ContextPolicy;
+    reasoningEffort: ReasoningEffort;
+    settings: GenerationSettings;
+    tools: ToolPolicy;
+  };
 }
 
 type OptionalInput<T> = { [K in keyof T]?: T[K] | undefined };
@@ -72,7 +106,8 @@ type OptionalInput<T> = { [K in keyof T]?: T[K] | undefined };
 export function buildEffectiveSettings(
   model: ModelDto,
   protocol: ProviderProtocol,
-  effort: ReasoningEffort
+  effort: ReasoningEffort,
+  overrides: GenerationOverrides = {}
 ): GenerationSettings {
   const capabilities = model.capabilities;
   if (effort !== "none" && !capabilities.reasoning) {
@@ -81,8 +116,10 @@ export function buildEffectiveSettings(
   const defaults = model.defaultSettings ?? ({} as ModelSettings);
   const common = {
     ...(defaults.common ?? {}),
+    ...(overrides.common ?? {}),
+    stopSequences: overrides.common?.stopSequences ?? defaults.common?.stopSequences ?? [],
     maxOutputTokens: Math.min(
-      defaults.common?.maxOutputTokens ?? model.maxOutputTokens,
+      overrides.common?.maxOutputTokens ?? defaults.common?.maxOutputTokens ?? model.maxOutputTokens,
       model.maxOutputTokens
     )
   };
@@ -98,8 +135,8 @@ export function buildEffectiveSettings(
   return {
     common,
     protocol: {
-      reasoningSummary: defaults.protocol?.reasoningSummary,
-      thinkingBudgetTokens: defaults.protocol?.thinkingBudgetTokens
+      reasoningSummary: overrides.protocol?.reasoningSummary ?? defaults.protocol?.reasoningSummary,
+      thinkingBudgetTokens: overrides.protocol?.thinkingBudgetTokens ?? defaults.protocol?.thinkingBudgetTokens
     },
     reasoningEffort: effort,
     ...(resolvedThinkingBudgetTokens ? { resolvedThinkingBudgetTokens } : {})
@@ -242,7 +279,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 10) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 11) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -398,6 +435,62 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 10;
       `);
     }
+    if (current < 11) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS agents (
+          id TEXT PRIMARY KEY,
+          card_json TEXT NOT NULL,
+          execution_json TEXT NOT NULL,
+          user_profile_json TEXT NOT NULL DEFAULT '{}',
+          avatar_png BLOB,
+          protected INTEGER NOT NULL DEFAULT 0,
+          revision INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_agents_updated ON agents(updated_at DESC);
+      `);
+      if (!hasColumn(sqlite, "conversations", "agent_id")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL");
+      }
+      if (!hasColumn(sqlite, "conversations", "execution_overrides_json")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN execution_overrides_json TEXT NOT NULL DEFAULT '{}'");
+      }
+      if (!hasColumn(sqlite, "generations", "agent_id")) {
+        sqlite.exec("ALTER TABLE generations ADD COLUMN agent_id TEXT");
+      }
+      if (!hasColumn(sqlite, "generations", "agent_name")) {
+        sqlite.exec("ALTER TABLE generations ADD COLUMN agent_name TEXT");
+      }
+      if (!hasColumn(sqlite, "generations", "agent_revision")) {
+        sqlite.exec("ALTER TABLE generations ADD COLUMN agent_revision INTEGER");
+      }
+      if (!hasColumn(sqlite, "generations", "agent_snapshot_json")) {
+        sqlite.exec("ALTER TABLE generations ADD COLUMN agent_snapshot_json TEXT");
+      }
+      if (!hasColumn(sqlite, "app_settings", "default_agent_id")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN default_agent_id TEXT");
+      }
+      if (!hasColumn(sqlite, "app_settings", "last_agent_id")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN last_agent_id TEXT");
+      }
+      if (!hasColumn(sqlite, "app_settings", "user_display_name")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN user_display_name TEXT NOT NULL DEFAULT '用户'");
+      }
+      if (!hasColumn(sqlite, "app_settings", "user_description")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN user_description TEXT NOT NULL DEFAULT ''");
+      }
+      sqlite.exec(`
+        UPDATE conversations
+        SET execution_overrides_json = json_object(
+          'modelId', model_id,
+          'contextPolicy', context_policy
+        )
+        WHERE execution_overrides_json = '{}';
+        CREATE INDEX IF NOT EXISTS idx_conversations_agent ON conversations(agent_id);
+        PRAGMA user_version = 11;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -420,6 +513,7 @@ export class Store {
     this.sqlite = new DatabaseSync(path, { timeout: 5_000 });
     this.sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     migrate(this.sqlite);
+    this.ensureDefaultAgent();
     try {
       chmodSync(dirname(path), 0o700);
     } catch {
@@ -441,6 +535,40 @@ export class Store {
     this.sqlite.close();
   }
 
+  private ensureDefaultAgent(): void {
+    const settings = this.sqlite.prepare("SELECT * FROM app_settings WHERE id = 1").get() as Row;
+    let row = this.sqlite.prepare("SELECT * FROM agents WHERE protected = 1 ORDER BY created_at LIMIT 1").get() as Row | undefined;
+    if (!row) {
+      const id = randomUUID();
+      const now = Date.now();
+      const modelId = textOrNull(settings.default_model_id);
+      const enabledModel = modelId ? this.getModel(modelId) : undefined;
+      const card = defaultAgentCard();
+      const execution: AgentExecutionConfig = {
+        modelId: enabledModel?.enabled ? enabledModel.id : null,
+        contextPolicy: settings.default_context_policy as ContextPolicy,
+        reasoningEffort: reasoningEffortSchema.parse(settings.reasoning_effort),
+        generation: {},
+        tools: { defaultEnabled: true, overrides: {} }
+      };
+      this.sqlite.prepare(`
+        INSERT INTO agents (id, card_json, execution_json, user_profile_json, protected, revision, created_at, updated_at)
+        VALUES (?, ?, ?, '{}', 1, 1, ?, ?)
+      `).run(id, json(card), json(execution), now, now);
+      row = this.sqlite.prepare("SELECT * FROM agents WHERE id = ?").get(id) as Row;
+    }
+    const defaultId = String(row.id);
+    const priorDefaultId = textOrNull(settings.default_agent_id);
+    const validDefault = priorDefaultId && this.getAgent(priorDefaultId) ? priorDefaultId : defaultId;
+    const priorLastId = textOrNull(settings.last_agent_id);
+    const validLast = priorLastId && this.getAgent(priorLastId) ? priorLastId : validDefault;
+    this.sqlite.prepare("UPDATE app_settings SET default_agent_id = ?, last_agent_id = ? WHERE id = 1")
+      .run(validDefault, validLast);
+    if (!priorDefaultId) {
+      this.sqlite.prepare("UPDATE conversations SET agent_id = ? WHERE agent_id IS NULL").run(defaultId);
+    }
+  }
+
   getSettings(): AppSettings {
     const row = this.sqlite.prepare("SELECT * FROM app_settings WHERE id = 1").get() as Row;
     return {
@@ -449,6 +577,12 @@ export class Store {
       theme: row.theme as AppSettings["theme"],
       defaultSystemPrompt: String(row.default_system_prompt),
       reasoningEffort: reasoningEffortSchema.parse(row.reasoning_effort),
+      defaultAgentId: String(row.default_agent_id),
+      lastAgentId: String(row.last_agent_id),
+      userProfile: {
+        displayName: String(row.user_display_name),
+        description: String(row.user_description)
+      },
       uiPreferences: {
         sidebarCollapsed: Boolean(row.sidebar_collapsed),
         reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"]
@@ -464,15 +598,107 @@ export class Store {
       theme: patch.theme ?? current.theme,
       defaultSystemPrompt: patch.defaultSystemPrompt ?? current.defaultSystemPrompt,
       reasoningEffort: patch.reasoningEffort ?? current.reasoningEffort,
+      defaultAgentId: patch.defaultAgentId ?? current.defaultAgentId,
+      lastAgentId: patch.lastAgentId ?? current.lastAgentId,
+      userProfile: patch.userProfile ?? current.userProfile,
       uiPreferences: patch.uiPreferences ?? current.uiPreferences
     };
     this.sqlite.prepare(`
       UPDATE app_settings SET default_model_id = ?, default_context_policy = ?, theme = ?, default_system_prompt = ?, reasoning_effort = ?,
+        default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
         sidebar_collapsed = ?, reasoning_collapse_policy = ?
       WHERE id = 1
     `).run(next.defaultModelId, next.defaultContextPolicy, next.theme, next.defaultSystemPrompt, next.reasoningEffort,
+      next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
       next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy);
+    if (patch.defaultSystemPrompt !== undefined || patch.userProfile !== undefined) {
+      this.sqlite.prepare("DELETE FROM context_summaries").run();
+    }
     return next;
+  }
+
+  listAgents(): AgentSummaryDto[] {
+    return (this.sqlite.prepare("SELECT * FROM agents ORDER BY protected DESC, updated_at DESC").all() as Row[])
+      .map((row) => agentSummaryDto(row));
+  }
+
+  getAgent(id: string): AgentDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM agents WHERE id = ?").get(id) as Row | undefined;
+    return row ? agentDto(row) : undefined;
+  }
+
+  createAgent(input: AgentInput, avatarPng?: Uint8Array): AgentDto {
+    const parsed = {
+      card: characterCardV2Schema.parse(input.card),
+      execution: agentExecutionConfigSchema.parse(input.execution),
+      userProfile: agentUserProfileOverrideSchema.parse(input.userProfile)
+    };
+    this.validateAgentModel(parsed.execution.modelId);
+    const id = randomUUID();
+    const now = Date.now();
+    this.sqlite.prepare(`
+      INSERT INTO agents (id, card_json, execution_json, user_profile_json, avatar_png, protected, revision, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)
+    `).run(id, json(parsed.card), json(parsed.execution), json(parsed.userProfile), avatarPng ?? null, now, now);
+    return this.getAgent(id)!;
+  }
+
+  createAgentCopy(input: AgentInput, avatarPng?: Uint8Array): AgentDto {
+    const names = new Set(this.listAgents().map((agent) => agent.name));
+    const original = input.card.data.name;
+    let name = original;
+    for (let index = 2; names.has(name); index += 1) name = `${original} (${index})`;
+    return this.createAgent({ ...input, card: { ...input.card, data: { ...input.card.data, name } } }, avatarPng);
+  }
+
+  updateAgent(id: string, patch: OptionalInput<AgentInput>): AgentDto | undefined {
+    const current = this.getAgent(id);
+    if (!current) return undefined;
+    const card = characterCardV2Schema.parse(patch.card ?? current.card);
+    const execution = agentExecutionConfigSchema.parse(patch.execution ?? current.execution);
+    const userProfile = agentUserProfileOverrideSchema.parse(patch.userProfile ?? current.userProfile);
+    this.validateAgentModel(execution.modelId);
+    this.sqlite.prepare(`
+      UPDATE agents SET card_json = ?, execution_json = ?, user_profile_json = ?,
+        revision = revision + 1, updated_at = ? WHERE id = ?
+    `).run(json(card), json(execution), json(userProfile), Date.now(), id);
+    this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_id = ?)")
+      .run(id);
+    return this.getAgent(id);
+  }
+
+  setAgentAvatar(id: string, avatarPng: Uint8Array | null): AgentDto | undefined {
+    const result = this.sqlite.prepare("UPDATE agents SET avatar_png = ?, updated_at = ? WHERE id = ?")
+      .run(avatarPng, Date.now(), id);
+    return Number(result.changes) ? this.getAgent(id) : undefined;
+  }
+
+  getAgentAvatar(id: string): Uint8Array | undefined {
+    const row = this.sqlite.prepare("SELECT avatar_png FROM agents WHERE id = ?").get(id) as Row | undefined;
+    return row?.avatar_png instanceof Uint8Array ? row.avatar_png : undefined;
+  }
+
+  deleteAgent(id: string): boolean {
+    const current = this.getAgent(id);
+    if (!current) return false;
+    if (current.protected) throw new StoreError("agent_protected", "默认助手不能删除");
+    const settings = this.getSettings();
+    const result = this.sqlite.prepare("DELETE FROM agents WHERE id = ?").run(id);
+    if (Number(result.changes) && (settings.defaultAgentId === id || settings.lastAgentId === id)) {
+      const protectedAgent = this.sqlite.prepare("SELECT id FROM agents WHERE protected = 1 ORDER BY created_at LIMIT 1").get() as Row;
+      const defaultAgentId = settings.defaultAgentId === id ? String(protectedAgent.id) : settings.defaultAgentId;
+      const lastAgentId = settings.lastAgentId === id ? defaultAgentId : settings.lastAgentId;
+      this.sqlite.prepare("UPDATE app_settings SET default_agent_id = ?, last_agent_id = ? WHERE id = 1")
+        .run(defaultAgentId, lastAgentId);
+    }
+    return Number(result.changes) > 0;
+  }
+
+  private validateAgentModel(modelId: string | null): void {
+    if (!modelId) return;
+    const model = this.getModel(modelId);
+    if (!model) throw new StoreError("model_not_found", "模型不存在");
+    if (!model.enabled) throw new StoreError("model_disabled", "模型已停用");
   }
 
   getToolSettings(): ToolSettingsDto {
@@ -650,70 +876,128 @@ export class Store {
   }
 
   listConversations(): ConversationDto[] {
-    return (this.sqlite.prepare("SELECT * FROM conversations ORDER BY updated_at DESC").all() as Row[]).map(conversationDto);
+    return (this.sqlite.prepare(`
+      SELECT c.*, a.execution_json AS agent_execution_json
+      FROM conversations c LEFT JOIN agents a ON a.id = c.agent_id
+      ORDER BY c.updated_at DESC
+    `).all() as Row[]).map(conversationDto);
   }
 
   getConversation(id: string): ConversationDto | undefined {
-    const row = this.sqlite.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Row | undefined;
+    const row = this.sqlite.prepare(`
+      SELECT c.*, a.execution_json AS agent_execution_json
+      FROM conversations c LEFT JOIN agents a ON a.id = c.agent_id WHERE c.id = ?
+    `).get(id) as Row | undefined;
     return row ? conversationDto(row) : undefined;
   }
 
-  createConversation(input: { title?: string | undefined; systemPrompt: string; contextPolicy?: ContextPolicy | undefined }): ConversationDto {
+  createConversation(input: {
+    title?: string | undefined;
+    agentId: string;
+    executionOverrides?: ConversationExecutionOverrides | undefined;
+  } | {
+    title?: string | undefined;
+    systemPrompt: string;
+    contextPolicy?: ContextPolicy | undefined;
+  }): ConversationDto {
     const now = Date.now();
     const id = randomUUID();
-    const settings = this.getSettings();
-    const defaultModel = settings.defaultModelId ? this.getModel(settings.defaultModelId) : undefined;
-    const modelId = defaultModel?.enabled ? defaultModel.id : null;
+    const agentId = "agentId" in input ? input.agentId : this.getSettings().defaultAgentId;
+    const agent = this.getAgent(agentId);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    const overrides = conversationExecutionOverridesSchema.parse("agentId" in input
+      ? input.executionOverrides ?? {}
+      : {
+          modelId: this.getSettings().defaultModelId,
+          contextPolicy: input.contextPolicy
+        });
+    const modelId = effectiveModelId(agent.execution, overrides);
+    if (modelId) this.validateAgentModel(modelId);
+    const contextPolicy = overrides.contextPolicy ?? agent.execution.contextPolicy;
     this.sqlite.prepare(`
-      INSERT INTO conversations (id, title, system_prompt, context_policy, model_id, draft, reasoning_effort, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, '', NULL, ?, ?)
-    `).run(id, input.title ?? "新对话", input.systemPrompt, input.contextPolicy ?? settings.defaultContextPolicy, modelId, now, now);
+      INSERT INTO conversations (id, title, system_prompt, context_policy, model_id, draft, reasoning_effort,
+        agent_id, execution_overrides_json, created_at, updated_at)
+      VALUES (?, ?, '', ?, ?, '', NULL, ?, ?, ?, ?)
+    `).run(id, input.title ?? "新对话", contextPolicy, modelId, agent.id, json(overrides), now, now);
+    this.sqlite.prepare("UPDATE app_settings SET last_agent_id = ? WHERE id = 1").run(agent.id);
     return this.getConversation(id)!;
   }
 
-  startConversation(input: { text: string; modelId: string; contextPolicy?: ContextPolicy | undefined }): ConversationStartedDto {
+  startConversation(input: {
+    text: string;
+    agentId: string;
+    greetingIndex: number;
+    executionOverrides?: ConversationExecutionOverrides | undefined;
+  } | {
+    text: string;
+    modelId: string;
+    contextPolicy?: ContextPolicy | undefined;
+  }): ConversationStartedDto {
     return this.transaction(() => {
-      const model = this.getModel(input.modelId);
-      if (!model) throw new StoreError("model_not_found", "模型不存在");
-      const connection = model.enabled ? this.getConnection(model.connectionId) : undefined;
-      if (!connection) {
-        throw new StoreError("model_disabled", "模型已停用或连接不可用");
-      }
       const now = Date.now();
-      const id = randomUUID();
-      const appSettings = this.getSettings();
-      const effective = buildEffectiveSettings(model, connection.protocol, appSettings.reasoningEffort);
-      this.sqlite.prepare(`
-        INSERT INTO conversations (id, title, system_prompt, context_policy, model_id, draft, reasoning_effort, created_at, updated_at)
-        VALUES (?, '新对话', ?, ?, ?, '', NULL, ?, ?)
-      `).run(id, appSettings.defaultSystemPrompt, input.contextPolicy ?? appSettings.defaultContextPolicy, model.id, now, now);
-      const conversation = this.getConversation(id)!;
-      const generation = this.insertMessageGeneration(conversation, input.text, effective);
+      const conversation = this.createConversation({
+        agentId: "agentId" in input ? input.agentId : this.getSettings().defaultAgentId,
+        executionOverrides: "agentId" in input
+          ? input.executionOverrides
+          : {
+              modelId: input.modelId,
+              contextPolicy: input.contextPolicy,
+              reasoningEffort: this.getSettings().reasoningEffort
+            }
+      });
+      const agent = this.getAgent(conversation.agentId!)!;
+      const greetings = [agent.card.data.first_mes, ...agent.card.data.alternate_greetings];
+      const greeting = greetings["greetingIndex" in input ? input.greetingIndex : 0];
+      if (greeting === undefined) throw new StoreError("greeting_not_found", "所选开场白不存在");
+      if ("agentId" in input && greeting.trim()) {
+        this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, 1, 'assistant', ?, NULL, ?)")
+          .run(randomUUID(), conversation.id, substituteCardPlaceholders(greeting, agent.name, this.resolvedUserProfile(agent).displayName), now);
+      }
+      const generation = this.insertMessageGeneration(conversation, input.text, this.resolveGeneration(conversation).snapshot);
       return {
-        conversation: this.getConversation(id)!,
+        conversation: this.getConversation(conversation.id)!,
         generation
       };
     });
   }
 
-  updateConversation(id: string, patch: OptionalInput<Pick<ConversationDto, "title" | "systemPrompt" | "contextPolicy" | "modelId" | "draft">>): ConversationDto | undefined {
+  updateConversation(id: string, patch: OptionalInput<Pick<ConversationDto,
+    "title" | "agentId" | "executionOverrides" | "draft" | "modelId" | "contextPolicy" | "systemPrompt"
+  >>): ConversationDto | undefined {
     const current = this.getConversation(id);
     if (!current) return undefined;
-    if (patch.modelId !== undefined && patch.modelId !== null) {
-      const model = this.getModel(patch.modelId);
-      if (!model) throw new StoreError("model_not_found", "模型不存在");
-      if (!model.enabled) throw new StoreError("model_disabled", "模型已停用");
-    }
+    const switchingAgent = patch.agentId !== undefined && patch.agentId !== current.agentId;
+    const agentId = patch.agentId === undefined ? current.agentId : patch.agentId;
+    const agent = agentId ? this.getAgent(agentId) : undefined;
+    if (agentId && !agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    const legacyOverrides: ConversationExecutionOverrides = {
+      ...current.executionOverrides,
+      ...(patch.modelId !== undefined ? { modelId: patch.modelId } : {}),
+      ...(patch.contextPolicy !== undefined ? { contextPolicy: patch.contextPolicy } : {})
+    };
+    if (patch.modelId !== undefined && patch.modelId !== null) this.validateAgentModel(patch.modelId);
+    const executionOverrides = switchingAgent
+      ? conversationExecutionOverridesSchema.parse({})
+      : conversationExecutionOverridesSchema.parse(patch.executionOverrides ?? legacyOverrides);
+    const modelId = agent ? effectiveModelId(agent.execution, executionOverrides) : null;
+    const contextPolicy = executionOverrides.contextPolicy ?? agent?.execution.contextPolicy ?? current.contextPolicy;
     const next = {
       title: patch.title ?? current.title,
-      systemPrompt: patch.systemPrompt ?? current.systemPrompt,
-      contextPolicy: patch.contextPolicy ?? current.contextPolicy,
-      modelId: patch.modelId === undefined ? current.modelId : patch.modelId,
+      agentId,
+      executionOverrides,
+      contextPolicy,
+      modelId,
       draft: patch.draft ?? current.draft
     };
     this.sqlite.prepare(`
-      UPDATE conversations SET title = ?, system_prompt = ?, context_policy = ?, model_id = ?, draft = ?, updated_at = ? WHERE id = ?
-    `).run(next.title, next.systemPrompt, next.contextPolicy, next.modelId, next.draft, Date.now(), id);
+      UPDATE conversations SET title = ?, system_prompt = ?, agent_id = ?, execution_overrides_json = ?, context_policy = ?, model_id = ?,
+        draft = ?, updated_at = ? WHERE id = ?
+    `).run(next.title, patch.systemPrompt ?? current.systemPrompt, next.agentId, json(next.executionOverrides), next.contextPolicy,
+      next.modelId, next.draft, Date.now(), id);
+    if (switchingAgent || patch.executionOverrides !== undefined) {
+      this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(id);
+    }
+    if (switchingAgent && next.agentId) this.sqlite.prepare("UPDATE app_settings SET last_agent_id = ? WHERE id = 1").run(next.agentId);
     return this.getConversation(id);
   }
 
@@ -721,16 +1005,59 @@ export class Store {
     return Number(this.sqlite.prepare("DELETE FROM conversations WHERE id = ?").run(id).changes) > 0;
   }
 
+  private resolvedUserProfile(agent: AgentDto): { displayName: string; description: string } {
+    const global = this.getSettings().userProfile;
+    return {
+      displayName: agent.userProfile.displayName ?? global.displayName,
+      description: agent.userProfile.description ?? global.description
+    };
+  }
+
+  private resolveGeneration(conversation: ConversationDto): {
+    agent: AgentDto;
+    model: ModelDto;
+    connection: ConnectionRecord;
+    snapshot: AgentSnapshot;
+  } {
+    if (!conversation.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
+    const agent = this.getAgent(conversation.agentId);
+    if (!agent) throw new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择");
+    const modelId = effectiveModelId(agent.execution, conversation.executionOverrides);
+    if (!modelId) throw new StoreError("conversation_model_required", "请先为 Agent 或会话选择模型");
+    const model = this.getModel(modelId);
+    const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
+    if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
+    const effort = conversation.executionOverrides.reasoningEffort ?? agent.execution.reasoningEffort;
+    const generation = mergeGenerationOverrides(agent.execution.generation, conversation.executionOverrides.generation);
+    const settings = buildEffectiveSettings(model, connection.protocol, effort, generation);
+    const appSettings = this.getSettings();
+    const snapshot: AgentSnapshot = {
+      agentId: agent.id,
+      name: agent.name,
+      revision: agent.revision,
+      card: agent.card,
+      userProfile: this.resolvedUserProfile(agent),
+      baseSystemPrompt: appSettings.defaultSystemPrompt,
+      execution: {
+        modelId,
+        contextPolicy: conversation.executionOverrides.contextPolicy ?? agent.execution.contextPolicy,
+        reasoningEffort: effort,
+        settings,
+        tools: {
+          defaultEnabled: agent.execution.tools.defaultEnabled,
+          overrides: { ...agent.execution.tools.overrides, ...(conversation.executionOverrides.tools ?? {}) }
+        }
+      }
+    };
+    return { agent, model, connection, snapshot };
+  }
+
   createMessageGeneration(conversationId: string, text: string): GenerationCreatedDto {
     return this.transaction(() => {
       const conversation = this.getConversation(conversationId);
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
-      if (!conversation.modelId) throw new StoreError("conversation_model_required", "请先为会话选择模型");
-      const model = this.getModel(conversation.modelId);
-      const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
-      if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
-      const effective = buildEffectiveSettings(model, connection.protocol, this.getSettings().reasoningEffort);
-      return this.insertMessageGeneration(conversation, text, effective);
+      const resolved = this.resolveGeneration(conversation);
+      return this.insertMessageGeneration(conversation, text, resolved.snapshot);
     });
   }
 
@@ -739,14 +1066,11 @@ export class Store {
       const message = this.sqlite.prepare("SELECT * FROM messages WHERE id = ? AND role = 'assistant'").get(assistantMessageId) as Row | undefined;
       if (!message) throw new StoreError("message_not_found", "助手消息不存在");
       const conversation = this.getConversation(String(message.conversation_id));
-      if (!conversation?.modelId) throw new StoreError("conversation_model_required", "请先为会话选择模型");
-      const model = this.getModel(conversation.modelId);
-      const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
-      if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
-      const effective = buildEffectiveSettings(model, connection.protocol, this.getSettings().reasoningEffort);
+      if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+      const { model, connection, snapshot } = this.resolveGeneration(conversation);
       const max = this.sqlite.prepare("SELECT COALESCE(MAX(version), 0) AS value FROM generations WHERE assistant_message_id = ?").get(assistantMessageId) as Row;
       const generationId = randomUUID();
-      this.insertGeneration(generationId, assistantMessageId, Number(max.value) + 1, connection, model, effective, Date.now());
+      this.insertGeneration(generationId, assistantMessageId, Number(max.value) + 1, connection, model, snapshot, Date.now());
       this.sqlite.prepare("UPDATE messages SET active_generation_id = ? WHERE id = ?").run(generationId, assistantMessageId);
       return { assistantMessageId, generationId };
     });
@@ -770,19 +1094,20 @@ export class Store {
     version: number,
     connection: ConnectionRecord,
     model: ModelDto,
-    settings: GenerationSettings,
+    snapshot: AgentSnapshot,
     now: number
   ): void {
     this.sqlite.prepare(`
       INSERT INTO generations (id, assistant_message_id, version, status, connection_id, model_id,
-        connection_name, protocol, model_key, model_display_name, settings_json, created_at)
-      VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, assistantMessageId, version, connection.id, model.id, connection.name, connection.protocol, model.modelKey, model.displayName, json(settings), now);
+        connection_name, protocol, model_key, model_display_name, settings_json,
+        agent_id, agent_name, agent_revision, agent_snapshot_json, created_at)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, assistantMessageId, version, connection.id, model.id, connection.name, connection.protocol, model.modelKey,
+      model.displayName, json(snapshot.execution.settings), snapshot.agentId, snapshot.name, snapshot.revision, json(snapshot), now);
   }
 
-  private insertMessageGeneration(conversation: ConversationDto, text: string, settings: GenerationSettings): GenerationCreatedDto {
-    if (!conversation.modelId) throw new StoreError("conversation_model_required", "请先为会话选择模型");
-    const model = this.getModel(conversation.modelId);
+  private insertMessageGeneration(conversation: ConversationDto, text: string, snapshot: AgentSnapshot): GenerationCreatedDto {
+    const model = this.getModel(snapshot.execution.modelId);
     const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
     if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
     const now = Date.now();
@@ -795,7 +1120,7 @@ export class Store {
       .run(userMessageId, conversation.id, userOrdinal, text, now);
     this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, 'assistant', NULL, ?, ?)")
       .run(assistantMessageId, conversation.id, userOrdinal + 1, generationId, now);
-    this.insertGeneration(generationId, assistantMessageId, 1, connection, model, settings, now);
+    this.insertGeneration(generationId, assistantMessageId, 1, connection, model, snapshot, now);
     const title = conversation.title === "新对话" ? titleFrom(text) : conversation.title;
     this.sqlite.prepare("UPDATE conversations SET title = ?, draft = '', updated_at = ? WHERE id = ?")
       .run(title, now, conversation.id);
@@ -859,6 +1184,23 @@ export class Store {
       SELECT g.*, m.conversation_id FROM generations g JOIN messages m ON m.id = g.assistant_message_id WHERE g.id = ?
     `).get(id) as Row | undefined;
     if (!row) return undefined;
+    const conversation = this.getConversation(String(row.conversation_id));
+    const currentAgent = conversation?.agentId ? this.getAgent(conversation.agentId) : undefined;
+    const legacySnapshot: AgentSnapshot = {
+      agentId: currentAgent?.id ?? null,
+      name: currentAgent?.name ?? String(row.agent_name ?? "默认助手"),
+      revision: currentAgent?.revision ?? Number(row.agent_revision ?? 1),
+      card: currentAgent?.card ?? defaultAgentCard(),
+      userProfile: currentAgent ? this.resolvedUserProfile(currentAgent) : this.getSettings().userProfile,
+      baseSystemPrompt: this.getSettings().defaultSystemPrompt,
+      execution: {
+        modelId: String(row.model_id),
+        contextPolicy: conversation?.contextPolicy ?? "trim",
+        reasoningEffort: parseGenerationSettings(row.settings_json).reasoningEffort,
+        settings: parseGenerationSettings(row.settings_json),
+        tools: { defaultEnabled: true, overrides: {} }
+      }
+    };
     return {
       id: String(row.id),
       assistantMessageId: String(row.assistant_message_id),
@@ -868,6 +1210,7 @@ export class Store {
       modelKey: String(row.model_key),
       protocol: row.protocol as ProviderProtocol,
       settings: parseGenerationSettings(row.settings_json),
+      agentSnapshot: row.agent_snapshot_json ? parse(row.agent_snapshot_json, legacySnapshot) : legacySnapshot,
       status: row.status as GenerationDto["status"]
     };
   }
@@ -1036,7 +1379,7 @@ export class Store {
         messageId: String(row.id),
         ordinal: Number(row.ordinal),
         role: row.role as "user" | "assistant",
-        text: row.role === "user" ? String(row.text ?? "") : String(row.generation_text ?? ""),
+        text: row.role === "user" ? String(row.text ?? "") : String(row.generation_text ?? row.text ?? ""),
         ...(row.provider_context_json ? { providerPayload: parse(row.provider_context_json, undefined) } : {}),
         ...(row.connection_id ? { providerConnectionId: String(row.connection_id) } : {}),
         ...(calls.length ? {
@@ -1157,6 +1500,11 @@ export class Store {
       protocol: row.protocol as ProviderProtocol,
       modelKey: String(row.model_key),
       settings: parseGenerationSettings(row.settings_json),
+      generatedAgent: row.agent_name ? {
+        agentId: textOrNull(row.agent_id),
+        name: String(row.agent_name),
+        revision: Number(row.agent_revision ?? 1)
+      } : null,
       blocks: blocks.map((block) => ({
         id: String(block.id),
         index: Number(block.block_index),
@@ -1223,16 +1571,92 @@ function modelDto(row: Row): ModelDto {
 }
 
 function conversationDto(row: Row): ConversationDto {
+  const executionOverrides = conversationExecutionOverridesSchema.parse(parse(row.execution_overrides_json, {}));
+  const agentExecution = row.agent_execution_json
+    ? agentExecutionConfigSchema.parse(parse(row.agent_execution_json, {}))
+    : undefined;
   return {
     id: String(row.id),
     title: String(row.title),
     systemPrompt: String(row.system_prompt),
-    contextPolicy: row.context_policy as ContextPolicy,
-    modelId: textOrNull(row.model_id),
+    contextPolicy: executionOverrides.contextPolicy ?? agentExecution?.contextPolicy ?? row.context_policy as ContextPolicy,
+    modelId: Object.hasOwn(executionOverrides, "modelId")
+      ? executionOverrides.modelId ?? null
+      : agentExecution?.modelId ?? textOrNull(row.model_id),
+    agentId: textOrNull(row.agent_id),
+    executionOverrides,
     draft: String(row.draft),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
+}
+
+function agentDto(row: Row): AgentDto {
+  const card = characterCardV2Schema.parse(parse(row.card_json, {}));
+  return {
+    ...agentSummaryDto(row),
+    card,
+  };
+}
+
+function agentSummaryDto(row: Row): AgentSummaryDto {
+  const card = characterCardV2Schema.parse(parse(row.card_json, {}));
+  const execution = agentExecutionConfigSchema.parse(parse(row.execution_json, {}));
+  return {
+    id: String(row.id), name: card.data.name, description: card.data.description,
+    protected: Boolean(row.protected), revision: Number(row.revision),
+    hasAvatar: row.avatar_png !== null && row.avatar_png !== undefined,
+    modelId: execution.modelId, execution,
+    userProfile: agentUserProfileOverrideSchema.parse(parse(row.user_profile_json, {})),
+    firstMessage: card.data.first_mes, alternateGreetings: card.data.alternate_greetings,
+    createdAt: Number(row.created_at), updatedAt: Number(row.updated_at)
+  };
+}
+
+function defaultAgentCard(): CharacterCardV2 {
+  return {
+    spec: "chara_card_v2",
+    spec_version: "2.0",
+    data: {
+      name: "默认助手",
+      description: "通用聊天与日常工作助手。",
+      personality: "",
+      scenario: "",
+      first_mes: "你好，有什么可以帮你？",
+      mes_example: "",
+      creator_notes: "",
+      system_prompt: "{{original}}",
+      post_history_instructions: "",
+      alternate_greetings: [],
+      tags: ["通用"],
+      creator: "llm-chat",
+      character_version: "1.0",
+      extensions: {}
+    }
+  };
+}
+
+function effectiveModelId(
+  execution: AgentExecutionConfig,
+  overrides: ConversationExecutionOverrides
+): string | null {
+  return Object.hasOwn(overrides, "modelId") ? overrides.modelId ?? null : execution.modelId;
+}
+
+function mergeGenerationOverrides(
+  agent: GenerationOverrides,
+  conversation: GenerationOverrides | undefined
+): GenerationOverrides {
+  return {
+    common: { ...(agent.common ?? {}), ...(conversation?.common ?? {}) },
+    protocol: { ...(agent.protocol ?? {}), ...(conversation?.protocol ?? {}) }
+  };
+}
+
+export function substituteCardPlaceholders(text: string, characterName: string, userName: string): string {
+  return text
+    .replace(/\{\{char\}\}|<BOT>/gi, characterName)
+    .replace(/\{\{user\}\}|<USER>/gi, userName);
 }
 
 function toolCallDto(row: Row): ToolCallDto {

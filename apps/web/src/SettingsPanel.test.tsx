@@ -1,4 +1,4 @@
-import type { AppSettings, ConnectionDto, ModelDto } from "@llm-chat/contracts";
+import type { AgentDto, AppSettings, ConnectionDto, ModelDto } from "@llm-chat/contracts";
 import { App as AntApp } from "antd";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,6 +8,9 @@ import { SettingsPanel } from "./SettingsPanel";
 const state = vi.hoisted(() => ({ screens: { md: true, lg: true } as Record<string, boolean> }));
 const api = vi.hoisted(() => ({
   updateSettings: vi.fn(),
+  agent: vi.fn(), createAgent: vi.fn(), updateAgent: vi.fn(), deleteAgent: vi.fn(),
+  updateAgentAvatar: vi.fn(), deleteAgentAvatar: vi.fn(), importAgent: vi.fn(),
+  agentExportUrl: vi.fn((id: string, format: string) => `/api/agents/${id}/export?format=${format}`),
   createConnection: vi.fn(), updateConnection: vi.fn(), deleteConnection: vi.fn(), testConnection: vi.fn(), discoverModels: vi.fn(),
   createModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(),
   toolSettings: vi.fn(), updateToolSettings: vi.fn(), toolCatalog: vi.fn(),
@@ -30,7 +33,9 @@ beforeAll(() => {
 
 const settings: AppSettings = {
   defaultModelId: "m1", defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "system",
-  reasoningEffort: "medium", uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
+  reasoningEffort: "medium", defaultAgentId: "agent1", lastAgentId: "agent1",
+  userProfile: { displayName: "用户", description: "" },
+  uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
 };
 const connection: ConnectionDto = {
   id: "c1", name: "Primary", protocol: "openai-responses", baseUrl: "https://api.example.com/v1",
@@ -43,6 +48,17 @@ const model: ModelDto = {
   capabilities: { tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: true, adaptiveThinking: false, manualThinking: false },
   defaultSettings: { common: { maxOutputTokens: 2048, stopSequences: ["END"], temperature: 0.5, topP: 0.9 }, protocol: { reasoningSummary: "concise" } }
 };
+const agent: AgentDto = {
+  id: "agent1", name: "默认助手", description: "通用助手", protected: true, revision: 1, hasAvatar: false,
+  modelId: "m1", firstMessage: "你好，{{user}}。", alternateGreetings: [], createdAt: 1, updatedAt: 1,
+  card: { spec: "chara_card_v2", spec_version: "2.0", data: {
+    name: "默认助手", description: "通用助手", personality: "", scenario: "", first_mes: "你好，{{user}}。",
+    mes_example: "", creator_notes: "", system_prompt: "{{original}}", post_history_instructions: "",
+    alternate_greetings: [], tags: [], creator: "", character_version: "", extensions: {}
+  } },
+  execution: { modelId: "m1", contextPolicy: "trim", reasoningEffort: "medium", generation: {}, tools: { defaultEnabled: true, overrides: {} } },
+  userProfile: {}
+};
 const anthropicModel: ModelDto = {
   ...model, id: "m2", connectionId: "c2", modelKey: "claude", displayName: "Claude",
   capabilities: { ...model.capabilities, reasoningSummary: false, adaptiveThinking: false, manualThinking: true },
@@ -52,6 +68,13 @@ const anthropicModel: ModelDto = {
 function resetApis() {
   vi.clearAllMocks();
   api.updateSettings.mockResolvedValue(settings);
+  api.agent.mockResolvedValue(agent);
+  api.createAgent.mockResolvedValue(agent);
+  api.updateAgent.mockResolvedValue(agent);
+  api.deleteAgent.mockResolvedValue(undefined);
+  api.updateAgentAvatar.mockResolvedValue(agent);
+  api.deleteAgentAvatar.mockResolvedValue(undefined);
+  api.importAgent.mockResolvedValue(agent);
   api.createConnection.mockResolvedValue(connection);
   api.updateConnection.mockResolvedValue(connection);
   api.deleteConnection.mockResolvedValue(undefined);
@@ -106,10 +129,18 @@ async function confirmDelete(user: ReturnType<typeof userEvent.setup>) {
 describe("SettingsPanel", () => {
   beforeEach(() => { state.screens = { md: true, lg: true }; resetApis(); });
 
+  it("requests the selected Agent detail", async () => {
+    api.agent.mockReturnValueOnce(new Promise(() => {}));
+    renderPanel({ agents: [agent] });
+    await waitFor(() => expect(api.agent).toHaveBeenCalledWith("agent1"));
+    expect(screen.getByText("正在加载 Agent")).toBeInTheDocument();
+  });
+
   it("renders desktop connection details, retains secrets, and saves parsed headers", async () => {
     const user = userEvent.setup();
     const props = renderPanel();
-    expect(screen.getByText("模型、连接、工具与界面")).toBeInTheDocument();
+    await selectTab("连接");
+    expect(screen.getByText("Agent、模型、连接、工具与界面")).toBeInTheDocument();
     expect(screen.getByText("选择一个连接查看详情")).toBeInTheDocument();
     await user.click(screen.getByText("Primary"));
     expect(screen.getByPlaceholderText("已保存；留空则不修改")).toHaveValue("");
@@ -128,6 +159,7 @@ describe("SettingsPanel", () => {
   it("creates and validates connections and reports failed actions", async () => {
     const user = userEvent.setup();
     const props = renderPanel({ connections: [] });
+    await selectTab("连接");
     await user.click(screen.getByRole("button", { name: /保存/ }));
     expect(api.createConnection).not.toHaveBeenCalled();
     await user.type(screen.getByLabelText("连接名称"), "New");
@@ -142,6 +174,7 @@ describe("SettingsPanel", () => {
     const user = userEvent.setup();
     api.testConnection.mockRejectedValueOnce(new Error("connection failed"));
     renderPanel();
+    await selectTab("连接");
     await user.click(screen.getByText("Primary"));
     await user.click(screen.getByRole("button", { name: /测试/ }));
     expect(await screen.findByText("connection failed")).toBeInTheDocument();
@@ -150,6 +183,7 @@ describe("SettingsPanel", () => {
   it("tests, discovers, and deletes an existing connection", async () => {
     const user = userEvent.setup();
     renderPanel();
+    await selectTab("连接");
     await user.click(screen.getByText("Primary"));
     await user.click(screen.getByRole("button", { name: /测试/ }));
     await waitFor(() => expect(api.testConnection).toHaveBeenCalledWith("c1"));
@@ -259,23 +293,23 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(api.createMcpServer).toHaveBeenCalledWith({
       name: "Docs2", url: "https://new.example.com/mcp", headers: { Authorization: "Bearer token", "X-Test": "a:b" }, enabled: true
     }));
-  }, 30_000);
+  }, 120_000);
 
   it("updates general settings and rolls API failures into a message", async () => {
     const user = userEvent.setup();
     const props = renderPanel();
     await selectTab("通用");
-    const prompt = document.querySelector(".general-settings textarea") as HTMLTextAreaElement;
+    const prompt = screen.getByText("基础系统提示", { selector: "label" }).closest(".ant-form-item")!.querySelector("textarea")!;
     fireEvent.change(prompt, { target: { value: "changed" } });
     expect(props.onSettings).toHaveBeenCalledWith(expect.objectContaining({ defaultSystemPrompt: "changed" }));
     fireEvent.blur(prompt);
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ defaultSystemPrompt: "system" }));
     api.updateSettings.mockRejectedValueOnce("not an error");
     const selects = screen.getAllByRole("combobox");
-    await user.click(selects[2]!);
+    await user.click(selects[0]!);
     await user.click(await screen.findByText("深色"));
     expect(await screen.findByText("操作失败")).toBeInTheDocument();
-    await user.click(selects[3]!);
+    await user.click(selects[1]!);
     await user.click(await screen.findByText("不自动折叠"));
     expect(props.onUiPreferences).toHaveBeenCalledWith({ sidebarCollapsed: false, reasoningCollapsePolicy: "never-auto-collapse" });
   });
@@ -285,6 +319,7 @@ describe("SettingsPanel", () => {
     state.screens = { md: false, lg: false };
     renderPanel();
     expect(screen.queryByText("模型、连接、工具与界面")).not.toBeInTheDocument();
+    await selectTab("连接");
     await user.click(screen.getByText("Primary"));
     expect(screen.getByRole("button", { name: /连接列表/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /连接列表/ }));

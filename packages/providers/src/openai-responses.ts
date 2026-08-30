@@ -44,6 +44,9 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
         input.push({ type: "function_call", call_id: call.id, name: call.name, arguments: call.arguments });
       }
     }
+    if (request.postHistoryInstructions) {
+      input.push({ role: "developer", content: request.postHistoryInstructions });
+    }
     const body: Record<string, unknown> = {
       model: request.modelKey,
       input,

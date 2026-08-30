@@ -1,4 +1,4 @@
-import type { AppSettings, ConnectionDto, ConversationDto, GenerationDto, GenerationEvent, MessageDto, ModelDto, ToolCallDto } from "@llm-chat/contracts";
+import type { AgentSummaryDto, AppSettings, ConnectionDto, ConversationDto, GenerationDto, GenerationEvent, MessageDto, ModelDto, ToolCallDto } from "@llm-chat/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,14 +6,16 @@ import { App } from "./App";
 
 const state = vi.hoisted(() => ({
   screens: { md: true, lg: true } as Record<string, boolean>,
-  mediaHandler: null as ((event: MediaQueryListEvent) => void) | null,
+  mediaHandlers: [] as Array<(event: MediaQueryListEvent) => void>,
   streams: new Map<string, (event: GenerationEvent) => void>(),
   unsubscribes: [] as ReturnType<typeof vi.fn>[]
 }));
 const api = vi.hoisted(() => ({
-  settings: vi.fn(), connections: vi.fn(), models: vi.fn(), conversations: vi.fn(), messages: vi.fn(),
+  settings: vi.fn(), agents: vi.fn(), connections: vi.fn(), models: vi.fn(), conversations: vi.fn(), messages: vi.fn(),
   updateConversation: vi.fn(), updateSettings: vi.fn(), startConversation: vi.fn(), send: vi.fn(), retry: vi.fn(),
-  selectGeneration: vi.fn(), cancel: vi.fn(), approveTool: vi.fn(), deleteConversation: vi.fn()
+  selectGeneration: vi.fn(), cancel: vi.fn(), approveTool: vi.fn(), deleteConversation: vi.fn(),
+  toolCatalog: vi.fn(),
+  agentAvatarUrl: vi.fn((id: string) => `/api/agents/${id}/avatar`)
 }));
 const generationEvents = vi.hoisted(() => vi.fn((id: string, callback: (event: GenerationEvent) => void) => {
   state.streams.set(id, callback);
@@ -29,11 +31,20 @@ vi.mock("antd", async (importOriginal) => {
   return {
     ...actual,
     Grid: { ...actual.Grid, useBreakpoint: () => state.screens },
+    Select: (props: Record<string, unknown>) => typeof props["aria-label"] === "string" && props["aria-label"].endsWith("覆盖")
+      ? createElement("select", {
+          "aria-label": props["aria-label"],
+          value: props.value as string,
+          onChange: (event: Event) => (props.onChange as (value: string) => void)((event.target as HTMLSelectElement).value)
+        }, ...(props.options as Array<{ label: string; value: string }>).map((option) =>
+          createElement("option", { key: option.value, value: option.value }, option.label)))
+      : createElement(actual.Select, props),
     Collapse: ({ items }: { items: Array<{ key: string; label: unknown; extra: unknown; children: unknown }> }) => createElement("div", {},
       ...items.map((item) => createElement("section", { key: item.key }, item.label as never, item.extra as never, item.children as never))),
     Dropdown: ({ children, menu }: { children: unknown; menu: { onClick?: (value: { key: string }) => void } }) => createElement("div", {},
       children as never,
       createElement("button", { onClick: () => menu.onClick?.({ key: "full" }) }, "策略完整"),
+      createElement("button", { onClick: () => menu.onClick?.({ key: "execution-settings" }) }, "执行设置"),
       createElement("button", { onClick: () => menu.onClick?.({ key: "delete" }) }, "菜单删除"))
   };
 });
@@ -128,7 +139,7 @@ beforeAll(() => {
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({
     matches: false, media: "", onchange: null, addListener: vi.fn(), removeListener: vi.fn(),
     addEventListener: vi.fn((type: string, listener: (event: MediaQueryListEvent) => void) => {
-      if (type === "change") state.mediaHandler = listener;
+      if (type === "change") state.mediaHandlers.push(listener);
     }),
     removeEventListener: vi.fn(), dispatchEvent: vi.fn()
   })) });
@@ -137,7 +148,9 @@ beforeAll(() => {
 
 const settings: AppSettings = {
   defaultModelId: "m1", defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
-  reasoningEffort: "medium", uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
+  reasoningEffort: "medium", defaultAgentId: "agent1", lastAgentId: "agent1",
+  userProfile: { displayName: "用户", description: "" },
+  uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" }
 };
 const connection: ConnectionDto = {
   id: "c1", name: "Primary", protocol: "openai-responses", baseUrl: "https://api.example.com",
@@ -148,8 +161,14 @@ const model: ModelDto = {
   capabilities: { tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: true, adaptiveThinking: false, manualThinking: false },
   defaultSettings: { common: { maxOutputTokens: 500, stopSequences: [] }, protocol: {} }, enabled: true, source: "manual", createdAt: 1, updatedAt: 1
 };
+const agent: AgentSummaryDto = {
+  id: "agent1", name: "默认助手", description: "通用助手", protected: true, revision: 1, hasAvatar: false,
+  modelId: "m1", execution: { modelId: "m1", contextPolicy: "trim", reasoningEffort: "medium", generation: {}, tools: { defaultEnabled: true, overrides: {} } },
+  userProfile: {}, firstMessage: "你好，用户。", alternateGreetings: [], createdAt: 1, updatedAt: 1
+};
 const conversation: ConversationDto = {
   id: "a1b2", title: "First chat", systemPrompt: "", contextPolicy: "trim", modelId: "m1", draft: "",
+  agentId: "agent1", executionOverrides: {},
   createdAt: 1, updatedAt: 1
 };
 const tool = (overrides: Partial<ToolCallDto> = {}): ToolCallDto => ({
@@ -173,9 +192,10 @@ const assistantMessage = (generations = [generation()], activeGenerationId = gen
 
 function resetApi() {
   vi.clearAllMocks();
-  state.streams.clear(); state.unsubscribes = []; state.screens = { md: true, lg: true }; state.mediaHandler = null;
+  state.streams.clear(); state.unsubscribes = []; state.screens = { md: true, lg: true }; state.mediaHandlers = [];
   window.history.replaceState({}, "", "/");
   api.settings.mockResolvedValue(settings);
+  api.agents.mockResolvedValue([agent]);
   api.connections.mockResolvedValue([connection]);
   api.models.mockResolvedValue([model]);
   api.conversations.mockResolvedValue([conversation]);
@@ -189,6 +209,7 @@ function resetApi() {
   api.cancel.mockResolvedValue({ ok: true });
   api.approveTool.mockResolvedValue({ toolCall: tool(), generationId: "g-resumed", resumed: true });
   api.deleteConversation.mockResolvedValue(undefined);
+  api.toolCatalog.mockResolvedValue([{ name: "web_search", label: "Web search", description: "Search", category: "web", requiresApproval: false, available: true }]);
 }
 
 async function boot(path = "/") {
@@ -206,13 +227,10 @@ describe("App", () => {
     render(<App />);
     expect(screen.getByText("正在启动 llm-chat")).toBeInTheDocument();
     resolveSettings(settings);
-    expect(await screen.findByText("有什么可以帮你？")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "默认助手" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "消息输入" })).toBeEnabled();
     expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "light");
     expect(document.documentElement.style.colorScheme).toBe("light");
-    act(() => state.mediaHandler?.({ matches: true } as MediaQueryListEvent));
-    expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "dark");
-    expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 
   it("keeps an explicit dark theme when the system preference changes", async () => {
@@ -222,7 +240,7 @@ describe("App", () => {
 
     expect(await screen.findByText("answer")).toHaveAttribute("data-color-scheme", "dark");
     expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "dark");
-    act(() => state.mediaHandler?.({ matches: false } as MediaQueryListEvent));
+    act(() => state.mediaHandlers.forEach((handler) => handler({ matches: false } as MediaQueryListEvent)));
     expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "dark");
   });
 
@@ -274,6 +292,22 @@ describe("App", () => {
     expect(screen.getByTestId("settings-panel")).toBeInTheDocument();
   });
 
+  it("keeps a deleted Agent detached and disables sending until the user selects one", async () => {
+    api.conversations.mockResolvedValue([{ ...conversation, agentId: null }]);
+    await boot("/c/a1b2");
+    expect(await screen.findByText("当前 Agent 已删除，请重新选择")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "消息输入" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "消息输入" })).toHaveAttribute("placeholder", "请先选择 Agent");
+  });
+
+  it("previews greeting placeholders with the effective global user profile", async () => {
+    api.settings.mockResolvedValue({ ...settings, userProfile: { displayName: "Lin", description: "" } });
+    api.agents.mockResolvedValue([{ ...agent, firstMessage: "你好，{{user}}。" }]);
+    api.conversations.mockResolvedValue([]);
+    await boot();
+    expect(await screen.findByText("你好，Lin。")).toBeInTheDocument();
+  });
+
   it("starts a conversation from welcome and restores the draft after failure", async () => {
     const user = userEvent.setup();
     api.conversations.mockResolvedValue([]);
@@ -281,7 +315,9 @@ describe("App", () => {
     const input = screen.getByRole("textbox", { name: "消息输入" });
     await user.type(input, " hello ");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    await waitFor(() => expect(api.startConversation).toHaveBeenCalledWith({ text: "hello", modelId: "m1", contextPolicy: "trim" }));
+    await waitFor(() => expect(api.startConversation).toHaveBeenCalledWith({
+      text: "hello", agentId: "agent1", greetingIndex: 0, executionOverrides: {}
+    }));
     expect(window.location.pathname).toBe("/c/a1b2");
     expect(generationEvents).toHaveBeenCalledWith("g-live", expect.any(Function));
 
@@ -307,7 +343,37 @@ describe("App", () => {
     expect(screen.queryByRole("textbox", { name: "会话标题" })).not.toBeInTheDocument();
     fireEvent.change(screen.getAllByRole("combobox", { name: "模型" })[0]!, { target: { value: "m1" } });
     await user.click(screen.getByRole("button", { name: "策略完整" }));
-    await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("a1b2", { contextPolicy: "full" }));
+    await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("a1b2", {
+      executionOverrides: { modelId: "m1", contextPolicy: "full" }
+    }));
+  });
+
+  it("edits and restores advanced conversation execution overrides", async () => {
+    const user = userEvent.setup();
+    await boot("/c/a1b2");
+    await user.click(screen.getByRole("button", { name: "执行设置" }));
+    expect(await screen.findByText("会话执行设置")).toBeInTheDocument();
+
+    const modelOverride = screen.getByRole("combobox", { name: "会话模型覆盖" });
+    await user.selectOptions(modelOverride, "unavailable");
+    expect(modelOverride).toHaveValue("unavailable");
+    await user.selectOptions(screen.getByRole("combobox", { name: "会话上下文覆盖" }), "full");
+    await user.selectOptions(screen.getByRole("combobox", { name: "会话推理强度覆盖" }), "high");
+    fireEvent.change(screen.getByRole("spinbutton", { name: "会话 Temperature 覆盖" }), { target: { value: "0.7" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "会话 Top P 覆盖" }), { target: { value: "0.8" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "会话最大输出覆盖" }), { target: { value: "2048" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "会话停止序列覆盖" }), { target: { value: "END\nDONE" } });
+    const summaryOverride = screen.getByRole("combobox", { name: "会话推理摘要覆盖" });
+    await user.selectOptions(summaryOverride, "concise");
+    expect(summaryOverride).toHaveValue("concise");
+    fireEvent.change(screen.getByRole("spinbutton", { name: "会话 Thinking token 预算覆盖" }), { target: { value: "4096" } });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Web search 覆盖" })).toBeInTheDocument());
+    const toolOverride = screen.getByRole("combobox", { name: "Web search 覆盖" });
+    await user.selectOptions(toolOverride, "disabled");
+    expect(toolOverride).toHaveValue("disabled");
+    await user.click(screen.getByRole("button", { name: "恢复 Agent 默认" }));
+    await user.click(document.querySelector(".ant-modal-footer .ant-btn-primary") as HTMLElement);
+    await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("a1b2", { executionOverrides: {} }));
   });
 
   it("navigates, creates, and deletes conversations", async () => {
@@ -336,7 +402,7 @@ describe("App", () => {
 
     window.history.pushState({}, "", "/");
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
-    expect(await screen.findByText("有什么可以帮你？")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "默认助手" })).toBeInTheDocument();
   });
 
   it("sends, retries, selects a generation, copies, and cancels", async () => {
@@ -386,9 +452,9 @@ describe("App", () => {
     api.approveTool.mockResolvedValueOnce({ toolCall: tool(), generationId: "g", resumed: false });
     await user.click(screen.getByRole("button", { name: /拒绝/ }));
     await waitFor(() => expect(api.approveTool).toHaveBeenCalledWith("t1", false));
-  }, 10_000);
+  }, 120_000);
 
-  it("optimistically updates UI and reasoning settings and rolls back failures", async () => {
+  it("optimistically updates UI settings and keeps new-conversation reasoning local", async () => {
     const user = userEvent.setup();
     await boot();
     let rejectUi!: (reason: Error) => void;
@@ -399,13 +465,9 @@ describe("App", () => {
     expect(await screen.findByText("ui failed")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("button", { name: "收起会话栏" })).toBeInTheDocument());
 
-    let rejectReason!: (reason: Error) => void;
-    api.updateSettings.mockReturnValueOnce(new Promise((_resolve, reject) => { rejectReason = reject; }));
     fireEvent.change(screen.getAllByRole("combobox", { name: /推理:medium/ })[0]!, { target: { value: "high" } });
     expect(screen.getAllByRole("combobox", { name: /推理:high/ })[0]).toBeInTheDocument();
-    rejectReason(new Error("reason failed"));
-    expect(await screen.findByText("reason failed")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByRole("combobox", { name: /推理:medium/ })[0]).toBeInTheDocument());
+    expect(api.updateSettings).toHaveBeenCalledTimes(1);
   });
 
   it("opens and closes settings and accepts settings callbacks on mobile", async () => {

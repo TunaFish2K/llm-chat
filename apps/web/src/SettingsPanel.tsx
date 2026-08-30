@@ -1,4 +1,7 @@
 import type {
+  AgentDto,
+  AgentInput,
+  AgentSummaryDto,
   AppSettings,
   ConnectionDto,
   ConnectionInput,
@@ -12,11 +15,12 @@ import type {
   ToolCatalogItemDto,
   ToolSettingsDto
 } from "@llm-chat/contracts";
-import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined, UploadOutlined } from "@ant-design/icons";
 import {
   App as AntApp,
   Button,
   Checkbox,
+  Collapse,
   Drawer,
   Flex,
   Form,
@@ -32,7 +36,7 @@ import {
   Tooltip,
   Typography
 } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { UiPreferences } from "./uiPreferences";
 
@@ -42,6 +46,7 @@ const { TextArea } = Input;
 interface Props {
   open: boolean;
   settings: AppSettings;
+  agents?: AgentSummaryDto[];
   connections: ConnectionDto[];
   models: ModelDto[];
   onClose: () => void;
@@ -83,7 +88,7 @@ export function SettingsPanel(props: Props) {
     width={screens.lg ? 960 : "100%"}
     title={mobile
       ? <Title level={4}>设置</Title>
-      : <Flex vertical><Title level={4}>设置</Title><Text type="secondary">模型、连接、工具与界面</Text></Flex>}
+      : <Flex vertical><Title level={4}>设置</Title><Text type="secondary">Agent、模型、连接、工具与界面</Text></Flex>}
     onClose={props.onClose}
     destroyOnHidden
     styles={{
@@ -92,8 +97,9 @@ export function SettingsPanel(props: Props) {
     }}
   >
     <Tabs
-      defaultActiveKey="connections"
+      defaultActiveKey="agents"
       items={[
+        { key: "agents", label: "Agent", children: <Agents agents={props.agents ?? []} models={props.models} settings={props.settings} busy={busy} mobile={mobile} run={run} /> },
         { key: "connections", label: "连接", children: <Connections connections={props.connections} busy={busy} mobile={mobile} run={run} /> },
         { key: "models", label: "模型", children: <Models connections={props.connections} models={props.models} busy={busy} mobile={mobile} run={run} /> },
         { key: "tools", label: "工具", children: <Tools /> },
@@ -101,6 +107,279 @@ export function SettingsPanel(props: Props) {
       ]}
     />
   </Drawer>;
+}
+
+function Agents({ agents, models, settings, busy, mobile, run }: {
+  agents: AgentSummaryDto[];
+  models: ModelDto[];
+  settings: AppSettings;
+  busy: boolean;
+  mobile: boolean;
+  run: Run;
+}) {
+  const [editing, setEditing] = useState<string | "new" | null>(agents[0]?.id ?? null);
+  const [detail, setDetail] = useState<AgentDto | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    let active = true;
+    setDetail(null);
+    if (editing && editing !== "new") {
+      void api.agent(editing).then((agent) => {
+        if (active) setDetail(agent);
+      }).catch(() => {
+        if (active) setDetail(null);
+      });
+    }
+    return () => { active = false; };
+  }, [editing, agents]);
+  const importFile = async (file: File) => {
+    let created: AgentDto | undefined;
+    const ok = await run(async () => {
+      created = await api.importAgent(file.name, await fileBase64(file));
+    }, "Agent 已导入");
+    if (ok && created) setEditing(created.id);
+  };
+  const list = <Flex vertical className="resource-pane" gap="small">
+    <Menu
+      className="resource-menu"
+      selectable
+      selectedKeys={editing && editing !== "new" ? [editing] : []}
+      items={agents.map((agent) => ({
+        key: agent.id,
+        label: <Flex vertical><Text>{agent.name}</Text><Text type="secondary" ellipsis>{agent.description || "未填写描述"}</Text></Flex>
+      }))}
+      onSelect={({ key }) => setEditing(key)}
+    />
+    <Space.Compact block>
+      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setEditing("new")}>新建</Button>
+      <Tooltip title="导入 JSON 或 PNG"><Button type="dashed" icon={<ImportOutlined />} onClick={() => importRef.current?.click()} /></Tooltip>
+    </Space.Compact>
+    <input ref={importRef} hidden type="file" accept="application/json,image/png,.json,.png" onChange={(event) => {
+      const file = event.target.files?.[0];
+      if (file) void importFile(file);
+      event.currentTarget.value = "";
+    }} />
+  </Flex>;
+  const editor = editing ? <AgentEditor
+    key={editing}
+    value={editing === "new" ? "new" : detail}
+    {...(agents.find((agent) => agent.id === settings.defaultAgentId) ?? agents[0]
+      ? { fallback: agents.find((agent) => agent.id === settings.defaultAgentId) ?? agents[0]! }
+      : {})}
+    models={models}
+    busy={busy}
+    run={run}
+    onDone={(id) => setEditing(id)}
+  /> : <Flex className="editor-empty" align="center" justify="center"><Text type="secondary">选择一个 Agent 查看详情</Text></Flex>;
+  if (mobile && editing) return <Flex className="settings-mobile-detail" vertical gap="middle">
+    <Button className="settings-back-button" type="text" icon={<ArrowLeftOutlined />} onClick={() => setEditing(null)}>Agent 列表</Button>
+    <div className="settings-editor">{editor}</div>
+  </Flex>;
+  return <Flex className={mobile ? "settings-mobile-list" : "settings-split"} vertical={mobile} gap="large">
+    {list}
+    {!mobile && <div className="settings-editor">{editor}</div>}
+  </Flex>;
+}
+
+function AgentEditor({ value, fallback, models, busy, run, onDone }: {
+  value: AgentDto | "new" | null;
+  fallback?: AgentSummaryDto;
+  models: ModelDto[];
+  busy: boolean;
+  run: Run;
+  onDone: (id: string | null) => void;
+}) {
+  const existing = value === "new" ? null : value;
+  const [form] = Form.useForm<AgentForm>();
+  const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
+  const [avatar, setAvatar] = useState<File | null>(null);
+  const avatarRef = useRef<HTMLInputElement>(null);
+  const { modal } = AntApp.useApp();
+  useEffect(() => {
+    void api.toolCatalog().then((next) => {
+      setCatalog(next);
+      const source = value === "new" ? newAgent(fallback) : value;
+      if (source) form.setFieldValue("enabledTools", agentForm(source, next).enabledTools);
+    });
+  }, []);
+  if (value === null) return <Flex justify="center"><Text type="secondary">正在加载 Agent</Text></Flex>;
+  const base = existing ?? newAgent(fallback);
+  const initial = agentForm(base, catalog);
+  const save = async (values: AgentForm) => {
+    let saved: AgentDto | undefined;
+    const ok = await run(async () => {
+      const input = agentInput(values, base, catalog);
+      saved = existing ? await api.updateAgent(existing.id, input) : await api.createAgent(input);
+      if (avatar && saved) await api.updateAgentAvatar(saved.id, avatar.name, await fileBase64(avatar));
+    }, existing ? "Agent 已更新" : "Agent 已创建");
+    if (ok && saved) onDone(saved.id);
+  };
+  return <>
+    <Flex justify="space-between" align="center" gap="small" wrap>
+      <Title level={5}>{existing?.name ?? "新建 Agent"}</Title>
+      {existing && <Space.Compact>
+        <Tooltip title="导出 JSON"><Button icon={<DownloadOutlined />} href={api.agentExportUrl(existing.id, "json")} /></Tooltip>
+        <Tooltip title="导出 PNG"><Button icon={<DownloadOutlined />} disabled={!existing.hasAvatar} href={api.agentExportUrl(existing.id, "png")} /></Tooltip>
+      </Space.Compact>}
+    </Flex>
+    <Form<AgentForm> form={form} layout="vertical" initialValues={initial} onFinish={(values) => void save(values)}>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="name" label="名称" rules={[{ required: true, whitespace: true }, { max: 200 }]}><Input /></Form.Item>
+        <Form.Item className="settings-field" label="头像">
+          <Space><Button icon={<UploadOutlined />} onClick={() => avatarRef.current?.click()}>{avatar?.name ?? (existing?.hasAvatar ? "替换 PNG" : "选择 PNG")}</Button>
+          {existing?.hasAvatar && <Button danger icon={<DeleteOutlined />} onClick={() => void run(() => api.deleteAgentAvatar(existing.id), "头像已删除")} />}</Space>
+          <input ref={avatarRef} hidden type="file" accept="image/png" onChange={(event) => setAvatar(event.target.files?.[0] ?? null)} />
+        </Form.Item>
+      </Flex>
+      <Form.Item name="description" label="描述"><TextArea rows={4} /></Form.Item>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="personality" label="性格"><TextArea rows={4} /></Form.Item>
+        <Form.Item className="settings-field" name="scenario" label="场景"><TextArea rows={4} /></Form.Item>
+      </Flex>
+      <Form.Item name="firstMessage" label="首条开场白"><TextArea rows={4} /></Form.Item>
+      <Form.Item name="alternateGreetings" label="备用开场白（JSON 字符串数组）" rules={[jsonRule("必须是 JSON 字符串数组")]}><TextArea rows={4} /></Form.Item>
+      <Collapse ghost items={[
+        { key: "prompt", label: "提示词与示例", children: <>
+          <Form.Item name="systemPrompt" label="系统提示词"><TextArea rows={6} /></Form.Item>
+          <Form.Item name="postHistoryInstructions" label="历史后指令"><TextArea rows={4} /></Form.Item>
+          <Form.Item name="messageExample" label="对话示例"><TextArea rows={6} /></Form.Item>
+        </> },
+        { key: "book", label: "Lorebook", children: <Form.Item name="characterBook" label="Character Book JSON" rules={[jsonRule("Lorebook 必须是有效 JSON")] }><TextArea rows={10} /></Form.Item> },
+        { key: "metadata", label: "角色卡元数据", children: <>
+          <Form.Item name="creatorNotes" label="创作者备注"><TextArea rows={4} /></Form.Item>
+          <Flex className="settings-fields-row" gap="middle" wrap>
+            <Form.Item className="settings-field" name="creator" label="创作者"><Input /></Form.Item>
+            <Form.Item className="settings-field" name="characterVersion" label="角色版本"><Input /></Form.Item>
+          </Flex>
+          <Form.Item name="tags" label="标签（逗号分隔）"><Input /></Form.Item>
+          <Form.Item name="extensions" label="Extensions JSON" rules={[jsonRule("Extensions 必须是有效 JSON 对象")]}><TextArea rows={6} /></Form.Item>
+        </> }
+      ]} />
+      <Title level={5}>执行配置</Title>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="modelId" label="模型"><Select allowClear placeholder="未选择" options={models.filter((model) => model.enabled).map((model) => ({ label: model.displayName, value: model.id }))} /></Form.Item>
+        <Form.Item className="settings-field" name="contextPolicy" label="上下文策略"><Select options={[{ label: "自动裁剪", value: "trim" }, { label: "自动摘要", value: "summarize" }, { label: "完整历史", value: "full" }]} /></Form.Item>
+        <Form.Item className="settings-field" name="reasoningEffort" label="推理强度"><Select options={["none", "low", "medium", "high", "xhigh", "max"].map((item) => ({ label: item, value: item }))} /></Form.Item>
+      </Flex>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="temperature" label="Temperature"><OptionalNumber min={0} max={2} step={0.1} /></Form.Item>
+        <Form.Item className="settings-field" name="topP" label="Top P"><OptionalNumber min={0} max={1} step={0.05} /></Form.Item>
+        <Form.Item className="settings-field" name="maxOutputTokens" label="最大输出"><InputNumber className="settings-number-input" min={1} max={1_000_000} /></Form.Item>
+      </Flex>
+      <Form.Item name="stopSequences" label="停止序列（每行一个）"><StopSequencesInput /></Form.Item>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="reasoningSummary" label="推理摘要"><Select allowClear placeholder="使用模型默认" options={["auto", "concise", "detailed"].map((item) => ({ label: item, value: item }))} /></Form.Item>
+        <Form.Item className="settings-field" name="thinkingBudgetTokens" label="Thinking token 预算"><InputNumber className="settings-number-input" min={1024} placeholder="使用模型默认" /></Form.Item>
+      </Flex>
+      <Form.Item name="toolDefaultEnabled" label="默认启用新工具" valuePropName="checked"><Switch /></Form.Item>
+      <Form.Item name="enabledTools" label="工具"><Checkbox.Group options={catalog.map((tool) => ({ label: tool.label, value: tool.name, disabled: !tool.available }))} /></Form.Item>
+      <Title level={5}>用户设定覆盖</Title>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="userDisplayName" label="显示名称"><Input placeholder="使用全局名称" /></Form.Item>
+        <Form.Item className="settings-field" name="userDescription" label="用户描述"><TextArea rows={3} placeholder="使用全局描述" /></Form.Item>
+      </Flex>
+      <Space className="settings-actions" wrap>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy}>保存</Button>
+        {existing && <Button danger icon={<DeleteOutlined />} disabled={existing.protected || busy} onClick={() => modal.confirm({
+          title: "删除 Agent", content: `删除“${existing.name}”？引用它的会话会保留，但发送前需要重新选择 Agent。`, okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
+          onOk: async () => { if (await run(() => api.deleteAgent(existing.id), "Agent 已删除")) onDone(null); }
+        })}>删除</Button>}
+      </Space>
+    </Form>
+  </>;
+}
+
+interface AgentForm {
+  name: string; description: string; personality: string; scenario: string; firstMessage: string;
+  alternateGreetings: string; systemPrompt: string; postHistoryInstructions: string; messageExample: string;
+  characterBook: string; creatorNotes: string; creator: string; characterVersion: string; tags: string; extensions: string;
+  modelId?: string | undefined; contextPolicy: AgentInput["execution"]["contextPolicy"];
+  reasoningEffort: AgentInput["execution"]["reasoningEffort"];
+  temperature?: number | null | undefined; topP?: number | null | undefined; maxOutputTokens?: number | null | undefined; stopSequences?: string[] | undefined;
+  reasoningSummary?: "auto" | "concise" | "detailed" | undefined; thinkingBudgetTokens?: number | null | undefined;
+  toolDefaultEnabled: boolean; enabledTools: string[]; userDisplayName?: string | undefined; userDescription?: string | undefined;
+}
+
+function newAgent(fallback?: AgentSummaryDto): AgentDto {
+  const now = Date.now();
+  return {
+    id: "new", name: "", description: "", protected: false, revision: 1, hasAvatar: false,
+    modelId: fallback?.execution.modelId ?? null,
+    firstMessage: "你好，{{user}}。", alternateGreetings: [], createdAt: now, updatedAt: now,
+    card: { spec: "chara_card_v2", spec_version: "2.0", data: {
+      name: "", description: "", personality: "", scenario: "", first_mes: "你好，{{user}}。", mes_example: "",
+      creator_notes: "", system_prompt: "{{original}}", post_history_instructions: "", alternate_greetings: [],
+      tags: [], creator: "", character_version: "", extensions: {}
+    } },
+    execution: fallback?.execution ?? { modelId: null, contextPolicy: "trim", reasoningEffort: "none", generation: {}, tools: { defaultEnabled: true, overrides: {} } },
+    userProfile: {}
+  };
+}
+
+function agentForm(agent: AgentDto, catalog: ToolCatalogItemDto[]): AgentForm {
+  const data = agent.card.data;
+  const policy = agent.execution.tools;
+  return {
+    name: data.name, description: data.description, personality: data.personality, scenario: data.scenario,
+    firstMessage: data.first_mes, alternateGreetings: JSON.stringify(data.alternate_greetings, null, 2),
+    systemPrompt: data.system_prompt, postHistoryInstructions: data.post_history_instructions, messageExample: data.mes_example,
+    characterBook: data.character_book ? JSON.stringify(data.character_book, null, 2) : "",
+    creatorNotes: data.creator_notes, creator: data.creator, characterVersion: data.character_version,
+    tags: data.tags.join(", "), extensions: JSON.stringify(data.extensions, null, 2), modelId: agent.execution.modelId ?? undefined,
+    contextPolicy: agent.execution.contextPolicy, reasoningEffort: agent.execution.reasoningEffort,
+    temperature: agent.execution.generation.common?.temperature, topP: agent.execution.generation.common?.topP,
+    maxOutputTokens: agent.execution.generation.common?.maxOutputTokens, stopSequences: agent.execution.generation.common?.stopSequences,
+    reasoningSummary: agent.execution.generation.protocol?.reasoningSummary,
+    thinkingBudgetTokens: agent.execution.generation.protocol?.thinkingBudgetTokens,
+    toolDefaultEnabled: policy.defaultEnabled,
+    enabledTools: catalog.filter((tool) => policy.overrides[tool.name] ?? policy.defaultEnabled).map((tool) => tool.name),
+    userDisplayName: agent.userProfile.displayName, userDescription: agent.userProfile.description
+  };
+}
+
+function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatalogItemDto[]): AgentInput {
+  const common = {
+    ...(values.temperature !== undefined && values.temperature !== null ? { temperature: values.temperature } : {}),
+    ...(values.topP !== undefined && values.topP !== null ? { topP: values.topP } : {}),
+    ...(values.maxOutputTokens ? { maxOutputTokens: values.maxOutputTokens } : {}),
+    ...(values.stopSequences?.length ? { stopSequences: values.stopSequences } : {})
+  };
+  const enabled = new Set(values.enabledTools ?? []);
+  const overrides = { ...base.execution.tools.overrides };
+  for (const tool of catalog) overrides[tool.name] = values.toolDefaultEnabled ? !enabled.has(tool.name) ? false : true : enabled.has(tool.name);
+  return {
+    card: { ...base.card, data: { ...base.card.data,
+      name: values.name.trim(), description: values.description ?? "", personality: values.personality ?? "", scenario: values.scenario ?? "",
+      first_mes: values.firstMessage ?? "", alternate_greetings: parseJson(values.alternateGreetings, []),
+      system_prompt: values.systemPrompt ?? "", post_history_instructions: values.postHistoryInstructions ?? "",
+      mes_example: values.messageExample ?? "", character_book: values.characterBook.trim() ? parseJson(values.characterBook, undefined) : undefined,
+      creator_notes: values.creatorNotes ?? "", creator: values.creator ?? "", character_version: values.characterVersion ?? "",
+      tags: (values.tags ?? "").split(",").map((tag) => tag.trim()).filter(Boolean), extensions: parseJson(values.extensions, {})
+    } },
+    execution: { ...base.execution, modelId: values.modelId ?? null, contextPolicy: values.contextPolicy,
+      reasoningEffort: values.reasoningEffort, generation: { ...base.execution.generation, common, protocol: {
+        ...(values.reasoningSummary ? { reasoningSummary: values.reasoningSummary } : {}),
+        ...(values.thinkingBudgetTokens ? { thinkingBudgetTokens: values.thinkingBudgetTokens } : {})
+      } },
+      tools: { defaultEnabled: values.toolDefaultEnabled, overrides }
+    },
+    userProfile: { ...(values.userDisplayName?.trim() ? { displayName: values.userDisplayName.trim() } : {}), ...(values.userDescription?.trim() ? { description: values.userDescription.trim() } : {}) }
+  };
+}
+
+function jsonRule(message: string) {
+  return { validator: async (_: unknown, value: string) => { if (!value?.trim()) return; try { JSON.parse(value); } catch { throw new Error(message); } } };
+}
+
+function parseJson<T>(value: string, fallback: T): T {
+  try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+async function fileBase64(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
 }
 
 function Tools() {
@@ -531,15 +810,16 @@ function General({ settings, models, onSettings, uiPreferences, onUiPreferences 
     try { onSettings(await api.updateSettings(patch)); } catch (error) { void message.error(error instanceof Error ? error.message : "操作失败"); }
   };
   return <Form layout="vertical" className="general-settings">
-    <Form.Item label="默认模型"><Select allowClear value={settings.defaultModelId ?? undefined} placeholder="未选择" options={models.filter((model) => model.enabled).map((model) => ({ label: model.displayName, value: model.id }))} onChange={(value) => void update({ defaultModelId: value ?? null })} /></Form.Item>
-    <Form.Item label="默认上下文策略"><Select value={settings.defaultContextPolicy} options={[{ label: "自动裁剪", value: "trim" }, { label: "自动摘要", value: "summarize" }, { label: "完整历史", value: "full" }]} onChange={(value) => void update({ defaultContextPolicy: value })} /></Form.Item>
     <Form.Item label="界面主题"><Select value={settings.theme} options={[{ label: "跟随系统", value: "system" }, { label: "浅色", value: "light" }, { label: "深色", value: "dark" }]} onChange={(value) => void update({ theme: value })} /></Form.Item>
     <Form.Item label="推理过程折叠"><Select value={uiPreferences.reasoningCollapsePolicy} options={[
       { label: "始终默认折叠", value: "always-collapsed" },
       { label: "正式回答后折叠", value: "collapse-on-answer" },
       { label: "不自动折叠", value: "never-auto-collapse" }
     ]} onChange={(reasoningCollapsePolicy) => onUiPreferences({ ...uiPreferences, reasoningCollapsePolicy })} /></Form.Item>
-    <Form.Item label="新会话默认系统提示"><TextArea rows={8} value={settings.defaultSystemPrompt} onChange={(event) => onSettings({ ...settings, defaultSystemPrompt: event.target.value })} onBlur={() => void update({ defaultSystemPrompt: settings.defaultSystemPrompt })} /></Form.Item>
+    <Title level={5}>全局用户设定</Title>
+    <Form.Item label="显示名称"><Input value={settings.userProfile.displayName} onChange={(event) => onSettings({ ...settings, userProfile: { ...settings.userProfile, displayName: event.target.value } })} onBlur={() => void update({ userProfile: settings.userProfile })} /></Form.Item>
+    <Form.Item label="用户描述"><TextArea rows={4} value={settings.userProfile.description} onChange={(event) => onSettings({ ...settings, userProfile: { ...settings.userProfile, description: event.target.value } })} onBlur={() => void update({ userProfile: settings.userProfile })} /></Form.Item>
+    <Form.Item label="基础系统提示"><TextArea rows={8} value={settings.defaultSystemPrompt} onChange={(event) => onSettings({ ...settings, defaultSystemPrompt: event.target.value })} onBlur={() => void update({ defaultSystemPrompt: settings.defaultSystemPrompt })} /></Form.Item>
   </Form>;
 }
 

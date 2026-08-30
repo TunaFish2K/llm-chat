@@ -29,6 +29,9 @@ export class OpenAiChatAdapter implements ProviderAdapter {
       }
       messages.push(converted);
     }
+    if (request.postHistoryInstructions) {
+      messages.push({ role: "developer", content: request.postHistoryInstructions });
+    }
     const body: Record<string, unknown> = {
       model: request.modelKey,
       messages,

@@ -1,8 +1,11 @@
 import type {
+  AgentDto,
+  AgentInput,
+  AgentSummaryDto,
   AppSettings,
   ConnectionDto,
   ConnectionInput,
-  ContextPolicy,
+  ConversationExecutionOverrides,
   ConversationStartedDto,
   ConversationDto,
   GenerationCreatedDto,
@@ -62,9 +65,23 @@ export const api = {
   createModel: (input: ModelInput) => request<ModelDto>("/api/models", { method: "POST", body: JSON.stringify(input) }),
   updateModel: (id: string, input: Partial<ModelInput>) => request<ModelDto>(`/api/models/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
   deleteModel: (id: string) => request<void>(`/api/models/${id}`, { method: "DELETE" }),
+  agents: () => request<AgentSummaryDto[]>("/api/agents"),
+  agent: (id: string) => request<AgentDto>(`/api/agents/${id}`),
+  createAgent: (input: AgentInput) => request<AgentDto>("/api/agents", { method: "POST", body: JSON.stringify(input) }),
+  updateAgent: (id: string, input: Partial<AgentInput>) => request<AgentDto>(`/api/agents/${id}`, { method: "PATCH", body: JSON.stringify(input) }),
+  deleteAgent: (id: string) => request<void>(`/api/agents/${id}`, { method: "DELETE" }),
+  importAgent: (fileName: string, dataBase64: string) => request<AgentDto>("/api/agents/import", {
+    method: "POST", body: JSON.stringify({ fileName, dataBase64 })
+  }),
+  updateAgentAvatar: (id: string, fileName: string, dataBase64: string) => request<AgentDto>(`/api/agents/${id}/avatar`, {
+    method: "PUT", body: JSON.stringify({ fileName, dataBase64 })
+  }),
+  deleteAgentAvatar: (id: string) => request<void>(`/api/agents/${id}/avatar`, { method: "DELETE" }),
+  agentAvatarUrl: (id: string, revision?: number) => `/api/agents/${id}/avatar${revision ? `?v=${revision}` : ""}`,
+  agentExportUrl: (id: string, format: "json" | "png") => `/api/agents/${id}/export?format=${format}`,
   conversations: () => request<ConversationDto[]>("/api/conversations"),
-  createConversation: (input: { systemPrompt: string }) => request<ConversationDto>("/api/conversations", { method: "POST", body: JSON.stringify(input) }),
-  startConversation: (input: { text: string; modelId: string; contextPolicy?: ContextPolicy }) => request<ConversationStartedDto>("/api/conversations/start", { method: "POST", body: JSON.stringify(input) }),
+  createConversation: (input: { agentId: string; executionOverrides?: ConversationExecutionOverrides }) => request<ConversationDto>("/api/conversations", { method: "POST", body: JSON.stringify(input) }),
+  startConversation: (input: { text: string; agentId: string; greetingIndex?: number; executionOverrides?: ConversationExecutionOverrides }) => request<ConversationStartedDto>("/api/conversations/start", { method: "POST", body: JSON.stringify(input) }),
   updateConversation: (id: string, patch: PatchConversationInput) => request<ConversationDto>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteConversation: (id: string) => request<void>(`/api/conversations/${id}`, { method: "DELETE" }),
   messages: (id: string) => request<MessageDto[]>(`/api/conversations/${id}/messages`),

@@ -74,7 +74,7 @@ describe("Store", () => {
       generatedModel: { modelId: model.id, displayName: "Mock Model" }
     });
     store.updateModel(secondModel.id, { enabled: false });
-    expect(store.getConversation(conversation.id)?.modelId).toBeNull();
+    expect(store.getConversation(conversation.id)?.modelId).toBe(secondModel.id);
     store.close();
   });
 
@@ -91,7 +91,7 @@ describe("Store", () => {
 
     expect(started.conversation).toMatchObject({
       title: "第一条消息",
-      systemPrompt: "server system",
+      systemPrompt: "",
       contextPolicy: "summarize",
       modelId: model.id
     });
@@ -142,7 +142,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(10);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(11);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -177,7 +177,7 @@ describe("Store", () => {
     store.close();
   });
 
-  it("uses one global effort across conversations, sends, and retries", () => {
+  it("keeps a conversation reasoning override stable across sends and retries", () => {
     const store = createStore();
     const { model } = seedModel(store);
     store.updateModel(model.id, {
@@ -190,11 +190,11 @@ describe("Store", () => {
 
     store.updateSettings({ reasoningEffort: "xhigh" });
     const second = store.createMessageGeneration(started.conversation.id, "继续");
-    expect(store.getGeneration(second.generationId)?.settings.reasoningEffort).toBe("xhigh");
+    expect(store.getGeneration(second.generationId)?.settings.reasoningEffort).toBe("high");
 
     store.updateSettings({ reasoningEffort: "max" });
     const retry = store.createRetryGeneration(second.assistantMessageId);
-    expect(store.getGeneration(retry.generationId)?.settings.reasoningEffort).toBe("max");
+    expect(store.getGeneration(retry.generationId)?.settings.reasoningEffort).toBe("high");
     expect(store.getGeneration(started.generation.generationId)?.settings.reasoningEffort).toBe("high");
     store.close();
   });
@@ -356,7 +356,7 @@ describe("Store", () => {
     const generated = store.createMessageGeneration(conversation.id, "with other");
     expect(store.getGeneration(generated.generationId)).toMatchObject({ modelKey: "other" });
     store.updateModel(other.id, { enabled: false });
-    expect(store.getConversation(conversation.id)?.modelId).toBeNull();
+    expect(store.getConversation(conversation.id)?.modelId).toBe(other.id);
     expect(() => store.updateConversation(conversation.id, { modelId: other.id })).toThrow("模型已停用");
     expect(() => store.createRetryGeneration("missing")).toThrow("助手消息不存在");
     expect(store.deleteConversation("missing")).toBe(false);

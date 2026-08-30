@@ -1,13 +1,16 @@
 import type {
+  AgentSummaryDto,
   AppSettings,
   ConnectionDto,
   ContextPolicy,
   ConversationDto,
+  ConversationExecutionOverrides,
   GenerationDto,
   MessageDto,
   ModelDto,
   ReasoningEffort,
-  ToolCallDto
+  ToolCallDto,
+  ToolCatalogItemDto
 } from "@llm-chat/contracts";
 import {
   CheckOutlined,
@@ -27,6 +30,7 @@ import {
 import { Actions, Bubble, Conversations, Sender, Think, Welcome, type BubbleItemType } from "@ant-design/x";
 import {
   Alert,
+  Avatar,
   Button,
   Collapse,
   Drawer,
@@ -34,8 +38,10 @@ import {
   Flex,
   Grid,
   Input,
+  InputNumber,
   Layout,
   Modal,
+  Select,
   Space,
   Spin,
   Tag,
@@ -62,6 +68,7 @@ const { Text } = Typography;
 
 interface BootData {
   settings: AppSettings;
+  agents: AgentSummaryDto[];
   connections: ConnectionDto[];
   models: ModelDto[];
   conversations: ConversationDto[];
@@ -78,11 +85,13 @@ export function App() {
   const [currentId, setCurrentId] = useState(() => conversationFromPath());
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [draft, setDraft] = useState("");
-  const [newModelId, setNewModelId] = useState<string | null>(null);
+  const [newAgentId, setNewAgentId] = useState<string | null>(null);
+  const [newOverrides, setNewOverrides] = useState<ConversationExecutionOverrides>({});
+  const [greetingIndex, setGreetingIndex] = useState(0);
   const [liveGenerationId, setLiveGenerationId] = useState<string | null>(null);
-  const [reasoningSaving, setReasoningSaving] = useState(false);
   const [toolActionIds, setToolActionIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [executionOpen, setExecutionOpen] = useState(false);
   const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ConversationDto | null>(null);
   const [error, setError] = useState("");
@@ -90,17 +99,15 @@ export function App() {
   const [titleDraft, setTitleDraft] = useState("");
   const [systemDark, setSystemDark] = useState(() => window.matchMedia("(prefers-color-scheme: dark)").matches);
   const draftReady = useRef(false);
-  const reasoningSaveRef = useRef<Promise<void> | null>(null);
-  const reasoningSaveSequence = useRef(0);
   const screens = Grid.useBreakpoint();
   const compactSidebar = !screens.lg;
   const mobileLayout = !screens.md;
 
   const refreshBoot = useCallback(async () => {
-    const [settings, connections, models, conversations] = await Promise.all([
-      api.settings(), api.connections(), api.models(), api.conversations()
+    const [settings, agents, connections, models, conversations] = await Promise.all([
+      api.settings(), api.agents(), api.connections(), api.models(), api.conversations()
     ]);
-    setBoot({ settings, connections, models, conversations });
+    setBoot({ settings, agents, connections, models, conversations });
   }, []);
 
   useEffect(() => { void refreshBoot().catch((value) => setError(messageOf(value))); }, [refreshBoot]);
@@ -117,14 +124,20 @@ export function App() {
   }, []);
 
   const current = boot?.conversations.find((item) => item.id === currentId) ?? null;
+  const fallbackAgentId = boot?.agents.some((agent) => agent.id === boot.settings.lastAgentId)
+    ? boot.settings.lastAgentId
+    : boot?.settings.defaultAgentId ?? null;
+  const selectedAgentId = current ? current.agentId : newAgentId ?? fallbackAgentId;
+  const selectedAgent = boot?.agents.find((agent) => agent.id === selectedAgentId) ?? null;
+  const activeOverrides = current?.executionOverrides ?? newOverrides;
   const enabledModels = useMemo(() => boot?.models.filter((model) => model.enabled) ?? [], [boot?.models]);
-  const fallbackModelId = enabledModels.some((model) => model.id === boot?.settings.defaultModelId)
-    ? boot?.settings.defaultModelId ?? null
-    : enabledModels[0]?.id ?? null;
-  const selectedModelId = current ? current.modelId : newModelId ?? fallbackModelId;
+  const selectedModelId = current?.modelId ?? (Object.hasOwn(activeOverrides, "modelId")
+    ? activeOverrides.modelId ?? null
+    : selectedAgent?.execution.modelId ?? null);
   const selectedModel = boot?.models.find((item) => item.id === selectedModelId) ?? null;
   const selectedModelAvailable = isModelUsable(selectedModel, boot?.connections ?? []);
-  const pendingPolicy = boot?.settings.defaultContextPolicy ?? "trim";
+  const selectedContextPolicy = activeOverrides.contextPolicy ?? selectedAgent?.execution.contextPolicy ?? "trim";
+  const selectedReasoningEffort = activeOverrides.reasoningEffort ?? selectedAgent?.execution.reasoningEffort ?? "none";
   const uiPreferences = boot?.settings.uiPreferences ?? defaultUiPreferences;
   const waitingToolApproval = messages.some((message) => message.generations.some((generation) =>
     generation.id === message.activeGenerationId && generation.status === "waiting-approval"
@@ -180,7 +193,9 @@ export function App() {
 
   const beginConversation = () => {
     setDraft("");
-    setNewModelId(null);
+    setNewAgentId(null);
+    setNewOverrides({});
+    setGreetingIndex(0);
     setError("");
     navigate(null);
   };
@@ -211,44 +226,52 @@ export function App() {
     });
   };
 
-  const persistReasoningEffort = (reasoningEffort: ReasoningEffort) => {
-    if (!boot || reasoningEffort === boot.settings.reasoningEffort) return;
-    const previous = boot.settings.reasoningEffort;
-    const sequence = ++reasoningSaveSequence.current;
-    setBoot({ ...boot, settings: { ...boot.settings, reasoningEffort } });
-    setReasoningSaving(true);
-    const predecessor = reasoningSaveRef.current?.catch(() => {}) ?? Promise.resolve();
-    const task = predecessor.then(async () => {
-      const settings = await api.updateSettings({ reasoningEffort });
-      if (reasoningSaveSequence.current === sequence) {
-        setBoot((value) => value ? { ...value, settings } : value);
-      }
-    }).catch((value) => {
-      if (reasoningSaveSequence.current === sequence) {
-        setBoot((currentBoot) => currentBoot ? {
-          ...currentBoot,
-          settings: { ...currentBoot.settings, reasoningEffort: previous }
-        } : currentBoot);
-        setError(messageOf(value));
-      }
-      throw value;
-    }).finally(() => {
-      if (reasoningSaveRef.current === task) {
-        reasoningSaveRef.current = null;
-        setReasoningSaving(false);
-      }
-    });
-    reasoningSaveRef.current = task;
-    void task.catch(() => {});
-  };
-
   const chooseModel = (modelId: string) => {
     if (!boot) return;
     if (!current) {
-      setNewModelId(modelId);
+      setNewOverrides((value) => ({ ...value, modelId }));
       return;
     }
-    void patchConversation(current, { modelId });
+    void patchConversation(current, { executionOverrides: { ...current.executionOverrides, modelId } });
+  };
+
+  const chooseReasoningEffort = (reasoningEffort: ReasoningEffort) => {
+    if (!current) {
+      setNewOverrides((value) => ({ ...value, reasoningEffort }));
+      return;
+    }
+    void patchConversation(current, {
+      executionOverrides: { ...current.executionOverrides, reasoningEffort }
+    });
+  };
+
+  const chooseContextPolicy = (contextPolicy: ContextPolicy) => {
+    if (!current) {
+      setNewOverrides((value) => ({ ...value, contextPolicy }));
+      return;
+    }
+    void patchConversation(current, {
+      executionOverrides: { ...current.executionOverrides, contextPolicy }
+    });
+  };
+
+  const chooseAgent = (agentId: string) => {
+    if (!current) {
+      setNewAgentId(agentId);
+      setNewOverrides({});
+      setGreetingIndex(0);
+      return;
+    }
+    const apply = () => void patchConversation(current, { agentId }).then(() => void refreshBoot());
+    if (messages.length) {
+      Modal.confirm({
+        title: "切换 Agent？",
+        content: "历史消息会保留，后续回复使用新 Agent。当前会话的模型、上下文、推理和工具覆盖项将全部清除。",
+        okText: "切换",
+        cancelText: "取消",
+        onOk: apply
+      });
+    } else apply();
   };
 
   const openSettings = () => {
@@ -257,20 +280,21 @@ export function App() {
   };
 
   const send = async (text = draft) => {
-    if (!boot || !selectedModelAvailable || !selectedModel || !text.trim() || liveGenerationId || waitingToolApproval) return;
+    if (!boot || !selectedAgent || !selectedModelAvailable || !selectedModel || !text.trim() || liveGenerationId || waitingToolApproval) return;
     setError("");
     try {
-      await reasoningSaveRef.current;
       const content = text.trim();
       setDraft("");
       if (!currentId) {
         const started = await api.startConversation({
           text: content,
-          modelId: selectedModel.id,
-          contextPolicy: pendingPolicy
+          agentId: selectedAgent!.id,
+          greetingIndex,
+          executionOverrides: newOverrides
         });
         setBoot((value) => value ? { ...value, conversations: [started.conversation, ...value.conversations] } : value);
-        setNewModelId(null);
+        setNewAgentId(null);
+        setNewOverrides({});
         navigate(started.conversation.id, true);
         await loadMessages(started.conversation.id);
         setLiveGenerationId(started.generation.generationId);
@@ -289,7 +313,6 @@ export function App() {
   const retry = async (messageId: string) => {
     if (liveGenerationId || waitingToolApproval) return;
     try {
-      await reasoningSaveRef.current;
       const created = await api.retry(messageId);
       if (currentId) await loadMessages(currentId);
       setLiveGenerationId(created.generationId);
@@ -324,10 +347,10 @@ export function App() {
     onGoSettings={openSettings}
   />;
   const effortControl = <ReasoningEffortControl
-    value={boot.settings.reasoningEffort}
+    value={selectedReasoningEffort}
     mobile={compactSidebar}
-    saving={reasoningSaving}
-    onChange={persistReasoningEffort}
+    saving={false}
+    onChange={chooseReasoningEffort}
   />;
   const welcomeModelSelector = <ModelSelector
     value={selectedModelId}
@@ -338,11 +361,22 @@ export function App() {
     placement={mobileLayout ? "topLeft" : "bottomLeft"}
   />;
   const welcomeEffortControl = <ReasoningEffortControl
-    value={boot.settings.reasoningEffort}
+    value={selectedReasoningEffort}
     mobile={compactSidebar}
-    saving={reasoningSaving}
-    onChange={persistReasoningEffort}
+    saving={false}
+    onChange={chooseReasoningEffort}
     placement={mobileLayout ? "topLeft" : "bottomLeft"}
+  />;
+  const agentSelector = <AgentSelector
+    value={selectedAgentId}
+    agents={boot.agents}
+    onChange={chooseAgent}
+  />;
+  const contextSelector = <Select
+    className="context-selector"
+    value={selectedContextPolicy}
+    options={CONTEXT_POLICIES}
+    onChange={chooseContextPolicy}
   />;
   const sidebar = <SidebarContent
     conversations={boot.conversations}
@@ -373,7 +407,13 @@ export function App() {
     }
     const selectedIndex = Math.max(0, message.generations.findIndex((item) => item.id === message.activeGenerationId));
     const generation = message.generations[selectedIndex];
-    if (!generation) return { key: message.id, role: "ai", content: "", loading: true, styles: { root: messageRailStyle } };
+    if (!generation) return {
+      key: message.id,
+      role: "ai",
+      variant: "borderless",
+      content: message.text ?? "",
+      styles: { root: messageRailStyle }
+    };
     const text = blockText(generation, ["text", "refusal"]);
     const reasoning = blockText(generation, ["reasoning"]);
     const active = message.activeGenerationId === liveGenerationId;
@@ -430,6 +470,8 @@ export function App() {
         label: "上下文策略",
         children: CONTEXT_POLICIES.map((policy) => ({ key: policy.value, label: policy.label }))
       },
+      { key: "execution-settings", label: "会话执行设置" },
+      { key: "restore-agent", label: "恢复 Agent 默认", disabled: !Object.keys(current.executionOverrides).length },
       { type: "divider" as const },
       { key: "delete", label: "删除会话", icon: <DeleteOutlined />, danger: true }
     ],
@@ -438,7 +480,13 @@ export function App() {
       if (key === "delete") {
         setDeleteTarget(current);
       } else if (CONTEXT_POLICIES.some((policy) => policy.value === key)) {
-        await patchConversation(current, { contextPolicy: key as ContextPolicy });
+        await patchConversation(current, {
+          executionOverrides: { ...current.executionOverrides, contextPolicy: key as ContextPolicy }
+        });
+      } else if (key === "restore-agent") {
+        await patchConversation(current, { executionOverrides: {} });
+      } else if (key === "execution-settings") {
+        setExecutionOpen(true);
       }
     }
   };
@@ -482,6 +530,7 @@ export function App() {
                   onClick={() => { setTitleDraft(current.title); setTitleEditing(true); }}
                 ><Text strong ellipsis>{current.title}</Text></Button>}
               </div>
+              {agentSelector}
               {headerMenu && <Dropdown menu={headerMenu} trigger={["click"]}>
                 <Button className="header-menu-button" type="text" icon={<MoreOutlined />} aria-label="会话操作" />
               </Dropdown>}
@@ -493,10 +542,16 @@ export function App() {
                 : !current ? <WelcomeComposer
                   error={error}
                   draft={draft}
-                  ready={selectedModelAvailable}
+                  ready={Boolean(selectedAgent) && selectedModelAvailable}
                   mobile={mobileLayout}
+                  agent={selectedAgent}
+                  userName={selectedAgent?.userProfile.displayName ?? boot.settings.userProfile.displayName}
+                  agentSelector={agentSelector}
+                  greetingIndex={greetingIndex}
                   modelSelector={welcomeModelSelector}
                   effortControl={welcomeEffortControl}
+                  contextSelector={contextSelector}
+                  onGreetingIndex={setGreetingIndex}
                   onDraftChange={setDraft}
                   onSubmit={(value) => void send(value)}
                   onDismissError={() => setError("")}
@@ -511,21 +566,24 @@ export function App() {
                       />}
                   </div>
                   <div className="composer-rail">
+                    {current && !selectedAgent && <Alert type="error" showIcon message="当前 Agent 已删除，请重新选择" />}
                     {current && !selectedModelAvailable && <Alert type="error" showIcon message="当前模型已失效或不可用，请重新选择" />}
                     {error && <Alert type="error" showIcon closable message={error} onClose={() => setError("")} />}
                     <Sender
                       value={draft}
-                      disabled={!selectedModelAvailable || waitingToolApproval}
+                      disabled={!selectedAgent || !selectedModelAvailable || waitingToolApproval}
                       loading={Boolean(liveGenerationId)}
-                      placeholder={waitingToolApproval ? "请先处理上方的工具审批" : selectedModelAvailable ? "输入消息" : selectedModel ? "当前模型失效" : "请先选择模型"}
+                      placeholder={waitingToolApproval ? "请先处理上方的工具审批" : !selectedAgent ? "请先选择 Agent" : selectedModelAvailable ? "输入消息" : selectedModel ? "当前模型失效" : "请先选择模型"}
                       autoSize={{ minRows: 1, maxRows: 6 }}
                       submitType="enter"
                       onChange={setDraft}
                       onSubmit={(value) => void send(value)}
                       onCancel={() => liveGenerationId && void api.cancel(liveGenerationId)}
                       footer={<Flex className="composer-toolbar" align="center" gap={4} wrap>
+                        {agentSelector}
                         {modelSelector}
                         {effortControl}
+                        {contextSelector}
                       </Flex>}
                     />
                   </div>
@@ -550,6 +608,7 @@ export function App() {
       <SettingsPanel
         open={settingsOpen}
         settings={boot.settings}
+        agents={boot.agents}
         connections={boot.connections}
         models={boot.models}
         uiPreferences={uiPreferences}
@@ -575,47 +634,219 @@ export function App() {
       >
         删除会话“{deleteTarget?.title}”？此操作无法恢复。
       </Modal>
+      {current && selectedAgent && <ConversationOverridesModal
+        open={executionOpen}
+        conversation={current}
+        agent={selectedAgent}
+        models={boot.models}
+        onClose={() => setExecutionOpen(false)}
+        onSave={async (executionOverrides) => {
+          await patchConversation(current, { executionOverrides });
+          setExecutionOpen(false);
+        }}
+      />}
   </AppTheme>;
 }
 
-function WelcomeComposer({ error, draft, ready, mobile, modelSelector, effortControl, onDraftChange, onSubmit, onDismissError }: {
+function AgentSelector({ value, agents, onChange }: {
+  value: string | null;
+  agents: AgentSummaryDto[];
+  onChange: (agentId: string) => void;
+}) {
+  return <Select
+    className="agent-selector"
+    value={value}
+    placeholder="选择 Agent"
+    options={agents.map((agent) => ({
+      value: agent.id,
+      label: <Flex align="center" gap="small" className="agent-option">
+        <Avatar size={24} src={agent.hasAvatar ? api.agentAvatarUrl(agent.id, agent.revision) : undefined}>
+          {agent.name.slice(0, 1)}
+        </Avatar>
+        <Text ellipsis>{agent.name}</Text>
+      </Flex>
+    }))}
+    onChange={onChange}
+  />;
+}
+
+function WelcomeComposer({ error, draft, ready, mobile, agent, userName, agentSelector, greetingIndex, modelSelector, effortControl, contextSelector, onGreetingIndex, onDraftChange, onSubmit, onDismissError }: {
   error: string;
   draft: string;
   ready: boolean;
   mobile: boolean;
+  agent: AgentSummaryDto | null;
+  userName: string;
+  agentSelector: React.ReactNode;
+  greetingIndex: number;
   modelSelector: React.ReactNode;
   effortControl: React.ReactNode;
+  contextSelector: React.ReactNode;
+  onGreetingIndex: (index: number) => void;
   onDraftChange: (value: string) => void;
   onSubmit: (value: string) => void;
   onDismissError: () => void;
 }) {
+  const greetings = agent ? [agent.firstMessage, ...agent.alternateGreetings] : [];
+  const greeting = greetings[greetingIndex] ?? "";
   return <Flex className="welcome-stage" align="center" justify="center">
     <Flex className="welcome-composer" vertical gap="large">
-      <Welcome className="welcome-prompt" variant="borderless" title="有什么可以帮你？" styles={{ root: { justifyContent: "center", textAlign: "center" } }} />
+      <Flex className="welcome-agent" vertical align="center" gap="middle">
+        <Avatar size={64} src={agent?.hasAvatar ? api.agentAvatarUrl(agent.id, agent.revision) : undefined}>
+          {agent?.name.slice(0, 1) ?? "A"}
+        </Avatar>
+        <Typography.Title level={2}>{agent?.name ?? "选择 Agent"}</Typography.Title>
+        {greeting && <Typography.Paragraph className="greeting-preview">
+          {renderGreeting(greeting, agent?.name ?? "Agent", userName)}
+        </Typography.Paragraph>}
+        {greetings.length > 1 && <Space.Compact size="small">
+          <Button type="text" icon={<LeftOutlined />} aria-label="上一条开场白" disabled={greetingIndex === 0} onClick={() => onGreetingIndex(greetingIndex - 1)} />
+          <Button type="text" disabled>{greetingIndex + 1}/{greetings.length}</Button>
+          <Button type="text" icon={<RightOutlined />} aria-label="下一条开场白" disabled={greetingIndex === greetings.length - 1} onClick={() => onGreetingIndex(greetingIndex + 1)} />
+        </Space.Compact>}
+      </Flex>
       <Flex className="welcome-input-stack" vertical gap="small">
         {!mobile && <Flex className="welcome-context" align="center" gap={4} wrap>
+          {agentSelector}
           {modelSelector}
           {effortControl}
+          {contextSelector}
         </Flex>}
         {error && <Alert type="error" showIcon closable message={error} onClose={onDismissError} />}
         <Sender
           value={draft}
           disabled={!ready}
-          placeholder={ready ? "输入消息" : "请先选择模型"}
+          placeholder={ready ? "输入消息" : agent ? "请先选择模型" : "请先选择 Agent"}
           autoSize={{ minRows: mobile ? 1 : 2, maxRows: 8 }}
           submitType="enter"
           onChange={onDraftChange}
           onSubmit={onSubmit}
           {...(mobile ? {
             footer: <Flex className="composer-toolbar" align="center" gap={4} wrap>
+              {agentSelector}
               {modelSelector}
               {effortControl}
+              {contextSelector}
             </Flex>
           } : {})}
         />
       </Flex>
     </Flex>
   </Flex>;
+}
+
+function renderGreeting(value: string, characterName: string, userName: string): string {
+  return value.replace(/\{\{char\}\}|<BOT>/gi, characterName).replace(/\{\{user\}\}|<USER>/gi, userName);
+}
+
+function ConversationOverridesModal({ open, conversation, agent, models, onClose, onSave }: {
+  open: boolean;
+  conversation: ConversationDto;
+  agent: AgentSummaryDto;
+  models: ModelDto[];
+  onClose: () => void;
+  onSave: (value: ConversationExecutionOverrides) => Promise<void>;
+}) {
+  const [value, setValue] = useState<ConversationExecutionOverrides>(conversation.executionOverrides);
+  const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    setValue(structuredClone(conversation.executionOverrides));
+    void api.toolCatalog().then(setCatalog).catch(() => setCatalog([]));
+  }, [open, conversation.id, conversation.updatedAt]);
+  const setTop = (key: "modelId" | "contextPolicy" | "reasoningEffort", next: string) => {
+    setValue((currentValue) => {
+      const output = { ...currentValue };
+      if (next === "agent-default") delete output[key];
+      else if (key === "modelId" && next === "unavailable") output.modelId = null;
+      else Object.assign(output, { [key]: next });
+      return output;
+    });
+  };
+  const setCommon = (key: "temperature" | "topP" | "maxOutputTokens" | "stopSequences", next: number | string[] | null) => {
+    setValue((currentValue) => {
+      const common = { ...(currentValue.generation?.common ?? {}) };
+      if (next === null || (Array.isArray(next) && !next.length)) delete common[key];
+      else Object.assign(common, { [key]: next });
+      const generation = { ...(currentValue.generation ?? {}) };
+      if (Object.keys(common).length) generation.common = common;
+      else delete generation.common;
+      const output = { ...currentValue };
+      if (Object.keys(generation).length) output.generation = generation;
+      else delete output.generation;
+      return output;
+    });
+  };
+  const setProtocol = (key: "reasoningSummary" | "thinkingBudgetTokens", next: string | number | null) => {
+    setValue((currentValue) => {
+      const protocol = { ...(currentValue.generation?.protocol ?? {}) };
+      if (next === null) delete protocol[key];
+      else Object.assign(protocol, { [key]: next });
+      const generation = { ...(currentValue.generation ?? {}) };
+      if (Object.keys(protocol).length) generation.protocol = protocol;
+      else delete generation.protocol;
+      const output = { ...currentValue };
+      if (Object.keys(generation).length) output.generation = generation;
+      else delete output.generation;
+      return output;
+    });
+  };
+  const save = async () => {
+    setSaving(true);
+    try { await onSave(value); } finally { setSaving(false); }
+  };
+  return <Modal open={open} title="会话执行设置" okText="保存" cancelText="取消" confirmLoading={saving} onCancel={onClose} onOk={() => void save()}>
+    <Flex vertical gap="middle" className="conversation-overrides">
+      <Flex gap="middle" wrap>
+        <label className="override-field"><Text type="secondary">模型</Text><Select
+          aria-label="会话模型覆盖"
+          value={Object.hasOwn(value, "modelId") ? value.modelId ?? "unavailable" : "agent-default"}
+          options={[
+            { label: `Agent 默认${agent.execution.modelId ? "" : "（未设置）"}`, value: "agent-default" },
+            { label: "不选择模型", value: "unavailable" },
+            ...models.filter((model) => model.enabled).map((model) => ({ label: model.displayName, value: model.id }))
+          ]}
+          onChange={(next) => setTop("modelId", next)}
+        /></label>
+        <label className="override-field"><Text type="secondary">上下文</Text><Select aria-label="会话上下文覆盖" value={value.contextPolicy ?? "agent-default"} options={[
+          { label: `Agent 默认（${CONTEXT_POLICIES.find((item) => item.value === agent.execution.contextPolicy)?.label}）`, value: "agent-default" },
+          ...CONTEXT_POLICIES
+        ]} onChange={(next) => setTop("contextPolicy", next)} /></label>
+        <label className="override-field"><Text type="secondary">推理强度</Text><Select aria-label="会话推理强度覆盖" value={value.reasoningEffort ?? "agent-default"} options={[
+          { label: `Agent 默认（${agent.execution.reasoningEffort}）`, value: "agent-default" },
+          ...["none", "low", "medium", "high", "xhigh", "max"].map((item) => ({ label: item, value: item }))
+        ]} onChange={(next) => setTop("reasoningEffort", next)} /></label>
+      </Flex>
+      <Flex gap="middle" wrap>
+        <label className="override-field"><Text type="secondary">Temperature</Text><InputNumber aria-label="会话 Temperature 覆盖" min={0} max={2} step={0.1} value={value.generation?.common?.temperature ?? null} placeholder="Agent 默认" onChange={(next) => setCommon("temperature", next)} /></label>
+        <label className="override-field"><Text type="secondary">Top P</Text><InputNumber aria-label="会话 Top P 覆盖" min={0} max={1} step={0.05} value={value.generation?.common?.topP ?? null} placeholder="Agent 默认" onChange={(next) => setCommon("topP", next)} /></label>
+        <label className="override-field"><Text type="secondary">最大输出</Text><InputNumber aria-label="会话最大输出覆盖" min={1} max={1_000_000} value={value.generation?.common?.maxOutputTokens ?? null} placeholder="Agent 默认" onChange={(next) => setCommon("maxOutputTokens", next)} /></label>
+      </Flex>
+      <label><Text type="secondary">停止序列</Text><Input.TextArea aria-label="会话停止序列覆盖" rows={2} value={(value.generation?.common?.stopSequences ?? []).join("\n")} placeholder="Agent 默认" onChange={(event) => setCommon("stopSequences", event.target.value.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 8))} /></label>
+      <Flex gap="middle" wrap>
+        <label className="override-field"><Text type="secondary">推理摘要</Text><Select aria-label="会话推理摘要覆盖" allowClear value={value.generation?.protocol?.reasoningSummary} placeholder="Agent 默认" options={["auto", "concise", "detailed"].map((item) => ({ label: item, value: item }))} onChange={(next) => setProtocol("reasoningSummary", next ?? null)} /></label>
+        <label className="override-field"><Text type="secondary">Thinking token 预算</Text><InputNumber aria-label="会话 Thinking token 预算覆盖" min={1024} value={value.generation?.protocol?.thinkingBudgetTokens ?? null} placeholder="Agent 默认" onChange={(next) => setProtocol("thinkingBudgetTokens", next)} /></label>
+      </Flex>
+      {catalog.length > 0 && <div><Text type="secondary">工具</Text><Flex vertical gap="small" className="override-tools">
+        {catalog.map((tool) => <Flex key={tool.name} align="center" justify="space-between" gap="middle">
+          <Text ellipsis>{tool.label}</Text>
+          <Select aria-label={`${tool.label} 覆盖`} size="small" value={value.tools?.[tool.name] === undefined ? "agent-default" : value.tools[tool.name] ? "enabled" : "disabled"} options={[
+            { label: "Agent 默认", value: "agent-default" }, { label: "启用", value: "enabled" }, { label: "停用", value: "disabled" }
+          ]} onChange={(next) => setValue((currentValue) => {
+            const tools = { ...(currentValue.tools ?? {}) };
+            if (next === "agent-default") delete tools[tool.name];
+            else tools[tool.name] = next === "enabled";
+            const output = { ...currentValue };
+            if (Object.keys(tools).length) output.tools = tools;
+            else delete output.tools;
+            return output;
+          })} />
+        </Flex>)}
+      </Flex></div>}
+      <Button onClick={() => setValue({})}>恢复 Agent 默认</Button>
+    </Flex>
+  </Modal>;
 }
 
 function SidebarContent({ conversations, currentId, showBrand, showCollapse, onCollapse, onCreate, onNavigate, onDelete, onSettings }: {
@@ -755,6 +986,7 @@ function MessageFooter({ message, generation, selectedIndex, active, mobile, onR
       <Button type="text" title="下一版本" icon={<RightOutlined />} disabled={selectedIndex === message.generations.length - 1} onClick={() => void onSelect(message.generations[selectedIndex + 1]!.id)} />
     </Space.Compact> : null;
   const metadata = <>
+    {generation.generatedAgent && <Text type="secondary">{generation.generatedAgent.name} r{generation.generatedAgent.revision}</Text>}
     {message.generatedModel && <Tooltip title={detail}><Text type="secondary" ellipsis className="message-model-label">{message.generatedModel.displayName}</Text></Tooltip>}
     {generation.usage.totalTokens !== undefined && <Text type="secondary">{generation.usage.totalTokens.toLocaleString()} tokens</Text>}
     {generation.status !== "completed" && <Tag color={statusColor(generation.status)}>{statusName(generation.status)}</Tag>}

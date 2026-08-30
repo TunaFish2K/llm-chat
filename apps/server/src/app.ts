@@ -4,8 +4,10 @@ import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import {
   appSettingsSchema,
+  agentInputSchema,
   connectionInputSchema,
   conversationInputSchema,
+  encodedFileSchema,
   mcpServerInputSchema,
   modelInputSchema,
   patchConversationSchema,
@@ -20,6 +22,7 @@ import { adapterFor, ProviderError } from "@llm-chat/providers";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z, ZodError } from "zod";
 import { Store, StoreError } from "./database";
+import { exportCharacterCard, importCharacterCard } from "./character-card";
 import { GenerationRunner } from "./generations";
 import { closeMcpManager, mcpManager } from "./mcp";
 import { toolCatalog } from "./tools";
@@ -31,7 +34,7 @@ export interface AppOptions {
 }
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
-  const app = Fastify({ logger: options.logger ?? true, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({ logger: options.logger ?? true, bodyLimit: 15 * 1024 * 1024 });
   const store = new Store(options.dataFile);
   const runner = new GenerationRunner(store);
   app.decorate("store", store);
@@ -66,7 +69,62 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       if (!model) throw new StoreError("model_not_found", "默认模型不存在");
       if (!model.enabled) throw new StoreError("model_disabled", "默认模型已停用");
     }
+    for (const agentId of [patch.defaultAgentId, patch.lastAgentId]) {
+      if (agentId && !store.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
+    }
     return store.updateSettings(patch);
+  });
+  app.get("/api/agents", async () => store.listAgents());
+  app.post("/api/agents", async (request, reply) => {
+    const value = agentInputSchema.parse(request.body);
+    return reply.code(201).send(store.createAgent(value));
+  });
+  app.post("/api/agents/import", async (request, reply) => {
+    const value = encodedFileSchema.parse(request.body);
+    return reply.code(201).send(importCharacterCard(store, value.fileName, Buffer.from(value.dataBase64, "base64")));
+  });
+  app.get<{ Params: { id: string } }>("/api/agents/:id", async (request) => {
+    const agent = store.getAgent(request.params.id);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    return agent;
+  });
+  app.patch<{ Params: { id: string } }>("/api/agents/:id", async (request) => {
+    const patch = agentInputSchema.partial().parse(request.body);
+    const agent = store.updateAgent(request.params.id, patch);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    return agent;
+  });
+  app.delete<{ Params: { id: string } }>("/api/agents/:id", async (request, reply) => {
+    if (!store.deleteAgent(request.params.id)) throw new StoreError("agent_not_found", "Agent 不存在");
+    return reply.code(204).send();
+  });
+  app.get<{ Params: { id: string } }>("/api/agents/:id/avatar", async (request, reply) => {
+    if (!store.getAgent(request.params.id)) throw new StoreError("agent_not_found", "Agent 不存在");
+    const avatar = store.getAgentAvatar(request.params.id);
+    if (!avatar) throw new StoreError("agent_avatar_not_found", "Agent 没有头像");
+    return reply.type("image/png").send(Buffer.from(avatar));
+  });
+  app.put<{ Params: { id: string } }>("/api/agents/:id/avatar", async (request) => {
+    const value = encodedFileSchema.parse(request.body);
+    const bytes = Buffer.from(value.dataBase64, "base64");
+    if (bytes.byteLength > 10 * 1024 * 1024 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+      throw new StoreError("agent_avatar_invalid", "头像必须是小于 10 MiB 的 PNG");
+    }
+    const agent = store.setAgentAvatar(request.params.id, bytes);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    return agent;
+  });
+  app.delete<{ Params: { id: string } }>("/api/agents/:id/avatar", async (request, reply) => {
+    const agent = store.setAgentAvatar(request.params.id, null);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    return reply.code(204).send();
+  });
+  app.get<{ Params: { id: string }; Querystring: { format?: "json" | "png" } }>("/api/agents/:id/export", async (request, reply) => {
+    const agent = store.getAgent(request.params.id);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    const exported = exportCharacterCard(store, agent, request.query.format ?? "json");
+    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(exported.fileName)}`);
+    return reply.type(exported.contentType).send(Buffer.from(exported.bytes));
   });
   app.get("/api/tools/settings", async () => store.getToolSettings());
   app.patch("/api/tools/settings", async (request) => store.updateToolSettings(toolSettingsInputSchema.parse(request.body)));

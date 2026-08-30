@@ -55,7 +55,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     });
     const body: Record<string, unknown> = {
       model: request.modelKey,
-      system: request.systemPrompt || undefined,
+      system: [request.systemPrompt, request.postHistoryInstructions].filter(Boolean).join("\n\n") || undefined,
       messages,
       max_tokens: common.maxOutputTokens,
       stream: true
