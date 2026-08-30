@@ -1,11 +1,62 @@
 import { defineConfig } from "vitest/config";
 
+const criticalCoverageThreshold = {
+  statements: 90,
+  lines: 90,
+  functions: 90,
+  branches: 85
+};
+
 export default defineConfig({
   test: {
-    include: ["apps/**/*.test.ts", "packages/**/*.test.ts"],
+    projects: [
+      {
+        test: {
+          name: "node",
+          environment: "node",
+          include: ["apps/server/src/**/*.test.{ts,tsx}", "packages/**/*.test.{ts,tsx}"]
+        }
+      },
+      {
+        test: {
+          name: "web",
+          environment: "jsdom",
+          include: ["apps/web/src/**/*.test.{ts,tsx}"],
+          setupFiles: ["apps/web/src/test/setup.ts"]
+        }
+      }
+    ],
     coverage: {
-      reporter: ["text", "html"],
-      include: ["apps/server/src/**/*.ts", "packages/providers/src/**/*.ts"]
+      provider: "v8",
+      all: true,
+      reporter: ["text", "html", "lcov", "json-summary"],
+      include: [
+        "apps/server/src/**/*.{ts,tsx}",
+        "apps/web/src/**/*.{ts,tsx}",
+        "packages/providers/src/**/*.{ts,tsx}",
+        "packages/contracts/src/**/*.{ts,tsx}"
+      ],
+      exclude: [
+        "**/*.test.{ts,tsx}",
+        "**/*.spec.{ts,tsx}",
+        "**/*test-helper*.{ts,tsx}",
+        "**/__tests__/**",
+        "**/test/**",
+        "apps/server/src/index.ts",
+        "apps/web/src/main.tsx"
+      ],
+      thresholds: {
+        statements: 90,
+        lines: 90,
+        functions: 90,
+        branches: 85,
+        "apps/server/src/generations.ts": criticalCoverageThreshold,
+        "apps/server/src/mcp.ts": criticalCoverageThreshold,
+        "apps/server/src/tools.ts": criticalCoverageThreshold,
+        "apps/web/src/Markdown.tsx": criticalCoverageThreshold,
+        "apps/web/src/api.ts": criticalCoverageThreshold,
+        "apps/web/src/generationState.ts": criticalCoverageThreshold
+      }
     }
   }
 });
