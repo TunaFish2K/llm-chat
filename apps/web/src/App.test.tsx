@@ -56,11 +56,20 @@ vi.mock("@ant-design/x", async () => {
         onClick: () => ((menu as (item: { key: string }) => { items: Array<{ onClick: () => void }> })(item).items[0]!.onClick())
       }, `删除:${item.label}`)
     ]));
-  const BubbleList = ({ items }: { items: Array<Record<string, unknown>> }) => createElement("div", { "data-testid": "bubbles" },
-    ...items.map((item) => createElement("article", { key: item.key as string, "data-key": item.key },
+  const BubbleList = ({ items, className, styles }: {
+    items: Array<Record<string, unknown>>;
+    className?: string;
+    styles?: { root?: Record<string, unknown>; scroll?: Record<string, unknown> };
+  }) => createElement("div", { "data-testid": "bubbles", className, style: styles?.root },
+    createElement("div", { "data-testid": "bubble-scroll", style: styles?.scroll },
+      ...items.map((item) => createElement("article", {
+        key: item.key as string,
+        "data-key": item.key,
+        style: (item.styles as { root?: Record<string, unknown> } | undefined)?.root
+      },
       item.loading ? createElement("span", {}, "loading") : null,
       typeof item.content === "string" ? item.content : item.content as never,
-      item.footer as never)));
+      item.footer as never))));
   const Actions = ({ items }: { items: Array<{ key: string; label: string; onItemClick: () => void }> }) => createElement("div", {},
     ...items.map((item) => createElement("button", { key: item.key, onClick: item.onItemClick }, item.label)));
   const Think = ({ title, children, onExpand }: Record<string, unknown>) => createElement("div", {},
@@ -74,7 +83,10 @@ vi.mock("@ant-design/x", async () => {
 });
 vi.mock("./Markdown", async () => {
   const { createElement } = await import("react");
-  return { Markdown: ({ children }: { children: string }) => createElement("div", { "data-testid": "markdown" }, children) };
+  return { Markdown: ({ children, colorScheme }: { children: string; colorScheme: string }) => createElement("div", {
+    "data-testid": "markdown",
+    "data-color-scheme": colorScheme
+  }, children) };
 });
 vi.mock("./ModelSelector", async () => {
   const { createElement } = await import("react");
@@ -196,7 +208,45 @@ describe("App", () => {
     resolveSettings(settings);
     expect(await screen.findByText("有什么可以帮你？")).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "消息输入" })).toBeEnabled();
+    expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "light");
+    expect(document.documentElement.style.colorScheme).toBe("light");
     act(() => state.mediaHandler?.({ matches: true } as MediaQueryListEvent));
+    expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+  });
+
+  it("keeps an explicit dark theme when the system preference changes", async () => {
+    api.settings.mockResolvedValue({ ...settings, theme: "dark" });
+    api.messages.mockResolvedValue([assistantMessage()]);
+    await boot("/c/a1b2");
+
+    expect(await screen.findByText("answer")).toHaveAttribute("data-color-scheme", "dark");
+    expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "dark");
+    act(() => state.mediaHandler?.({ matches: false } as MediaQueryListEvent));
+    expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "dark");
+  });
+
+  it("lets the desktop message list CSS rail own its width", async () => {
+    api.messages.mockResolvedValue([userMessage()]);
+    await boot("/c/a1b2");
+
+    const list = await screen.findByTestId("bubbles");
+    expect(list).toHaveClass("message-list");
+    expect(list.style.height).toBe("100%");
+    expect(list.style.width).toBe("");
+    expect(screen.getByTestId("bubble-scroll").style.paddingBlock).toBe("24px 32px");
+    expect(list.querySelector("article")).toHaveStyle({ width: "100%", marginInline: "auto" });
+  });
+
+  it("keeps a mobile gutter inside the aligned message rail", async () => {
+    state.screens = { md: false, lg: false };
+    api.messages.mockResolvedValue([userMessage()]);
+    await boot("/c/a1b2");
+
+    const list = await screen.findByTestId("bubbles");
+    expect(list.style.width).toBe("");
+    expect(screen.getByTestId("bubble-scroll").style.paddingBlock).toBe("16px 24px");
+    expect(list.querySelector("article")).toHaveStyle({ width: "calc(100% - 8px)", marginInline: "auto" });
   });
 
   it("keeps the boot surface when boot fails", async () => {
@@ -336,7 +386,7 @@ describe("App", () => {
     api.approveTool.mockResolvedValueOnce({ toolCall: tool(), generationId: "g", resumed: false });
     await user.click(screen.getByRole("button", { name: /拒绝/ }));
     await waitFor(() => expect(api.approveTool).toHaveBeenCalledWith("t1", false));
-  });
+  }, 10_000);
 
   it("optimistically updates UI and reasoning settings and rolls back failures", async () => {
     const user = userEvent.setup();

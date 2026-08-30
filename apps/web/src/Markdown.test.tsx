@@ -14,7 +14,7 @@ describe("Markdown math", () => {
     ["parenthesis", String.raw`Euler: \(a+b\)`],
     ["brackets", String.raw`\[a^2+b^2=c^2\]`]
   ])("renders %s formulas", (_name, markdown) => {
-    const { container } = render(<Markdown>{markdown}</Markdown>);
+    const { container } = render(<Markdown colorScheme="light">{markdown}</Markdown>);
 
     expect(container.querySelector(".katex")).toBeInTheDocument();
   });
@@ -29,7 +29,7 @@ describe("Markdown math", () => {
       "",
       String.raw`$\mathbb{R} \subset \mathbb{C}$`
     ].join("\n");
-    const { container } = render(<Markdown>{markdown}</Markdown>);
+    const { container } = render(<Markdown colorScheme="light">{markdown}</Markdown>);
 
     expect(container.querySelectorAll(".katex")).toHaveLength(3);
     expect(container.querySelectorAll(".mtable").length).toBeGreaterThanOrEqual(2);
@@ -39,21 +39,21 @@ describe("Markdown math", () => {
   it("keeps invalid and incomplete formulas safe and readable", () => {
     const invalid = String.raw`Invalid: $\notARealCommand{value}$`;
     const incomplete = String.raw`Incomplete: $\frac{1}{`;
-    const { container, rerender } = render(<Markdown>{invalid}</Markdown>);
+    const { container, rerender } = render(<Markdown colorScheme="light">{invalid}</Markdown>);
 
     expect(container).toHaveTextContent("Invalid:");
     expect(container.querySelector(".katex")).toBeInTheDocument();
 
-    rerender(<Markdown>{incomplete}</Markdown>);
+    rerender(<Markdown colorScheme="light">{incomplete}</Markdown>);
     expect(container).toHaveTextContent(incomplete);
   });
 
   it("converges from an incomplete streaming formula to completed math", () => {
-    const { container, rerender } = render(<Markdown streaming>{String.raw`Answer: \(x^2`}</Markdown>);
+    const { container, rerender } = render(<Markdown colorScheme="light" streaming>{String.raw`Answer: \(x^2`}</Markdown>);
 
     expect(container.querySelector(".katex")).not.toBeInTheDocument();
 
-    rerender(<Markdown>{String.raw`Answer: \(x^2\)`}</Markdown>);
+    rerender(<Markdown colorScheme="light">{String.raw`Answer: \(x^2\)`}</Markdown>);
     expect(container.querySelector(".katex")).toBeInTheDocument();
   });
 });
@@ -64,7 +64,7 @@ describe("Markdown code", () => {
     ["ts", "const answer: number = 42;", "typescript"],
     ["py", "def answer():\n    return 42", "python"]
   ])("highlights %s code as %s", async (language, source, normalizedLanguage) => {
-    const { container } = render(<Markdown>{fenced(language, source)}</Markdown>);
+    const { container } = render(<Markdown colorScheme="light">{fenced(language, source)}</Markdown>);
 
     expect(screen.getByText(normalizedLanguage)).toBeInTheDocument();
     await waitFor(() => expect(container.querySelectorAll("code .token").length).toBeGreaterThan(0));
@@ -84,7 +84,7 @@ describe("Markdown code", () => {
     ["zsh", "bash"],
     ["md", "markdown"]
   ])("normalizes the %s alias to %s", (language, normalizedLanguage) => {
-    render(<Markdown>{fenced(language, "value")}</Markdown>);
+    render(<Markdown colorScheme="light">{fenced(language, "value")}</Markdown>);
 
     expect(screen.getByText(normalizedLanguage)).toBeInTheDocument();
   });
@@ -92,14 +92,14 @@ describe("Markdown code", () => {
   it.each(["jsx", "tsx", "json", "css", "sql", "java", "c", "go", "rust", "php", "swift", "dart", "docker"])(
     "supports the direct %s language name",
     (language) => {
-      render(<Markdown>{fenced(language, "value")}</Markdown>);
+      render(<Markdown colorScheme="light">{fenced(language, "value")}</Markdown>);
 
       expect(screen.getByText(language)).toBeInTheDocument();
     }
   );
 
   it("keeps inline code as a native code element", () => {
-    const { container } = render(<Markdown>Use `const value = 1` inline.</Markdown>);
+    const { container } = render(<Markdown colorScheme="light">Use `const value = 1` inline.</Markdown>);
 
     expect(container.querySelector("p > code")).toHaveTextContent("const value = 1");
     expect(container.querySelector(".ant-codeHighlighter")).not.toBeInTheDocument();
@@ -108,7 +108,7 @@ describe("Markdown code", () => {
   it("falls back to plain code for unknown, parameterized, and language-free blocks", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const markdown = [fenced("not-a-real-language", "unknown"), fenced("", "plain")].join("\n\n");
-    const { container } = render(<Markdown>{markdown}</Markdown>);
+    const { container } = render(<Markdown colorScheme="dark">{markdown}</Markdown>);
 
     expect(container.querySelectorAll("pre > code")).toHaveLength(2);
     expect(container).toHaveTextContent("unknown");
@@ -121,7 +121,7 @@ describe("Markdown code", () => {
   it("uses the built-in language header and copy action", async () => {
     const user = userEvent.setup();
     const source = "const copied = true;";
-    const { container } = render(<Markdown>{fenced("js extra-parameter", source)}</Markdown>);
+    const { container } = render(<Markdown colorScheme="light">{fenced("js extra-parameter", source)}</Markdown>);
 
     expect(screen.getByText("javascript")).toBeInTheDocument();
     const copyAction = screen.getByRole("button", { name: "Copy" });
@@ -130,12 +130,21 @@ describe("Markdown code", () => {
     await user.click(copyAction);
     await waitFor(() => expect(navigator.clipboard.readText()).resolves.toBe(`${source}\n`));
   });
+
+  it("uses a transparent One Dark surface inside the dark code container", async () => {
+    const { container } = render(<Markdown colorScheme="dark">{fenced("javascript", "const dark = true;")}</Markdown>);
+
+    await waitFor(() => expect(container.querySelectorAll("code .token").length).toBeGreaterThan(0));
+    const pre = container.querySelector(".ant-codeHighlighter-code pre");
+    expect(pre).toHaveStyle({ background: "transparent", margin: "0px" });
+    expect(pre).not.toHaveStyle({ background: "rgb(250, 250, 250)" });
+  });
 });
 
 describe("Markdown safety", () => {
   it("sanitizes executable HTML", () => {
     const markdown = '<img src="x" onerror="window.__markdownXss = true"><script>window.__markdownXss = true</script>';
-    const { container } = render(<Markdown>{markdown}</Markdown>);
+    const { container } = render(<Markdown colorScheme="light">{markdown}</Markdown>);
 
     expect(container.querySelector("script")).not.toBeInTheDocument();
     expect(container.querySelector("img")).not.toHaveAttribute("onerror");

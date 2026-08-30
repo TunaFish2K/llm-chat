@@ -1,6 +1,6 @@
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-.app-provider, .app-layout { height: 100%; height: 100dvh; }
+.app-theme-root, .app-provider, .app-layout { height: 100%; height: 100dvh; }
 body { overflow: hidden; overscroll-behavior: none; }
 
 .app-loading { height: 100%; }
@@ -26,7 +26,7 @@ body { overflow: hidden; overscroll-behavior: none; }
 .conversation-list { flex: 1; min-height: 0; overflow-y: auto; }
 
 .message-stage { flex: 1; min-height: 0; display: flex; overflow: hidden; }
-.message-list { width: 100%; height: 100%; }
+.message-list { width: min(900px, calc(100% - 32px)); height: 100%; margin-inline: auto; }
 .message-meta { min-height: 32px; }
 .message-model-label { min-width: 0; max-width: 260px; }
 .message-meta-actions, .message-meta-details { min-width: 0; width: 100%; }
@@ -81,6 +81,7 @@ body { overflow: hidden; overscroll-behavior: none; }
 
 @media (max-width: 991px) {
   .header-rail { width: calc(100% - 64px); margin-inline: 0 8px; margin-inline-start: 56px; }
+  .message-list, .composer-rail { width: calc(100% - 16px); }
 }
 
 @media (max-width: 767px) {
@@ -90,7 +91,7 @@ body { overflow: hidden; overscroll-behavior: none; }
     padding-top: env(safe-area-inset-top);
   }
   .sidebar-open-button { top: calc(8px + env(safe-area-inset-top)); }
-  .composer-rail { width: calc(100% - 16px); padding-block-end: max(8px, env(safe-area-inset-bottom)); }
+  .composer-rail { padding-block-end: max(8px, env(safe-area-inset-bottom)); }
   .welcome-stage { align-items: stretch; padding: 0 12px max(12px, env(safe-area-inset-bottom)); }
   .welcome-composer { height: 100%; }
   .welcome-prompt { margin-block: auto; }

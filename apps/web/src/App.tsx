@@ -24,11 +24,9 @@ import {
   SettingOutlined,
   SyncOutlined
 } from "@ant-design/icons";
-import { Actions, Bubble, Conversations, Sender, Think, Welcome, XProvider, type BubbleItemType } from "@ant-design/x";
-import zhCNX from "@ant-design/x/locale/zh_CN";
+import { Actions, Bubble, Conversations, Sender, Think, Welcome, type BubbleItemType } from "@ant-design/x";
 import {
   Alert,
-  App as AntApp,
   Button,
   Collapse,
   Drawer,
@@ -42,10 +40,8 @@ import {
   Spin,
   Tag,
   Tooltip,
-  Typography,
-  theme as antdTheme
+  Typography
 } from "antd";
-import zhCN from "antd/locale/zh_CN";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, generationEvents } from "./api";
 import { Markdown } from "./Markdown";
@@ -53,6 +49,7 @@ import { ModelSelector, isModelUsable, protocolShortName } from "./ModelSelector
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
 import { SettingsPanel } from "./SettingsPanel";
 import { applyGenerationEvent, blockText, streamEnded } from "./generationState";
+import { AppTheme, resolveColorScheme, type ColorScheme } from "./theme";
 import {
   initialReasoningExpanded,
   defaultUiPreferences,
@@ -314,9 +311,11 @@ export function App() {
     setTitleEditing(false);
   };
 
-  if (!boot) return <Flex className="app-loading" align="center" justify="center" gap="small"><Spin />正在启动 llm-chat</Flex>;
+  const colorScheme = resolveColorScheme(boot?.settings.theme ?? "system", systemDark);
+  if (!boot) return <AppTheme colorScheme={colorScheme}>
+    <Flex className="app-loading" align="center" justify="center" gap="small"><Spin />正在启动 llm-chat</Flex>
+  </AppTheme>;
 
-  const dark = boot.settings.theme === "dark" || (boot.settings.theme === "system" && systemDark);
   const modelSelector = <ModelSelector
     value={selectedModelId}
     models={boot.models}
@@ -357,7 +356,7 @@ export function App() {
     onSettings={openSettings}
   />;
   const messageRailStyle: React.CSSProperties = {
-    width: screens.md ? "min(900px, calc(100% - 16px))" : "calc(100% - 24px)",
+    width: screens.md ? "100%" : "calc(100% - 8px)",
     marginInline: "auto"
   };
 
@@ -389,6 +388,7 @@ export function App() {
         key={generation.id}
         generation={generation}
         active={active}
+        colorScheme={colorScheme}
         collapsePolicy={uiPreferences.reasoningCollapsePolicy}
         toolActionIds={toolActionIds}
         onToolApproval={async (toolCall, approved) => {
@@ -446,32 +446,9 @@ export function App() {
   const persistentSidebarOpen = !compactSidebar && !uiPreferences.sidebarCollapsed;
   const openSidebarButton = !persistentSidebarOpen;
 
-  return <XProvider
-    locale={{ ...zhCNX, ...zhCN }}
-    theme={{
-      algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-      token: {
-        colorPrimary: dark ? "#57a98c" : "#147a5b",
-        borderRadius: 6,
-        ...(dark
-          ? { colorBgBase: "#202321", colorTextBase: "#eceeec", colorBgContainer: "#292d2a", colorBgElevated: "#303531", colorBorder: "#3d423e", colorBorderSecondary: "#343936" }
-          : { colorBgBase: "#f5f6f4", colorBgContainer: "#ffffff", colorBgElevated: "#ffffff" })
-      },
-      components: {
-        Layout: {
-          bodyBg: dark ? "#202321" : "#f5f6f4",
-          headerBg: dark ? "#252926" : "#ffffff",
-          siderBg: dark ? "#292d2a" : "#fafbf9",
-          lightSiderBg: dark ? "#292d2a" : "#fafbf9",
-          headerHeight: 56,
-          headerPadding: "0"
-        }
-      }
-    }}
-  >
-    <AntApp className="app-provider">
+  return <AppTheme colorScheme={colorScheme}>
       <Layout className="app-layout">
-        {persistentSidebarOpen && <Sider width={260} theme="light">{sidebar}</Sider>}
+        {persistentSidebarOpen && <Sider width={260} theme={colorScheme}>{sidebar}</Sider>}
         <Layout className="chat-layout">
           <Header className={current ? "chat-header" : "chat-header chat-header-welcome"}>
             {openSidebarButton && <Button
@@ -530,7 +507,7 @@ export function App() {
                         className="message-list"
                         items={bubbleItems}
                         autoScroll
-                        styles={{ root: { height: "100%", width: "100%" }, scroll: { paddingBlock: mobileLayout ? "16px 24px" : "24px 32px" } }}
+                        styles={{ root: { height: "100%" }, scroll: { paddingBlock: mobileLayout ? "16px 24px" : "24px 32px" } }}
                       />}
                   </div>
                   <div className="composer-rail">
@@ -598,8 +575,7 @@ export function App() {
       >
         删除会话“{deleteTarget?.title}”？此操作无法恢复。
       </Modal>
-    </AntApp>
-  </XProvider>;
+  </AppTheme>;
 }
 
 function WelcomeComposer({ error, draft, ready, mobile, modelSelector, effortControl, onDraftChange, onSubmit, onDismissError }: {
@@ -679,9 +655,10 @@ function EmptyState({ title, description, action, onAction }: { title: string; d
   </Flex>;
 }
 
-function AssistantContent({ generation, active, collapsePolicy, toolActionIds, onToolApproval }: {
+function AssistantContent({ generation, active, colorScheme, collapsePolicy, toolActionIds, onToolApproval }: {
   generation: GenerationDto;
   active: boolean;
+  colorScheme: ColorScheme;
   collapsePolicy: ReasoningCollapsePolicy;
   toolActionIds: Set<string>;
   onToolApproval: (toolCall: ToolCallDto, approved: boolean) => Promise<void>;
@@ -709,7 +686,7 @@ function AssistantContent({ generation, active, collapsePolicy, toolActionIds, o
       expanded={expanded}
       onExpand={setExpanded}
     >
-      <Markdown streaming={active}>{reasoning}</Markdown>
+      <Markdown colorScheme={colorScheme} streaming={active}>{reasoning}</Markdown>
     </Think>}
     {generation.toolCalls.map((toolCall) => <ToolCallView
       key={toolCall.id}
@@ -717,7 +694,7 @@ function AssistantContent({ generation, active, collapsePolicy, toolActionIds, o
       loading={toolActionIds.has(toolCall.id)}
       onApproval={onToolApproval}
     />)}
-    {text && <Markdown streaming={active}>{text}</Markdown>}
+    {text && <Markdown colorScheme={colorScheme} streaming={active}>{text}</Markdown>}
     {unsupported.map((block) => <Alert key={block.id} type="warning" showIcon message={block.content} />)}
     {generation.error && <Alert type="error" showIcon message={generation.error.message} />}
   </Flex>;

@@ -2,6 +2,8 @@ import { CodeHighlighter } from "@ant-design/x";
 import { XMarkdown } from "@ant-design/x-markdown";
 import Latex from "@ant-design/x-markdown/plugins/Latex";
 import { Children, type ReactNode } from "react";
+import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { ColorScheme } from "./theme";
 import "@ant-design/x-markdown/es/XMarkdown/index.css";
 
 const aliases: Record<string, string> = {
@@ -117,21 +119,33 @@ function codeText(children: ReactNode): string {
   return Children.toArray(children).join("");
 }
 
-const markdownComponents = {
-  code: ({ block, children, lang }: { block?: boolean; children?: ReactNode; lang?: string }) => {
-    if (!block) return <code>{children}</code>;
-
-    const language = normalizeLanguage(lang);
-    if (!language) return <code>{children}</code>;
-
-    return <CodeHighlighter lang={language}>{codeText(children)}</CodeHighlighter>;
-  }
+const darkHighlightProps = {
+  style: oneDark,
+  customStyle: { margin: 0, background: "transparent" }
 };
 
-export function Markdown({ children, streaming = false }: { children: string; streaming?: boolean }) {
+function componentsFor(colorScheme: ColorScheme) {
+  return {
+    code: ({ block, children, lang }: { block?: boolean; children?: ReactNode; lang?: string }) => {
+      if (!block) return <code>{children}</code>;
+
+      const language = normalizeLanguage(lang);
+      if (!language) return <code>{children}</code>;
+
+      return colorScheme === "dark"
+        ? <CodeHighlighter lang={language} highlightProps={darkHighlightProps}>{codeText(children)}</CodeHighlighter>
+        : <CodeHighlighter lang={language}>{codeText(children)}</CodeHighlighter>;
+    }
+  };
+}
+
+const lightComponents = componentsFor("light");
+const darkComponents = componentsFor("dark");
+
+export function Markdown({ children, colorScheme, streaming = false }: { children: string; colorScheme: ColorScheme; streaming?: boolean }) {
   return (
     <XMarkdown
-      components={markdownComponents}
+      components={colorScheme === "dark" ? darkComponents : lightComponents}
       config={markdownConfig}
       content={children}
       openLinksInNewTab
