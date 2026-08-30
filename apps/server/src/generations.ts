@@ -183,9 +183,11 @@ export class GenerationRunner {
           return;
         }
         const executable = existing.filter((call) =>
-          call.output === null && call.error === null && (call.approvalState === "approved" || call.approvalState === "denied")
+          call.output === null && call.error === null
+          && (call.approvalState === "auto" || call.approvalState === "approved" || call.approvalState === "denied")
         );
         await this.executeTools(record, executable, toolMap, job.controller.signal);
+        job.controller.signal.throwIfAborted();
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
 
@@ -250,6 +252,7 @@ export class GenerationRunner {
           this.store.setGenerationStepContext(generationId, stepIndex, providerContext);
         }
         if (!calls.length) {
+          job.controller.signal.throwIfAborted();
           this.store.finishGeneration(generationId, "completed", { stopReason });
           this.emitStatus(generationId, "completed", stopReason);
           return;
@@ -267,6 +270,7 @@ export class GenerationRunner {
           persisted.push(saved);
         }
         if (persisted.some((call) => call.approvalState === "pending")) {
+          job.controller.signal.throwIfAborted();
           this.waitForApproval(generationId);
           return;
         }

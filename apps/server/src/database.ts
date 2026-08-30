@@ -288,7 +288,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 12) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 13) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -587,11 +587,47 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 12;
       `);
     }
+    if (current < 13) {
+      repairTerminalToolCalls(sqlite, Date.now());
+      sqlite.exec("PRAGMA user_version = 13;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
     throw error;
   }
+}
+
+const TERMINAL_TOOL_FAILURE = "Generation ended before tool execution completed";
+
+function repairTerminalToolCalls(
+  sqlite: DatabaseSyncType,
+  completedAt: number,
+  failure = TERMINAL_TOOL_FAILURE,
+  denial = "Tool execution denied because generation ended",
+  generationId?: string
+): void {
+  sqlite.prepare(`
+    UPDATE generation_tool_calls
+    SET approval_state = CASE
+          WHEN approval_state IN ('pending', 'denied') THEN 'denied'
+          ELSE 'failed'
+        END,
+        output = CASE
+          WHEN approval_state IN ('pending', 'denied') THEN json_object('error', ?)
+          ELSE json_object('error', ?)
+        END,
+        error = CASE
+          WHEN approval_state IN ('pending', 'denied') THEN NULL
+          ELSE ?
+        END,
+        completed_at = COALESCE(completed_at, ?)
+    WHERE output IS NULL AND error IS NULL
+      AND generation_id IN (
+        SELECT id FROM generations WHERE status IN ('completed', 'failed', 'stopped', 'interrupted')
+      )
+      AND (? IS NULL OR generation_id = ?)
+  `).run(denial, failure, failure, completedAt, generationId ?? null, generationId ?? null);
 }
 
 function hasColumn(sqlite: DatabaseSyncType, table: string, column: string): boolean {
@@ -629,9 +665,11 @@ export class Store {
         // A sidecar can be absent depending on the SQLite journal state.
       }
     }
+    const interruptedAt = Date.now();
     this.sqlite
       .prepare("UPDATE generations SET status = 'interrupted', completed_at = ? WHERE status IN ('queued', 'running')")
-      .run(Date.now());
+      .run(interruptedAt);
+    repairTerminalToolCalls(this.sqlite, interruptedAt, "Generation interrupted before tool execution completed");
     for (const task of this.sqlite.prepare("SELECT pid, process_group_id, process_start_identity FROM background_tasks WHERE status IN ('starting','running')").all() as Row[]) {
       const pid = task.pid === null ? null : Number(task.pid);
       const expected = textOrNull(task.process_start_identity);
@@ -1518,9 +1556,22 @@ export class Store {
   }
 
   finishGeneration(id: string, status: "completed" | "stopped" | "failed", options: { stopReason?: string; code?: string; message?: string }): void {
-    this.sqlite.prepare(`
-      UPDATE generations SET status = ?, stop_reason = ?, error_code = ?, error_message = ?, completed_at = ? WHERE id = ?
-    `).run(status, options.stopReason ?? null, options.code ?? null, options.message ?? null, Date.now(), id);
+    const completedAt = Date.now();
+    this.transaction(() => {
+      this.sqlite.prepare(`
+        UPDATE generations SET status = ?, stop_reason = ?, error_code = ?, error_message = ?, completed_at = ? WHERE id = ?
+      `).run(status, options.stopReason ?? null, options.code ?? null, options.message ?? null, completedAt, id);
+      const failure = options.stopReason === "cancelled"
+        ? "Generation cancelled before tool execution"
+        : `Generation ${status} before tool execution completed`;
+      repairTerminalToolCalls(
+        this.sqlite,
+        completedAt,
+        failure,
+        options.stopReason === "cancelled" ? failure : undefined,
+        id
+      );
+    });
   }
 
   contextMessages(conversationId: string, beforeAssistantMessageId: string): ContextMessageRecord[] {
