@@ -139,9 +139,7 @@ describe("SettingsPanel", () => {
   it("allows unavailable Agent tools to be overridden and saves false", async () => {
     const user = userEvent.setup();
     renderPanel({ agents: [agent] });
-    const unavailableLabel = await screen.findByText("全局不可用");
-    const unavailableTool = unavailableLabel.closest("label")?.querySelector("input[type=checkbox]") as HTMLInputElement;
-    expect(unavailableTool).toBeInTheDocument();
+    const unavailableTool = await screen.findByRole("checkbox", { name: /Shell.*全局不可用/ });
     expect(unavailableTool).toBeChecked();
     await user.click(unavailableTool);
     expect(unavailableTool).not.toBeChecked();

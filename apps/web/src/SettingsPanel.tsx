@@ -197,12 +197,12 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   const avatarRef = useRef<HTMLInputElement>(null);
   const { modal } = AntApp.useApp();
   useEffect(() => {
-    void api.toolCatalog().then((next) => {
-      setCatalog(next);
-      const source = value === "new" ? newAgent(fallback) : value;
-      if (source) form.setFieldValue("enabledTools", agentForm(source, next).enabledTools);
-    });
+    void api.toolCatalog().then(setCatalog);
   }, []);
+  useEffect(() => {
+    const source = value === "new" ? newAgent(fallback) : value;
+    if (source) form.setFieldsValue(agentForm(source, catalog));
+  }, [catalog, fallback, form, value]);
   if (value === null) return <Flex justify="center"><Text type="secondary">正在加载 Agent</Text></Flex>;
   const base = existing ?? newAgent(fallback);
   const initial = agentForm(base, catalog);
@@ -356,7 +356,7 @@ function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatalogItemD
       name: values.name.trim(), description: values.description ?? "", personality: values.personality ?? "", scenario: values.scenario ?? "",
       first_mes: values.firstMessage ?? "", alternate_greetings: parseJson(values.alternateGreetings, []),
       system_prompt: values.systemPrompt ?? "", post_history_instructions: values.postHistoryInstructions ?? "",
-      mes_example: values.messageExample ?? "", character_book: values.characterBook.trim() ? parseJson(values.characterBook, undefined) : undefined,
+      mes_example: values.messageExample ?? "", character_book: values.characterBook?.trim() ? parseJson(values.characterBook, undefined) : undefined,
       creator_notes: values.creatorNotes ?? "", creator: values.creator ?? "", character_version: values.characterVersion ?? "",
       tags: (values.tags ?? "").split(",").map((tag) => tag.trim()).filter(Boolean), extensions: parseJson(values.extensions, {})
     } },
