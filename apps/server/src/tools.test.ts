@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
@@ -24,6 +24,14 @@ describe("server tool catalog", () => {
     expect(tool(enabled, "workspace_shell").requiresApproval({ command: "pwd" })).toBe(true);
     expect(tool(enabled, "workspace_write_file").definition.inputSchema).toMatchObject({
       type: "object", required: ["path", "text"]
+    });
+    expect(tool(enabled, "workspace_write_file").definition.description).toContain("relative to the conversation workspace root");
+    expect(tool(enabled, "workspace_write_file").definition.inputSchema.properties).toMatchObject({
+      path: { description: expect.stringContaining("Use . for the root") }
+    });
+    expect(tool(enabled, "workspace_shell").definition.inputSchema.properties).toMatchObject({
+      command: { description: expect.stringContaining("relative to the conversation workspace root") },
+      cwd: { description: expect.stringContaining("Use . for the root") }
     });
     const withoutWorkspace = await buildServerTools(store, false, { workspacePath: null });
     expect(tool(withoutWorkspace, "workspace_read_file").available).toBe(false);
@@ -58,16 +66,60 @@ describe("workspace tools", () => {
     const read = tool(tools, "workspace_read_file");
     await write.execute({ path: "/workspace/docs/note.txt", text: "hello" }, signal());
     expect(JSON.parse(await read.execute({ path: "docs/note.txt" }, signal()))).toEqual({
-      path: "/workspace/docs/note.txt", text: "hello"
+      path: "docs/note.txt", text: "hello"
     });
     await expect(write.execute({ path: "docs/note.txt", text: "no", overwrite: false }, signal()))
       .rejects.toThrow("already exists");
     await write.execute({ path: "docs/note.txt", text: "updated", overwrite: true }, signal());
     const listed = JSON.parse(await tool(tools, "workspace_list").execute({ path: "/workspace", recursive: true }, signal()));
     expect(listed).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: "/workspace/docs", type: "directory" }),
-      expect.objectContaining({ path: "/workspace/docs/note.txt", type: "file" })
+      expect.objectContaining({ path: "docs", type: "directory" }),
+      expect.objectContaining({ path: "docs/note.txt", type: "file" })
     ]));
+    store.close();
+  });
+
+  it("returns workspace-relative paths that shell commands can use and represents the root as .", async () => {
+    const store = createStore();
+    store.updateToolSettings({ workspaceShellEnabled: true });
+    const tools = await buildServerTools(store);
+    const written = JSON.parse(await tool(tools, "workspace_write_file").execute({
+      path: "llm-chat/README.md", text: "workspace relative\n"
+    }, signal()));
+    expect(written.path).toBe("llm-chat/README.md");
+    expect(JSON.parse(await tool(tools, "workspace_read_file").execute({ path: written.path }, signal())))
+      .toEqual({ path: "llm-chat/README.md", text: "workspace relative\n" });
+    expect(JSON.parse(await tool(tools, "workspace_glob").execute({ pattern: "." }, signal()))).toEqual(["."]);
+    expect(JSON.parse(await tool(tools, "workspace_list").execute({ path: "." }, signal())))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: "llm-chat", type: "directory" })]));
+    const shellResult = JSON.parse(await tool(tools, "workspace_shell").execute({
+      command: `cat ${written.path}`, cwd: "."
+    }, signal()));
+    expect(shellResult).toMatchObject({ exitCode: 0, stdout: "workspace relative\n" });
+    expect(JSON.stringify({ written, shellResult })).not.toContain(store.dataDir);
+    store.close();
+  });
+
+  it("accepts legacy /workspace inputs across file, search, and shell tools", async () => {
+    const store = createStore();
+    store.updateToolSettings({ workspaceShellEnabled: true });
+    const tools = await buildServerTools(store);
+    await tool(tools, "workspace_write_file").execute({ path: "/workspace/project/file.txt", text: "legacy" }, signal());
+    expect(JSON.parse(await tool(tools, "workspace_read_file").execute({ path: "/workspace/project/file.txt" }, signal())))
+      .toMatchObject({ path: "project/file.txt", text: "legacy" });
+    expect(JSON.parse(await tool(tools, "workspace_glob").execute({ pattern: "/workspace/project/*.txt" }, signal())))
+      .toEqual(["project/file.txt"]);
+    expect(JSON.parse(await tool(tools, "workspace_grep").execute({
+      query: "legacy", pattern: "/workspace/project/*.txt"
+    }, signal()))).toEqual([expect.objectContaining({ path: "project/file.txt" })]);
+    await expect(tool(tools, "workspace_shell").execute({
+      command: "test -f file.txt", cwd: "/workspace/project"
+    }, signal())).resolves.toBeTruthy();
+    await expect(tool(tools, "workspace_shell").execute({
+      command: "test -f file.txt", cwd: "project"
+    }, signal())).resolves.toBeTruthy();
+    expect(await tool(tools, "workspace_list").execute({ path: "/workspace" }, signal()))
+      .toBe(await tool(tools, "workspace_list").execute({ path: "." }, signal()));
     store.close();
   });
 
@@ -80,7 +132,7 @@ describe("workspace tools", () => {
       .rejects.toThrow("occurs 2 times");
     expect(JSON.parse(await edit.execute({
       path: "repeat.txt", old_text: "one", new_text: "1", replace_all: true
-    }, signal()))).toMatchObject({ replacements: 2 });
+    }, signal()))).toMatchObject({ path: "repeat.txt", replacements: 2 });
     await expect(edit.execute({ path: "repeat.txt", old_text: "missing", new_text: "" }, signal()))
       .rejects.toThrow("was not found");
     expect(JSON.parse(await tool(tools, "workspace_read_file").execute({ path: "repeat.txt" }, signal())).text)
@@ -96,9 +148,9 @@ describe("workspace tools", () => {
     writeFileSync(join(workspace, "src", "a.ts"), `Alpha\n${"x".repeat(600)} needle\nbeta`);
     writeFileSync(join(workspace, "src", "big.ts"), Buffer.alloc(1024 * 1024 + 1, 65));
     expect(JSON.parse(await tool(tools, "workspace_glob").execute({ pattern: "**/*.ts" }, signal())))
-      .toEqual(expect.arrayContaining(["/workspace/src/a.ts", "/workspace/src/big.ts"]));
+      .toEqual(expect.arrayContaining(["src/a.ts", "src/big.ts"]));
     const plain = JSON.parse(await tool(tools, "workspace_grep").execute({ query: "NEEDLE", pattern: "**/*.ts" }, signal()));
-    expect(plain).toEqual([expect.objectContaining({ path: "/workspace/src/a.ts", line: 2 })]);
+    expect(plain).toEqual([expect.objectContaining({ path: "src/a.ts", line: 2 })]);
     expect(plain[0].text).toHaveLength(500);
     const regex = JSON.parse(await tool(tools, "workspace_grep").execute({ query: "^(alpha|beta)$", regex: true }, signal()));
     expect(regex.map((item: { line: number }) => item.line)).toEqual([1, 3]);
@@ -139,6 +191,19 @@ describe("workspace tools", () => {
       .rejects.toThrow("outside /workspace");
     await expect(tool(tools, "workspace_write_file").execute({ path: "link.txt", text: "overwrite" }, signal()))
       .rejects.toThrow("outside /workspace");
+    await expect(tool(tools, "workspace_read_file").execute({ path: "/etc/passwd" }, signal()))
+      .rejects.toThrow("inside /workspace");
+    await expect(tool(tools, "workspace_read_file").execute({ path: "/workspace-other/file.txt" }, signal()))
+      .rejects.toThrow("inside /workspace");
+    await expect(tool(tools, "workspace_read_file").execute({ path: "../outside.txt" }, signal()))
+      .rejects.toThrow("escapes /workspace");
+    const outsideDirectory = join(store.dataDir, "outside-directory");
+    mkdirSync(outsideDirectory);
+    symlinkSync(outsideDirectory, join(workspace, "directory-link"));
+    await expect(tool(tools, "workspace_write_file").execute({
+      path: "directory-link/new/note.txt", text: "escape"
+    }, signal())).rejects.toThrow("outside /workspace");
+    expect(existsSync(join(outsideDirectory, "new"))).toBe(false);
     writeFileSync(outside, "secret");
     expect(await tool(tools, "workspace_grep").execute({ query: "secret" }, signal())).toBe("[]");
     writeFileSync(join(workspace, "large.txt"), Buffer.alloc(8 * 1024 * 1024 + 1));

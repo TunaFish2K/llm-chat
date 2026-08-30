@@ -82,35 +82,35 @@ export async function buildServerTools(
       id: integerProperty("Memory id for edit or delete"),
       content: stringProperty("Memory text for create or edit")
     }, (input) => input.action === "delete", async (input) => memoryAction(store, input)),
-    tool("workspace_list", "列出文件", "workspace", "List files and directories inside the conversation workspace.", {
-      path: stringProperty("Workspace path, relative or beginning with /workspace"),
+    tool("workspace_list", "列出文件", "workspace", "List files and directories using paths relative to the conversation workspace root. Use . for the root; returned paths can be used directly by workspace file tools and shell commands.", {
+      path: workspacePathProperty("Directory to list"),
       recursive: booleanProperty("List recursively")
-    }, false, async (input) => listWorkspace(workspace!, optionalString(input, "path") ?? "/workspace", Boolean(input.recursive)), Boolean(workspace)),
-    tool("workspace_read_file", "读取文件", "workspace", "Read a UTF-8 text file inside the server workspace (maximum 8 MiB).", {
-      path: stringProperty("Workspace path, relative or beginning with /workspace")
+    }, false, async (input) => listWorkspace(workspace!, optionalString(input, "path") ?? ".", Boolean(input.recursive)), Boolean(workspace)),
+    tool("workspace_read_file", "读取文件", "workspace", "Read a UTF-8 text file using a path relative to the conversation workspace root (maximum 8 MiB). The returned path is also workspace-relative.", {
+      path: workspacePathProperty("File to read")
     }, false, async (input) => readWorkspaceFile(workspace!, requiredString(input, "path")), Boolean(workspace)),
-    tool("workspace_write_file", "写入文件", "workspace", "Write a UTF-8 text file inside the server workspace.", {
-      path: stringProperty("Workspace path, relative or beginning with /workspace"),
+    tool("workspace_write_file", "写入文件", "workspace", "Write a UTF-8 text file using a path relative to the conversation workspace root. The returned path is also workspace-relative.", {
+      path: workspacePathProperty("File to write"),
       text: stringProperty("Complete UTF-8 file content"),
       overwrite: booleanProperty("Whether an existing file may be replaced; defaults to true")
     }, true, async (input) => writeWorkspaceFile(workspace!, requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false), Boolean(workspace)),
-    tool("workspace_edit_file", "编辑文件", "workspace", "Replace exact text in a UTF-8 file inside the server workspace.", {
-      path: stringProperty("Workspace path, relative or beginning with /workspace"),
+    tool("workspace_edit_file", "编辑文件", "workspace", "Replace exact text in a UTF-8 file using a path relative to the conversation workspace root. The returned path is also workspace-relative.", {
+      path: workspacePathProperty("File to edit"),
       old_text: stringProperty("Exact text to replace"),
       new_text: stringProperty("Replacement text"),
       replace_all: booleanProperty("Replace every occurrence; defaults to false")
     }, true, async (input) => editWorkspaceFile(workspace!, input), Boolean(workspace)),
-    tool("workspace_glob", "查找文件", "workspace", "Find workspace paths with a glob pattern such as **/*.ts.", {
-      pattern: stringProperty("Glob pattern relative to /workspace")
+    tool("workspace_glob", "查找文件", "workspace", "Find workspace-relative paths with a glob pattern such as **/*.ts. Returned paths can be used directly by workspace file tools and shell commands.", {
+      pattern: stringProperty("Glob pattern relative to the conversation workspace root; use . for the root. Legacy /workspace/... patterns are accepted.")
     }, false, async (input) => globWorkspace(workspace!, requiredString(input, "pattern")), Boolean(workspace)),
-    tool("workspace_grep", "搜索文件", "workspace", "Search UTF-8 workspace files for plain text or a regular expression.", {
+    tool("workspace_grep", "搜索文件", "workspace", "Search UTF-8 workspace files for plain text or a regular expression. Match paths are relative to the conversation workspace root and can be used directly by file tools and shell commands.", {
       query: stringProperty("Text or regular expression"),
-      pattern: stringProperty("File glob; defaults to **/*"),
+      pattern: stringProperty("File glob relative to the conversation workspace root; defaults to **/* (all files). Legacy /workspace/... patterns are accepted."),
       regex: booleanProperty("Treat query as a JavaScript regular expression")
     }, false, async (input) => grepWorkspace(workspace!, input), Boolean(workspace)),
-    tool("workspace_shell", "运行命令", "workspace", "Run a shell command with the working directory confined to the server workspace. Commands require explicit user approval.", {
-      command: stringProperty("Shell command"),
-      cwd: stringProperty("Working directory inside /workspace"),
+    tool("workspace_shell", "运行命令", "workspace", "Run a shell command with its working directory confined to the conversation workspace. Use workspace-relative paths in commands and . for the workspace root. Commands require explicit user approval.", {
+      command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
+      cwd: workspacePathProperty("Working directory for the command"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
     }, true, async (input, signal) => runShell(workspace!, input, signal), Boolean(workspace))
   ];
@@ -167,8 +167,8 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
 
 function backgroundTools(manager: TaskManager): ServerTool[] {
   return [
-    tool("background_start", "启动后台任务", "background", "Start a long-running command in the frozen conversation workspace and return its task id immediately.", {
-      command: stringProperty("Shell command"),
+    tool("background_start", "启动后台任务", "background", "Start a long-running command in the frozen conversation workspace and return its task id immediately. Use paths relative to the workspace root in the command.", {
+      command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
       mode: { type: "string", enum: ["pipe", "pty"], description: "Use pty for interactive terminal programs" },
       expected_duration_seconds: integerProperty("Optional expected duration in seconds"),
       hard_timeout_seconds: integerProperty("Optional hard timeout in seconds")
@@ -294,6 +294,9 @@ function inferRequired(name: string): string[] {
 }
 
 function stringProperty(description: string): JsonObject { return { type: "string", description }; }
+function workspacePathProperty(subject: string): JsonObject {
+  return stringProperty(`${subject}, relative to the conversation workspace root. Use . for the root. Legacy /workspace paths are accepted.`);
+}
 function integerProperty(description: string): JsonObject { return { type: "integer", description }; }
 function booleanProperty(description: string): JsonObject { return { type: "boolean", description }; }
 
@@ -422,7 +425,7 @@ async function memoryAction(store: Store, input: JsonObject): Promise<string> {
 }
 
 async function workspacePath(root: string, input: string, mustExist = true): Promise<string> {
-  const relativePath = input.replace(/^\/workspace\/?/, "");
+  const relativePath = normalizeWorkspaceInput(input);
   if (isAbsolute(relativePath)) throw new Error("Path must be inside /workspace");
   const target = resolve(root, relativePath || ".");
   if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error("Path escapes /workspace");
@@ -434,9 +437,15 @@ async function workspacePath(root: string, input: string, mustExist = true): Pro
   return target;
 }
 
+function normalizeWorkspaceInput(input: string): string {
+  if (input === "/workspace") return ".";
+  if (input.startsWith("/workspace/")) return input.slice("/workspace/".length) || ".";
+  return input || ".";
+}
+
 function displayWorkspacePath(root: string, path: string): string {
   const value = relative(root, path).split(sep).join("/");
-  return value ? `/workspace/${value}` : "/workspace";
+  return value || ".";
 }
 
 async function listWorkspace(root: string, path: string, recursive: boolean): Promise<string> {
@@ -458,12 +467,28 @@ async function readWorkspaceFile(root: string, path: string): Promise<string> {
 
 async function safeWriteTarget(root: string, path: string): Promise<string> {
   const target = await workspacePath(root, path, false);
-  await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-  const parent = await workspacePath(root, dirname(relative(root, target)));
-  if (!parent.startsWith(root)) throw new Error("Path resolves outside /workspace");
+  const canonicalRoot = await realpath(root);
+  const parent = dirname(target);
+  let existingAncestor = parent;
+  while (true) {
+    try {
+      const canonicalAncestor = await realpath(existingAncestor);
+      if (canonicalAncestor !== canonicalRoot && !canonicalAncestor.startsWith(`${canonicalRoot}${sep}`)) {
+        throw new Error("Path resolves outside /workspace");
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      existingAncestor = dirname(existingAncestor);
+    }
+  }
+  await mkdir(parent, { recursive: true, mode: 0o700 });
+  const canonicalParent = await realpath(parent);
+  if (canonicalParent !== canonicalRoot && !canonicalParent.startsWith(`${canonicalRoot}${sep}`)) {
+    throw new Error("Path resolves outside /workspace");
+  }
   try {
     const canonical = await realpath(target);
-    const canonicalRoot = await realpath(root);
     if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) {
       throw new Error("Path resolves outside /workspace");
     }
@@ -500,10 +525,12 @@ async function editWorkspaceFile(root: string, input: JsonObject): Promise<strin
 }
 
 async function globWorkspace(root: string, pattern: string): Promise<string> {
-  if (pattern.startsWith("/") || pattern.includes("..")) throw new Error("Glob must be relative to /workspace");
+  const workspacePattern = normalizeWorkspaceInput(pattern);
+  if (isAbsolute(workspacePattern) || workspacePattern.split("/").includes("..")) throw new Error("Glob must be relative to /workspace");
+  if (workspacePattern === ".") return JSON.stringify(["."]);
   const matches: string[] = [];
-  for await (const item of glob(pattern, { cwd: root, withFileTypes: true, exclude: ["**/node_modules/**", "**/.git/**"] })) {
-    matches.push(`/workspace/${relative(root, resolve(item.parentPath, item.name)).split(sep).join("/")}`);
+  for await (const item of glob(workspacePattern, { cwd: root, withFileTypes: true, exclude: ["**/node_modules/**", "**/.git/**"] })) {
+    matches.push(displayWorkspacePath(root, resolve(item.parentPath, item.name)));
     if (matches.length >= 1_000) break;
   }
   return JSON.stringify(matches);
@@ -511,7 +538,8 @@ async function globWorkspace(root: string, pattern: string): Promise<string> {
 
 async function grepWorkspace(root: string, input: JsonObject): Promise<string> {
   const query = requiredString(input, "query");
-  const pattern = optionalString(input, "pattern") || "**/*";
+  const pattern = normalizeWorkspaceInput(optionalString(input, "pattern") || "**/*");
+  if (isAbsolute(pattern) || pattern.split("/").includes("..")) throw new Error("Glob must be relative to /workspace");
   const matcher = input.regex ? new RegExp(query, "i") : null;
   const results: Array<{ path: string; line: number; text: string }> = [];
   for await (const item of glob(pattern, { cwd: root, withFileTypes: true, exclude: ["**/node_modules/**", "**/.git/**"] })) {
@@ -536,7 +564,7 @@ async function grepWorkspace(root: string, input: JsonObject): Promise<string> {
 }
 
 async function runShell(root: string, input: JsonObject, signal: AbortSignal): Promise<string> {
-  const cwd = await workspacePath(root, optionalString(input, "cwd") ?? "/workspace");
+  const cwd = await workspacePath(root, optionalString(input, "cwd") ?? ".");
   const timeout = optionalInteger(input, "timeout", 30, 1, 120) * 1_000;
   const result = await execFileAsync("/bin/sh", ["-lc", requiredString(input, "command")], {
     cwd, timeout, maxBuffer: 1024 * 1024, signal, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" }
