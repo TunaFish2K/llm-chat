@@ -4,7 +4,6 @@ import type {
   ContextPolicy,
   ConversationDto,
   GenerationDto,
-  GenerationEvent,
   MessageDto,
   ModelDto,
   ReasoningEffort,
@@ -53,6 +52,7 @@ import { Markdown } from "./Markdown";
 import { ModelSelector, isModelUsable, protocolShortName } from "./ModelSelector";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
 import { SettingsPanel } from "./SettingsPanel";
+import { applyGenerationEvent, blockText, streamEnded } from "./generationState";
 import {
   initialReasoningExpanded,
   defaultUiPreferences,
@@ -794,33 +794,8 @@ function MessageFooter({ message, generation, selectedIndex, active, mobile, onR
   </Flex>;
 }
 
-function applyGenerationEvent(messages: MessageDto[], event: GenerationEvent): MessageDto[] {
-  if (event.type === "snapshot") return updateGeneration(messages, event.generation.id, () => event.generation);
-  if (event.type === "block-delta") return updateGeneration(messages, event.generationId, (generation) => ({ ...generation, blocks: upsertBlock(generation.blocks, event.block) }));
-  if (event.type === "usage") return updateGeneration(messages, event.generationId, (generation) => ({ ...generation, usage: event.usage }));
-  if (event.type === "tool-call") return updateGeneration(messages, event.generationId, (generation) => ({
-    ...generation,
-    toolCalls: [...generation.toolCalls.filter((item) => item.id !== event.toolCall.id), event.toolCall].sort((a, b) => a.index - b.index)
-  }));
-  if (event.type === "status") return updateGeneration(messages, event.generationId, (generation) => ({ ...generation, status: event.status, stopReason: event.stopReason ?? generation.stopReason }));
-  return updateGeneration(messages, event.generationId, (generation) => ({ ...generation, status: "failed", error: { code: event.code, message: event.message } }));
-}
-
-function updateGeneration(messages: MessageDto[], id: string, update: (generation: GenerationDto) => GenerationDto): MessageDto[] {
-  return messages.map((message) => ({ ...message, generations: message.generations.map((generation) => generation.id === id ? update(generation) : generation) }));
-}
-
-function upsertBlock(blocks: GenerationDto["blocks"], block: GenerationDto["blocks"][number]) {
-  return [...blocks.filter((item) => item.index !== block.index), block].sort((a, b) => a.index - b.index);
-}
-
-function blockText(generation: GenerationDto, types: GenerationDto["blocks"][number]["type"][]): string {
-  return generation.blocks.filter((block) => types.includes(block.type)).map((block) => block.content).join(types.includes("reasoning") ? "\n" : "");
-}
-
 function replace<T extends { id: string }>(items: T[], value: T): T[] { return items.map((item) => item.id === value.id ? value : item); }
 function conversationFromPath(): string | null { return location.pathname.match(/^\/c\/([0-9a-f-]+)$/i)?.[1] ?? null; }
-function streamEnded(status: string) { return ["waiting-approval", "completed", "stopped", "failed", "interrupted"].includes(status); }
 function messageOf(value: unknown) { return value instanceof Error ? value.message : "操作失败"; }
 function statusName(value: GenerationDto["status"]) { return ({ queued: "等待中", running: "生成中", "waiting-approval": "等待审批", completed: "完成", stopped: "已停止", failed: "失败", interrupted: "已中断" } as const)[value]; }
 function statusColor(value: GenerationDto["status"]): string { return ({ queued: "default", running: "processing", "waiting-approval": "warning", completed: "success", stopped: "warning", failed: "error", interrupted: "warning" } as const)[value]; }
