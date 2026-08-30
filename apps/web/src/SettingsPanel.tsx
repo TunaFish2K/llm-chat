@@ -151,8 +151,8 @@ function Agents({ agents, models, settings, busy, mobile, run }: {
       onSelect={({ key }) => setEditing(key)}
     />
     <Space.Compact block>
-      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setEditing("new")}>新建</Button>
-      <Tooltip title="导入 JSON 或 PNG"><Button type="dashed" icon={<ImportOutlined />} onClick={() => importRef.current?.click()} /></Tooltip>
+      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setEditing("new")}>新建 Agent</Button>
+      <Button type="dashed" block icon={<ImportOutlined />} onClick={() => importRef.current?.click()}>导入角色卡</Button>
     </Space.Compact>
     <input ref={importRef} hidden type="file" accept="application/json,image/png,.json,.png" onChange={(event) => {
       const file = event.target.files?.[0];
@@ -272,7 +272,10 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
         <Form.Item className="settings-field" name="thinkingBudgetTokens" label="Thinking token 预算"><InputNumber className="settings-number-input" min={1024} placeholder="使用模型默认" /></Form.Item>
       </Flex>
       <Form.Item name="toolDefaultEnabled" label="默认启用新工具" valuePropName="checked"><Switch /></Form.Item>
-      <Form.Item name="enabledTools" label="工具"><Checkbox.Group options={catalog.map((tool) => ({ label: tool.label, value: tool.name, disabled: !tool.available }))} /></Form.Item>
+      <Form.Item name="enabledTools" label="工具"><Checkbox.Group options={catalog.map((tool) => ({
+        label: <>{tool.label}{!tool.available && <Text type="danger">全局不可用</Text>}</>,
+        value: tool.name
+      }))} /></Form.Item>
       <Title level={5}>用户设定覆盖</Title>
       <Flex className="settings-fields-row" gap="middle" wrap>
         <Form.Item className="settings-field" name="userDisplayName" label="显示名称"><Input placeholder="使用全局名称" /></Form.Item>

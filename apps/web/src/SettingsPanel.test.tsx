@@ -136,6 +136,47 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("正在加载 Agent")).toBeInTheDocument();
   });
 
+  it("allows unavailable Agent tools to be overridden and saves false", async () => {
+    renderPanel({ agents: [agent] });
+    const unavailableLabel = await screen.findByText("全局不可用");
+    const unavailableTool = unavailableLabel.closest("label")?.querySelector("input[type=checkbox]") as HTMLInputElement;
+    expect(unavailableTool).toBeInTheDocument();
+    expect(unavailableTool).toBeChecked();
+    fireEvent.change(unavailableTool, { target: { checked: false } });
+    expect(unavailableTool).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(api.updateAgent).toHaveBeenCalledWith("agent1", expect.objectContaining({
+      execution: expect.objectContaining({
+        tools: expect.objectContaining({ overrides: expect.objectContaining({ workspace_shell: false }) })
+      })
+    })));
+  });
+
+  it("imports a character card and selects the imported Agent", async () => {
+    const imported = {
+      ...agent,
+      id: "imported",
+      name: "导入角色",
+      card: { ...agent.card, data: { ...agent.card.data, name: "导入角色" } }
+    };
+    api.importAgent.mockResolvedValue(imported);
+    api.agent.mockImplementation((id: string) => Promise.resolve(id === "imported" ? imported : agent));
+    renderPanel({ agents: [agent] });
+
+    expect(await screen.findByRole("button", { name: /新建 Agent/ })).toBeInTheDocument();
+    const importButton = screen.getByRole("button", { name: /导入角色卡/ });
+    expect(importButton).toBeInTheDocument();
+    const fileInput = document.querySelector('input[type="file"][accept="application/json,image/png,.json,.png"]') as HTMLInputElement;
+    expect(fileInput).toBeInTheDocument();
+    const file = new File(["{}"], "card.json", { type: "application/json" });
+    Object.defineProperty(file, "arrayBuffer", { configurable: true, value: async () => new Uint8Array([123, 125]).buffer });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => expect(api.importAgent).toHaveBeenCalledWith("card.json", "e30="));
+    expect(await screen.findByRole("heading", { name: "导入角色" })).toBeInTheDocument();
+    await waitFor(() => expect(api.agent).toHaveBeenCalledWith("imported"));
+  });
+
   it("renders desktop connection details, retains secrets, and saves parsed headers", async () => {
     const user = userEvent.setup();
     const props = renderPanel();
