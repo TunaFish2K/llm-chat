@@ -5,15 +5,21 @@ import type { ModelInput, ModelSettings } from "@llm-chat/contracts";
 import { Store } from "./database";
 
 const storeDirs: string[] = [];
+const stores: Store[] = [];
 
 export function cleanupStores(): void {
+  for (const store of stores.splice(0)) {
+    try { store.close(); } catch {}
+  }
   for (const dir of storeDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 }
 
 export function createStore(): Store {
   const dir = mkdtempSync(join(tmpdir(), "llm-chat-test-"));
   storeDirs.push(dir);
-  return new Store(join(dir, "test.sqlite"));
+  const store = new Store(join(dir, "test.sqlite"));
+  stores.push(store);
+  return store;
 }
 
 export function seedModel(store: Store) {
