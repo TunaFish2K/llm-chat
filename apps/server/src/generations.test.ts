@@ -236,6 +236,64 @@ describe("GenerationRunner tools and approval", () => {
     });
   });
 
+  it("executes every unresolved automatic and approved call once after the final approval", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const failed = vi.fn(async () => { throw new Error("read failed"); });
+    const approved = vi.fn(async () => "approved output");
+    const later = vi.fn(async () => "later output");
+    const requests: GenerateRequest[] = [];
+    const scripts: ProviderEvent[][] = [
+      [
+        toolCall("auto-failed", "auto_failed", "{}"),
+        toolCall("approval-call", "needs_approval", "{}"),
+        toolCall("auto-later", "auto_later", "{}"),
+        { type: "complete", stopReason: "tool_calls" }
+      ],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: async () => [
+        serverTool("auto_failed", failed),
+        serverTool("needs_approval", approved, true),
+        serverTool("auto_later", later)
+      ],
+      stream: (_protocol, request) => {
+        requests.push(request);
+        return events(scripts.shift()!);
+      }
+    });
+
+    runner.start(generation.generationId);
+    await inactiveWithStatus(runner, store, generation, "waiting-approval");
+    expect(failed).not.toHaveBeenCalled();
+    expect(approved).not.toHaveBeenCalled();
+    expect(later).not.toHaveBeenCalled();
+
+    store.updateToolCall("approval-call", { approvalState: "approved" });
+    runner.start(generation.generationId);
+    const result = await terminal(store, generation.generationId);
+
+    expect(failed).toHaveBeenCalledOnce();
+    expect(approved).toHaveBeenCalledOnce();
+    expect(later).toHaveBeenCalledOnce();
+    expect(result.toolCalls).toEqual([
+      expect.objectContaining({ id: "auto-failed", approvalState: "failed", error: "read failed" }),
+      expect.objectContaining({ id: "approval-call", approvalState: "completed", output: "approved output" }),
+      expect.objectContaining({ id: "auto-later", approvalState: "completed", output: "later output" })
+    ]);
+    expect(requests[1]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "tool",
+        toolResults: [
+          expect.objectContaining({ callId: "auto-failed", isError: true }),
+          expect.objectContaining({ callId: "approval-call", content: "approved output" }),
+          expect.objectContaining({ callId: "auto-later", content: "later output" })
+        ]
+      })
+    ]));
+  });
+
   it.each([
     ["unavailable", undefined, "Tool unavailable is not available"],
     ["failed", serverTool("failed", async () => { throw new Error("tool broke"); }), "tool broke"]
@@ -348,6 +406,38 @@ describe("GenerationRunner errors and cancellation", () => {
       expect.objectContaining({ approvalState: "denied", output: expect.stringContaining("Generation cancelled") }),
       expect.objectContaining({ approvalState: "denied", output: expect.stringContaining("Generation cancelled") })
     ]);
+  });
+
+  it("cancels a mixed approval batch with a denial and failure result for every call", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const runner = makeRunner(store, {
+      buildTools: async () => [serverTool("read", async () => "unused"), serverTool("write", async () => "unused", true)],
+      stream: () => events([toolCall("unstarted-read", "read", "{}"), toolCall("pending-write", "write", "{}")])
+    });
+    runner.start(generation.generationId);
+    await inactiveWithStatus(runner, store, generation, "waiting-approval");
+
+    expect(runner.cancel(generation.generationId)).toBe(true);
+    const calls = store.listToolCalls(generation.generationId);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        id: "unstarted-read", approvalState: "failed",
+        output: expect.stringContaining("Generation cancelled"), error: expect.stringContaining("Generation cancelled")
+      }),
+      expect.objectContaining({
+        id: "pending-write", approvalState: "denied",
+        output: expect.stringContaining("Generation cancelled"), error: null
+      })
+    ]);
+    expect(calls.every((call) => call.output !== null || call.error !== null)).toBe(true);
+    expect(store.currentGenerationMessages(generation.generationId).at(-1)).toMatchObject({
+      role: "tool",
+      toolResults: [
+        expect.objectContaining({ callId: "unstarted-read", isError: true }),
+        expect.objectContaining({ callId: "pending-write" })
+      ]
+    });
   });
 
   it("keeps cancellation terminal when a running tool resolves late", async () => {

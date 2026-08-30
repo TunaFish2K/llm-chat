@@ -142,7 +142,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(12);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -519,5 +519,69 @@ describe("Store", () => {
     reopened.sqlite.exec("PRAGMA user_version = 999");
     reopened.close();
     expect(() => new Store(path)).toThrow("高于当前服务支持的版本");
+  });
+
+  it("migrates v12 terminal generations to complete tool result context", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const failed = store.createMessageGeneration(conversation.id, "failed with incomplete tools");
+    store.upsertToolCall(failed.generationId, { id: "legacy-auto", name: "read", arguments: "{}" }, 0, 0, false);
+    store.upsertToolCall(failed.generationId, { id: "legacy-pending", name: "write", arguments: "{}" }, 1, 0, true);
+    store.sqlite.prepare(`
+      UPDATE generations SET status = 'failed', error_code = 'provider_error', error_message = 'failed', completed_at = ?
+      WHERE id = ?
+    `).run(Date.now(), failed.generationId);
+    store.sqlite.exec("PRAGMA user_version = 12");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+
+    const repaired = new Store(path);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
+    const calls = repaired.listToolCalls(failed.generationId);
+    expect(calls).toEqual([
+      expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),
+      expect.objectContaining({ id: "legacy-pending", approvalState: "denied", output: expect.stringContaining("denied"), error: null })
+    ]);
+    expect(calls.every((call) => call.output !== null || call.error !== null)).toBe(true);
+    expect(repaired.currentGenerationMessages(failed.generationId).at(-1)).toMatchObject({
+      role: "tool",
+      toolResults: [
+        expect.objectContaining({ callId: "legacy-auto", isError: true }),
+        expect.objectContaining({ callId: "legacy-pending" })
+      ]
+    });
+    const next = repaired.createMessageGeneration(conversation.id, "next");
+    expect(repaired.contextMessages(conversation.id, next.assistantMessageId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "assistant",
+        toolResults: [
+          expect.objectContaining({ callId: "legacy-auto", isError: true }),
+          expect.objectContaining({ callId: "legacy-pending" })
+        ]
+      })
+    ]));
+    repaired.close();
+  });
+
+  it("settles incomplete calls when startup interrupts an active generation", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const active = store.createMessageGeneration(conversation.id, "interrupted tools");
+    store.setGenerationRunning(active.generationId);
+    store.upsertToolCall(active.generationId, { id: "running-call", name: "read", arguments: "{}" }, 0, 0, false);
+    store.updateToolCall("running-call", { approvalState: "running", startedAt: Date.now() });
+    store.upsertToolCall(active.generationId, { id: "not-started", name: "read", arguments: "{}" }, 1, 0, false);
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+
+    const reopened = new Store(path);
+    expect(reopened.getGeneration(active.generationId)?.status).toBe("interrupted");
+    expect(reopened.listToolCalls(active.generationId)).toEqual([
+      expect.objectContaining({ id: "running-call", approvalState: "failed", error: expect.stringContaining("interrupted") }),
+      expect.objectContaining({ id: "not-started", approvalState: "failed", error: expect.stringContaining("interrupted") })
+    ]);
+    reopened.close();
   });
 });
