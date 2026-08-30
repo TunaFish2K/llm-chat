@@ -26,7 +26,15 @@ export interface ServerTool {
   execute: (input: JsonObject, signal: AbortSignal) => Promise<string>;
 }
 
-export async function buildServerTools(store: Store, includeDisabled = false): Promise<ServerTool[]> {
+export interface ToolDependencies {
+  lookup?: typeof lookup;
+}
+
+export async function buildServerTools(
+  store: Store,
+  includeDisabled = false,
+  dependencies: ToolDependencies = {}
+): Promise<ServerTool[]> {
   const settings = store.getToolSettings();
   const workspace = resolve(store.dataDir, "workspace");
   const skills = resolve(store.dataDir, "skills");
@@ -40,7 +48,7 @@ export async function buildServerTools(store: Store, includeDisabled = false): P
     }, true, async (input, signal) => runJavascript(requiredString(input, "code"), signal)),
     tool("fetch_url", "读取网页", "web", "Fetch a public HTTP or HTTPS URL and return readable text. Private and loopback addresses are blocked.", {
       url: stringProperty("Public HTTP or HTTPS URL")
-    }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal)),
+    }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal, dependencies.lookup ?? lookup)),
     tool("search_web", "网页搜索", "web", "Search the web for current information using the configured SearXNG service. Returns titles, URLs, and snippets.", {
       query: stringProperty("Focused search query"),
       limit: integerProperty("Number of results, 1 to 10")
@@ -250,10 +258,10 @@ async function searchWeb(store: Store, query: string, limit: number, signal: Abo
   })));
 }
 
-async function fetchPublicText(rawUrl: string, signal: AbortSignal): Promise<string> {
+async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost: typeof lookup): Promise<string> {
   let current = new URL(rawUrl);
   for (let redirects = 0; redirects <= 4; redirects += 1) {
-    await assertPublicUrl(current);
+    await assertPublicUrl(current, resolveHost);
     const response = await fetch(current, { redirect: "manual", headers: { "user-agent": "llm-chat-tool/1.0", accept: "text/html,text/plain,application/json" }, signal });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -274,10 +282,11 @@ async function fetchPublicText(rawUrl: string, signal: AbortSignal): Promise<str
   throw new Error("Too many redirects");
 }
 
-async function assertPublicUrl(url: URL): Promise<void> {
+async function assertPublicUrl(url: URL, resolveHost: typeof lookup): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only HTTP and HTTPS URLs are allowed");
   if (url.username || url.password) throw new Error("URLs with credentials are not allowed");
-  const addresses = isIP(url.hostname) ? [{ address: url.hostname }] : await lookup(url.hostname, { all: true });
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await resolveHost(hostname, { all: true });
   if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) throw new Error("Private or loopback addresses are blocked");
 }
 
@@ -349,6 +358,15 @@ async function safeWriteTarget(root: string, path: string): Promise<string> {
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   const parent = await workspacePath(root, dirname(relative(root, target)));
   if (!parent.startsWith(root)) throw new Error("Path resolves outside /workspace");
+  try {
+    const canonical = await realpath(target);
+    const canonicalRoot = await realpath(root);
+    if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) {
+      throw new Error("Path resolves outside /workspace");
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   return target;
 }
 
@@ -396,6 +414,9 @@ async function grepWorkspace(root: string, input: JsonObject): Promise<string> {
   for await (const item of glob(pattern, { cwd: root, withFileTypes: true, exclude: ["**/node_modules/**", "**/.git/**"] })) {
     if (!item.isFile()) continue;
     const path = resolve(item.parentPath, item.name);
+    const canonical = await realpath(path);
+    const canonicalRoot = await realpath(root);
+    if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) continue;
     const info = await stat(path);
     if (info.size > 1024 * 1024) continue;
     let text: string;
