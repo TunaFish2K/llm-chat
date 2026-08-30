@@ -9,6 +9,10 @@ export const REASONING_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "h
 
 const MARKS = Object.fromEntries(REASONING_EFFORTS.map((effort, index) => [index, effort]));
 
+export function reasoningEffortAt(index: number | null | undefined): ReasoningEffort {
+  return REASONING_EFFORTS[index ?? 0] ?? "none";
+}
+
 interface Props {
   value: ReasoningEffort;
   onChange: (value: ReasoningEffort) => void;
@@ -32,9 +36,9 @@ export function ReasoningEffortControl({ value, onChange, mobile, saving, placem
       step={1}
       marks={MARKS}
       value={REASONING_EFFORTS.indexOf(preview)}
-      tooltip={{ formatter: (index) => REASONING_EFFORTS[index ?? 0] }}
-      onChange={(index) => setPreview(REASONING_EFFORTS[index] ?? "none")}
-      onChangeComplete={(index) => onChange(REASONING_EFFORTS[index] ?? "none")}
+      tooltip={{ formatter: reasoningEffortAt }}
+      onChange={(index) => setPreview(reasoningEffortAt(index))}
+      onChangeComplete={(index) => onChange(reasoningEffortAt(index))}
     />
   </Flex>;
 
