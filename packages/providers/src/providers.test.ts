@@ -1,10 +1,11 @@
 import type { GenerationSettings } from "@llm-chat/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnthropicAdapter } from "./anthropic";
-import { endpoint, readSse } from "./http";
+import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
+import { adapterFor } from "./index";
 import { OpenAiChatAdapter } from "./openai-chat";
 import { OpenAiResponsesAdapter } from "./openai-responses";
-import type { GenerateRequest, ProviderConnection, ProviderEvent } from "./types";
+import { ProviderError, type GenerateRequest, type ProviderConnection, type ProviderEvent } from "./types";
 
 const settings: GenerationSettings = {
   common: { maxOutputTokens: 256, stopSequences: [] },
@@ -25,6 +26,62 @@ describe("provider HTTP helpers", () => {
     const events = [];
     for await (const event of readSse(response)) events.push(event);
     expect(events).toEqual([{ event: "ping", data: "one\ntwo" }]);
+  });
+
+  it("builds protocol authentication headers and lets configured headers override defaults", () => {
+    const openai = request("openai-chat").connection;
+    expect(headers(openai)).toEqual({ "content-type": "application/json", authorization: "Bearer key" });
+    const anthropic = request("anthropic-messages").connection;
+    anthropic.secretHeaders = { "anthropic-version": "custom", "x-extra": "value" };
+    expect(headers(anthropic)).toEqual({
+      "content-type": "application/json", "x-api-key": "key", "anthropic-version": "custom", "x-extra": "value"
+    });
+    expect(headers({ ...openai, apiKey: "", secretHeaders: {} })).toEqual({ "content-type": "application/json" });
+    expect(endpoint("https://example.test/v1/models", "/models")).toBe("https://example.test/v1/models");
+  });
+
+  it.each([
+    [401, { error: { message: "bad key" } }, "provider_auth_error"],
+    [403, { error: "forbidden" }, "provider_auth_error"],
+    [429, { error: { message: "slow down" } }, "provider_rate_limit"],
+    [500, "<html>private upstream page</html>", "provider_http_error"]
+  ])("normalizes non-OK HTTP %i without leaking unstructured bodies", async (status, body, code) => {
+    const response = typeof body === "string"
+      ? new Response(body, { status, headers: { "x-request-id": "req-1" } })
+      : Response.json(body, { status, headers: { "request-id": "req-1" } });
+    const error = await ensureOk(response).catch((caught) => caught) as ProviderError;
+    expect(error).toMatchObject({ name: "ProviderError", code, status });
+    expect(error.message).toContain("req-1");
+    if (status === 500) expect(error.message).not.toContain("private upstream page");
+  });
+
+  it("lists and normalizes both model response shapes and forwards abort signals", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn(async () => Response.json({ data: [
+      { id: "a", display_name: "Model A" }, { id: "b", displayName: "Model B" }, { nope: true }
+    ] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(listModelEndpoint(request("openai-chat").connection, controller.signal)).resolves.toEqual([
+      { id: "a", displayName: "Model A" }, { id: "b", displayName: "Model B" }
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith("https://example.test/v1/models", expect.objectContaining({ signal: controller.signal }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ models: [{ id: "c", name: "Model C" }, { id: "d" }] })));
+    await expect(listModelEndpoint(request("anthropic-messages").connection)).resolves.toEqual([
+      { id: "c", displayName: "Model C" }, { id: "d", displayName: "d" }
+    ]);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "no" }, { status: 403 })));
+    await expect(listModelEndpoint(request("openai-chat").connection)).rejects.toMatchObject({ code: "provider_auth_error" });
+  });
+
+  it("ignores SSE comments and empty frames, defaults event names, and wraps read failures", async () => {
+    const events = [];
+    for await (const event of readSse(streamResponse([": keepalive\n\n", "data: value\n\n", "event: empty\n\n"]))) events.push(event);
+    expect(events).toEqual([{ event: "message", data: "value" }]);
+    await expect(collectSse(new Response(null))).rejects.toMatchObject({ code: "provider_stream_error" });
+    const failed = new Response(new ReadableStream({ start(controller) { controller.error(new Error("socket failed")); } }));
+    await expect(collectSse(failed)).rejects.toMatchObject({ code: "provider_stream_error", message: "socket failed" });
+    const aborted = new Response(new ReadableStream({ start(controller) { controller.error(new DOMException("aborted", "AbortError")); } }));
+    await expect(collectSse(aborted)).rejects.toMatchObject({ name: "AbortError" });
   });
 });
 
@@ -150,6 +207,145 @@ describe("provider adapters", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "reasoning", content: "分析", complete: true }));
     expect(events).toContainEqual({ type: "usage", usage: { inputTokens: 7, outputTokens: 5 } });
     expect(events).toContainEqual({ type: "provider-context", payload: expect.arrayContaining([expect.objectContaining({ signature: "sig" })]) });
+  });
+
+  it("maps Chat settings and message variants and tolerates malformed chunks", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return streamResponse([
+        "data: not-json\n\n",
+        frame({ choices: [{ delta: { reasoning: "why", refusal: "cannot" } }] }),
+        frame({ choices: [{ delta: { tool_calls: [{ function: { name: "missing_id" } }] } }] }),
+        frame({ choices: [], usage: { completion_tokens_details: { reasoning_tokens: 2 }, prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 } }),
+        "data: [DONE]\n\n"
+      ]);
+    }));
+    const req = request("openai-chat");
+    req.settings = {
+      common: { maxOutputTokens: 33, temperature: 0, topP: 0.5, stopSequences: ["END"] },
+      protocol: {}, reasoningEffort: "low"
+    };
+    req.messages = [
+      { role: "assistant", text: "", toolCalls: [{ id: "old", name: "fn", arguments: "{}" }] },
+      { role: "tool", text: "", toolResults: [{ callId: "old", name: "fn", content: "ok" }] }
+    ];
+    const events = await collect(new OpenAiChatAdapter().stream(req));
+    expect(body).toMatchObject({
+      max_completion_tokens: 33, temperature: 0, top_p: 0.5, stop: ["END"], reasoning_effort: "low"
+    });
+    expect(body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "system" }), expect.objectContaining({ role: "assistant", content: null }),
+      expect.objectContaining({ role: "tool", tool_call_id: "old" })
+    ]));
+    expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "refusal", content: "cannot", complete: true }));
+    expect(events).toContainEqual({ type: "usage", usage: { inputTokens: 4, outputTokens: 3, reasoningTokens: 2, totalTokens: 7 } });
+    expect(events.some((event) => event.type === "tool-call" && event.call.name === "missing_id")).toBe(false);
+  });
+
+  it("maps Responses refusal, unsupported items, usage details, stop reasons, and failures", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      "data: malformed\n\n",
+      namedFrame("response.refusal.delta", { delta: "denied" }),
+      namedFrame("response.output_item.done", { item: { type: "computer_call", id: "u1" } }),
+      namedFrame("response.output_item.done", { item: { type: "function_call", id: "fallback", name: "fn", arguments: 3 } }),
+      namedFrame("response.completed", { response: {
+        incomplete_details: { reason: "max_output_tokens" },
+        usage: { input_tokens: 8, output_tokens: 5, total_tokens: 13, input_tokens_details: { cached_tokens: 2 }, output_tokens_details: { reasoning_tokens: 1 } }
+      } })
+    ])));
+    const events = await collect(new OpenAiResponsesAdapter().stream(request("openai-responses")));
+    expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "refusal", content: "denied", complete: true }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "unsupported", providerPayload: { type: "computer_call", id: "u1" } }));
+    expect(events).toContainEqual({ type: "tool-call", call: { id: "fallback", name: "fn", arguments: "{}" } });
+    expect(events).toContainEqual({ type: "usage", usage: { inputTokens: 8, outputTokens: 5, reasoningTokens: 1, cachedInputTokens: 2, totalTokens: 13 } });
+    expect(events.at(-1)).toEqual({ type: "complete", stopReason: "max_output_tokens" });
+
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([namedFrame("response.failed", { response: { error: { message: "generation failed" } } })])));
+    await expect(collect(new OpenAiResponsesAdapter().stream(request("openai-responses")))).rejects.toThrow("generation failed");
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([namedFrame("response.failed", { response: {} })])));
+    await expect(collect(new OpenAiResponsesAdapter().stream(request("openai-responses")))).rejects.toThrow("Responses 生成失败");
+  });
+
+  it("does not replay provider context across connections", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return streamResponse([namedFrame("response.completed", { response: {} })]);
+    }));
+    const req = request("openai-responses");
+    req.messages = [{
+      role: "assistant", text: "visible", providerConnectionId: "other",
+      providerPayload: [{ type: "reasoning", encrypted_content: "secret" }]
+    }];
+    await collect(new OpenAiResponsesAdapter().stream(req));
+    expect(JSON.stringify(body.input)).not.toContain("secret");
+    expect(body.input).toEqual([{ role: "assistant", content: [{ type: "output_text", text: "visible" }] }]);
+  });
+
+  it("normalizes Anthropic redacted and unsupported blocks and malformed tool JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      "data: not-json\n\n",
+      namedFrame("content_block_start", { index: 0, content_block: { type: "redacted_thinking", data: "opaque" } }),
+      namedFrame("content_block_stop", { index: 0 }),
+      namedFrame("content_block_start", { index: 1, content_block: { type: "image", source: "x" } }),
+      namedFrame("content_block_stop", { index: 1 }),
+      namedFrame("content_block_start", { index: 2, content_block: { type: "tool_use", id: "tool", name: "fn" } }),
+      namedFrame("content_block_delta", { index: 2, delta: { type: "input_json_delta", partial_json: "{" } }),
+      namedFrame("content_block_stop", { index: 2 }),
+      namedFrame("message_delta", { delta: { stop_reason: "max_tokens" }, usage: { output_tokens: 4, cache_read_input_tokens: 2 } })
+    ])));
+    const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
+    expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "reasoning", content: "[推理内容已由提供方隐藏]", complete: true }));
+    expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "unsupported", content: expect.stringContaining("image") }));
+    expect(events).toContainEqual({ type: "tool-call", call: { id: "tool", name: "fn", arguments: "{}" } });
+    expect(events).toContainEqual({ type: "usage", usage: { outputTokens: 4, cachedInputTokens: 2 } });
+    expect(events.at(-1)).toEqual({ type: "complete", stopReason: "max_tokens" });
+  });
+
+  it("maps Anthropic request settings, avoids duplicate tool blocks, and surfaces protocol errors", async () => {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      body = JSON.parse(String(init?.body));
+      return streamResponse([namedFrame("message_stop", {})]);
+    }));
+    const req = request("anthropic-messages");
+    req.settings = {
+      common: { maxOutputTokens: 100, temperature: 0, topP: 0.2, stopSequences: ["END"] },
+      protocol: {}, reasoningEffort: "none"
+    };
+    req.messages = [{
+      role: "assistant", text: "ignored", providerConnectionId: req.connection.id,
+      providerPayload: [{ type: "tool_use", id: "same", name: "fn", input: {} }],
+      toolCalls: [{ id: "same", name: "fn", arguments: "{" }, { id: "new", name: "new_fn", arguments: "{" }]
+    }, { role: "tool", text: "", toolResults: [{ callId: "new", name: "new_fn", content: "bad", isError: true }] }];
+    await collect(new AnthropicAdapter().stream(req));
+    expect(body).toMatchObject({ max_tokens: 100, temperature: 0, top_p: 0.2, stop_sequences: ["END"] });
+    expect(JSON.stringify(body.messages).match(/\"id\":\"same\"/g)).toHaveLength(1);
+    expect(body.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "user", content: [expect.objectContaining({ is_error: true })] })
+    ]));
+
+    const missing = request("anthropic-messages");
+    missing.capabilities = { ...missing.capabilities, adaptiveThinking: false, manualThinking: true };
+    missing.settings = { ...settings, reasoningEffort: "high" };
+    await expect(collect(new AnthropicAdapter().stream(missing))).rejects.toMatchObject({ code: "reasoning_budget_missing" });
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([namedFrame("error", { error: { message: "anthropic failed" } })])));
+    await expect(collect(new AnthropicAdapter().stream(request("anthropic-messages")))).rejects.toThrow("anthropic failed");
+  });
+
+  it("propagates HTTP and abort failures and returns the registered adapter", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: { message: "upstream" } }, { status: 500 })));
+    await expect(collect(new OpenAiChatAdapter().stream(request("openai-chat")))).rejects.toMatchObject({ code: "provider_http_error" });
+    const controller = new AbortController();
+    controller.abort();
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new DOMException("aborted", "AbortError"); }));
+    const req = request("openai-responses");
+    req.signal = controller.signal;
+    await expect(collect(new OpenAiResponsesAdapter().stream(req))).rejects.toMatchObject({ name: "AbortError" });
+    expect(adapterFor("openai-chat")).toBeInstanceOf(OpenAiChatAdapter);
+    expect(adapterFor("openai-responses")).toBeInstanceOf(OpenAiResponsesAdapter);
+    expect(adapterFor("anthropic-messages")).toBeInstanceOf(AnthropicAdapter);
   });
 });
 
@@ -298,6 +494,12 @@ function request(protocol: ProviderConnection["protocol"]): GenerateRequest {
 async function collect(stream: AsyncGenerator<ProviderEvent>): Promise<ProviderEvent[]> {
   const events: ProviderEvent[] = [];
   for await (const event of stream) events.push(event);
+  return events;
+}
+
+async function collectSse(response: Response): Promise<Array<{ event: string; data: string }>> {
+  const events = [];
+  for await (const event of readSse(response)) events.push(event);
   return events;
 }
 

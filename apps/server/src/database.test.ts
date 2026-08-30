@@ -292,4 +292,232 @@ describe("Store", () => {
     expect(generation?.settings.common.maxOutputTokens).toBe(4096);
     store.close();
   });
+
+  it("covers connection and model CRUD boundaries while keeping secrets out of DTOs", () => {
+    const store = createStore();
+    const first = store.createConnection({
+      name: "Zulu", protocol: "openai-chat", baseUrl: "https://old.test/v1",
+      apiKey: "old-key", secretHeaders: { Authorization: "secret", "X-Key": "value" }
+    });
+    const second = store.createConnection({
+      name: "alpha", protocol: "anthropic-messages", baseUrl: "https://anthropic.test/v1",
+      secretHeaders: {}
+    });
+    expect(store.listConnections().map((item) => item.name)).toEqual(["alpha", "Zulu"]);
+    expect(first).toMatchObject({ hasApiKey: true, secretHeaderNames: ["Authorization", "X-Key"] });
+    expect(JSON.stringify(first)).not.toContain("old-key");
+    expect(JSON.stringify(first)).not.toContain("\"Authorization\":\"secret\"");
+    expect(store.updateConnection("missing", { name: "none" })).toBeUndefined();
+    expect(store.updateConnection(first.id, { name: "Updated", apiKey: "", secretHeaders: { New: "hidden" } }))
+      .toMatchObject({ name: "Updated", hasApiKey: false, secretHeaderNames: ["New"] });
+    expect(store.getConnection(first.id)).toMatchObject({ apiKey: "", secretHeaders: { New: "hidden" } });
+
+    const settings = { common: { maxOutputTokens: 64, stopSequences: [] }, protocol: {} };
+    const input = {
+      connectionId: first.id, modelKey: "same", displayName: "Original", contextWindow: 1024,
+      maxOutputTokens: 64, capabilities: {
+        tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
+        adaptiveThinking: false, manualThinking: false
+      }, defaultSettings: settings, enabled: true
+    };
+    const model = store.createModel(input);
+    const discovered = store.createModel({ ...input, displayName: "Discovered rename" }, "discovered");
+    expect(discovered.id).toBe(model.id);
+    expect(discovered.displayName).toBe("Discovered rename");
+    expect(store.listModels(first.id)).toHaveLength(1);
+    expect(store.updateModel("missing", { enabled: false })).toBeUndefined();
+    expect(store.updateModel(model.id, { contextWindow: null, modelKey: "renamed" }))
+      .toMatchObject({ contextWindow: null, modelKey: "renamed" });
+    store.updateSettings({ defaultModelId: model.id });
+    expect(store.deleteConnection("missing")).toBe(false);
+    expect(store.deleteConnection(first.id)).toBe(true);
+    expect(store.getModel(model.id)).toBeUndefined();
+    expect(store.getSettings().defaultModelId).toBeNull();
+    expect(store.deleteConnection(second.id)).toBe(true);
+    store.close();
+  });
+
+  it("uses the conversation's current model and rejects missing or disabled choices atomically", () => {
+    const store = createStore();
+    const { connection, model, settings } = seedModel(store);
+    const other = store.createModel({
+      connectionId: connection.id, modelKey: "other", displayName: "Other", contextWindow: 4096,
+      maxOutputTokens: 256, capabilities: model.capabilities,
+      defaultSettings: { ...settings, common: { ...settings.common, maxOutputTokens: 256 } }, enabled: true
+    });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    expect(store.updateConversation("missing", { title: "x" })).toBeUndefined();
+    expect(() => store.updateConversation(conversation.id, { modelId: "00000000-0000-4000-8000-000000000099" }))
+      .toThrow("模型不存在");
+    store.updateConversation(conversation.id, { modelId: null });
+    expect(() => store.createMessageGeneration(conversation.id, "no model")).toThrow("选择模型");
+    expect(() => store.createMessageGeneration("missing", "no conversation")).toThrow("会话不存在");
+    store.updateConversation(conversation.id, { modelId: other.id });
+    const generated = store.createMessageGeneration(conversation.id, "with other");
+    expect(store.getGeneration(generated.generationId)).toMatchObject({ modelKey: "other" });
+    store.updateModel(other.id, { enabled: false });
+    expect(store.getConversation(conversation.id)?.modelId).toBeNull();
+    expect(() => store.updateConversation(conversation.id, { modelId: other.id })).toThrow("模型已停用");
+    expect(() => store.createRetryGeneration("missing")).toThrow("助手消息不存在");
+    expect(store.deleteConversation("missing")).toBe(false);
+    expect(store.deleteConversation(conversation.id)).toBe(true);
+    store.close();
+  });
+
+  it("enforces active-generation ownership and exposes all busy states", () => {
+    const store = createStore();
+    seedModel(store);
+    const one = store.createConversation({ systemPrompt: "" });
+    const two = store.createConversation({ systemPrompt: "" });
+    const first = store.createMessageGeneration(one.id, "one");
+    const foreign = store.createMessageGeneration(two.id, "two");
+    expect(store.conversationIdForMessage(first.assistantMessageId)).toBe(one.id);
+    expect(store.conversationIdForMessage("missing")).toBeUndefined();
+    expect(store.selectGeneration(first.assistantMessageId, foreign.generationId)).toBe(false);
+    expect(store.selectGeneration("missing", first.generationId)).toBe(false);
+    expect(store.isConversationBusy(one.id)).toBe(true);
+    store.setGenerationRunning(first.generationId);
+    expect(store.getGeneration(first.generationId)?.status).toBe("running");
+    expect(store.isConversationBusy(one.id)).toBe(true);
+    store.setGenerationWaitingApproval(first.generationId);
+    expect(store.getGeneration(first.generationId)?.status).toBe("waiting-approval");
+    expect(store.isConversationBusy(one.id)).toBe(true);
+    store.finishGeneration(first.generationId, "completed", { stopReason: "stop" });
+    expect(store.isConversationBusy(one.id)).toBe(false);
+    store.close();
+  });
+
+  it("stores approval transitions, step context, blocks, usage, results, and errors", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "run tools");
+    const pending = store.upsertToolCall(created.generationId, { id: "call-1", name: "first", arguments: "{}" }, 0, 0, true);
+    expect(pending).toMatchObject({ approvalState: "pending", requiresApproval: true });
+    expect(store.generationIdForToolCall("call-1")).toBe(created.generationId);
+    expect(store.generationIdForToolCall("missing")).toBeUndefined();
+    expect(store.updateToolCall("missing", { approvalState: "approved" })).toBeUndefined();
+    store.updateToolCall("call-1", { approvalState: "approved" });
+    store.updateToolCall("call-1", { approvalState: "running", startedAt: 10 });
+    store.updateToolCall("call-1", { approvalState: "completed", output: "result", completedAt: 20 });
+    store.upsertToolCall(created.generationId, { id: "call-2", name: "second", arguments: "{bad" }, 1, 1, false);
+    store.updateToolCall("call-2", { approvalState: "failed", error: "failure", startedAt: 30, completedAt: 40 });
+    store.setGenerationStepContext(created.generationId, 0, [{ type: "reasoning", id: "r0" }]);
+    store.setGenerationStepContext(created.generationId, 0, [{ type: "reasoning", id: "r1" }]);
+    store.updateGenerationBlock(created.generationId, 1, "text", "draft", false, { raw: 1 });
+    store.updateGenerationBlock(created.generationId, 1, "text", "final", true, { raw: 2 });
+    store.updateGenerationBlock(created.generationId, 1001, "refusal", "cannot", true);
+    store.updateGenerationUsage(created.generationId, { inputTokens: 10, outputTokens: 4, totalTokens: 14 });
+    store.setGenerationContext(created.generationId, {
+      policy: "trim", omittedMessages: 2, estimatedInputTokens: 10, summaryUsed: false
+    });
+    store.setProviderContext(created.generationId, [{ encrypted: "opaque" }]);
+    store.finishGeneration(created.generationId, "failed", { code: "provider_error", message: "failed", stopReason: "error" });
+
+    expect(store.listToolCalls(created.generationId)).toEqual([
+      expect.objectContaining({ id: "call-1", approvalState: "completed", output: "result", startedAt: 10, completedAt: 20 }),
+      expect.objectContaining({ id: "call-2", approvalState: "failed", error: "failure" })
+    ]);
+    expect(store.currentGenerationMessages(created.generationId)).toEqual([
+      expect.objectContaining({
+        role: "assistant", text: "final", providerPayload: [{ type: "reasoning", id: "r1" }],
+        toolCalls: [{ id: "call-1", name: "first", arguments: "{}" }]
+      }),
+      { role: "tool", text: "", toolResults: [{ callId: "call-1", name: "first", content: "result" }] },
+      expect.objectContaining({ role: "assistant", text: "cannot", toolCalls: [{ id: "call-2", name: "second", arguments: "{bad" }] }),
+      { role: "tool", text: "", toolResults: [{ callId: "call-2", name: "second", content: JSON.stringify({ error: "failure" }), isError: true }] }
+    ]);
+    expect(store.getGeneration(created.generationId)).toMatchObject({
+      status: "failed", stopReason: "error", usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 },
+      context: { policy: "trim", omittedMessages: 2 }, error: { code: "provider_error", message: "failed" },
+      blocks: [expect.objectContaining({ index: 1, content: "final", complete: true }), expect.objectContaining({ index: 1001, type: "refusal" })]
+    });
+    expect(store.currentGenerationMessages("missing")).toEqual([]);
+    store.close();
+  });
+
+  it("persists tool, MCP, and memory settings while redacting their secrets", () => {
+    const store = createStore();
+    expect(store.getToolSettings()).toMatchObject({
+      enabled: {}, search: { baseUrl: "", hasApiKey: false }, workspaceShellEnabled: false
+    });
+    expect(store.updateToolSettings({
+      enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", apiKey: "search-secret" },
+      workspaceShellEnabled: true
+    })).toMatchObject({
+      enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", hasApiKey: true }, workspaceShellEnabled: true
+    });
+    expect(JSON.stringify(store.getToolSettings())).not.toContain("search-secret");
+    store.updateToolSettings({ search: { baseUrl: "https://new.test" } });
+    expect(store.getToolSecrets().searchApiKey).toBe("search-secret");
+    store.updateToolSettings({ search: { baseUrl: "", apiKey: "" } });
+    expect(store.getToolSettings().search.hasApiKey).toBe(false);
+
+    const server = store.createMcpServer({
+      name: "Server", url: "https://mcp.test", headers: { Authorization: "Bearer secret" }, enabled: true
+    });
+    expect(server).toMatchObject({ name: "Server", headerNames: ["Authorization"], lastError: null });
+    expect(JSON.stringify(server)).not.toContain("Bearer secret");
+    expect(store.getMcpServer(server.id)?.headers).toEqual({ Authorization: "Bearer secret" });
+    store.setMcpServerError(server.id, "offline");
+    expect(store.listMcpServers()[0]?.lastError).toBe("offline");
+    expect(store.updateMcpServer(server.id, { name: "Renamed", enabled: false })).toMatchObject({
+      name: "Renamed", enabled: false, lastError: null
+    });
+    expect(store.updateMcpServer("missing", { name: "none" })).toBeUndefined();
+    expect(store.deleteMcpServer("missing")).toBe(false);
+    expect(store.deleteMcpServer(server.id)).toBe(true);
+
+    const first = store.createMemory("first");
+    const second = store.createMemory("second");
+    expect(store.listMemories().map((item) => item.id).sort()).toEqual([first.id, second.id].sort());
+    expect(store.updateMemory(first.id, "updated").content).toBe("updated");
+    store.deleteMemory(second.id);
+    expect(() => store.updateMemory(999, "missing")).toThrow("不存在");
+    expect(() => store.deleteMemory(999)).toThrow("不存在");
+    store.close();
+  });
+
+  it("returns provider-aware context and literal chat-search matches", () => {
+    const store = createStore();
+    const { connection } = seedModel(store);
+    const conversation = store.createConversation({ title: "Search", systemPrompt: "" });
+    const first = store.createMessageGeneration(conversation.id, "literal 100%_value");
+    store.updateGenerationBlock(first.generationId, 1, "reasoning", "hidden", true);
+    store.updateGenerationBlock(first.generationId, 2, "text", "assistant content", true);
+    store.setProviderContext(first.generationId, [{ id: "provider" }]);
+    store.upsertToolCall(first.generationId, { id: "ctx-call", name: "fn", arguments: "{}" }, 0, 0, false);
+    store.updateToolCall("ctx-call", { approvalState: "failed", error: "tool failed" });
+    const latest = store.createMessageGeneration(conversation.id, "latest");
+    expect(store.contextMessages(conversation.id, "missing")).toEqual([]);
+    expect(store.contextMessages(conversation.id, latest.assistantMessageId)).toEqual([
+      expect.objectContaining({ role: "user", text: "literal 100%_value" }),
+      expect.objectContaining({
+        role: "assistant", text: "assistant content", providerConnectionId: connection.id,
+        providerPayload: [{ id: "provider" }],
+        toolCalls: [{ id: "ctx-call", name: "fn", arguments: "{}" }],
+        toolResults: [{ callId: "ctx-call", name: "fn", content: JSON.stringify({ error: "tool failed" }), isError: true }]
+      }),
+      expect.objectContaining({ role: "user", text: "latest" })
+    ]);
+    expect(store.searchChats("100%_value", 10)).toHaveLength(1);
+    expect(store.searchChats("100Xvalue", 10)).toEqual([]);
+    expect(store.recentChats(1)).toEqual([expect.objectContaining({ id: conversation.id })]);
+    store.close();
+  });
+
+  it("marks unfinished generations interrupted on restart and rejects future database versions", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const queued = store.createMessageGeneration(conversation.id, "queued");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+    const reopened = new Store(path);
+    expect(reopened.getGeneration(queued.generationId)?.status).toBe("interrupted");
+    expect(reopened.getGeneration(queued.generationId)?.completedAt).not.toBeNull();
+    reopened.sqlite.exec("PRAGMA user_version = 999");
+    reopened.close();
+    expect(() => new Store(path)).toThrow("高于当前服务支持的版本");
+  });
 });

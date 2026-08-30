@@ -52,16 +52,15 @@ export async function buildContext(
     };
   }
   if (conversation.contextPolicy === "trim") {
-    const messages = [...providerMessages];
+    let remaining = [...rawMessages];
     let omitted = 0;
-    while (messages.length > 1 && estimateTokens(conversation.systemPrompt, messages) > budget) {
-      messages.shift();
-      omitted += 1;
-      if (messages[0]?.role === "assistant") {
-        messages.shift();
-        omitted += 1;
-      }
+    while (remaining.length > 1 && estimateTokens(conversation.systemPrompt, remaining.flatMap(toProviderMessages)) > budget) {
+      const nextUser = remaining.findIndex((message, index) => index > 0 && message.role === "user");
+      const removeCount = nextUser > 0 ? nextUser : 1;
+      remaining = remaining.slice(removeCount);
+      omitted += removeCount;
     }
+    const messages = remaining.flatMap(toProviderMessages);
     const finalEstimate = estimateTokens(conversation.systemPrompt, messages);
     if (finalEstimate > budget) {
       throw new ContextError("message_too_large", "最新消息超过模型可用上下文容量");
