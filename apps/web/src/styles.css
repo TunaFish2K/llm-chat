@@ -1,0 +1,108 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+.app-provider, .app-layout { height: 100%; height: 100dvh; }
+body { overflow: hidden; overscroll-behavior: none; }
+
+.app-loading { height: 100%; }
+.chat-layout { position: relative; min-width: 0; height: 100%; }
+.chat-header { position: relative; line-height: normal; overflow: hidden; }
+.chat-header-welcome { background: transparent; }
+.header-rail {
+  width: min(900px, calc(100% - 32px));
+  height: 100%;
+  min-width: 0;
+  margin-inline: auto;
+}
+.sidebar-open-button { position: absolute; inset-inline-start: 8px; top: 8px; min-width: 40px; min-height: 40px; }
+.conversation-title-slot { flex: 1; min-width: 0; }
+.conversation-title-button { max-width: 100%; padding-inline: 0; }
+.conversation-title-button > span { min-width: 0; }
+.conversation-title-input { max-width: 520px; }
+.header-menu-button { flex: 0 0 40px; min-width: 40px; min-height: 40px; }
+.chat-content { min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+.sidebar-content { height: 100%; padding: 12px; }
+.sidebar-header { min-height: 40px; padding-inline: 8px; }
+.conversation-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+.message-stage { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.message-list { width: 100%; height: 100%; }
+.message-meta { min-height: 32px; }
+.message-model-label { min-width: 0; max-width: 260px; }
+.message-meta-actions, .message-meta-details { min-width: 0; width: 100%; }
+.tool-call { width: min(720px, 100%); }
+.tool-call .ant-collapse-header { align-items: center !important; }
+.tool-call .ant-collapse-header-text { min-width: 0; }
+.tool-payload {
+  max-height: 280px;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.composer-rail { width: min(900px, calc(100% - 32px)); margin-inline: auto; padding-block: 8px 12px; }
+.composer-rail > * + * { margin-top: 8px; }
+.composer-toolbar { width: 100%; }
+
+.empty-state { flex: 1; min-height: 0; width: 100%; padding: 24px; }
+.welcome-stage { flex: 1; min-height: 0; width: 100%; padding: 24px 24px 48px; }
+.welcome-composer { width: min(780px, 100%); }
+.welcome-input-stack { min-width: 0; width: 100%; }
+.welcome-context { min-width: 0; min-height: 28px; padding-inline: 8px; }
+
+.model-trigger { max-width: min(260px, 48vw); }
+.model-trigger-label { min-width: 0; max-width: 210px; }
+.model-popover-list { max-height: min(360px, 55vh); overflow-y: auto; }
+.model-group-title { display: block; padding: 8px 12px 4px; }
+.model-option-button { height: auto; padding-block: 8px; }
+.model-option-button > span { width: 100%; }
+.model-option-copy { flex: 1; min-width: 0; }
+.reasoning-popover { padding-bottom: 12px; }
+
+.settings-split { min-height: 520px; }
+.resource-pane { flex: 0 0 250px; min-width: 0; }
+.resource-menu { flex: 1; min-height: 0; overflow-y: auto; }
+.settings-editor { flex: 1; min-width: 0; overflow-y: auto; }
+.editor-empty { min-height: 320px; }
+.general-settings { max-width: 640px; }
+.settings-mobile-list, .settings-mobile-detail, .settings-form { min-width: 0; width: 100%; }
+.settings-back-button { align-self: flex-start; margin-inline-start: -8px; }
+.settings-fields-row { width: 100%; }
+.settings-field { flex: 1 1 220px; min-width: 0; }
+.settings-number-input { width: 100%; }
+
+@media (min-width: 992px) {
+  .chat-header-welcome { position: absolute; inset: 0 0 auto; z-index: 1; width: 100%; }
+}
+
+@media (max-width: 991px) {
+  .header-rail { width: calc(100% - 64px); margin-inline: 0 8px; margin-inline-start: 56px; }
+}
+
+@media (max-width: 767px) {
+  .chat-header {
+    height: calc(56px + env(safe-area-inset-top));
+    min-height: calc(56px + env(safe-area-inset-top));
+    padding-top: env(safe-area-inset-top);
+  }
+  .sidebar-open-button { top: calc(8px + env(safe-area-inset-top)); }
+  .composer-rail { width: calc(100% - 16px); padding-block-end: max(8px, env(safe-area-inset-bottom)); }
+  .welcome-stage { align-items: stretch; padding: 0 12px max(12px, env(safe-area-inset-bottom)); }
+  .welcome-composer { height: 100%; }
+  .welcome-prompt { margin-block: auto; }
+  .welcome-input-stack { flex: 0 0 auto; }
+  .model-trigger { max-width: 48vw; }
+  .model-trigger-label { max-width: 34vw; }
+  .message-meta-mobile { min-height: 0; }
+  .message-model-label { max-width: min(60vw, 240px); }
+  .settings-split { min-height: 0; }
+  .resource-pane { flex-basis: auto; width: 100%; }
+  .settings-mobile-list .resource-menu { overflow: visible; }
+  .settings-editor { overflow: visible; }
+  .settings-field { flex-basis: 100%; }
+  .settings-actions { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+}

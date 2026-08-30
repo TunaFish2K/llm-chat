@@ -1,0 +1,26 @@
+{
+  "name": "llm-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"pnpm --filter @llm-chat/server dev\" \"pnpm --filter @llm-chat/web dev\"",
+    "build": "pnpm --filter @llm-chat/web build && pnpm --filter @llm-chat/server build",
+    "start": "pnpm --filter @llm-chat/server start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

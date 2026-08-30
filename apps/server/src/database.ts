@@ -1,0 +1,1302 @@
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname } from "node:path";
+import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
+import type {
+  AppSettings,
+  ConnectionDto,
+  ConnectionInput,
+  ContextPolicy,
+  ConversationStartedDto,
+  ConversationDto,
+  GenerationCreatedDto,
+  GenerationDto,
+  GenerationSettings,
+  GeneratedModelDto,
+  MessageDto,
+  ModelDto,
+  ModelInput,
+  ModelSettings,
+  McpServerDto,
+  McpServerInput,
+  ProviderProtocol,
+  ReasoningEffort,
+  ToolCallDto,
+  ToolSettingsDto,
+  ToolSettingsInput,
+  UsageDto
+} from "@llm-chat/contracts";
+import { generationSettingsSchema, modelCapabilitiesSchema, modelSettingsSchema, reasoningEffortSchema } from "@llm-chat/contracts";
+
+interface ConnectionRecord extends ConnectionDto {
+  apiKey: string;
+  secretHeaders: Record<string, string>;
+}
+
+export interface ContextMessageRecord {
+  messageId: string;
+  ordinal: number;
+  role: "user" | "assistant";
+  text: string;
+  providerPayload?: unknown;
+  providerConnectionId?: string;
+  toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  toolResults?: Array<{ callId: string; name: string; content: string; isError?: boolean }>;
+}
+
+export interface GenerationRecord {
+  id: string;
+  assistantMessageId: string;
+  conversationId: string;
+  connectionId: string;
+  modelId: string;
+  modelKey: string;
+  protocol: ProviderProtocol;
+  settings: GenerationSettings;
+  status: GenerationDto["status"];
+}
+
+type OptionalInput<T> = { [K in keyof T]?: T[K] | undefined };
+
+/**
+ * Clone the model's defaultSettings, clamp the effective
+ * common.maxOutputTokens to the model row ceiling, stamp the global
+ * reasoning effort, and scrub deprecated protocol-level controls.
+ * Atomically rejects
+ *   - capabilities.reasoning = false with an enabled effort
+ *   - anthropic manual-only thinking when the effective
+ *     common.maxOutputTokens <= 1024 (no room for even the minimum
+ *     1024-token thinking budget).
+ */
+export function buildEffectiveSettings(
+  model: ModelDto,
+  protocol: ProviderProtocol,
+  effort: ReasoningEffort
+): GenerationSettings {
+  const capabilities = model.capabilities;
+  if (effort !== "none" && !capabilities.reasoning) {
+    throw new StoreError("reasoning_not_supported", "当前模型不支持推理强度设置");
+  }
+  const defaults = model.defaultSettings ?? ({} as ModelSettings);
+  const common = {
+    ...(defaults.common ?? {}),
+    maxOutputTokens: Math.min(
+      defaults.common?.maxOutputTokens ?? model.maxOutputTokens,
+      model.maxOutputTokens
+    )
+  };
+  const isAnthropicManual = protocol === "anthropic-messages"
+    && capabilities.manualThinking
+    && !capabilities.adaptiveThinking;
+  if (effort !== "none" && isAnthropicManual && common.maxOutputTokens <= 1024) {
+    throw new StoreError("reasoning_budget_too_small", "当前模型输出上限过低，无法启用推理");
+  }
+  const resolvedThinkingBudgetTokens = effort !== "none" && isAnthropicManual
+    ? resolveManualThinkingBudget(effort, common.maxOutputTokens, defaults.protocol?.thinkingBudgetTokens)
+    : undefined;
+  return {
+    common,
+    protocol: {
+      reasoningSummary: defaults.protocol?.reasoningSummary,
+      thinkingBudgetTokens: defaults.protocol?.thinkingBudgetTokens
+    },
+    reasoningEffort: effort,
+    ...(resolvedThinkingBudgetTokens ? { resolvedThinkingBudgetTokens } : {})
+  };
+}
+
+export function resolveManualThinkingBudget(
+  effort: Exclude<ReasoningEffort, "none">,
+  maxOutputTokens: number,
+  configuredMedium?: number
+): number {
+  const clamp = (value: number) => Math.min(Math.max(Math.floor(value), 1024), Math.max(1024, maxOutputTokens - 1));
+  if (configuredMedium !== undefined) {
+    const anchor = clamp(configuredMedium);
+    const ratios: Record<Exclude<ReasoningEffort, "none">, number> = {
+      low: 0.5, medium: 1, high: 1.8, xhigh: 2.2, max: 2.6
+    };
+    return clamp(anchor * ratios[effort]);
+  }
+  const ratios: Record<Exclude<ReasoningEffort, "none">, number> = {
+    low: 0.15, medium: 0.3, high: 0.55, xhigh: 0.675, max: 0.8
+  };
+  return clamp(maxOutputTokens * ratios[effort]);
+}
+
+export const MIGRATION_V1 = `
+CREATE TABLE IF NOT EXISTS app_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  default_model_id TEXT,
+  default_context_policy TEXT NOT NULL DEFAULT 'trim',
+  theme TEXT NOT NULL DEFAULT 'system',
+  default_system_prompt TEXT NOT NULL DEFAULT '',
+  reasoning_effort TEXT NOT NULL DEFAULT 'none'
+    CHECK (reasoning_effort IN ('none','low','medium','high','xhigh','max'))
+);
+INSERT OR IGNORE INTO app_settings (id) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS connections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  api_key TEXT NOT NULL DEFAULT '',
+  secret_headers_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS models (
+  id TEXT PRIMARY KEY,
+  connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+  model_key TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  context_window INTEGER,
+  max_output_tokens INTEGER NOT NULL,
+  capabilities_json TEXT NOT NULL,
+  default_settings_json TEXT NOT NULL,
+  source TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(connection_id, model_key)
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  system_prompt TEXT NOT NULL DEFAULT '',
+  context_policy TEXT NOT NULL DEFAULT 'trim',
+  draft TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  text TEXT,
+  active_generation_id TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE(conversation_id, ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS generations (
+  id TEXT PRIMARY KEY,
+  assistant_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  model_id TEXT NOT NULL,
+  connection_name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  model_key TEXT NOT NULL,
+  settings_json TEXT NOT NULL,
+  usage_json TEXT NOT NULL DEFAULT '{}',
+  stop_reason TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  context_json TEXT,
+  provider_context_json TEXT,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  completed_at INTEGER,
+  UNIQUE(assistant_message_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS generation_blocks (
+  id TEXT PRIMARY KEY,
+  generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+  block_index INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  complete INTEGER NOT NULL DEFAULT 0,
+  provider_payload_json TEXT,
+  UNIQUE(generation_id, block_index)
+);
+
+CREATE TABLE IF NOT EXISTS context_summaries (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  through_ordinal INTEGER NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  text TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  model_key TEXT NOT NULL,
+  usage_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_models_connection ON models(connection_id);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, ordinal);
+CREATE INDEX IF NOT EXISTS idx_generations_message ON generations(assistant_message_id, version);
+CREATE INDEX IF NOT EXISTS idx_blocks_generation ON generation_blocks(generation_id, block_index);
+CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON context_summaries(conversation_id, through_ordinal DESC);
+`;
+
+const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
+
+function migrate(sqlite: DatabaseSyncType): void {
+  const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
+  if (current > 10) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    sqlite.exec(MIGRATION_V1);
+    if (current < 2) {
+      if (!hasColumn(sqlite, "conversations", "model_id")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN model_id TEXT REFERENCES models(id) ON DELETE SET NULL");
+      }
+      if (!hasColumn(sqlite, "generations", "model_display_name")) {
+        sqlite.exec("ALTER TABLE generations ADD COLUMN model_display_name TEXT");
+      }
+      sqlite.exec(`
+        UPDATE generations
+        SET model_display_name = COALESCE(
+          (SELECT display_name FROM models WHERE models.id = generations.model_id),
+          model_key
+        )
+        WHERE model_display_name IS NULL OR model_display_name = '';
+        UPDATE conversations
+        SET model_id = (
+          SELECT default_model_id FROM app_settings
+          WHERE id = 1 AND default_model_id IN (SELECT id FROM models WHERE enabled = 1)
+        )
+        WHERE model_id IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_conversations_model ON conversations(model_id);
+        PRAGMA user_version = 2;
+      `);
+    }
+    if (current < 3) {
+      if (!hasColumn(sqlite, "conversations", "reasoning_effort")) {
+        sqlite.exec(`
+          ALTER TABLE conversations
+            ADD COLUMN reasoning_effort TEXT NULL DEFAULT NULL
+            CHECK (reasoning_effort IS NULL
+                OR reasoning_effort IN ('low','medium','high','max'));
+        `);
+      }
+      sqlite.exec("PRAGMA user_version = 3;");
+    }
+    if (current < 4) {
+      if (!hasColumn(sqlite, "app_settings", "reasoning_effort")) {
+        sqlite.exec(`
+          ALTER TABLE app_settings
+            ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT 'none'
+            CHECK (reasoning_effort IN ('none','low','medium','high','xhigh','max'));
+        `);
+      }
+      sqlite.exec("PRAGMA user_version = 4;");
+    }
+    if (current < 5) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS generation_tool_calls (
+          id TEXT PRIMARY KEY,
+          generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+          call_index INTEGER NOT NULL,
+          step_index INTEGER NOT NULL DEFAULT 0,
+          name TEXT NOT NULL,
+          arguments_json TEXT NOT NULL DEFAULT '{}',
+          approval_state TEXT NOT NULL DEFAULT 'auto',
+          requires_approval INTEGER NOT NULL DEFAULT 0,
+          output TEXT,
+          error TEXT,
+          started_at INTEGER,
+          completed_at INTEGER,
+          UNIQUE(generation_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tool_calls_generation
+          ON generation_tool_calls(generation_id, call_index);
+
+        CREATE TABLE IF NOT EXISTS tool_settings (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          enabled_json TEXT NOT NULL DEFAULT '{}',
+          search_base_url TEXT NOT NULL DEFAULT '',
+          search_api_key TEXT NOT NULL DEFAULT '',
+          workspace_shell_enabled INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO tool_settings (id) VALUES (1);
+
+        CREATE TABLE IF NOT EXISTS memories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          content TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(
+          message_id UNINDEXED,
+          conversation_id UNINDEXED,
+          title,
+          content,
+          tokenize = 'unicode61'
+        );
+        INSERT INTO message_search (message_id, conversation_id, title, content)
+        SELECT m.id, m.conversation_id, c.title,
+          CASE WHEN m.role = 'user' THEN COALESCE(m.text, '') ELSE COALESCE((
+            SELECT GROUP_CONCAT(b.content, '') FROM generation_blocks b
+            JOIN generations g ON g.id = b.generation_id
+            WHERE g.id = m.active_generation_id AND b.type IN ('text', 'refusal')
+          ), '') END
+        FROM messages m JOIN conversations c ON c.id = m.conversation_id;
+        PRAGMA user_version = 5;
+      `);
+    }
+    if (current < 6) {
+      if (!hasColumn(sqlite, "generation_tool_calls", "step_index")) {
+        sqlite.exec("ALTER TABLE generation_tool_calls ADD COLUMN step_index INTEGER NOT NULL DEFAULT 0");
+      }
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS generation_steps (
+          generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+          step_index INTEGER NOT NULL,
+          provider_context_json TEXT,
+          PRIMARY KEY (generation_id, step_index)
+        );
+        PRAGMA user_version = 6;
+      `);
+    }
+    if (current < 7) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_servers (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          url TEXT NOT NULL,
+          headers_json TEXT NOT NULL DEFAULT '{}',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        PRAGMA user_version = 7;
+      `);
+    }
+    if (current < 8) {
+      if (!hasColumn(sqlite, "app_settings", "sidebar_collapsed")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN sidebar_collapsed INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!hasColumn(sqlite, "app_settings", "reasoning_collapse_policy")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN reasoning_collapse_policy TEXT NOT NULL DEFAULT 'collapse-on-answer'");
+      }
+      sqlite.exec("PRAGMA user_version = 8;");
+    }
+    if (current < 9) {
+      sqlite.exec(`
+        UPDATE models SET capabilities_json = json_set(capabilities_json, '$.tools', json('true'))
+        WHERE json_extract(capabilities_json, '$.tools') IS NULL;
+        PRAGMA user_version = 9;
+      `);
+    }
+    if (current < 10) {
+      sqlite.exec(`
+        UPDATE models SET capabilities_json = json_set(capabilities_json, '$.tools', json('true'))
+        WHERE json_type(capabilities_json, '$.tools') = 'integer'
+          AND json_extract(capabilities_json, '$.tools') = 1;
+        PRAGMA user_version = 10;
+      `);
+    }
+    sqlite.exec("COMMIT");
+  } catch (error) {
+    sqlite.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function hasColumn(sqlite: DatabaseSyncType, table: string, column: string): boolean {
+  return (sqlite.prepare(`PRAGMA table_info(${table})`).all() as Row[])
+    .some((row) => row.name === column);
+}
+
+export class Store {
+  readonly sqlite: DatabaseSyncType;
+  readonly dataDir: string;
+
+  constructor(path: string) {
+    this.dataDir = dirname(path);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    this.sqlite = new DatabaseSync(path, { timeout: 5_000 });
+    this.sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    migrate(this.sqlite);
+    try {
+      chmodSync(dirname(path), 0o700);
+    } catch {
+      // Permission modes are best effort on non-POSIX platforms.
+    }
+    for (const databaseFile of [path, `${path}-wal`, `${path}-shm`]) {
+      try {
+        chmodSync(databaseFile, 0o600);
+      } catch {
+        // A sidecar can be absent depending on the SQLite journal state.
+      }
+    }
+    this.sqlite
+      .prepare("UPDATE generations SET status = 'interrupted', completed_at = ? WHERE status IN ('queued', 'running')")
+      .run(Date.now());
+  }
+
+  close(): void {
+    this.sqlite.close();
+  }
+
+  getSettings(): AppSettings {
+    const row = this.sqlite.prepare("SELECT * FROM app_settings WHERE id = 1").get() as Row;
+    return {
+      defaultModelId: textOrNull(row.default_model_id),
+      defaultContextPolicy: row.default_context_policy as ContextPolicy,
+      theme: row.theme as AppSettings["theme"],
+      defaultSystemPrompt: String(row.default_system_prompt),
+      reasoningEffort: reasoningEffortSchema.parse(row.reasoning_effort),
+      uiPreferences: {
+        sidebarCollapsed: Boolean(row.sidebar_collapsed),
+        reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"]
+      }
+    };
+  }
+
+  updateSettings(patch: OptionalInput<AppSettings>): AppSettings {
+    const current = this.getSettings();
+    const next: AppSettings = {
+      defaultModelId: patch.defaultModelId === undefined ? current.defaultModelId : patch.defaultModelId,
+      defaultContextPolicy: patch.defaultContextPolicy ?? current.defaultContextPolicy,
+      theme: patch.theme ?? current.theme,
+      defaultSystemPrompt: patch.defaultSystemPrompt ?? current.defaultSystemPrompt,
+      reasoningEffort: patch.reasoningEffort ?? current.reasoningEffort,
+      uiPreferences: patch.uiPreferences ?? current.uiPreferences
+    };
+    this.sqlite.prepare(`
+      UPDATE app_settings SET default_model_id = ?, default_context_policy = ?, theme = ?, default_system_prompt = ?, reasoning_effort = ?,
+        sidebar_collapsed = ?, reasoning_collapse_policy = ?
+      WHERE id = 1
+    `).run(next.defaultModelId, next.defaultContextPolicy, next.theme, next.defaultSystemPrompt, next.reasoningEffort,
+      next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy);
+    return next;
+  }
+
+  getToolSettings(): ToolSettingsDto {
+    const row = this.sqlite.prepare("SELECT * FROM tool_settings WHERE id = 1").get() as Row;
+    return {
+      enabled: parse(row.enabled_json, {}),
+      search: { baseUrl: String(row.search_base_url), hasApiKey: Boolean(row.search_api_key) },
+      workspaceShellEnabled: Boolean(row.workspace_shell_enabled),
+      workspacePath: `${this.dataDir}/workspace`,
+      skillsPath: `${this.dataDir}/skills`
+    };
+  }
+
+  getToolSecrets(): { searchApiKey: string } {
+    const row = this.sqlite.prepare("SELECT search_api_key FROM tool_settings WHERE id = 1").get() as Row;
+    return { searchApiKey: String(row.search_api_key) };
+  }
+
+  updateToolSettings(patch: ToolSettingsInput): ToolSettingsDto {
+    const current = this.getToolSettings();
+    const secret = this.getToolSecrets();
+    this.sqlite.prepare(`
+      UPDATE tool_settings SET enabled_json = ?, search_base_url = ?, search_api_key = ?, workspace_shell_enabled = ?
+      WHERE id = 1
+    `).run(
+      json(patch.enabled ?? current.enabled),
+      patch.search?.baseUrl ?? current.search.baseUrl,
+      patch.search?.apiKey === undefined ? secret.searchApiKey : patch.search.apiKey,
+      (patch.workspaceShellEnabled ?? current.workspaceShellEnabled) ? 1 : 0
+    );
+    return this.getToolSettings();
+  }
+
+  listMcpServers(): McpServerDto[] {
+    return (this.sqlite.prepare("SELECT * FROM mcp_servers ORDER BY name COLLATE NOCASE").all() as Row[]).map(mcpServerDto);
+  }
+
+  getMcpServer(id: string): (McpServerDto & { headers: Record<string, string> }) | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM mcp_servers WHERE id = ?").get(id) as Row | undefined;
+    return row ? { ...mcpServerDto(row), headers: parse(row.headers_json, {}) } : undefined;
+  }
+
+  createMcpServer(input: McpServerInput): McpServerDto {
+    const id = randomUUID();
+    const now = Date.now();
+    this.sqlite.prepare(`
+      INSERT INTO mcp_servers (id, name, url, headers_json, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.url, json(input.headers), input.enabled ? 1 : 0, now, now);
+    return this.listMcpServers().find((item) => item.id === id)!;
+  }
+
+  updateMcpServer(id: string, input: OptionalInput<McpServerInput>): McpServerDto | undefined {
+    const current = this.getMcpServer(id);
+    if (!current) return undefined;
+    this.sqlite.prepare(`
+      UPDATE mcp_servers SET name = ?, url = ?, headers_json = ?, enabled = ?, last_error = NULL, updated_at = ? WHERE id = ?
+    `).run(input.name ?? current.name, input.url ?? current.url, json(input.headers ?? current.headers),
+      (input.enabled ?? current.enabled) ? 1 : 0, Date.now(), id);
+    return this.listMcpServers().find((item) => item.id === id);
+  }
+
+  setMcpServerError(id: string, error: string | null): void {
+    this.sqlite.prepare("UPDATE mcp_servers SET last_error = ?, updated_at = ? WHERE id = ?").run(error, Date.now(), id);
+  }
+
+  deleteMcpServer(id: string): boolean {
+    return Number(this.sqlite.prepare("DELETE FROM mcp_servers WHERE id = ?").run(id).changes) > 0;
+  }
+
+  listConnections(): ConnectionDto[] {
+    return (this.sqlite.prepare("SELECT * FROM connections ORDER BY name COLLATE NOCASE").all() as Row[])
+      .map(connectionDto);
+  }
+
+  getConnection(id: string): ConnectionRecord | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM connections WHERE id = ?").get(id) as Row | undefined;
+    return row ? connectionRecord(row) : undefined;
+  }
+
+  createConnection(input: ConnectionInput): ConnectionDto {
+    const now = Date.now();
+    const id = randomUUID();
+    this.sqlite.prepare(`
+      INSERT INTO connections (id, name, protocol, base_url, api_key, secret_headers_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.name, input.protocol, input.baseUrl, input.apiKey ?? "", json(input.secretHeaders), now, now);
+    return this.listConnections().find((item) => item.id === id)!;
+  }
+
+  updateConnection(id: string, input: OptionalInput<ConnectionInput>): ConnectionDto | undefined {
+    const current = this.getConnection(id);
+    if (!current) return undefined;
+    const now = Date.now();
+    this.sqlite.prepare(`
+      UPDATE connections SET name = ?, protocol = ?, base_url = ?, api_key = ?, secret_headers_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      input.name ?? current.name,
+      input.protocol ?? current.protocol,
+      input.baseUrl ?? current.baseUrl,
+      input.apiKey === undefined ? current.apiKey : input.apiKey,
+      json(input.secretHeaders ?? current.secretHeaders),
+      now,
+      id
+    );
+    return this.listConnections().find((item) => item.id === id);
+  }
+
+  deleteConnection(id: string): boolean {
+    const result = this.sqlite.prepare("DELETE FROM connections WHERE id = ?").run(id);
+    if (Number(result.changes)) {
+      this.sqlite.prepare("UPDATE app_settings SET default_model_id = NULL WHERE default_model_id NOT IN (SELECT id FROM models)").run();
+    }
+    return Number(result.changes) > 0;
+  }
+
+  listModels(connectionId?: string): ModelDto[] {
+    const rows = connectionId
+      ? this.sqlite.prepare("SELECT * FROM models WHERE connection_id = ? ORDER BY display_name COLLATE NOCASE").all(connectionId)
+      : this.sqlite.prepare("SELECT * FROM models ORDER BY display_name COLLATE NOCASE").all();
+    return (rows as Row[]).map(modelDto);
+  }
+
+  getModel(id: string): ModelDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM models WHERE id = ?").get(id) as Row | undefined;
+    return row ? modelDto(row) : undefined;
+  }
+
+  createModel(input: ModelInput, source: ModelDto["source"] = "manual"): ModelDto {
+    const now = Date.now();
+    const id = randomUUID();
+    this.sqlite.prepare(`
+      INSERT INTO models (id, connection_id, model_key, display_name, context_window, max_output_tokens,
+        capabilities_json, default_settings_json, source, enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(connection_id, model_key) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at
+    `).run(
+      id, input.connectionId, input.modelKey, input.displayName, input.contextWindow, input.maxOutputTokens,
+      json(input.capabilities), json(input.defaultSettings), source, input.enabled ? 1 : 0, now, now
+    );
+    return this.listModels(input.connectionId).find((item) => item.modelKey === input.modelKey)!;
+  }
+
+  updateModel(id: string, input: OptionalInput<ModelInput>): ModelDto | undefined {
+    const current = this.getModel(id);
+    if (!current) return undefined;
+    const next: ModelInput = {
+      connectionId: input.connectionId ?? current.connectionId,
+      modelKey: input.modelKey ?? current.modelKey,
+      displayName: input.displayName ?? current.displayName,
+      contextWindow: input.contextWindow === undefined ? current.contextWindow : input.contextWindow,
+      maxOutputTokens: input.maxOutputTokens ?? current.maxOutputTokens,
+      capabilities: input.capabilities ?? current.capabilities,
+      defaultSettings: input.defaultSettings ?? current.defaultSettings,
+      enabled: input.enabled ?? current.enabled
+    };
+    this.sqlite.prepare(`
+      UPDATE models SET connection_id = ?, model_key = ?, display_name = ?, context_window = ?, max_output_tokens = ?,
+        capabilities_json = ?, default_settings_json = ?, enabled = ?, updated_at = ? WHERE id = ?
+    `).run(
+      next.connectionId, next.modelKey, next.displayName, next.contextWindow, next.maxOutputTokens,
+      json(next.capabilities), json(next.defaultSettings), next.enabled ? 1 : 0, Date.now(), id
+    );
+    if (!next.enabled) {
+      this.sqlite.prepare("UPDATE conversations SET model_id = NULL WHERE model_id = ?").run(id);
+      this.sqlite.prepare("UPDATE app_settings SET default_model_id = NULL WHERE default_model_id = ?").run(id);
+    }
+    return this.getModel(id);
+  }
+
+  deleteModel(id: string): boolean {
+    const result = this.sqlite.prepare("DELETE FROM models WHERE id = ?").run(id);
+    this.sqlite.prepare("UPDATE app_settings SET default_model_id = NULL WHERE default_model_id = ?").run(id);
+    return Number(result.changes) > 0;
+  }
+
+  listConversations(): ConversationDto[] {
+    return (this.sqlite.prepare("SELECT * FROM conversations ORDER BY updated_at DESC").all() as Row[]).map(conversationDto);
+  }
+
+  getConversation(id: string): ConversationDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as Row | undefined;
+    return row ? conversationDto(row) : undefined;
+  }
+
+  createConversation(input: { title?: string | undefined; systemPrompt: string; contextPolicy?: ContextPolicy | undefined }): ConversationDto {
+    const now = Date.now();
+    const id = randomUUID();
+    const settings = this.getSettings();
+    const defaultModel = settings.defaultModelId ? this.getModel(settings.defaultModelId) : undefined;
+    const modelId = defaultModel?.enabled ? defaultModel.id : null;
+    this.sqlite.prepare(`
+      INSERT INTO conversations (id, title, system_prompt, context_policy, model_id, draft, reasoning_effort, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, '', NULL, ?, ?)
+    `).run(id, input.title ?? "新对话", input.systemPrompt, input.contextPolicy ?? settings.defaultContextPolicy, modelId, now, now);
+    return this.getConversation(id)!;
+  }
+
+  startConversation(input: { text: string; modelId: string; contextPolicy?: ContextPolicy | undefined }): ConversationStartedDto {
+    return this.transaction(() => {
+      const model = this.getModel(input.modelId);
+      if (!model) throw new StoreError("model_not_found", "模型不存在");
+      const connection = model.enabled ? this.getConnection(model.connectionId) : undefined;
+      if (!connection) {
+        throw new StoreError("model_disabled", "模型已停用或连接不可用");
+      }
+      const now = Date.now();
+      const id = randomUUID();
+      const appSettings = this.getSettings();
+      const effective = buildEffectiveSettings(model, connection.protocol, appSettings.reasoningEffort);
+      this.sqlite.prepare(`
+        INSERT INTO conversations (id, title, system_prompt, context_policy, model_id, draft, reasoning_effort, created_at, updated_at)
+        VALUES (?, '新对话', ?, ?, ?, '', NULL, ?, ?)
+      `).run(id, appSettings.defaultSystemPrompt, input.contextPolicy ?? appSettings.defaultContextPolicy, model.id, now, now);
+      const conversation = this.getConversation(id)!;
+      const generation = this.insertMessageGeneration(conversation, input.text, effective);
+      return {
+        conversation: this.getConversation(id)!,
+        generation
+      };
+    });
+  }
+
+  updateConversation(id: string, patch: OptionalInput<Pick<ConversationDto, "title" | "systemPrompt" | "contextPolicy" | "modelId" | "draft">>): ConversationDto | undefined {
+    const current = this.getConversation(id);
+    if (!current) return undefined;
+    if (patch.modelId !== undefined && patch.modelId !== null) {
+      const model = this.getModel(patch.modelId);
+      if (!model) throw new StoreError("model_not_found", "模型不存在");
+      if (!model.enabled) throw new StoreError("model_disabled", "模型已停用");
+    }
+    const next = {
+      title: patch.title ?? current.title,
+      systemPrompt: patch.systemPrompt ?? current.systemPrompt,
+      contextPolicy: patch.contextPolicy ?? current.contextPolicy,
+      modelId: patch.modelId === undefined ? current.modelId : patch.modelId,
+      draft: patch.draft ?? current.draft
+    };
+    this.sqlite.prepare(`
+      UPDATE conversations SET title = ?, system_prompt = ?, context_policy = ?, model_id = ?, draft = ?, updated_at = ? WHERE id = ?
+    `).run(next.title, next.systemPrompt, next.contextPolicy, next.modelId, next.draft, Date.now(), id);
+    return this.getConversation(id);
+  }
+
+  deleteConversation(id: string): boolean {
+    return Number(this.sqlite.prepare("DELETE FROM conversations WHERE id = ?").run(id).changes) > 0;
+  }
+
+  createMessageGeneration(conversationId: string, text: string): GenerationCreatedDto {
+    return this.transaction(() => {
+      const conversation = this.getConversation(conversationId);
+      if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+      if (!conversation.modelId) throw new StoreError("conversation_model_required", "请先为会话选择模型");
+      const model = this.getModel(conversation.modelId);
+      const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
+      if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
+      const effective = buildEffectiveSettings(model, connection.protocol, this.getSettings().reasoningEffort);
+      return this.insertMessageGeneration(conversation, text, effective);
+    });
+  }
+
+  createRetryGeneration(assistantMessageId: string): GenerationCreatedDto {
+    return this.transaction(() => {
+      const message = this.sqlite.prepare("SELECT * FROM messages WHERE id = ? AND role = 'assistant'").get(assistantMessageId) as Row | undefined;
+      if (!message) throw new StoreError("message_not_found", "助手消息不存在");
+      const conversation = this.getConversation(String(message.conversation_id));
+      if (!conversation?.modelId) throw new StoreError("conversation_model_required", "请先为会话选择模型");
+      const model = this.getModel(conversation.modelId);
+      const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
+      if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
+      const effective = buildEffectiveSettings(model, connection.protocol, this.getSettings().reasoningEffort);
+      const max = this.sqlite.prepare("SELECT COALESCE(MAX(version), 0) AS value FROM generations WHERE assistant_message_id = ?").get(assistantMessageId) as Row;
+      const generationId = randomUUID();
+      this.insertGeneration(generationId, assistantMessageId, Number(max.value) + 1, connection, model, effective, Date.now());
+      this.sqlite.prepare("UPDATE messages SET active_generation_id = ? WHERE id = ?").run(generationId, assistantMessageId);
+      return { assistantMessageId, generationId };
+    });
+  }
+
+  conversationIdForMessage(messageId: string): string | undefined {
+    const row = this.sqlite.prepare("SELECT conversation_id FROM messages WHERE id = ?").get(messageId) as Row | undefined;
+    return row ? String(row.conversation_id) : undefined;
+  }
+
+  isConversationBusy(conversationId: string): boolean {
+    return Boolean(this.sqlite.prepare(`
+      SELECT 1 FROM generations g JOIN messages m ON m.id = g.assistant_message_id
+      WHERE m.conversation_id = ? AND g.status IN ('queued', 'running', 'waiting-approval') LIMIT 1
+    `).get(conversationId));
+  }
+
+  private insertGeneration(
+    id: string,
+    assistantMessageId: string,
+    version: number,
+    connection: ConnectionRecord,
+    model: ModelDto,
+    settings: GenerationSettings,
+    now: number
+  ): void {
+    this.sqlite.prepare(`
+      INSERT INTO generations (id, assistant_message_id, version, status, connection_id, model_id,
+        connection_name, protocol, model_key, model_display_name, settings_json, created_at)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, assistantMessageId, version, connection.id, model.id, connection.name, connection.protocol, model.modelKey, model.displayName, json(settings), now);
+  }
+
+  private insertMessageGeneration(conversation: ConversationDto, text: string, settings: GenerationSettings): GenerationCreatedDto {
+    if (!conversation.modelId) throw new StoreError("conversation_model_required", "请先为会话选择模型");
+    const model = this.getModel(conversation.modelId);
+    const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
+    if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
+    const now = Date.now();
+    const max = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?").get(conversation.id) as Row;
+    const userMessageId = randomUUID();
+    const assistantMessageId = randomUUID();
+    const generationId = randomUUID();
+    const userOrdinal = Number(max.value) + 1;
+    this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, 'user', ?, NULL, ?)")
+      .run(userMessageId, conversation.id, userOrdinal, text, now);
+    this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, 'assistant', NULL, ?, ?)")
+      .run(assistantMessageId, conversation.id, userOrdinal + 1, generationId, now);
+    this.insertGeneration(generationId, assistantMessageId, 1, connection, model, settings, now);
+    const title = conversation.title === "新对话" ? titleFrom(text) : conversation.title;
+    this.sqlite.prepare("UPDATE conversations SET title = ?, draft = '', updated_at = ? WHERE id = ?")
+      .run(title, now, conversation.id);
+    return { userMessageId, assistantMessageId, generationId };
+  }
+
+  selectGeneration(messageId: string, generationId: string): boolean {
+    const result = this.sqlite.prepare(`
+      UPDATE messages SET active_generation_id = ?
+      WHERE id = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ? AND assistant_message_id = messages.id)
+    `).run(generationId, messageId, generationId);
+    if (Number(result.changes)) {
+      const conversation = this.sqlite.prepare("SELECT conversation_id FROM messages WHERE id = ?").get(messageId) as Row;
+      this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(String(conversation.conversation_id));
+    }
+    return Number(result.changes) > 0;
+  }
+
+  listMessages(conversationId: string): MessageDto[] {
+    const messages = this.sqlite.prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY ordinal").all(conversationId) as Row[];
+    return messages.map((message) => {
+      const assistant = message.role === "assistant";
+      const activeGenerationId = textOrNull(message.active_generation_id);
+      return {
+        id: String(message.id),
+        role: message.role as "user" | "assistant",
+        text: textOrNull(message.text),
+        generatedModel: assistant && activeGenerationId ? this.generatedModel(activeGenerationId) : null,
+        activeGenerationId,
+        generations: assistant ? this.listGenerations(String(message.id)) : [],
+        createdAt: Number(message.created_at)
+      };
+    });
+  }
+
+  private generatedModel(generationId: string): GeneratedModelDto | null {
+    const row = this.sqlite.prepare(`
+      SELECT model_id, model_display_name, model_key, connection_name, protocol FROM generations WHERE id = ?
+    `).get(generationId) as Row | undefined;
+    return row ? {
+      modelId: String(row.model_id),
+      displayName: String(row.model_display_name ?? row.model_key),
+      modelKey: String(row.model_key),
+      connectionName: String(row.connection_name),
+      protocol: row.protocol as ProviderProtocol
+    } : null;
+  }
+
+  private listGenerations(messageId: string): GenerationDto[] {
+    return (this.sqlite.prepare("SELECT * FROM generations WHERE assistant_message_id = ? ORDER BY version").all(messageId) as Row[])
+      .map((row) => this.generationDto(row));
+  }
+
+  getGeneration(id: string): GenerationDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM generations WHERE id = ?").get(id) as Row | undefined;
+    return row ? this.generationDto(row) : undefined;
+  }
+
+  getGenerationRecord(id: string): GenerationRecord | undefined {
+    const row = this.sqlite.prepare(`
+      SELECT g.*, m.conversation_id FROM generations g JOIN messages m ON m.id = g.assistant_message_id WHERE g.id = ?
+    `).get(id) as Row | undefined;
+    if (!row) return undefined;
+    return {
+      id: String(row.id),
+      assistantMessageId: String(row.assistant_message_id),
+      conversationId: String(row.conversation_id),
+      connectionId: String(row.connection_id),
+      modelId: String(row.model_id),
+      modelKey: String(row.model_key),
+      protocol: row.protocol as ProviderProtocol,
+      settings: parseGenerationSettings(row.settings_json),
+      status: row.status as GenerationDto["status"]
+    };
+  }
+
+  setGenerationRunning(id: string): void {
+    this.sqlite.prepare(`
+      UPDATE generations SET status = 'running', started_at = COALESCE(started_at, ?), completed_at = NULL
+      WHERE id = ? AND status IN ('queued', 'waiting-approval')
+    `).run(Date.now(), id);
+  }
+
+  setGenerationWaitingApproval(id: string): void {
+    this.sqlite.prepare("UPDATE generations SET status = 'waiting-approval' WHERE id = ?").run(id);
+  }
+
+  upsertToolCall(
+    generationId: string,
+    call: { id: string; name: string; arguments: string },
+    index: number,
+    stepIndex: number,
+    requiresApproval: boolean
+  ): ToolCallDto {
+    const state = requiresApproval ? "pending" : "auto";
+    this.sqlite.prepare(`
+      INSERT INTO generation_tool_calls
+        (id, generation_id, call_index, step_index, name, arguments_json, approval_state, requires_approval)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, arguments_json = excluded.arguments_json
+    `).run(call.id, generationId, index, stepIndex, call.name, call.arguments, state, requiresApproval ? 1 : 0);
+    return this.getToolCall(call.id)!;
+  }
+
+  getToolCall(id: string): ToolCallDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM generation_tool_calls WHERE id = ?").get(id) as Row | undefined;
+    return row ? toolCallDto(row) : undefined;
+  }
+
+  listToolCalls(generationId: string): ToolCallDto[] {
+    return (this.sqlite.prepare(`
+      SELECT * FROM generation_tool_calls WHERE generation_id = ? ORDER BY call_index
+    `).all(generationId) as Row[]).map(toolCallDto);
+  }
+
+  setGenerationStepContext(generationId: string, stepIndex: number, payload: unknown): void {
+    this.sqlite.prepare(`
+      INSERT INTO generation_steps (generation_id, step_index, provider_context_json) VALUES (?, ?, ?)
+      ON CONFLICT(generation_id, step_index) DO UPDATE SET provider_context_json = excluded.provider_context_json
+    `).run(generationId, stepIndex, json(payload));
+  }
+
+  currentGenerationMessages(generationId: string): Array<{
+    role: "assistant" | "tool";
+    text: string;
+    toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+    toolResults?: Array<{ callId: string; name: string; content: string; isError?: boolean }>;
+    providerPayload?: unknown;
+    providerConnectionId?: string;
+  }> {
+    const generation = this.sqlite.prepare("SELECT connection_id FROM generations WHERE id = ?").get(generationId) as Row | undefined;
+    if (!generation) return [];
+    const calls = this.sqlite.prepare(`SELECT * FROM generation_tool_calls WHERE generation_id = ? ORDER BY call_index`)
+      .all(generationId) as Row[];
+    if (!calls.length) return [];
+    const steps = [...new Set(calls.map((row) => Number(row.step_index)))].sort((a, b) => a - b);
+    const messages: ReturnType<Store["currentGenerationMessages"]> = [];
+    for (const stepIndex of steps) {
+      const stepCalls = calls.filter((row) => Number(row.step_index) === stepIndex).map(toolCallDto);
+      const blocks = this.sqlite.prepare(`
+        SELECT * FROM generation_blocks WHERE generation_id = ? AND block_index >= ? AND block_index < ? ORDER BY block_index
+      `).all(generationId, stepIndex * 1000, (stepIndex + 1) * 1000) as Row[];
+      const contextRow = this.sqlite.prepare(`
+        SELECT provider_context_json FROM generation_steps WHERE generation_id = ? AND step_index = ?
+      `).get(generationId, stepIndex) as Row | undefined;
+      messages.push({
+        role: "assistant",
+        text: blocks.filter((block) => block.type === "text" || block.type === "refusal").map((block) => String(block.content)).join(""),
+        toolCalls: stepCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
+        ...(contextRow?.provider_context_json ? { providerPayload: parse(contextRow.provider_context_json, undefined) } : {}),
+        providerConnectionId: String(generation.connection_id)
+      });
+      const results = stepCalls.filter((call) => call.output !== null || call.error !== null).map((call) => ({
+        callId: call.id,
+        name: call.name,
+        content: call.output ?? JSON.stringify({ error: call.error }),
+        ...(call.error ? { isError: true } : {})
+      }));
+      if (results.length) messages.push({ role: "tool", text: "", toolResults: results });
+    }
+    return messages;
+  }
+
+  updateToolCall(
+    id: string,
+    patch: { approvalState?: ToolCallDto["approvalState"]; output?: string | null; error?: string | null; startedAt?: number | null; completedAt?: number | null }
+  ): ToolCallDto | undefined {
+    const current = this.getToolCall(id);
+    if (!current) return undefined;
+    this.sqlite.prepare(`
+      UPDATE generation_tool_calls SET approval_state = ?, output = ?, error = ?, started_at = ?, completed_at = ? WHERE id = ?
+    `).run(
+      patch.approvalState ?? current.approvalState,
+      patch.output === undefined ? current.output : patch.output,
+      patch.error === undefined ? current.error : patch.error,
+      patch.startedAt === undefined ? current.startedAt : patch.startedAt,
+      patch.completedAt === undefined ? current.completedAt : patch.completedAt,
+      id
+    );
+    return this.getToolCall(id);
+  }
+
+  generationIdForToolCall(id: string): string | undefined {
+    const row = this.sqlite.prepare("SELECT generation_id FROM generation_tool_calls WHERE id = ?").get(id) as Row | undefined;
+    return row ? String(row.generation_id) : undefined;
+  }
+
+  updateGenerationBlock(id: string, index: number, type: string, content: string, complete: boolean, providerPayload?: unknown): void {
+    const existing = this.sqlite.prepare("SELECT id FROM generation_blocks WHERE generation_id = ? AND block_index = ?").get(id, index) as Row | undefined;
+    if (existing) {
+      this.sqlite.prepare(`
+        UPDATE generation_blocks SET type = ?, content = ?, complete = ?, provider_payload_json = ? WHERE id = ?
+      `).run(type, content, complete ? 1 : 0, providerPayload === undefined ? null : json(providerPayload), String(existing.id));
+    } else {
+      this.sqlite.prepare(`
+        INSERT INTO generation_blocks (id, generation_id, block_index, type, content, complete, provider_payload_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(randomUUID(), id, index, type, content, complete ? 1 : 0, providerPayload === undefined ? null : json(providerPayload));
+    }
+  }
+
+  updateGenerationUsage(id: string, usage: UsageDto): void {
+    this.sqlite.prepare("UPDATE generations SET usage_json = ? WHERE id = ?").run(json(usage), id);
+  }
+
+  setGenerationContext(id: string, context: GenerationDto["context"]): void {
+    this.sqlite.prepare("UPDATE generations SET context_json = ? WHERE id = ?").run(json(context), id);
+  }
+
+  setProviderContext(id: string, payload: unknown): void {
+    this.sqlite.prepare("UPDATE generations SET provider_context_json = ? WHERE id = ?").run(json(payload), id);
+  }
+
+  finishGeneration(id: string, status: "completed" | "stopped" | "failed", options: { stopReason?: string; code?: string; message?: string }): void {
+    this.sqlite.prepare(`
+      UPDATE generations SET status = ?, stop_reason = ?, error_code = ?, error_message = ?, completed_at = ? WHERE id = ?
+    `).run(status, options.stopReason ?? null, options.code ?? null, options.message ?? null, Date.now(), id);
+  }
+
+  contextMessages(conversationId: string, beforeAssistantMessageId: string): ContextMessageRecord[] {
+    const target = this.sqlite.prepare("SELECT ordinal FROM messages WHERE id = ?").get(beforeAssistantMessageId) as Row | undefined;
+    if (!target) return [];
+    const rows = this.sqlite.prepare(`
+      SELECT m.*, g.id AS generation_id, g.connection_id, g.provider_context_json,
+        (SELECT GROUP_CONCAT(content, '') FROM (
+          SELECT content FROM generation_blocks b
+          WHERE b.generation_id = g.id AND b.type IN ('text', 'refusal')
+          ORDER BY b.block_index
+        )) AS generation_text
+      FROM messages m
+      LEFT JOIN generations g ON g.id = m.active_generation_id
+      WHERE m.conversation_id = ? AND m.ordinal < ?
+      ORDER BY m.ordinal
+    `).all(conversationId, Number(target.ordinal)) as Row[];
+    return rows.map((row) => {
+      const calls = row.generation_id ? this.listToolCalls(String(row.generation_id)) : [];
+      return {
+        messageId: String(row.id),
+        ordinal: Number(row.ordinal),
+        role: row.role as "user" | "assistant",
+        text: row.role === "user" ? String(row.text ?? "") : String(row.generation_text ?? ""),
+        ...(row.provider_context_json ? { providerPayload: parse(row.provider_context_json, undefined) } : {}),
+        ...(row.connection_id ? { providerConnectionId: String(row.connection_id) } : {}),
+        ...(calls.length ? {
+          toolCalls: calls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })),
+          toolResults: calls
+            .filter((call) => call.output !== null || call.error !== null)
+            .map((call) => ({
+              callId: call.id,
+              name: call.name,
+              content: call.output ?? JSON.stringify({ error: call.error }),
+              ...(call.error ? { isError: true } : {})
+            }))
+        } : {})
+      };
+    });
+  }
+
+  listMemories(): Array<{ id: number; content: string; createdAt: number; updatedAt: number }> {
+    return (this.sqlite.prepare("SELECT * FROM memories ORDER BY updated_at DESC").all() as Row[]).map((row) => ({
+      id: Number(row.id), content: String(row.content), createdAt: Number(row.created_at), updatedAt: Number(row.updated_at)
+    }));
+  }
+
+  createMemory(content: string): { id: number; content: string; createdAt: number; updatedAt: number } {
+    const now = Date.now();
+    const result = this.sqlite.prepare("INSERT INTO memories (content, created_at, updated_at) VALUES (?, ?, ?)")
+      .run(content, now, now);
+    return this.listMemories().find((item) => item.id === Number(result.lastInsertRowid))!;
+  }
+
+  updateMemory(id: number, content: string): { id: number; content: string; createdAt: number; updatedAt: number } {
+    const result = this.sqlite.prepare("UPDATE memories SET content = ?, updated_at = ? WHERE id = ?")
+      .run(content, Date.now(), id);
+    if (!Number(result.changes)) throw new StoreError("memory_not_found", `记忆 #${id} 不存在`);
+    return this.listMemories().find((item) => item.id === id)!;
+  }
+
+  deleteMemory(id: number): void {
+    const result = this.sqlite.prepare("DELETE FROM memories WHERE id = ?").run(id);
+    if (!Number(result.changes)) throw new StoreError("memory_not_found", `记忆 #${id} 不存在`);
+  }
+
+  recentChats(limit: number): Array<{ id: string; title: string; updatedAt: number }> {
+    return (this.sqlite.prepare("SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ?")
+      .all(limit) as Row[]).map((row) => ({ id: String(row.id), title: String(row.title), updatedAt: Number(row.updated_at) }));
+  }
+
+  searchChats(query: string, limit: number): Array<{ conversationId: string; title: string; snippet: string; updatedAt: number }> {
+    const pattern = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
+    const rows = this.sqlite.prepare(`
+      SELECT c.id AS conversation_id, c.title, c.updated_at,
+        CASE WHEN m.role = 'user' THEN m.text ELSE (
+          SELECT GROUP_CONCAT(b.content, '') FROM generation_blocks b
+          JOIN generations g2 ON g2.id = b.generation_id
+          WHERE g2.id = m.active_generation_id AND b.type IN ('text','refusal')
+        ) END AS content
+      FROM messages m JOIN conversations c ON c.id = m.conversation_id
+      WHERE COALESCE(CASE WHEN m.role = 'user' THEN m.text ELSE (
+        SELECT GROUP_CONCAT(b.content, '') FROM generation_blocks b
+        JOIN generations g3 ON g3.id = b.generation_id
+        WHERE g3.id = m.active_generation_id AND b.type IN ('text','refusal')
+      ) END, '') LIKE ? ESCAPE '\\'
+      ORDER BY c.updated_at DESC LIMIT ?
+    `).all(pattern, limit) as Row[];
+    return rows.map((row) => {
+      const content = String(row.content ?? "").replace(/\s+/g, " ");
+      const position = content.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+      const start = Math.max(0, position - 80);
+      return {
+        conversationId: String(row.conversation_id),
+        title: String(row.title),
+        snippet: content.slice(start, start + 240),
+        updatedAt: Number(row.updated_at)
+      };
+    });
+  }
+
+  getLatestSummary(conversationId: string): { id: string; throughOrdinal: number; sourceFingerprint: string; text: string } | undefined {
+    const row = this.sqlite.prepare(`
+      SELECT * FROM context_summaries WHERE conversation_id = ? ORDER BY through_ordinal DESC LIMIT 1
+    `).get(conversationId) as Row | undefined;
+    return row ? {
+      id: String(row.id),
+      throughOrdinal: Number(row.through_ordinal),
+      sourceFingerprint: String(row.source_fingerprint),
+      text: String(row.text)
+    } : undefined;
+  }
+
+  saveSummary(input: { conversationId: string; throughOrdinal: number; fingerprint: string; text: string; connectionId: string; modelKey: string; usage: UsageDto }): string {
+    const id = randomUUID();
+    this.sqlite.prepare(`
+      INSERT INTO context_summaries (id, conversation_id, through_ordinal, source_fingerprint, text, connection_id, model_key, usage_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, input.conversationId, input.throughOrdinal, input.fingerprint, input.text, input.connectionId, input.modelKey, json(input.usage), Date.now());
+    return id;
+  }
+
+  private transaction<T>(action: () => T): T {
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const result = action();
+      this.sqlite.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.sqlite.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private generationDto(row: Row): GenerationDto {
+    const blocks = this.sqlite.prepare("SELECT * FROM generation_blocks WHERE generation_id = ? ORDER BY block_index").all(String(row.id)) as Row[];
+    return {
+      id: String(row.id),
+      version: Number(row.version),
+      status: row.status as GenerationDto["status"],
+      connectionName: String(row.connection_name),
+      protocol: row.protocol as ProviderProtocol,
+      modelKey: String(row.model_key),
+      settings: parseGenerationSettings(row.settings_json),
+      blocks: blocks.map((block) => ({
+        id: String(block.id),
+        index: Number(block.block_index),
+        type: block.type as GenerationDto["blocks"][number]["type"],
+        content: String(block.content),
+        complete: Boolean(block.complete)
+      })),
+      toolCalls: this.listToolCalls(String(row.id)),
+      usage: parse(row.usage_json, {}),
+      stopReason: textOrNull(row.stop_reason),
+      error: row.error_code ? { code: String(row.error_code), message: String(row.error_message) } : null,
+      context: row.context_json ? parse(row.context_json, null) : null,
+      createdAt: Number(row.created_at),
+      completedAt: row.completed_at === null ? null : Number(row.completed_at)
+    };
+  }
+}
+
+export class StoreError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+  }
+}
+
+type Row = Record<string, unknown>;
+
+function connectionDto(row: Row): ConnectionDto {
+  const secretHeaders = parse<Record<string, string>>(row.secret_headers_json, {});
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    protocol: row.protocol as ProviderProtocol,
+    baseUrl: String(row.base_url),
+    hasApiKey: Boolean(row.api_key),
+    secretHeaderNames: Object.keys(secretHeaders),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
+  };
+}
+
+function connectionRecord(row: Row): ConnectionRecord {
+  return {
+    ...connectionDto(row),
+    apiKey: String(row.api_key),
+    secretHeaders: parse(row.secret_headers_json, {})
+  };
+}
+
+function modelDto(row: Row): ModelDto {
+  return {
+    id: String(row.id),
+    connectionId: String(row.connection_id),
+    modelKey: String(row.model_key),
+    displayName: String(row.display_name),
+    contextWindow: row.context_window === null ? null : Number(row.context_window),
+    maxOutputTokens: Number(row.max_output_tokens),
+    capabilities: modelCapabilitiesSchema.parse(parse(row.capabilities_json, {})),
+    defaultSettings: parseModelSettings(row.default_settings_json),
+    source: row.source as ModelDto["source"],
+    enabled: Boolean(row.enabled),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
+  };
+}
+
+function conversationDto(row: Row): ConversationDto {
+  return {
+    id: String(row.id),
+    title: String(row.title),
+    systemPrompt: String(row.system_prompt),
+    contextPolicy: row.context_policy as ContextPolicy,
+    modelId: textOrNull(row.model_id),
+    draft: String(row.draft),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
+  };
+}
+
+function toolCallDto(row: Row): ToolCallDto {
+  return {
+    id: String(row.id),
+    index: Number(row.call_index),
+    name: String(row.name),
+    arguments: String(row.arguments_json),
+    approvalState: row.approval_state as ToolCallDto["approvalState"],
+    requiresApproval: Boolean(row.requires_approval),
+    output: textOrNull(row.output),
+    error: textOrNull(row.error),
+    startedAt: row.started_at === null ? null : Number(row.started_at),
+    completedAt: row.completed_at === null ? null : Number(row.completed_at)
+  };
+}
+
+function mcpServerDto(row: Row): McpServerDto {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    url: String(row.url),
+    headerNames: Object.keys(parse<Record<string, string>>(row.headers_json, {})),
+    enabled: Boolean(row.enabled),
+    lastError: textOrNull(row.last_error),
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
+  };
+}
+
+function parseModelSettings(value: unknown): ModelSettings {
+  return modelSettingsSchema.parse(parse(value, {}));
+}
+
+function parseGenerationSettings(value: unknown): GenerationSettings {
+  const raw = parse<Record<string, unknown>>(value, {});
+  const parsed = generationSettingsSchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  const defaults = modelSettingsSchema.parse(raw);
+  return {
+    ...defaults,
+    reasoningEffort: reasoningEffortSchema.safeParse(raw.reasoningEffort).data ?? "none",
+    ...(typeof raw.resolvedThinkingBudgetTokens === "number"
+      ? { resolvedThinkingBudgetTokens: raw.resolvedThinkingBudgetTokens }
+      : {})
+  };
+}
+
+function textOrNull(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+function json(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function parse<T>(value: unknown, fallback: T): T {
+  try {
+    return JSON.parse(String(value)) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function titleFrom(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 60) || "新对话";
+}

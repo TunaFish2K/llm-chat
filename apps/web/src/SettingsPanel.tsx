@@ -1,0 +1,594 @@
+import type {
+  AppSettings,
+  ConnectionDto,
+  ConnectionInput,
+  McpServerDto,
+  McpServerInput,
+  ModelCapabilities,
+  ModelDto,
+  ModelInput,
+  ModelSettings,
+  ProviderProtocol,
+  ToolCatalogItemDto,
+  ToolSettingsDto
+} from "@llm-chat/contracts";
+import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import {
+  App as AntApp,
+  Button,
+  Checkbox,
+  Drawer,
+  Flex,
+  Form,
+  Grid,
+  Input,
+  InputNumber,
+  List,
+  Menu,
+  Select,
+  Space,
+  Switch,
+  Tabs,
+  Tooltip,
+  Typography
+} from "antd";
+import { useEffect, useState } from "react";
+import { api } from "./api";
+import type { UiPreferences } from "./uiPreferences";
+
+const { Text, Title } = Typography;
+const { TextArea } = Input;
+
+interface Props {
+  open: boolean;
+  settings: AppSettings;
+  connections: ConnectionDto[];
+  models: ModelDto[];
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+  onSettings: (settings: AppSettings) => void;
+  uiPreferences: UiPreferences;
+  onUiPreferences: (preferences: UiPreferences) => void;
+}
+
+const defaults: Record<ProviderProtocol, string> = {
+  "openai-responses": "https://api.openai.com/v1",
+  "openai-chat": "https://api.openai.com/v1",
+  "anthropic-messages": "https://api.anthropic.com/v1"
+};
+
+type Run = (action: () => Promise<unknown>, success: string) => Promise<boolean>;
+
+export function SettingsPanel(props: Props) {
+  const [busy, setBusy] = useState(false);
+  const screens = Grid.useBreakpoint();
+  const mobile = !screens.md;
+  const { message } = AntApp.useApp();
+  const run: Run = async (action, success) => {
+    setBusy(true);
+    try {
+      await action();
+      await props.onRefresh();
+      void message.success(success);
+      return true;
+    } catch (error) {
+      void message.error(error instanceof Error ? error.message : "操作失败");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <Drawer
+    open={props.open}
+    width={screens.lg ? 960 : "100%"}
+    title={mobile
+      ? <Title level={4}>设置</Title>
+      : <Flex vertical><Title level={4}>设置</Title><Text type="secondary">模型、连接、工具与界面</Text></Flex>}
+    onClose={props.onClose}
+    destroyOnHidden
+    styles={{
+      header: { paddingTop: "max(16px, env(safe-area-inset-top))" },
+      body: { paddingBottom: "max(24px, env(safe-area-inset-bottom))" }
+    }}
+  >
+    <Tabs
+      defaultActiveKey="connections"
+      items={[
+        { key: "connections", label: "连接", children: <Connections connections={props.connections} busy={busy} mobile={mobile} run={run} /> },
+        { key: "models", label: "模型", children: <Models connections={props.connections} models={props.models} busy={busy} mobile={mobile} run={run} /> },
+        { key: "tools", label: "工具", children: <Tools /> },
+        { key: "general", label: "通用", children: <General settings={props.settings} models={props.models} onSettings={props.onSettings} uiPreferences={props.uiPreferences} onUiPreferences={props.onUiPreferences} /> }
+      ]}
+    />
+  </Drawer>;
+}
+
+function Tools() {
+  const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
+  const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
+  const [saving, setSaving] = useState(false);
+  const { message } = AntApp.useApp();
+  const load = async () => {
+    const [nextSettings, nextCatalog] = await Promise.all([api.toolSettings(), api.toolCatalog()]);
+    setSettings(nextSettings);
+    setCatalog(nextCatalog);
+  };
+  useEffect(() => { void load().catch((error) => void message.error(error instanceof Error ? error.message : "工具设置加载失败")); }, []);
+  if (!settings) return <Flex justify="center"><Text type="secondary">正在加载工具设置</Text></Flex>;
+
+  const update = async (patch: Parameters<typeof api.updateToolSettings>[0], success?: string) => {
+    setSaving(true);
+    try {
+      const next = await api.updateToolSettings(patch);
+      setSettings(next);
+      const nextCatalog = await api.toolCatalog();
+      setCatalog(nextCatalog);
+      if (success) void message.success(success);
+    } catch (error) {
+      void message.error(error instanceof Error ? error.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <Flex vertical gap="large" className="general-settings">
+    <div>
+      <Title level={5}>内置工具</Title>
+      <List
+        dataSource={catalog}
+        renderItem={(item) => <List.Item
+          actions={[<Switch
+            key="enabled"
+            checked={settings.enabled[item.name] !== false}
+            disabled={saving || !item.available}
+            onChange={(enabled) => void update({ enabled: { ...settings.enabled, [item.name]: enabled } })}
+          />]}
+        >
+          <List.Item.Meta
+            avatar={<ApiOutlined />}
+            title={<Flex align="center" gap="small"><Text>{item.label}</Text>{item.requiresApproval && <Text type="warning">需审批</Text>}</Flex>}
+            description={item.available ? item.description : `${item.description}（尚未配置）`}
+          />
+        </List.Item>}
+      />
+    </div>
+    <Form
+      layout="vertical"
+      initialValues={{ searchBaseUrl: settings.search.baseUrl, searchApiKey: "", workspaceShellEnabled: settings.workspaceShellEnabled }}
+      onFinish={(values: ToolSettingsForm) => void update({
+        search: { baseUrl: values.searchBaseUrl ?? "", ...(values.searchApiKey ? { apiKey: values.searchApiKey } : {}) },
+        workspaceShellEnabled: values.workspaceShellEnabled
+      }, "工具设置已保存")}
+    >
+      <Title level={5}>服务端配置</Title>
+      <Form.Item name="searchBaseUrl" label="SearXNG 地址" rules={[{ type: "url", warningOnly: true }]}>
+        <Input placeholder="https://search.example.com/search" />
+      </Form.Item>
+      <Form.Item name="searchApiKey" label="搜索服务密钥">
+        <Input.Password autoComplete="off" placeholder={settings.search.hasApiKey ? "已保存；留空则不修改" : "可选"} />
+      </Form.Item>
+      <Form.Item name="workspaceShellEnabled" label="工作区 Shell" valuePropName="checked" extra="启用后每条命令仍需在消息中批准。">
+        <Switch />
+      </Form.Item>
+      <Text type="secondary">工作区：{settings.workspacePath}</Text><br />
+      <Text type="secondary">Skills：{settings.skillsPath}</Text>
+      <div className="settings-actions"><Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saving}>保存</Button></div>
+    </Form>
+    <McpSettings />
+  </Flex>;
+}
+
+interface ToolSettingsForm {
+  searchBaseUrl?: string;
+  searchApiKey?: string;
+  workspaceShellEnabled: boolean;
+}
+
+function McpSettings() {
+  const [servers, setServers] = useState<McpServerDto[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [form] = Form.useForm<McpServerForm>();
+  const { message, modal } = AntApp.useApp();
+  const load = async () => setServers(await api.mcpServers());
+  useEffect(() => { void load().catch((error) => void message.error(error instanceof Error ? error.message : "MCP 加载失败")); }, []);
+  const act = async (action: () => Promise<unknown>, success: string) => {
+    setBusy(true);
+    try {
+      await action();
+      await load();
+      void message.success(success);
+    } catch (error) {
+      void message.error(error instanceof Error ? error.message : "MCP 操作失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const create = async (values: McpServerForm) => {
+    const input: McpServerInput = {
+      name: values.name,
+      url: values.url,
+      headers: parseHeaders(values.headers ?? ""),
+      enabled: true
+    };
+    await act(() => api.createMcpServer(input), "MCP 服务已添加");
+    form.resetFields();
+  };
+  return <div>
+    <Title level={5}>MCP 服务</Title>
+    <List
+      locale={{ emptyText: "尚未添加 MCP 服务" }}
+      dataSource={servers}
+      renderItem={(server) => <List.Item actions={[
+        <Tooltip key="test" title="测试连接"><Button type="text" icon={<ThunderboltOutlined />} disabled={busy || !server.enabled} onClick={() => void act(() => api.testMcpServer(server.id), "MCP 连接可用")} /></Tooltip>,
+        <Switch key="enabled" checked={server.enabled} disabled={busy} onChange={(enabled) => void act(() => api.updateMcpServer(server.id, { enabled }), enabled ? "MCP 已启用" : "MCP 已停用")} />,
+        <Tooltip key="delete" title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
+          title: "删除 MCP 服务", content: `删除“${server.name}”？`, okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
+          onOk: () => act(() => api.deleteMcpServer(server.id), "MCP 服务已删除")
+        })} /></Tooltip>
+      ]}>
+        <List.Item.Meta
+          avatar={<ApiOutlined />}
+          title={server.name}
+          description={<Flex vertical><Text type="secondary" ellipsis>{server.url}</Text>{server.lastError && <Text type="danger">{server.lastError}</Text>}</Flex>}
+        />
+      </List.Item>}
+    />
+    <Form form={form} layout="vertical" onFinish={(values) => void create(values)}>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="name" label="名称" rules={[{ required: true }, { pattern: /^[A-Za-z0-9]+$/, message: "只允许英文字母和数字" }]}>
+          <Input placeholder="filesystem" />
+        </Form.Item>
+        <Form.Item className="settings-field" name="url" label="Streamable HTTP / SSE 地址" rules={[{ required: true }, { type: "url" }]}>
+          <Input placeholder="https://example.com/mcp" />
+        </Form.Item>
+      </Flex>
+      <Form.Item name="headers" label="秘密请求头" extra="每行一个，例如 Authorization: Bearer token">
+        <TextArea rows={2} />
+      </Form.Item>
+      <Button htmlType="submit" icon={<PlusOutlined />} loading={busy}>添加 MCP</Button>
+    </Form>
+  </div>;
+}
+
+interface McpServerForm {
+  name: string;
+  url: string;
+  headers?: string;
+}
+
+function Connections({ connections, busy, mobile, run }: { connections: ConnectionDto[]; busy: boolean; mobile: boolean; run: Run }) {
+  const [editing, setEditing] = useState<ConnectionDto | "new" | null>(connections.length ? null : "new");
+  if (mobile && editing) return <Flex className="settings-mobile-detail" vertical gap="middle">
+    <Button className="settings-back-button" type="text" icon={<ArrowLeftOutlined />} onClick={() => setEditing(null)}>
+      连接列表
+    </Button>
+    <div className="settings-editor">
+      <ConnectionEditor key={editing === "new" ? "new" : editing.id} value={editing} busy={busy} run={run} onDone={() => setEditing(null)} />
+    </div>
+  </Flex>;
+  return <Flex className={mobile ? "settings-mobile-list" : "settings-split"} vertical={mobile} gap="large">
+    <Flex vertical className="resource-pane" gap="small">
+      <Menu
+        className="resource-menu"
+        selectable
+        selectedKeys={editing && editing !== "new" ? [editing.id] : []}
+        items={connections.map((connection) => ({
+          key: connection.id,
+          label: <Flex vertical><Text>{connection.name}</Text><Text type="secondary">{protocolName(connection.protocol)}</Text></Flex>
+        }))}
+        onSelect={({ key }) => setEditing(connections.find((connection) => connection.id === key) ?? null)}
+      />
+      <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setEditing("new")}>新建连接</Button>
+    </Flex>
+    {!mobile && <div className="settings-editor">
+      {editing ? <ConnectionEditor key={editing === "new" ? "new" : editing.id} value={editing} busy={busy} run={run} onDone={() => setEditing(null)} />
+        : <Flex className="editor-empty" align="center" justify="center"><Text type="secondary">选择一个连接查看详情</Text></Flex>}
+    </div>}
+  </Flex>;
+}
+
+function ConnectionEditor({ value, busy, run, onDone }: { value: ConnectionDto | "new"; busy: boolean; run: Run; onDone: () => void }) {
+  const existing = value === "new" ? null : value;
+  const [form] = Form.useForm<ConnectionForm>();
+  const { modal } = AntApp.useApp();
+  const save = async (values: ConnectionForm) => {
+    const input: ConnectionInput = {
+      name: values.name,
+      protocol: values.protocol,
+      baseUrl: values.baseUrl,
+      ...(values.apiKey ? { apiKey: values.apiKey } : {}),
+      secretHeaders: parseHeaders(values.secretHeaders ?? "")
+    };
+    const ok = await run(
+      () => existing ? api.updateConnection(existing.id, input) : api.createConnection(input),
+      existing ? "连接已更新" : "连接已创建"
+    );
+    if (ok) onDone();
+  };
+  return <>
+    <Title level={5}>{existing ? existing.name : "新建连接"}</Title>
+    <Form
+      className="settings-form"
+      form={form}
+      layout="vertical"
+      initialValues={{ protocol: existing?.protocol ?? "openai-responses", name: existing?.name ?? "", baseUrl: existing?.baseUrl ?? defaults["openai-responses"], apiKey: "", secretHeaders: "" }}
+      onFinish={(values) => void save(values)}
+    >
+      <Form.Item name="protocol" label="协议" rules={[{ required: true }]}>
+        <Select options={[
+          { label: "OpenAI Responses", value: "openai-responses" },
+          { label: "OpenAI Chat Completions", value: "openai-chat" },
+          { label: "Anthropic Messages", value: "anthropic-messages" }
+        ]} onChange={(protocol: ProviderProtocol) => !existing && form.setFieldValue("baseUrl", defaults[protocol])} />
+      </Form.Item>
+      <Form.Item name="name" label="连接名称" rules={[{ required: true, whitespace: true }, { max: 80 }]}><Input /></Form.Item>
+      <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true }, { type: "url" }]}><Input /></Form.Item>
+      <Form.Item name="apiKey" label="API Key"><Input.Password autoComplete="off" placeholder={existing?.hasApiKey ? "已保存；留空则不修改" : "可选"} /></Form.Item>
+      <Form.Item name="secretHeaders" label="秘密请求头" extra="每行一个，例如 X-Org: value"><TextArea rows={3} /></Form.Item>
+      <Space className="settings-actions" wrap>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy}>保存</Button>
+        {existing && <Button icon={<ThunderboltOutlined />} disabled={busy} onClick={() => void run(() => api.testConnection(existing.id), "连接可用")}>测试</Button>}
+        {existing && <Button icon={<ReloadOutlined />} disabled={busy} onClick={() => void run(() => api.discoverModels(existing.id), "模型列表已刷新")}>发现模型</Button>}
+        {existing && <Button danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
+          title: "删除连接",
+          content: `删除连接“${existing.name}”及其模型？历史回复仍会保留快照。`,
+          okText: "删除",
+          cancelText: "取消",
+          okButtonProps: { danger: true },
+          onOk: async () => { if (await run(() => api.deleteConnection(existing.id), "连接已删除")) onDone(); }
+        })}>删除</Button>}
+      </Space>
+    </Form>
+  </>;
+}
+
+function Models({ connections, models, busy, mobile, run }: { connections: ConnectionDto[]; models: ModelDto[]; busy: boolean; mobile: boolean; run: Run }) {
+  const [editing, setEditing] = useState<ModelDto | "new" | null>(models.length ? null : "new");
+  if (mobile && editing) return <Flex className="settings-mobile-detail" vertical gap="middle">
+    <Button className="settings-back-button" type="text" icon={<ArrowLeftOutlined />} onClick={() => setEditing(null)}>
+      模型列表
+    </Button>
+    <div className="settings-editor">
+      <ModelEditor key={editing === "new" ? "new" : editing.id} value={editing} connections={connections} busy={busy} run={run} onDone={() => setEditing(null)} />
+    </div>
+  </Flex>;
+  return <Flex className={mobile ? "settings-mobile-list" : "settings-split"} vertical={mobile} gap="large">
+    <Flex vertical className="resource-pane" gap="small">
+      <Menu
+        className="resource-menu"
+        selectable
+        selectedKeys={editing && editing !== "new" ? [editing.id] : []}
+        items={models.map((model) => ({
+          key: model.id,
+          label: <Flex vertical><Text>{model.displayName}</Text><Text type="secondary">{connections.find((connection) => connection.id === model.connectionId)?.name ?? "连接已删除"}</Text></Flex>
+        }))}
+        onSelect={({ key }) => setEditing(models.find((model) => model.id === key) ?? null)}
+      />
+      <Button type="dashed" block icon={<PlusOutlined />} disabled={!connections.length} onClick={() => setEditing("new")}>手工添加</Button>
+    </Flex>
+    {!mobile && <div className="settings-editor">
+      {editing ? <ModelEditor key={editing === "new" ? "new" : editing.id} value={editing} connections={connections} busy={busy} run={run} onDone={() => setEditing(null)} />
+        : <Flex className="editor-empty" align="center" justify="center"><Text type="secondary">选择一个模型配置能力</Text></Flex>}
+    </div>}
+  </Flex>;
+}
+
+function ModelEditor({ value, connections, busy, run, onDone }: { value: ModelDto | "new"; connections: ConnectionDto[]; busy: boolean; run: Run; onDone: () => void }) {
+  const existing = value === "new" ? null : value;
+  const [form] = Form.useForm<ModelForm>();
+  const { modal } = AntApp.useApp();
+  const connectionId = Form.useWatch("connectionId", form) as string | undefined;
+  const initialConnectionId = existing?.connectionId ?? connections[0]?.id;
+  const protocol = connections.find((connection) => connection.id === (connectionId ?? initialConnectionId))?.protocol;
+  const capabilities = existing?.capabilities ?? defaultCapabilities(protocol);
+  const defaults = existing?.defaultSettings ?? {
+    common: { maxOutputTokens: 4096, stopSequences: [] },
+    protocol: {}
+  } satisfies ModelSettings;
+  const save = async (values: ModelForm) => {
+    // Trust the submitted form values, not the closure-captured defaults.
+    const current = values.capabilities;
+    const summarySupported = protocol === "openai-responses" && current.reasoningSummary;
+    const budgetSupported = protocol === "anthropic-messages" && current.manualThinking && !current.adaptiveThinking;
+    const defaultSettings: ModelSettings = {
+      common: {
+        maxOutputTokens: Math.min(values.defaultMaxOutputTokens, values.maxOutputTokens),
+        stopSequences: values.stopSequences ?? [],
+        ...(current.temperature && values.temperature !== undefined && values.temperature !== null ? { temperature: values.temperature } : {}),
+        ...(current.topP && values.topP !== undefined && values.topP !== null ? { topP: values.topP } : {})
+      },
+      protocol: {
+        ...(summarySupported ? { reasoningSummary: values.reasoningSummary ?? "auto" } : {}),
+        ...(budgetSupported && values.thinkingBudgetTokens ? { thinkingBudgetTokens: Math.min(values.thinkingBudgetTokens, values.defaultMaxOutputTokens - 1) } : {})
+      }
+    };
+    const input: ModelInput = {
+      connectionId: values.connectionId,
+      modelKey: values.modelKey,
+      displayName: values.displayName || values.modelKey,
+      contextWindow: values.contextWindow ?? null,
+      maxOutputTokens: values.maxOutputTokens,
+      capabilities: values.capabilities,
+      defaultSettings,
+      enabled: values.enabled
+    };
+    const ok = await run(() => existing ? api.updateModel(existing.id, input) : api.createModel(input), existing ? "模型已更新" : "模型已添加");
+    if (ok) onDone();
+  };
+  return <>
+    <Title level={5}>{existing ? existing.displayName : "手工添加模型"}</Title>
+    <Form<ModelForm>
+      className="settings-form"
+      form={form}
+      layout="vertical"
+      initialValues={{
+        connectionId: initialConnectionId,
+        modelKey: existing?.modelKey ?? "",
+        displayName: existing?.displayName ?? "",
+        contextWindow: existing?.contextWindow,
+        maxOutputTokens: existing?.maxOutputTokens ?? 4096,
+        capabilities,
+        enabled: existing?.enabled ?? true,
+        defaultMaxOutputTokens: Math.min(defaults.common.maxOutputTokens, existing?.maxOutputTokens ?? 4096),
+        temperature: defaults.common.temperature,
+        topP: defaults.common.topP,
+        stopSequences: defaults.common.stopSequences,
+        reasoningSummary: defaults.protocol.reasoningSummary ?? (capabilities.reasoningSummary ? "auto" : undefined),
+        thinkingBudgetTokens: defaults.protocol.thinkingBudgetTokens
+      }}
+      onFinish={(values) => void save(values)}
+    >
+      <Form.Item name="connectionId" label="连接" rules={[{ required: true }]}><Select disabled={Boolean(existing)} options={connections.map((connection) => ({ label: connection.name, value: connection.id }))} /></Form.Item>
+      <Form.Item name="modelKey" label="模型 ID" rules={[{ required: true, whitespace: true }]}><Input /></Form.Item>
+      <Form.Item name="displayName" label="显示名称" rules={[{ required: true, whitespace: true }]}><Input /></Form.Item>
+      <Flex className="settings-fields-row" gap="middle" wrap>
+        <Form.Item className="settings-field" name="contextWindow" label="上下文窗口"><InputNumber className="settings-number-input" min={256} placeholder="裁剪/摘要必填" /></Form.Item>
+        <Form.Item className="settings-field" name="maxOutputTokens" label="模型上限输出" rules={[{ required: true }]}><InputNumber className="settings-number-input" min={1} /></Form.Item>
+      </Flex>
+      <Title level={5}>能力</Title>
+      <Flex vertical>
+        {capabilityEntries.map(([key, label]) => <Form.Item key={key} name={["capabilities", key]} valuePropName="checked"><Checkbox>{label}</Checkbox></Form.Item>)}
+      </Flex>
+      <Form.Item shouldUpdate={(previous, current) => previous.capabilities !== current.capabilities || previous.defaultMaxOutputTokens !== current.defaultMaxOutputTokens || previous.maxOutputTokens !== current.maxOutputTokens} noStyle>
+        {({ getFieldValue }) => {
+          const watched = getFieldValue("capabilities") as ModelCapabilities | undefined;
+          const shown = watched ?? capabilities;
+          const modelMax = (getFieldValue("maxOutputTokens") as number | undefined) ?? existing?.maxOutputTokens ?? 4096;
+          const defaultMax = (getFieldValue("defaultMaxOutputTokens") as number | undefined) ?? Math.min(defaults.common.maxOutputTokens, modelMax);
+          const showTemperature = shown.temperature;
+          const showTopP = shown.topP;
+          const showSummary = protocol === "openai-responses" && shown.reasoningSummary;
+          const showBudget = protocol === "anthropic-messages" && shown.manualThinking && !shown.adaptiveThinking;
+          return <>
+            <Title level={5}>默认设置</Title>
+            <Flex className="settings-fields-row" gap="middle" wrap>
+              <Form.Item
+                className="settings-field"
+                name="defaultMaxOutputTokens"
+                label="默认最大输出 tokens"
+                rules={[
+                  { required: true },
+                  { validator: (_, v: number) => v > modelMax ? Promise.reject(new Error(`不能超过模型上限 ${modelMax}`)) : Promise.resolve() }
+                ]}
+              ><InputNumber className="settings-number-input" min={1} max={modelMax} /></Form.Item>
+              {showSummary ? <Form.Item className="settings-field" name="reasoningSummary" label={<Space size={4}>推理摘要<Tooltip title="供应商返回的可展示推理摘要，不是模型内部思维链。"><QuestionCircleOutlined /></Tooltip></Space>}><Select options={reasoningSummaryOptions} /></Form.Item> : null}
+              {showBudget ? <Form.Item className="settings-field" name="thinkingBudgetTokens" label="Thinking 预算 tokens" rules={[{ required: true }]}><InputNumber className="settings-number-input" min={1024} max={Math.max(1024, defaultMax - 1)} /></Form.Item> : null}
+            </Flex>
+            {showTemperature ? <Form.Item name="temperature" label="默认 Temperature（留空由服务端决定）"><OptionalNumber min={0} max={2} step={0.1} /></Form.Item> : null}
+            {showTopP ? <Form.Item name="topP" label="默认 Top P（留空由服务端决定）"><OptionalNumber min={0} max={1} step={0.05} /></Form.Item> : null}
+            <Form.Item name="stopSequences" label="停止序列" extra="每行一个，最多 8 条">
+              <StopSequencesInput />
+            </Form.Item>
+          </>;
+        }}
+      </Form.Item>
+      <Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item>
+      <Space className="settings-actions" wrap>
+        <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy}>保存</Button>
+        {existing && <Button danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
+          title: "删除模型",
+          content: `删除模型“${existing.displayName}”？使用该模型的会话将要求重新选择模型。`,
+          okText: "删除",
+          cancelText: "取消",
+          okButtonProps: { danger: true },
+          onOk: async () => { if (await run(() => api.deleteModel(existing.id), "模型已删除")) onDone(); }
+        })}>删除</Button>}
+      </Space>
+    </Form>
+  </>;
+}
+
+function StopSequencesInput({ value, onChange }: { value?: string[]; onChange?: (value: string[]) => void }) {
+  return <TextArea
+    rows={3}
+    value={(value ?? []).join("\n")}
+    onChange={(event) => onChange?.(event.target.value.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 8))}
+  />;
+}
+
+function OptionalNumber({ value, onChange, min, max, step }: { value?: number | null; onChange?: (value: number | null) => void; min: number; max: number; step: number }) {
+  return <InputNumber<number>
+    className="settings-number-input"
+    value={value ?? null}
+    min={min}
+    max={max}
+    step={step}
+    precision={String(step).split(".")[1]?.length ?? 0}
+    placeholder="留空"
+    onChange={(next) => onChange?.(next)}
+  />;
+}
+
+function General({ settings, models, onSettings, uiPreferences, onUiPreferences }: {
+  settings: AppSettings;
+  models: ModelDto[];
+  onSettings: (settings: AppSettings) => void;
+  uiPreferences: UiPreferences;
+  onUiPreferences: (preferences: UiPreferences) => void;
+}) {
+  const { message } = AntApp.useApp();
+  const update = async (patch: Partial<AppSettings>) => {
+    try { onSettings(await api.updateSettings(patch)); } catch (error) { void message.error(error instanceof Error ? error.message : "操作失败"); }
+  };
+  return <Form layout="vertical" className="general-settings">
+    <Form.Item label="默认模型"><Select allowClear value={settings.defaultModelId ?? undefined} placeholder="未选择" options={models.filter((model) => model.enabled).map((model) => ({ label: model.displayName, value: model.id }))} onChange={(value) => void update({ defaultModelId: value ?? null })} /></Form.Item>
+    <Form.Item label="默认上下文策略"><Select value={settings.defaultContextPolicy} options={[{ label: "自动裁剪", value: "trim" }, { label: "自动摘要", value: "summarize" }, { label: "完整历史", value: "full" }]} onChange={(value) => void update({ defaultContextPolicy: value })} /></Form.Item>
+    <Form.Item label="界面主题"><Select value={settings.theme} options={[{ label: "跟随系统", value: "system" }, { label: "浅色", value: "light" }, { label: "深色", value: "dark" }]} onChange={(value) => void update({ theme: value })} /></Form.Item>
+    <Form.Item label="推理过程折叠"><Select value={uiPreferences.reasoningCollapsePolicy} options={[
+      { label: "始终默认折叠", value: "always-collapsed" },
+      { label: "正式回答后折叠", value: "collapse-on-answer" },
+      { label: "不自动折叠", value: "never-auto-collapse" }
+    ]} onChange={(reasoningCollapsePolicy) => onUiPreferences({ ...uiPreferences, reasoningCollapsePolicy })} /></Form.Item>
+    <Form.Item label="新会话默认系统提示"><TextArea rows={8} value={settings.defaultSystemPrompt} onChange={(event) => onSettings({ ...settings, defaultSystemPrompt: event.target.value })} onBlur={() => void update({ defaultSystemPrompt: settings.defaultSystemPrompt })} /></Form.Item>
+  </Form>;
+}
+
+interface ConnectionForm {
+  protocol: ProviderProtocol;
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  secretHeaders?: string;
+}
+
+interface ModelForm {
+  connectionId: string;
+  modelKey: string;
+  displayName: string;
+  contextWindow?: number | null;
+  maxOutputTokens: number;
+  capabilities: ModelCapabilities;
+  enabled: boolean;
+  defaultMaxOutputTokens: number;
+  temperature?: number | null;
+  topP?: number | null;
+  stopSequences?: string[];
+  reasoningSummary?: "auto" | "concise" | "detailed";
+  thinkingBudgetTokens?: number;
+}
+
+const reasoningSummaryOptions: Array<{ label: string; value: "auto" | "concise" | "detailed" }> = [
+  { label: "自动", value: "auto" },
+  { label: "简洁", value: "concise" },
+  { label: "详细", value: "detailed" }
+];
+
+const capabilityEntries: Array<[keyof ModelCapabilities, string]> = [
+  ["tools", "工具调用"], ["temperature", "Temperature"], ["topP", "Top P"], ["reasoning", "推理"],
+  ["reasoningSummary", "推理摘要"], ["adaptiveThinking", "Adaptive Thinking"], ["manualThinking", "手动 Thinking 预算"]
+];
+
+function defaultCapabilities(protocol?: ProviderProtocol): ModelCapabilities {
+  return {
+    tools: true,
+    temperature: true,
+    topP: true,
+    reasoning: protocol !== "openai-chat",
+    reasoningSummary: protocol === "openai-responses",
+    adaptiveThinking: protocol === "anthropic-messages",
+    manualThinking: protocol === "anthropic-messages"
+  };
+}
+
+function protocolName(value: ProviderProtocol) { return value === "openai-responses" ? "Responses" : value === "openai-chat" ? "Chat Completions" : "Anthropic Messages"; }
+function parseHeaders(value: string): Record<string, string> { return Object.fromEntries(value.split("\n").map((line) => line.split(":" as string)).filter((parts) => parts.length >= 2).map(([name, ...rest]) => [name!.trim(), rest.join(":").trim()]).filter(([name]) => name)); }

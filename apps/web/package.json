@@ -1,0 +1,25 @@
+{
+  "name": "@llm-chat/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@ant-design/icons": "6.3.2",
+    "@ant-design/x": "2.9.0",
+    "@ant-design/x-markdown": "2.9.0",
+    "@llm-chat/contracts": "workspace:*",
+    "antd": "6.6.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "vite": "^7.1.0"
+  }
+}
