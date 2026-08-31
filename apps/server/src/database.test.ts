@@ -145,7 +145,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(15);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -204,7 +204,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(15);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -217,6 +217,37 @@ describe("Store", () => {
     expect(usage(anthropicSummary)).toEqual({ inputTokens: 13, cachedInputTokens: 2, outputTokens: 4, totalTokens: 17 });
     expect(usage(openaiSummary)).toEqual({ inputTokens: 9, cachedInputTokens: 3, outputTokens: 1, totalTokens: 10 });
     expect(usage(incompleteSummary)).toEqual({ cachedInputTokens: 8, outputTokens: 2 });
+    migrated.close();
+  });
+
+  it("migrates v14 Skill source metadata and backfills bundled ownership", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-v14-"));
+    dirs.push(dir);
+    const path = join(dir, "legacy.sqlite");
+    const store = new Store(path);
+    const insert = store.sqlite.prepare(`
+      INSERT INTO skill_installations (id, name, description, source_path, active_revision, state, error,
+        required_tools_json, recommended_approvals_json, bundled, source_kind, compatibility, installed_at, updated_at)
+      VALUES (?, ?, '', ?, 'revision', 'loaded', NULL, '[]', '{}', ?, ?, NULL, 1, 1)
+    `);
+    insert.run("bundled-skill", "Bundled", "/bundled", 1, "bundled");
+    insert.run("manual-skill", "Manual", "/manual", 0, "manual");
+    store.sqlite.exec(`
+      ALTER TABLE skill_installations DROP COLUMN compatibility;
+      ALTER TABLE skill_installations DROP COLUMN source_kind;
+      PRAGMA user_version = 14;
+    `);
+    store.close();
+
+    const migrated = new Store(path);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(15);
+    const rows = migrated.sqlite.prepare(
+      "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
+    ).all();
+    expect(rows).toEqual([
+      { id: "bundled-skill", source_kind: "bundled", compatibility: null, bundled: 1 },
+      { id: "manual-skill", source_kind: "manual", compatibility: null, bundled: 0 }
+    ]);
     migrated.close();
   });
 
@@ -611,7 +642,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(15);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

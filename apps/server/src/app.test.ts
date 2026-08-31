@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelInput, ModelSettings } from "@llm-chat/contracts";
@@ -343,6 +343,22 @@ describe("server API", () => {
     expect(internal.json()).toEqual({ error: { code: "internal_error", message: "服务端发生错误" } });
   });
 
+  it("rescans the injected Agent Skills root", async () => {
+    const app = await testApp();
+    const source = join(app.store.dataDir, "agent-skills", "api-helper");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, "SKILL.md"), [
+      "---", "name: api-helper", "description: Discovered through the API", "compatibility: Linux", "---", "Instructions"
+    ].join("\n"));
+
+    const response = await app.inject({ method: "POST", url: "/api/skills/discover" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ discovered: 1, updated: 0, unchanged: 0, unloaded: 0, errors: [] });
+    expect((await app.inject({ method: "GET", url: "/api/skills" })).json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "agents.api-helper", sourceKind: "agents", compatibility: "Linux" })
+    ]));
+  });
+
   it("returns 404 for stale assets while preserving the SPA route fallback", async () => {
     const app = await testApp(true);
     const asset = await app.inject({ method: "GET", url: "/assets/index-stale.js" });
@@ -602,7 +618,10 @@ async function createApiModel(app: Awaited<ReturnType<typeof testApp>>) {
 async function testApp(serveWeb = false) {
   const dir = mkdtempSync(join(tmpdir(), "llm-chat-api-"));
   dirs.push(dir);
-  const app = await buildApp({ dataFile: join(dir, "test.sqlite"), logger: false, serveWeb });
+  const app = await buildApp({
+    dataFile: join(dir, "test.sqlite"), logger: false, serveWeb,
+    skillDiscoveryRoot: join(dir, "agent-skills")
+  });
   apps.push(app);
   return app;
 }

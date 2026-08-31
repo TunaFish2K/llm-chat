@@ -24,12 +24,24 @@ import {
   startConversationSchema,
   toolApprovalInputSchema,
   toolApprovalStateSchema,
+  toolPolicySchema,
   toolSettingsInputSchema
 } from "./index";
 
 const uuid = "00000000-0000-4000-8000-000000000001";
 
 describe("contract schemas", () => {
+  it("defaults tool directness without changing existing enablement behavior", () => {
+    expect(toolPolicySchema.parse({})).toEqual({
+      defaultEnabled: true,
+      overrides: {},
+      directOverrides: {},
+      approvalOverrides: {}
+    });
+    expect(toolPolicySchema.parse({ directOverrides: { search_web: false } }).directOverrides)
+      .toEqual({ search_web: false });
+  });
+
   it("accepts every public enum member and rejects unknown values", () => {
     const cases = [
       [protocolSchema, ["openai-responses", "openai-chat", "anthropic-messages"]],

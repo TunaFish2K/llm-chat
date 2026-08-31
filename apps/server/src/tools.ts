@@ -26,6 +26,7 @@ export interface ServerTool {
   available: boolean;
   requiresApproval: (input: JsonObject) => boolean | Promise<boolean>;
   execute: (input: JsonObject, signal: AbortSignal, context?: ToolExecutionContext) => Promise<string>;
+  activatesTools?: (input: JsonObject) => string[] | Promise<string[]>;
   sourceKind?: "builtin" | "plugin" | "mcp";
   sourceId?: string;
   sourceName?: string;

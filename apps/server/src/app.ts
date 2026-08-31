@@ -38,6 +38,7 @@ export interface AppOptions {
   dataFile: string;
   logger?: boolean;
   serveWeb?: boolean;
+  skillDiscoveryRoot?: string;
 }
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
@@ -47,7 +48,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const eventHub = new EventHub();
   const taskManager = new TaskManager(store, eventHub);
   const pluginManager = new PluginManager(store, eventHub);
-  const skillManager = new SkillManager(store, eventHub);
+  const skillManager = new SkillManager(store, eventHub,
+    options.skillDiscoveryRoot === undefined ? {} : { discoveryRoot: options.skillDiscoveryRoot });
   await skillManager.initialize();
   const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager);
   const runner = new GenerationRunner(store, {
@@ -169,6 +171,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(204).send();
   });
   app.get("/api/skills", async () => skillManager.list());
+  app.post("/api/skills/discover", async () => {
+    return userOperation("skill_discovery_failed", () => skillManager.discover());
+  });
   app.post("/api/skills/install", async (request, reply) => {
     const value = z.object({ sourcePath: z.string().min(1).max(4096) }).parse(request.body);
     return reply.code(201).send(await userOperation("skill_invalid", () => skillManager.install(value.sourcePath)));
