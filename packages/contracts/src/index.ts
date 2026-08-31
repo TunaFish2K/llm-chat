@@ -213,11 +213,20 @@ export const generationOverridesSchema = z.object({
 });
 export type GenerationOverrides = z.infer<typeof generationOverridesSchema>;
 
-export const toolPolicySchema = z.object({
+const toolPolicyObjectSchema = z.object({
   defaultEnabled: z.boolean().default(true),
   overrides: z.record(z.string(), z.boolean()).default({}),
+  directOverrides: z.record(z.string(), z.boolean()).default({}),
   approvalOverrides: z.record(z.string(), z.enum(["default", "always", "never"])).default({})
 });
+// Runtime parsing always supplies directOverrides. Its static optionality keeps
+// source compatibility for callers that construct pre-v15 policies directly.
+export const toolPolicySchema = toolPolicyObjectSchema as z.ZodType<{
+  defaultEnabled: boolean;
+  overrides: Record<string, boolean>;
+  directOverrides?: Record<string, boolean>;
+  approvalOverrides: Record<string, "default" | "always" | "never">;
+}>;
 export type ToolPolicy = z.infer<typeof toolPolicySchema>;
 export type ApprovalPolicy = "default" | "always" | "never";
 
@@ -535,8 +544,24 @@ export interface SkillDto {
   requiredTools: string[];
   recommendedApprovals: Record<string, ApprovalPolicy>;
   bundled: boolean;
+  /** Optional on input-facing consumers for compatibility; server DTOs always include it. */
+  sourceKind?: "bundled" | "manual" | "agents";
+  compatibility?: string | null;
   installedAt: number;
   updatedAt: number;
+}
+
+export interface SkillDiscoveryError {
+  path: string;
+  message: string;
+}
+
+export interface SkillDiscoverySummary {
+  discovered: number;
+  updated: number;
+  unchanged: number;
+  unloaded: number;
+  errors: SkillDiscoveryError[];
 }
 
 export const backgroundTaskStatusSchema = z.enum([

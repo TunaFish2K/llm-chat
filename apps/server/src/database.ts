@@ -291,7 +291,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 14) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 15) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -606,6 +606,20 @@ function migrate(sqlite: DatabaseSyncType): void {
       )`);
       sqlite.exec("PRAGMA user_version = 14;");
     }
+    if (current < 15) {
+      if (!hasColumn(sqlite, "skill_installations", "source_kind")) {
+        sqlite.exec("ALTER TABLE skill_installations ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'manual'");
+      }
+      if (!hasColumn(sqlite, "skill_installations", "compatibility")) {
+        sqlite.exec("ALTER TABLE skill_installations ADD COLUMN compatibility TEXT");
+      }
+      sqlite.exec(`
+        UPDATE skill_installations
+        SET source_kind = CASE WHEN bundled = 1 THEN 'bundled' ELSE 'manual' END
+        WHERE source_kind IS NULL OR source_kind != 'agents';
+        PRAGMA user_version = 15;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -741,7 +755,7 @@ export class Store {
         contextPolicy: settings.default_context_policy as ContextPolicy,
         reasoningEffort: reasoningEffortSchema.parse(settings.reasoning_effort),
         generation: {},
-        tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} },
+        tools: { defaultEnabled: true, overrides: {}, directOverrides: {}, approvalOverrides: {} },
         enabledSkillIds: [],
         maxToolRounds: 32,
         maxBackgroundTasks: 2,
@@ -1279,6 +1293,7 @@ export class Store {
         tools: {
           defaultEnabled: agent.execution.tools.defaultEnabled,
           overrides: { ...agent.execution.tools.overrides, ...(conversation.executionOverrides.tools ?? {}) },
+          directOverrides: { ...agent.execution.tools.directOverrides },
           approvalOverrides: { ...agent.execution.tools.approvalOverrides }
         },
         enabledSkillIds: [...agent.execution.enabledSkillIds],
@@ -1440,7 +1455,7 @@ export class Store {
         contextPolicy: conversation?.contextPolicy ?? "trim",
         reasoningEffort: parseGenerationSettings(row.settings_json).reasoningEffort,
         settings: parseGenerationSettings(row.settings_json),
-        tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} },
+        tools: { defaultEnabled: true, overrides: {}, directOverrides: {}, approvalOverrides: {} },
         enabledSkillIds: [],
         maxToolRounds: 8,
         maxBackgroundTasks: 2,

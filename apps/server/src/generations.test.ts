@@ -260,6 +260,142 @@ describe("GenerationRunner lifecycle", () => {
 });
 
 describe("GenerationRunner tools and approval", () => {
+  it("loads authorized lazy tools through search_tools on the next model step", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    setLazyTools(store, generation.generationId, ["weather_lookup"]);
+    const requests: GenerateRequest[] = [];
+    const execute = vi.fn(async () => "sunny");
+    const scripts: ProviderEvent[][] = [
+      [toolCall("search-call", "search_tools", '{"query":"weather"}')],
+      [toolCall("weather-call", "weather_lookup", '{}')],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: async () => [serverTool("direct_tool", async () => "direct"), serverTool("weather_lookup", execute)],
+      stream: (_protocol, request) => { requests.push(request); return events(scripts.shift()!); }
+    });
+
+    runner.start(generation.generationId);
+    const result = await terminal(store, generation.generationId);
+    expect(requests.map((request) => (request.tools ?? []).map((tool) => tool.name))).toEqual([
+      ["direct_tool", "search_tools"],
+      ["direct_tool", "weather_lookup", "search_tools"],
+      ["direct_tool", "weather_lookup", "search_tools"]
+    ]);
+    expect(execute).toHaveBeenCalledOnce();
+    expect(JSON.parse(result.toolCalls[0]!.output!)).toMatchObject({
+      loadedToolNames: ["weather_lookup"],
+      tools: [expect.objectContaining({ name: "weather_lookup" })]
+    });
+  });
+
+  it("rejects a lazy tool call that was not exposed", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    setLazyTools(store, generation.generationId, ["lazy_write"]);
+    const execute = vi.fn(async () => "must not execute");
+    const scripts: ProviderEvent[][] = [
+      [toolCall("hallucinated", "lazy_write", '{}')],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: async () => [serverTool("lazy_write", execute, true)],
+      stream: () => events(scripts.shift()!)
+    });
+
+    runner.start(generation.generationId);
+    const result = await terminal(store, generation.generationId);
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.toolCalls[0]).toMatchObject({
+      id: "hallucinated", approvalState: "failed", requiresApproval: false,
+      error: "Tool lazy_write is not available"
+    });
+  });
+
+  it("does not expose search matches when persisting the search result fails", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    setLazyTools(store, generation.generationId, ["lazy_read"]);
+    const requests: GenerateRequest[] = [];
+    const scripts: ProviderEvent[][] = [
+      [toolCall("failed-search", "search_tools", '{"query":"lazy read"}')],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: async () => [serverTool("lazy_read", async () => "read")],
+      persistToolOutput: async () => { throw new Error("persistence failed"); },
+      stream: (_protocol, request) => { requests.push(request); return events(scripts.shift()!); }
+    });
+
+    runner.start(generation.generationId);
+    const result = await terminal(store, generation.generationId);
+    expect(requests).toHaveLength(2);
+    expect((requests[1]!.tools ?? []).map((tool) => tool.name)).toEqual(["search_tools"]);
+    expect(result.toolCalls[0]).toMatchObject({ approvalState: "failed", error: "persistence failed" });
+  });
+
+  it("reconstructs searched lazy tools when resuming after approval", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    setLazyTools(store, generation.generationId, ["lazy_approval"]);
+    const execute = vi.fn(async () => "approved output");
+    const requests: GenerateRequest[] = [];
+    const scripts: ProviderEvent[][] = [
+      [toolCall("resume-search", "search_tools", '{"query":"lazy approval"}')],
+      [toolCall("resume-lazy", "lazy_approval", '{}')],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: async () => [serverTool("lazy_approval", execute, true)],
+      stream: (_protocol, request) => { requests.push(request); return events(scripts.shift()!); }
+    });
+
+    runner.start(generation.generationId);
+    await inactiveWithStatus(runner, store, generation, "waiting-approval");
+    store.updateToolCall("resume-lazy", { approvalState: "approved" });
+    runner.start(generation.generationId);
+    await terminal(store, generation.generationId);
+    expect(execute).toHaveBeenCalledOnce();
+    expect((requests[2]!.tools ?? []).map((tool) => tool.name)).toEqual(["lazy_approval", "search_tools"]);
+  });
+
+  it("exposes only authorized required tools after use_skill activation", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const record = store.getGenerationRecord(generation.generationId)!;
+    record.agentSnapshot.execution.tools.overrides.disabled_required = false;
+    record.agentSnapshot.execution.tools.directOverrides = { enabled_required: false };
+    store.updateGenerationExtensionSnapshot(generation.generationId, record.agentSnapshot);
+    const useSkill = serverTool("use_skill", async () => "skill instructions");
+    useSkill.activatesTools = async () => ["enabled_required", "disabled_required", "absent_required"];
+    const unavailable = serverTool("unavailable_required", async () => "unavailable");
+    unavailable.available = false;
+    const requests: GenerateRequest[] = [];
+    const scripts: ProviderEvent[][] = [
+      [toolCall("skill-call", "use_skill", '{"id":"agents.helper"}')],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: async () => [
+        useSkill,
+        serverTool("enabled_required", async () => "enabled"),
+        serverTool("disabled_required", async () => "disabled"),
+        unavailable
+      ],
+      stream: (_protocol, request) => { requests.push(request); return events(scripts.shift()!); }
+    });
+
+    runner.start(generation.generationId);
+    await terminal(store, generation.generationId);
+    expect((requests[0]!.tools ?? []).map((tool) => tool.name)).toEqual(["use_skill", "search_tools"]);
+    expect((requests[1]!.tools ?? []).map((tool) => tool.name)).toEqual(["use_skill", "enabled_required", "search_tools"]);
+    const sentNames = requests.flatMap((request) => (request.tools ?? []).map((tool) => tool.name));
+    expect(sentNames).not.toContain("disabled_required");
+    expect(sentNames).not.toContain("absent_required");
+    expect(sentNames).not.toContain("unavailable_required");
+  });
+
   it("waits for approval, resumes an approved tool, and continues generation", async () => {
     const store = createStore();
     const generation = seedGeneration(store);
@@ -586,6 +722,12 @@ function serverTool(
     requiresApproval: typeof requiresApproval === "function" ? requiresApproval : () => requiresApproval,
     execute
   };
+}
+
+function setLazyTools(store: Store, generationId: string, names: string[]): void {
+  const record = store.getGenerationRecord(generationId)!;
+  record.agentSnapshot.execution.tools.directOverrides = Object.fromEntries(names.map((name) => [name, false]));
+  store.updateGenerationExtensionSnapshot(generationId, record.agentSnapshot);
 }
 
 function block(index: number, content: string, complete: boolean, blockType: "text" | "reasoning" = "text"): ProviderEvent {

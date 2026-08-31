@@ -7,6 +7,70 @@ import { buildServerTools, type ServerTool } from "./tools";
 import { isAbsolute, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 
+export const SEARCH_TOOLS_NAME = "search_tools";
+
+export interface ToolSearchSummary {
+  name: string;
+  label: string;
+  description: string;
+  category: ServerTool["category"];
+  arguments: string[];
+}
+
+export interface ToolSearchResult {
+  query: string;
+  loadedToolNames: string[];
+  tools: ToolSearchSummary[];
+}
+
+export function createSearchToolsTool(lazyTools: ServerTool[]): ServerTool {
+  return {
+    definition: {
+      name: SEARCH_TOOLS_NAME,
+      description: "Search the authorized lazy tool catalog. Matching tools are loaded for later model steps in this generation.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 1, maxLength: 500, description: "Tool capability to find" },
+          limit: { type: "integer", minimum: 1, maximum: 10, default: 5, description: "Maximum matching tools" }
+        },
+        required: ["query"],
+        additionalProperties: false
+      }
+    },
+    label: "搜索工具",
+    category: "local",
+    available: true,
+    sourceKind: "builtin",
+    requiresApproval: () => false,
+    activatesTools: (input) => {
+      const { query, limit } = searchInput(input);
+      return searchTools(lazyTools, query, limit).loadedToolNames;
+    },
+    execute: async (input) => {
+      const { query, limit } = searchInput(input);
+      return JSON.stringify(searchTools(lazyTools, query, limit));
+    }
+  };
+}
+
+export function searchTools(tools: ServerTool[], query: string, limit = 5): ToolSearchResult {
+  const terms = normalizedTerms(query);
+  const ranked = tools.map((tool) => ({ tool, score: scoreTool(tool, terms) }))
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score
+      || left.tool.definition.name.localeCompare(right.tool.definition.name, "en"))
+    .slice(0, Math.min(10, Math.max(1, Math.floor(limit))));
+  const summaries = ranked.map(({ tool }): ToolSearchSummary => ({
+    name: tool.definition.name,
+    label: tool.label,
+    description: tool.definition.description,
+    category: tool.category,
+    arguments: schemaPropertyNames(tool.definition.inputSchema)
+  }));
+  return { query, loadedToolNames: summaries.map((tool) => tool.name), tools: summaries };
+}
+
 export class ToolRegistry {
   constructor(
     private readonly store: Store,
@@ -80,4 +144,76 @@ function required(input: Record<string, unknown>, key: string): string {
   const value = input[key];
   if (typeof value !== "string" || !value.trim()) throw new Error(`${key} is required`);
   return value;
+}
+
+function searchInput(input: Record<string, unknown>): { query: string; limit: number } {
+  const query = typeof input.query === "string" ? input.query.trim() : "";
+  if (!query || query.length > 500) throw new Error("query must be 1 to 500 characters");
+  const limit = input.limit === undefined ? 5 : input.limit;
+  if (!Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 10) {
+    throw new Error("limit must be an integer from 1 to 10");
+  }
+  return { query, limit: Number(limit) };
+}
+
+function scoreTool(tool: ServerTool, terms: string[]): number {
+  if (!terms.length) return 0;
+  const fields = [
+    { value: tool.definition.name, weight: 8 },
+    { value: tool.label, weight: 6 },
+    { value: tool.category, weight: 4 },
+    ...schemaPropertyNames(tool.definition.inputSchema).map((value) => ({ value, weight: 5 })),
+    { value: tool.definition.description, weight: 2 }
+  ].map((field) => ({ ...field, normalized: normalizeSearchText(field.value), tokens: normalizedTerms(field.value) }));
+  let total = 0;
+  for (const term of terms) {
+    let best = 0;
+    for (const field of fields) {
+      const match = field.normalized === term
+        ? 400
+        : field.tokens.includes(term)
+          ? 200
+          : field.tokens.some((token) => token.startsWith(term))
+            ? 100
+            : field.tokens.some((token) => token.includes(term))
+              ? 40
+              : field.normalized.includes(term) ? 10 : 0;
+      best = Math.max(best, match * field.weight);
+    }
+    if (!best) return 0;
+    total += best;
+  }
+  return total;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase("en-US")
+    .replace(/[_-]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function normalizedTerms(value: string): string[] {
+  return [...new Set(normalizeSearchText(value).split(/\s+/).filter(Boolean))];
+}
+
+function schemaPropertyNames(schema: unknown): string[] {
+  const result = new Set<string>();
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const object = value as Record<string, unknown>;
+    if (object.properties && typeof object.properties === "object" && !Array.isArray(object.properties)) {
+      for (const [name, property] of Object.entries(object.properties as Record<string, unknown>)) {
+        result.add(name);
+        visit(property);
+      }
+    }
+    for (const key of ["items", "anyOf", "oneOf", "allOf"] as const) {
+      const nested = object[key];
+      if (Array.isArray(nested)) nested.forEach(visit);
+      else visit(nested);
+    }
+  };
+  visit(schema);
+  return [...result].sort((left, right) => left.localeCompare(right, "en"));
 }

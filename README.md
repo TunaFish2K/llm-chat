@@ -98,7 +98,9 @@ Agent 修改后，选择该 Agent 的会话会在下一次生成时读取新配�
 - 文件、Shell 和后台任务工具只访问生成快照中固定的会话工作目录。
 - `background_start`、`background_write` 和 `background_stop` 默认需要审批；读取和等待默认自动执行。
 - 写文件、编辑文件、隔离 JavaScript 和具有副作用的 MCP 工具默认需要批准。
-- Skills 由服务端托管并按 Agent 启用。模型通过 `use_skill` 按需加载固定修订，不会把全部 Skill 永久注入上下文。
+- Skills 由服务端托管并按 Agent 启用。服务启动和 `POST /api/skills/discover` 只扫描当前系统用户 `~/.agents/skills` 的直接子目录。发现的 Agent Skills 使用 `agents.<name>` 内部 ID，并保存内容寻址修订。
+- 模型通过 `use_skill` 按需加载固定 Skill 修订。标准 `allowed-tools` 只作为 Skill 内容保留，不会启用工具或绕过审批。
+- Agent 可把已启用工具设为直接或惰性。直接工具在第一步提供给模型；惰性工具由内部 `search_tools` 按需发现，并且仍受 Agent 启用状态、可用性和审批策略限制。
 - Plugin 源目录安装后会复制到 `LLM_CHAT_DATA_DIR/plugins`。Plugin 是可信本地代码；独立子进程只提供故障隔离，不限制主机权限。
 - 任意 URL 读取会阻止回环、私网地址和重定向到私网的请求。
 

@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventHub } from "./events";
@@ -8,6 +8,69 @@ import { cleanupStores, createStore, seedModel } from "./test-helpers";
 afterEach(() => cleanupStores());
 
 describe("SkillManager", () => {
+  it("discovers only direct Agent Skills children and keeps changed revisions pending", async () => {
+    const store = createStore();
+    const root = resolve(store.dataDir, "agent-skills");
+    const source = resolve(root, "review-helper");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(resolve(source, "SKILL.md"), [
+      "---",
+      "name: review-helper",
+      "description: >-",
+      "  Review code with a real YAML parser.",
+      "compatibility: Requires git",
+      "allowed-tools: workspace_shell",
+      "requiredTools:",
+      "  - workspace_read_file",
+      "  - workspace_grep",
+      "recommendedApprovals:",
+      "  workspace_read_file: never",
+      "---",
+      "# Review helper"
+    ].join("\n"));
+    const nested = resolve(root, "container", "nested-skill");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(resolve(nested, "SKILL.md"), "---\nname: nested-skill\ndescription: Nested\n---\n");
+    const invalid = resolve(root, "wrong-directory");
+    mkdirSync(invalid, { recursive: true });
+    writeFileSync(resolve(invalid, "SKILL.md"), "---\nname: other-name\ndescription: Wrong\n---\n");
+    const manager = new SkillManager(store, new EventHub(), { discoveryRoot: root });
+
+    const first = await manager.discover();
+    expect(first).toMatchObject({ discovered: 1, updated: 0, unchanged: 0, unloaded: 0 });
+    expect(first.errors).toEqual([expect.objectContaining({ path: resolve(invalid, "SKILL.md"), message: expect.stringContaining("match") })]);
+    const discovered = manager.list().find((skill) => skill.id === "agents.review-helper")!;
+    expect(discovered).toMatchObject({
+      name: "review-helper", description: "Review code with a real YAML parser.", compatibility: "Requires git",
+      sourceKind: "agents", bundled: false, state: "loaded",
+      requiredTools: ["workspace_read_file", "workspace_grep"],
+      recommendedApprovals: { workspace_read_file: "never" }
+    });
+    expect(discovered.requiredTools).not.toContain("workspace_shell");
+    expect(manager.list().some((skill) => skill.id === "agents.nested-skill")).toBe(false);
+
+    writeFileSync(resolve(source, "SKILL.md"), [
+      "---", "name: review-helper", "description: Updated", "requiredTools: [workspace_read_file]", "---", "Updated"
+    ].join("\n"));
+    const changed = await manager.discover();
+    expect(changed.updated).toBe(1);
+    expect(manager.list().find((skill) => skill.id === discovered.id)).toMatchObject({
+      revision: discovered.revision, state: "pending-reload", description: discovered.description
+    });
+    expect((await manager.discover()).unchanged).toBe(1);
+    const reloaded = await manager.reload(discovered.id);
+    expect(reloaded).toMatchObject({ state: "loaded", description: "Updated", sourceKind: "agents" });
+    expect(reloaded.revision).not.toBe(discovered.revision);
+
+    rmSync(source, { recursive: true, force: true });
+    expect(await manager.discover()).toMatchObject({ unloaded: 1 });
+    expect(manager.list().find((skill) => skill.id === discovered.id)?.state).toBe("unloaded");
+    expect(manager.activeRevisions([discovered.id])).toEqual({});
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM skill_revisions WHERE skill_id = ?")
+      .get(discovered.id)).toMatchObject({ count: 2 });
+    manager.close();
+  });
+
   it("initializes bundled and legacy Skills idempotently", async () => {
     const store = createStore();
     const legacy = resolve(store.dataDir, "skills", "legacy-helper");
@@ -86,6 +149,7 @@ describe("SkillManager", () => {
 
     const reloaded = await manager.reload("docs-helper");
     expect(reloaded.revision).not.toBe(installed.revision);
+    expect(await pinned.activatesTools?.({ id: "docs-helper" })).toEqual(["web_search", "workspace_read_file"]);
     await expect(manager.reload("missing")).rejects.toThrow("Skill not found");
 
     store.sqlite.prepare("UPDATE generations SET agent_snapshot_json = ? WHERE id = ?")

@@ -10,6 +10,7 @@ import {
 } from "@llm-chat/providers";
 import { buildContext, ContextError, type BuiltContext } from "./context";
 import type { GenerationRecord, Store } from "./database";
+import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
 
 type Subscriber = (event: GenerationEvent) => void;
@@ -166,15 +167,30 @@ export class GenerationRunner {
       const context = await this.dependencies.buildContext(this.store, record, model, connection, job.controller.signal);
       this.store.setGenerationContext(generationId, context.metadata);
       const toolPolicy = record.agentSnapshot.execution.tools;
-      const tools = model.capabilities.tools
+      const authorizedTools = model.capabilities.tools
         ? (await this.dependencies.buildTools(this.store, record)).filter((tool) =>
-            tool.available && (toolPolicy.overrides[tool.definition.name] ?? toolPolicy.defaultEnabled))
+            tool.available && tool.definition.name !== SEARCH_TOOLS_NAME
+            && (toolPolicy.overrides[tool.definition.name] ?? toolPolicy.defaultEnabled))
         : [];
-      const toolMap = new Map(tools.map((tool) => [tool.definition.name, tool]));
+      const authorizedToolMap = new Map(authorizedTools.map((tool) => [tool.definition.name, tool]));
+      const lazyTools = authorizedTools.filter((tool) => (toolPolicy.directOverrides?.[tool.definition.name] ?? true) === false);
+      const exposedToolNames = new Set(authorizedTools
+        .filter((tool) => (toolPolicy.directOverrides?.[tool.definition.name] ?? true) !== false)
+        .map((tool) => tool.definition.name));
+      const exposeAuthorized = (names: string[]) => {
+        for (const name of names) if (authorizedToolMap.has(name)) exposedToolNames.add(name);
+      };
+      const searchTool = lazyTools.length ? createSearchToolsTool(lazyTools) : undefined;
+      const exposedToolMap = (): Map<string, ServerTool> => new Map([
+        ...[...exposedToolNames].map((name) => [name, authorizedToolMap.get(name)!] as const),
+        ...(searchTool ? [[SEARCH_TOOLS_NAME, searchTool] as const] : [])
+      ]);
       const memoryPrompt = this.dependencies.memoryPrompt(this.store);
       let messages: ProviderMessage[] = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       let usage = cleanUsage(this.store.getGeneration(generationId)?.usage ?? {});
-      let stepIndex = nextStepIndex(this.store.listToolCalls(generationId));
+      const existingCalls = this.store.listToolCalls(generationId);
+      await restoreExposedTools(existingCalls, authorizedToolMap, exposeAuthorized);
+      let stepIndex = nextStepIndex(existingCalls);
 
       if (resuming) {
         const existing = this.store.listToolCalls(generationId);
@@ -186,7 +202,7 @@ export class GenerationRunner {
           call.output === null && call.error === null
           && (call.approvalState === "auto" || call.approvalState === "approved" || call.approvalState === "denied")
         );
-        await this.executeTools(record, executable, toolMap, job.controller.signal);
+        await this.executeTools(record, executable, exposedToolMap(), exposeAuthorized, job.controller.signal);
         job.controller.signal.throwIfAborted();
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
@@ -194,6 +210,7 @@ export class GenerationRunner {
       const maxToolRounds = record.agentSnapshot.execution.maxToolRounds;
       for (; maxToolRounds === null || stepIndex < maxToolRounds; stepIndex += 1) {
         job.controller.signal.throwIfAborted();
+        const stepToolMap = exposedToolMap();
         const calls: Array<{ id: string; name: string; arguments: string }> = [];
         let providerContext: unknown;
         let stopReason = "stop";
@@ -206,7 +223,7 @@ export class GenerationRunner {
           systemPrompt,
           postHistoryInstructions: context.postHistoryInstructions ?? "",
           messages,
-          tools: tools.map((tool) => tool.definition),
+          tools: [...stepToolMap.values()].map((tool) => tool.definition),
           settings: record.settings,
           capabilities: model.capabilities,
           signal: job.controller.signal
@@ -260,11 +277,14 @@ export class GenerationRunner {
 
         const persisted = [];
         for (const [index, call] of calls.entries()) {
-          const definition = toolMap.get(call.name);
+          const definition = stepToolMap.get(call.name);
           const args = parseToolArguments(call.arguments);
           if (definition) validateToolArguments(definition, args);
-          const override = toolPolicy.approvalOverrides[call.name] ?? "default";
-          const requiresApproval = override === "always" || (override === "default" && await (definition?.requiresApproval(args) ?? false));
+          const override = !definition || call.name === SEARCH_TOOLS_NAME
+            ? "never"
+            : toolPolicy.approvalOverrides[call.name] ?? "default";
+          const requiresApproval = override === "always"
+            || (override === "default" && await (definition?.requiresApproval(args) ?? false));
           const saved = this.store.upsertToolCall(generationId, call, stepIndex * 1000 + index, stepIndex, requiresApproval);
           this.emit(generationId, { type: "tool-call", generationId, toolCall: saved });
           persisted.push(saved);
@@ -274,7 +294,7 @@ export class GenerationRunner {
           this.waitForApproval(generationId);
           return;
         }
-        await this.executeTools(record, persisted, toolMap, job.controller.signal);
+        await this.executeTools(record, persisted, stepToolMap, exposeAuthorized, job.controller.signal);
         job.controller.signal.throwIfAborted();
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
@@ -300,6 +320,7 @@ export class GenerationRunner {
     record: GenerationRecord,
     calls: ReturnType<Store["listToolCalls"]>,
     toolMap: Map<string, ServerTool>,
+    exposeAuthorized: (names: string[]) => void,
     signal: AbortSignal
   ): Promise<void> {
     const generationId = record.id;
@@ -331,6 +352,7 @@ export class GenerationRunner {
           approvalState: "completed", output, error: null, completedAt: Date.now()
         })!;
         this.emit(generationId, { type: "tool-call", generationId, toolCall: completed });
+        if (tool.activatesTools) exposeAuthorized(await tool.activatesTools(parseToolArguments(call.arguments)));
       } catch (error) {
         if (signal.aborted) throw error;
         const message = error instanceof Error ? error.message : "Tool execution failed";
@@ -416,4 +438,32 @@ function validateToolArguments(tool: ServerTool, input: Record<string, unknown>)
 function nextStepIndex(calls: ReturnType<Store["listToolCalls"]>): number {
   if (!calls.length) return 0;
   return Math.floor(Math.max(...calls.map((call) => call.index)) / 1000) + 1;
+}
+
+async function restoreExposedTools(
+  calls: ReturnType<Store["listToolCalls"]>,
+  authorizedTools: Map<string, ServerTool>,
+  exposeAuthorized: (names: string[]) => void
+): Promise<void> {
+  for (const call of calls) {
+    if (call.approvalState !== "completed" || call.output === null) continue;
+    if (call.name === SEARCH_TOOLS_NAME) {
+      try {
+        const parsed = JSON.parse(call.output) as { loadedToolNames?: unknown };
+        if (Array.isArray(parsed.loadedToolNames)) {
+          exposeAuthorized(parsed.loadedToolNames.filter((name): name is string => typeof name === "string"));
+        }
+      } catch {
+        // A malformed historical meta-tool result grants no tool exposure.
+      }
+      continue;
+    }
+    const tool = authorizedTools.get(call.name);
+    if (!tool?.activatesTools) continue;
+    try {
+      exposeAuthorized(await tool.activatesTools(parseToolArguments(call.arguments)));
+    } catch {
+      // Missing historical activation metadata must not broaden authority.
+    }
+  }
 }
