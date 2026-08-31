@@ -392,6 +392,7 @@ describe("server API", () => {
   it("returns 404 for stale assets while preserving the SPA route fallback", async () => {
     const app = await testApp(true);
     const index = await app.inject({ method: "GET", url: "/" });
+    expect(index.headers["cache-control"]).toBe("no-cache");
     const scriptPath = index.body.match(/src="([^"]+\.js)"/)?.[1];
     expect(scriptPath).toBeTruthy();
     const currentAsset = await app.inject({ method: "GET", url: scriptPath! });
@@ -405,6 +406,7 @@ describe("server API", () => {
     const route = await app.inject({ method: "GET", url: "/c/00000000-0000-4000-8000-000000000000" });
     expect(route.statusCode).toBe(200);
     expect(route.headers["content-type"]).toContain("text/html");
+    expect(route.headers["cache-control"]).toBe("no-cache");
   });
 
   it("covers MCP CRUD, conflicts, invalidation, and test routes without network access", async () => {

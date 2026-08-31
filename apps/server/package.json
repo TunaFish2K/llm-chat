@@ -4,25 +4,27 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "LLM_CHAT_AUTH_MODE=disabled tsx watch src/index.ts",
+    "dev": "LLM_CHAT_AUTH_MODE=disabled LLM_CHAT_SERVE_WEB=false tsx watch src/index.ts",
     "build": "tsup --config tsup.config.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "auth:reset": "node dist/auth-reset.js"
   },
   "dependencies": {
     "@fastify/compress": "^8.3.1",
     "@fastify/cookie": "^11.1.2",
     "@fastify/helmet": "^13.1.1",
     "@fastify/rate-limit": "^11.2.0",
-    "@fastify/static": "^8.2.0",
+    "@fastify/static": "^10.1.3",
     "@llm-chat/contracts": "workspace:*",
     "@llm-chat/providers": "workspace:*",
     "@modelcontextprotocol/client": "^2.0.0",
     "@simplewebauthn/server": "^13.3.3",
     "@types/qrcode": "^1.5.6",
     "@xterm/headless": "6.0.0",
-    "ajv": "8.17.1",
+    "ajv": "8.18.0",
     "fastify": "^5.6.0",
     "node-pty": "1.1.0",
+    "proper-lockfile": "^4.1.2",
     "qrcode": "^1.5.4",
     "yaml": "^2.8.1",
     "zod": "^4.1.0"
