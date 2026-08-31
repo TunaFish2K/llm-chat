@@ -103,7 +103,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     await ensureOk(response);
 
     const blocks = new Map<number, AnthropicBlock>();
-    let inputUsage: UsageDto = {};
+    let usageSnapshot: Record<string, unknown> = {};
     let stopReason = "end_turn";
     for await (const frame of readSse(response)) {
       let event: Record<string, unknown>;
@@ -115,7 +115,7 @@ export class AnthropicAdapter implements ProviderAdapter {
       const type = typeof event.type === "string" ? event.type : frame.event;
       if (type === "message_start") {
         const message = event.message as Record<string, unknown> | undefined;
-        inputUsage = normalizeUsage(message?.usage);
+        usageSnapshot = record(message?.usage);
       } else if (type === "content_block_start") {
         const index = number(event.index) ?? 0;
         const block = (event.content_block as AnthropicBlock | undefined) ?? { type: "unsupported" };
@@ -148,7 +148,8 @@ export class AnthropicAdapter implements ProviderAdapter {
       } else if (type === "message_delta") {
         const delta = event.delta as Record<string, unknown> | undefined;
         if (typeof delta?.stop_reason === "string") stopReason = delta.stop_reason;
-        yield { type: "usage", usage: { ...inputUsage, ...normalizeUsage(event.usage) } };
+        usageSnapshot = { ...usageSnapshot, ...record(event.usage) };
+        yield { type: "usage", usage: normalizeUsage(usageSnapshot) };
       } else if (type === "error") {
         const error = event.error as Record<string, unknown> | undefined;
         throw new Error(typeof error?.message === "string" ? error.message : "Anthropic 生成失败");
@@ -194,11 +195,28 @@ function parseArguments(value: string): unknown {
 function normalizeUsage(value: unknown): UsageDto {
   if (!value || typeof value !== "object") return {};
   const usage = value as Record<string, unknown>;
+  const uncachedInputTokens = number(usage.input_tokens);
+  const cacheCreationInputTokens = number(usage.cache_creation_input_tokens);
+  const cachedInputTokens = number(usage.cache_read_input_tokens);
+  const hasInput = uncachedInputTokens !== undefined
+    || cacheCreationInputTokens !== undefined
+    || cachedInputTokens !== undefined;
+  const inputTokens = hasInput
+    ? (uncachedInputTokens ?? 0) + (cacheCreationInputTokens ?? 0) + (cachedInputTokens ?? 0)
+    : undefined;
+  const outputTokens = number(usage.output_tokens);
   return compactUsage({
-    inputTokens: number(usage.input_tokens),
-    outputTokens: number(usage.output_tokens),
-    cachedInputTokens: number(usage.cache_read_input_tokens)
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    totalTokens: inputTokens !== undefined || outputTokens !== undefined
+      ? (inputTokens ?? 0) + (outputTokens ?? 0)
+      : undefined
   });
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
 function number(value: unknown): number | undefined {

@@ -183,6 +183,80 @@ describe("GenerationRunner lifecycle", () => {
       expect.objectContaining({ type: "status", status: "completed", stopReason: "stop" })
     ]));
   });
+
+  it("aggregates every usage dimension across tool rounds and derives missing totals", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const tool = serverTool("automatic", async () => "done");
+    const scripts: ProviderEvent[][] = [
+      [
+        { type: "usage", usage: {
+          inputTokens: 2,
+          outputTokens: 1,
+          reasoningTokens: 0,
+          cachedInputTokens: 0
+        } },
+        toolCall("usage-call", "automatic", "{}"),
+        { type: "complete", stopReason: "tool_calls" }
+      ],
+      [
+        { type: "usage", usage: {
+          inputTokens: 3,
+          outputTokens: 4,
+          reasoningTokens: 2,
+          totalTokens: 20
+        } },
+        { type: "complete", stopReason: "stop" }
+      ]
+    ];
+    const emitted: unknown[] = [];
+    const runner = makeRunner(store, {
+      buildTools: async () => [tool],
+      stream: () => events(scripts.shift()!)
+    });
+    runner.start(generation.generationId);
+    runner.subscribe(generation.generationId, (event) => emitted.push(event));
+
+    const result = await terminal(store, generation.generationId);
+    expect(result.usage).toEqual({
+      inputTokens: 5,
+      outputTokens: 5,
+      reasoningTokens: 2,
+      cachedInputTokens: 0,
+      totalTokens: 23
+    });
+    expect(emitted).toContainEqual({
+      type: "usage",
+      generationId: generation.generationId,
+      usage: { inputTokens: 2, outputTokens: 1, reasoningTokens: 0, cachedInputTokens: 0, totalTokens: 3 }
+    });
+  });
+
+  it("persists explicitly reported zero usage", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const runner = makeRunner(store, {
+      stream: () => events([
+        { type: "usage", usage: {
+          inputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          cachedInputTokens: 0
+        } },
+        { type: "complete", stopReason: "stop" }
+      ])
+    });
+
+    runner.start(generation.generationId);
+    const result = await terminal(store, generation.generationId);
+    expect(result.usage).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cachedInputTokens: 0,
+      totalTokens: 0
+    });
+  });
 });
 
 describe("GenerationRunner tools and approval", () => {
