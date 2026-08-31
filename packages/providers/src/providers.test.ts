@@ -166,6 +166,35 @@ describe("provider adapters", () => {
     expect(events.at(-1)).toEqual({ type: "complete", stopReason: "stop" });
   });
 
+  it("normalizes Chat cache usage across official and vendor dialects", async () => {
+    const rawUsages = [
+      {
+        prompt_tokens: 10,
+        completion_tokens: 2,
+        prompt_tokens_details: { cached_tokens: 3 },
+        cached_tokens: 4,
+        prompt_cache_hit_tokens: 5
+      },
+      { prompt_tokens: 10, completion_tokens: 2, cached_tokens: 0, prompt_cache_hit_tokens: 5 },
+      { prompt_tokens: 10, completion_tokens: 2, prompt_cache_hit_tokens: 2 },
+      { prompt_tokens: 10, completion_tokens: 2 }
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      frame({ choices: [], usage: rawUsages.shift() }),
+      "data: [DONE]\n\n"
+    ])));
+
+    for (const expected of [
+      { inputTokens: 10, outputTokens: 2, cachedInputTokens: 3 },
+      { inputTokens: 10, outputTokens: 2, cachedInputTokens: 0 },
+      { inputTokens: 10, outputTokens: 2, cachedInputTokens: 2 },
+      { inputTokens: 10, outputTokens: 2 }
+    ]) {
+      const events = await collect(new OpenAiChatAdapter().stream(request("openai-chat")));
+      expect(events).toContainEqual({ type: "usage", usage: expected });
+    }
+  });
+
   it("returns Responses reasoning items to the same connection", async () => {
     let sentBody: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
@@ -205,7 +234,7 @@ describe("provider adapters", () => {
     ])));
     const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "reasoning", content: "分析", complete: true }));
-    expect(events).toContainEqual({ type: "usage", usage: { inputTokens: 7, outputTokens: 5 } });
+    expect(events).toContainEqual({ type: "usage", usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12 } });
     expect(events).toContainEqual({ type: "provider-context", payload: expect.arrayContaining([expect.objectContaining({ signature: "sig" })]) });
   });
 
@@ -267,6 +296,24 @@ describe("provider adapters", () => {
     await expect(collect(new OpenAiResponsesAdapter().stream(request("openai-responses")))).rejects.toThrow("Responses 生成失败");
   });
 
+  it("preserves zero and missing Responses cache usage", async () => {
+    const rawUsages = [
+      { input_tokens: 4, output_tokens: 1, input_tokens_details: { cached_tokens: 0 } },
+      { input_tokens: 4, output_tokens: 1, input_tokens_details: {} }
+    ];
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      namedFrame("response.completed", { response: { usage: rawUsages.shift() } })
+    ])));
+
+    const withZero = await collect(new OpenAiResponsesAdapter().stream(request("openai-responses")));
+    expect(withZero).toContainEqual({
+      type: "usage",
+      usage: { inputTokens: 4, outputTokens: 1, cachedInputTokens: 0 }
+    });
+    const withoutCache = await collect(new OpenAiResponsesAdapter().stream(request("openai-responses")));
+    expect(withoutCache).toContainEqual({ type: "usage", usage: { inputTokens: 4, outputTokens: 1 } });
+  });
+
   it("does not replay provider context across connections", async () => {
     let body: Record<string, unknown> = {};
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
@@ -299,8 +346,47 @@ describe("provider adapters", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "reasoning", content: "[推理内容已由提供方隐藏]", complete: true }));
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "unsupported", content: expect.stringContaining("image") }));
     expect(events).toContainEqual({ type: "tool-call", call: { id: "tool", name: "fn", arguments: "{}" } });
-    expect(events).toContainEqual({ type: "usage", usage: { outputTokens: 4, cachedInputTokens: 2 } });
+    expect(events).toContainEqual({
+      type: "usage",
+      usage: { inputTokens: 2, outputTokens: 4, cachedInputTokens: 2, totalTokens: 6 }
+    });
     expect(events.at(-1)).toEqual({ type: "complete", stopReason: "max_tokens" });
+  });
+
+  it("normalizes Anthropic cache creation and reads across split usage events", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      namedFrame("message_start", { message: { usage: {
+        input_tokens: 7,
+        cache_creation_input_tokens: 3,
+        cache_read_input_tokens: 2,
+        output_tokens: 1
+      } } }),
+      namedFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } })
+    ])));
+
+    const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
+    expect(events).toContainEqual({
+      type: "usage",
+      usage: { inputTokens: 12, outputTokens: 5, cachedInputTokens: 2, totalTokens: 17 }
+    });
+  });
+
+  it("preserves explicit zero Anthropic cache usage", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      namedFrame("message_start", { message: { usage: {
+        input_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        output_tokens: 0
+      } } }),
+      namedFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } })
+    ])));
+
+    const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
+    expect(events).toContainEqual({
+      type: "usage",
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, totalTokens: 0 }
+    });
   });
 
   it("maps Anthropic request settings, avoids duplicate tool blocks, and surfaces protocol errors", async () => {

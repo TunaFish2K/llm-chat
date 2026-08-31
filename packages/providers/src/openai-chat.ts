@@ -109,11 +109,17 @@ export class OpenAiChatAdapter implements ProviderAdapter {
       if (typeof choice?.finish_reason === "string") stopReason = choice.finish_reason;
       const rawUsage = event.usage as Record<string, unknown> | undefined;
       if (rawUsage) {
-        const details = rawUsage.completion_tokens_details as Record<string, unknown> | undefined;
+        const completionDetails = rawUsage.completion_tokens_details as Record<string, unknown> | undefined;
+        const promptDetails = rawUsage.prompt_tokens_details as Record<string, unknown> | undefined;
         const usage = compactUsage({
           inputTokens: number(rawUsage.prompt_tokens),
           outputTokens: number(rawUsage.completion_tokens),
-          reasoningTokens: number(details?.reasoning_tokens),
+          reasoningTokens: number(completionDetails?.reasoning_tokens),
+          cachedInputTokens: firstNumber(
+            promptDetails?.cached_tokens,
+            rawUsage.cached_tokens,
+            rawUsage.prompt_cache_hit_tokens
+          ),
           totalTokens: number(rawUsage.total_tokens)
         });
         yield { type: "usage", usage };
@@ -131,6 +137,14 @@ export class OpenAiChatAdapter implements ProviderAdapter {
 
 function number(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function firstNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const normalized = number(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
 }
 
 function compactUsage(value: Partial<Record<keyof UsageDto, number | undefined>>): UsageDto {

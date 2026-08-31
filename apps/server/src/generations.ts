@@ -173,7 +173,7 @@ export class GenerationRunner {
       const toolMap = new Map(tools.map((tool) => [tool.definition.name, tool]));
       const memoryPrompt = this.dependencies.memoryPrompt(this.store);
       let messages: ProviderMessage[] = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
-      let usage = this.store.getGeneration(generationId)?.usage ?? {};
+      let usage = cleanUsage(this.store.getGeneration(generationId)?.usage ?? {});
       let stepIndex = nextStepIndex(this.store.listToolCalls(generationId));
 
       if (resuming) {
@@ -370,16 +370,28 @@ function normalizeError(error: unknown): { code: string; message: string } {
 }
 
 function cleanUsage(usage: UsageDto): UsageDto {
-  return Object.fromEntries(Object.entries(usage).filter(([, value]) => value !== undefined)) as UsageDto;
+  const result = Object.fromEntries(
+    Object.entries(usage).filter(([, value]) => value !== undefined)
+  ) as UsageDto;
+  if (
+    result.totalTokens === undefined
+    && (result.inputTokens !== undefined || result.outputTokens !== undefined)
+  ) {
+    result.totalTokens = (result.inputTokens ?? 0) + (result.outputTokens ?? 0);
+  }
+  return result;
 }
 
 function addUsage(current: UsageDto, next: UsageDto): UsageDto {
+  const normalizedCurrent = cleanUsage(current);
+  const normalizedNext = cleanUsage(next);
   const result: UsageDto = {};
   for (const key of ["inputTokens", "outputTokens", "reasoningTokens", "cachedInputTokens", "totalTokens"] as const) {
-    const value = (current[key] ?? 0) + (next[key] ?? 0);
-    if (value) result[key] = value;
+    if (normalizedCurrent[key] !== undefined || normalizedNext[key] !== undefined) {
+      result[key] = (normalizedCurrent[key] ?? 0) + (normalizedNext[key] ?? 0);
+    }
   }
-  return cleanUsage(result);
+  return result;
 }
 
 function parseToolArguments(value: string): Record<string, unknown> {
