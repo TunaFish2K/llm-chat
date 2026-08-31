@@ -52,6 +52,34 @@ body { overflow: hidden; overscroll-behavior: none; }
 }
 .composer-rail { width: min(900px, calc(100% - 32px)); margin-inline: auto; padding-block: 8px 12px; }
 .composer-rail > * + * { margin-top: 8px; }
+.approval-panel {
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.approval-panel-header { min-width: 0; }
+.approval-tool-heading { min-width: 0; flex: 1 1 240px; }
+.approval-tool-heading .ant-typography { min-width: 0; }
+.approval-tool-heading .ant-typography:last-child { max-width: min(42vw, 320px); }
+.approval-position { flex: 0 0 auto; white-space: nowrap; }
+.approval-prompt { display: block; margin-block: 8px 4px; }
+.approval-payload {
+  width: 100%;
+  max-height: min(280px, 35vh);
+  min-height: 56px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-actions { margin-top: 12px; }
 .composer-toolbar { width: 100%; }
 .composer-toolbar-mobile { flex-wrap: nowrap; min-width: 0; overflow: hidden; }
 .composer-agent-control, .composer-model-control { min-width: 0; width: 0; flex: 1 1 0; }
@@ -149,6 +177,9 @@ body { overflow: hidden; overscroll-behavior: none; }
   .agent-selector { width: 144px; max-width: 42vw; }
   .message-meta-mobile { min-height: 0; }
   .message-model-label { max-width: min(60vw, 240px); }
+  .approval-tool-heading { flex-basis: 100%; }
+  .approval-tool-heading .ant-typography:last-child { max-width: 100%; }
+  .approval-position { margin-inline-start: auto; }
   .settings-split { min-height: 0; }
   .resource-pane { flex-basis: auto; width: 100%; }
   .settings-mobile-list .resource-menu { overflow: visible; }

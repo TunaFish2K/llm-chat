@@ -494,9 +494,11 @@ describe("App", () => {
 
   it("approves and denies tools and resumes generation when requested", async () => {
     const user = userEvent.setup();
-    api.messages.mockResolvedValue([assistantMessage([generation({ status: "completed", toolCalls: [tool()] })])]);
+    api.messages.mockResolvedValue([assistantMessage([generation({ status: "waiting-approval", toolCalls: [tool()] })])]);
     await boot("/c/a1b2");
     expect(await screen.findByText("answer")).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: /允许/ })).toHaveLength(1);
+    expect(document.querySelector(".tool-call button")).toBeNull();
     const resumed = generation({ id: "g-resumed", status: "running", blocks: [], toolCalls: [tool()] });
     api.messages.mockResolvedValue([assistantMessage([resumed], "g-resumed")]);
     await user.click(await screen.findByRole("button", { name: /允许/ }));
@@ -506,6 +508,60 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /拒绝/ }));
     await waitFor(() => expect(api.approveTool).toHaveBeenCalledWith("t1", false));
   }, 120_000);
+
+  it("shows pending tools in index order, preserves the draft, and restores Sender after the queue", async () => {
+    const user = userEvent.setup();
+    const first = tool({ id: "t-first", index: 1, arguments: '{"cmd":"pwd","path":"/tmp"}' });
+    const second = tool({ id: "t-second", index: 2, name: "workspace_write", arguments: '{"content":"hello"}' });
+    const waiting = generation({ id: "g-waiting", status: "waiting-approval", blocks: [], toolCalls: [second, first] });
+    const nextWaiting = generation({ id: "g-waiting", status: "waiting-approval", blocks: [], toolCalls: [{ ...second }] });
+    const resumed = generation({ id: "g-resumed", status: "running", blocks: [], toolCalls: [{ ...second, approvalState: "denied" }] });
+    let messageState: MessageDto[] = [assistantMessage([waiting])];
+    api.conversations.mockResolvedValue([{ ...conversation, draft: "keep this draft" }]);
+    api.messages.mockImplementation(async () => messageState);
+    api.approveTool
+      .mockImplementationOnce(async () => {
+        messageState = [assistantMessage([nextWaiting])];
+        return { toolCall: { ...first, approvalState: "approved" }, generationId: "g-waiting", resumed: false };
+      })
+      .mockImplementationOnce(async () => {
+        messageState = [assistantMessage([resumed], "g-resumed")];
+        return { toolCall: { ...second, approvalState: "denied" }, generationId: "g-resumed", resumed: true };
+      });
+    await boot("/c/a1b2");
+
+    const approval = await screen.findByRole("region", { name: "工具审批" });
+    expect(screen.queryByRole("textbox", { name: "消息输入" })).not.toBeInTheDocument();
+    expect(within(approval).getByText("工作区 / shell")).toBeInTheDocument();
+    expect(within(approval).getByText("第 1 项，共 2 项")).toBeInTheDocument();
+    expect(within(approval).getByText(/"cmd": "pwd"/)).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: /允许/ })).toHaveLength(1);
+
+    await user.click(within(approval).getByRole("button", { name: /允许/ }));
+    await waitFor(() => expect(api.approveTool).toHaveBeenCalledWith("t-first", true));
+    const nextApproval = await screen.findByRole("region", { name: "工具审批" });
+    expect(within(nextApproval).getByText("第 1 项，共 1 项")).toBeInTheDocument();
+    expect(within(nextApproval).getByText("工作区 / write")).toBeInTheDocument();
+
+    await user.click(within(nextApproval).getByRole("button", { name: /拒绝/ }));
+    await waitFor(() => expect(api.approveTool).toHaveBeenCalledWith("t-second", false));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "工具审批" })).not.toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: "消息输入" })).toHaveValue("keep this draft");
+    expect(generationEvents).toHaveBeenCalledWith("g-resumed", expect.any(Function));
+  });
+
+  it("retains the approval item and shows the error when approval fails", async () => {
+    const user = userEvent.setup();
+    const waiting = generation({ status: "waiting-approval", blocks: [], toolCalls: [tool()] });
+    api.messages.mockResolvedValue([assistantMessage([waiting])]);
+    api.approveTool.mockRejectedValueOnce(new Error("approval failed"));
+    await boot("/c/a1b2");
+    const approval = await screen.findByRole("region", { name: "工具审批" });
+    await user.click(within(approval).getByRole("button", { name: /允许/ }));
+    expect(await screen.findByText("approval failed")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "工具审批" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "工具审批" })).getByRole("button", { name: /允许/ })).toBeEnabled();
+  });
 
   it("optimistically updates UI settings and keeps new-conversation reasoning local", async () => {
     const user = userEvent.setup();
