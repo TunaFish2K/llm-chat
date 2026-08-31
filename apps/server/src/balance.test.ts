@@ -70,8 +70,10 @@ describe("BalanceService", () => {
   });
 
   it("does not cache failures and sanitizes upstream response bodies", async () => {
+    const rejected = new Response(JSON.stringify({ error: { message: "api-secret leaked" } }), { status: 401 });
+    const rejectedText = vi.spyOn(rejected, "text");
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "api-secret leaked" } }), { status: 401 }))
+      .mockResolvedValueOnce(rejected)
       .mockResolvedValueOnce(new Response("not json"))
       .mockResolvedValueOnce(Response.json({ account: {} }))
       .mockResolvedValueOnce(Response.json({ account: { cents: 500 } }));
@@ -83,10 +85,33 @@ describe("BalanceService", () => {
     );
     expect(upstream).toMatchObject({ code: "balance_upstream_error", statusCode: 502 });
     expect(upstream.message).not.toContain("api-secret");
+    expect(rejectedText).not.toHaveBeenCalled();
     await expect(service.get(connection())).rejects.toMatchObject({ code: "balance_invalid_result" });
     await expect(service.get(connection())).rejects.toMatchObject({ code: "balance_invalid_result" });
     await expect(service.get(connection())).resolves.toMatchObject({ value: 5, cached: false });
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("cancels an unbounded chunked success response before materializing it", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > 2) throw new Error("read past response limit");
+        controller.enqueue(new Uint8Array(600 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      }
+    }, { highWaterMark: 0 });
+    const service = new BalanceService({
+      fetch: vi.fn(async () => new Response(body)) as typeof fetch
+    });
+
+    await expect(service.get(connection())).rejects.toMatchObject({ code: "balance_invalid_result" });
+    expect(pulls).toBe(2);
+    expect(cancelled).toBe(true);
   });
 
   it("keeps a still-valid successful entry when an explicit refresh fails", async () => {

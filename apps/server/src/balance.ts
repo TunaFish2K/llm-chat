@@ -105,28 +105,29 @@ export class BalanceService {
       throw new BalanceError("balance_upstream_error", "余额服务请求失败", 502);
     }
 
-    try {
-      await ensureOk(response);
-    } catch {
+    if (!response.ok) {
+      await cancelBody(response);
       throw new BalanceError(
         "balance_upstream_error",
         `余额服务返回 HTTP ${response.status}`,
         502
       );
     }
+    await ensureOk(response);
 
     const declaredLength = Number(response.headers.get("content-length"));
     if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_LENGTH) {
+      await cancelBody(response);
       throw invalidResult("余额服务响应过大");
     }
 
     let text: string;
     try {
-      text = await response.text();
-    } catch {
+      text = await readBoundedText(response, MAX_RESPONSE_LENGTH);
+    } catch (error) {
+      if (error instanceof BalanceError) throw error;
       throw new BalanceError("balance_upstream_error", "读取余额服务响应失败", 502);
     }
-    if (text.length > MAX_RESPONSE_LENGTH) throw invalidResult("余额服务响应过大");
     try {
       return JSON.parse(text) as unknown;
     } catch {
@@ -139,6 +140,39 @@ export class BalanceService {
       if (value.expiresAt <= now) this.cache.delete(key);
     }
   }
+}
+
+async function readBoundedText(response: Response, limit: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytesRead = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytesRead += value.byteLength;
+      if (bytesRead > limit) {
+        try { await reader.cancel(); } catch {}
+        throw invalidResult("余额服务响应过大");
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } catch (error) {
+    if (!(error instanceof BalanceError)) {
+      try { await reader.cancel(); } catch {}
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function cancelBody(response: Response): Promise<void> {
+  try { await response.body?.cancel(); } catch {}
 }
 
 export function evaluateBalanceExpression(expression: string, document: unknown): number {
