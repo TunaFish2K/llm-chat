@@ -155,6 +155,16 @@ The final coverage verification passes 312 assertions across 33 files. Global co
 - An exploratory run that overlapped `pnpm build` with the node suite transiently failed the stale-asset MIME assertion while Vite was cleaning/rebuilding `apps/web/dist`. The required sequential node run passed, and the production probe returned the expected text/plain 404. This was classified as a test-procedure artifact, not a product regression.
 - The production server was stopped with SIGINT after the probes. All application state was created in `/tmp/llm-chat-normal-qa-data.uA96Gf`; no original project data directory was read or modified.
 
+## 2026-08-31 Follow-up: Web Test Budget and Async Stability
+
+The original QA baseline above measured 100 web tests in 56.64 seconds with a 60-second suite budget and a 30-second per-file budget. The integrated suite now contains 112 web tests. During integration, two 113-test runs completed in 64.30 and 61.61 seconds; after removing a duplicate render while preserving its assertions in the remaining render, 112 tests completed in 64.53 seconds. Across those three integration runs, elapsed time per test averaged approximately 0.563 seconds, compared with approximately 0.566 seconds in the original baseline. The fixed 60-second limit no longer represented the larger suite even though throughput had not regressed.
+
+The web budget is therefore recalibrated to 70 seconds for the suite and 35 seconds per file. The budget runner still requires the Vitest process and JSON report to succeed, so the change does not permit assertion failures.
+
+The first integrated full-coverage run passed 355 of 356 tests. Its only failure was an existing Ant Design connection-form case whose asynchronous validation message did not appear within Testing Library's default one-second async utility timeout under coverage instrumentation. The same targeted details tests passed outside that full instrumented run. Shared web test setup now configures Testing Library's async utility timeout to three seconds; cleanup and the checks for unexpected `console.warn` and `console.error` output remain enforced.
+
+Fresh-worktree verification passed 112 of 112 web tests in 65.18 seconds, and all web tests also passed under coverage. The first fresh-worktree coverage attempt passed 355 of 356 tests; its separate failure was the server stale-asset MIME assertion. The worktree had no `apps/web/dist/index.html`, so `registerWeb` returned before installing the stale-asset and SPA fallback handlers and the request received the default JSON 404. After the frontend build generated `apps/web/dist`, the unchanged coverage command passed all 34 test files and all 356 tests, and every configured coverage threshold passed. This confirms that the async timeout stabilized the connection-form case. It also records a test-process finding: coverage verification of the server's static-asset behavior requires the frontend build artifact to exist first.
+
 ## Limitations
 
 - No live OpenAI, Anthropic, or other external provider was called. Provider behavior was exercised with mocks.

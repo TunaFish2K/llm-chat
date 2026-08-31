@@ -1,6 +1,8 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, beforeEach, expect, vi } from "vitest";
+
+configure({ asyncUtilTimeout: 3_000 });
 
 class TestResizeObserver implements ResizeObserver {
   observe() {}

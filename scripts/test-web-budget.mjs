@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
 
-const suiteLimitMs = 60_000;
-const fileLimitMs = 30_000;
+const suiteLimitMs = 70_000;
+const fileLimitMs = 35_000;
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "llm-chat-web-budget-"));
 const reportPath = join(temporaryDirectory, "vitest.json");
 const startedAt = performance.now();
