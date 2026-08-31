@@ -535,8 +535,14 @@ export function App() {
     };
   });
 
+  const activeTaskCount = tasks.filter((task) => ["queued", "starting", "running"].includes(task.status)).length;
   const headerMenu = current && {
     items: [
+      ...(compactSidebar ? [{
+        key: "background-tasks",
+        label: activeTaskCount ? `后台任务 ${activeTaskCount}` : "后台任务",
+        icon: <CodeOutlined />
+      }] : []),
       {
         key: "context",
         label: "上下文策略",
@@ -559,6 +565,8 @@ export function App() {
         await patchConversation(current, { executionOverrides: {} });
       } else if (key === "execution-settings") {
         setExecutionOpen(true);
+      } else if (key === "background-tasks") {
+        setTasksOpen(true);
       }
     }
   };
@@ -571,9 +579,9 @@ export function App() {
         {persistentSidebarOpen && <Sider width={260} theme={colorScheme}>{sidebar}</Sider>}
         <Layout className="chat-layout">
           <Header className={current ? "chat-header" : "chat-header chat-header-welcome"}>
-            <Badge className="task-badge" count={tasks.filter((task) => ["queued", "starting", "running"].includes(task.status)).length} size="small">
+            {(!current || !compactSidebar) && <Badge className="task-badge" count={activeTaskCount} size="small">
               <Button className="task-button" type="text" icon={<CodeOutlined />} aria-label="后台任务" onClick={() => setTasksOpen(true)} />
-            </Badge>
+            </Badge>}
             {openSidebarButton && <Button
               className="sidebar-open-button"
               type="text"

@@ -126,7 +126,8 @@ vi.mock("antd", async () => {
   return {
     Alert: ({ title, onClose }: Record<string, unknown>) => createElement("div", { role: "alert" }, title as never, onClose ? createElement("button", { onClick: onClose as never }, "关闭") : null),
     Avatar: ({ children }: Record<string, unknown>) => createElement("div", {}, children as never),
-    Badge: ({ children }: Record<string, unknown>) => createElement("div", {}, children as never),
+    Badge: ({ children, className, count }: Record<string, unknown>) => createElement("div", { className: className as string },
+      count ? createElement("span", {}, count as never) : null, children as never),
     Breadcrumb: ({ items = [] }: { items?: Array<{ title: unknown }> }) => createElement("nav", {}, ...items.map((item, index) => createElement("span", { key: index }, item.title as never))),
     Button, Checkbox: ({ children, checked, onChange }: Record<string, unknown>) => createElement("label", {}, createElement("input", { type: "checkbox", checked, onChange }), children as never),
     Collapse, Drawer, Flex, Grid: { useBreakpoint: () => state.screens }, Input, InputNumber, Layout, Listy, Modal, Popover, Select, Space,
@@ -137,11 +138,22 @@ vi.mock("antd", async () => {
       ? cloneElement(children, onClick ? { onClick } as never : {})
       : children,
     Typography,
-    Dropdown: ({ children, menu }: { children: unknown; menu: { onClick?: (value: { key: string }) => void } }) => createElement("div", {},
-      children as never,
-      createElement("button", { onClick: () => menu.onClick?.({ key: "full" }) }, "策略完整"),
-      createElement("button", { onClick: () => menu.onClick?.({ key: "execution-settings" }) }, "执行设置"),
-      createElement("button", { onClick: () => menu.onClick?.({ key: "delete" }) }, "菜单删除"))
+    Dropdown: ({ children, menu }: { children: unknown; menu: { items?: Array<{ key: string; label?: unknown }>; onClick?: (value: { key: string }) => void } }) => {
+      const [open, setOpen] = useState(false);
+      const hasItem = (key: string) => menu.items?.some((item) => item.key === key);
+      const taskItem = menu.items?.find((item) => item.key === "background-tasks");
+      const trigger = isValidElement(children)
+        ? cloneElement(children, { onClick: () => setOpen((value) => !value) } as never)
+        : children;
+      return createElement("div", {},
+        trigger as never,
+        open ? createElement("div", { role: "menu" },
+          hasItem("background-tasks") ? createElement("button", { onClick: () => menu.onClick?.({ key: "background-tasks" }) }, taskItem?.label as never) : null,
+          hasItem("context") ? createElement("button", { onClick: () => menu.onClick?.({ key: "full" }) }, "策略完整") : null,
+          hasItem("execution-settings") ? createElement("button", { onClick: () => menu.onClick?.({ key: "execution-settings" }) }, "执行设置") : null,
+          hasItem("delete") ? createElement("button", { onClick: () => menu.onClick?.({ key: "delete" }) }, "菜单删除") : null
+        ) : null);
+    }
   };
 });
 vi.mock("@ant-design/x", async () => {
@@ -423,6 +435,60 @@ export function registerAppShellTests() {
     });
   });
 
+  it("moves the current conversation task action into the compact menu", async () => {
+    state.screens = { md: false, lg: false };
+    await boot("/c/a1b2");
+
+    expect(document.querySelector(".task-badge")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "后台任务" })).toBeInTheDocument();
+  });
+
+  it("keeps the standalone task action on compact welcome", async () => {
+    state.screens = { md: false, lg: false };
+    api.conversations.mockResolvedValue([]);
+    await boot();
+
+    expect(document.querySelector(".task-badge")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "后台任务" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "会话操作" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the standalone task action and omits the menu duplicate on desktop", async () => {
+    await boot("/c/a1b2");
+
+    expect(document.querySelector(".task-badge")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
+    expect(screen.getByRole("menu")).not.toHaveTextContent("后台任务");
+    expect(screen.getAllByRole("button", { name: "后台任务" })).toHaveLength(1);
+  });
+
+  it("opens the task drawer from the compact conversation menu", async () => {
+    state.screens = { md: false, lg: false };
+    api.backgroundTasks.mockResolvedValue([backgroundTask()]);
+    await boot("/c/a1b2");
+
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
+    fireEvent.click(await screen.findByRole("button", { name: "后台任务 1" }));
+    expect(await screen.findAllByText("npm test")).not.toHaveLength(0);
+    expect(document.querySelector(".ant-drawer")).toBeInTheDocument();
+  });
+
+  it("counts only queued, starting, and running tasks in the compact menu", async () => {
+    state.screens = { md: false, lg: false };
+    api.backgroundTasks.mockResolvedValue([
+      backgroundTask({ id: "task-running", status: "running" }),
+      backgroundTask({ id: "task-starting", status: "starting" }),
+      backgroundTask({ id: "task-queued", status: "queued" }),
+      backgroundTask({ id: "task-completed", status: "completed" })
+    ]);
+    await boot("/c/a1b2");
+
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
+    expect(await screen.findByRole("button", { name: "后台任务 3" })).toBeInTheDocument();
+  });
+
   it("keeps the boot surface when boot fails", async () => {
     api.settings.mockRejectedValueOnce(new Error("boot failed"));
     render(<App />);
@@ -503,6 +569,7 @@ export function registerAppConversationTests() {
     await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("a1b2", {
       executionOverrides: { modelId: "m1" }
     }));
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     fireEvent.click(screen.getByRole("button", { name: "策略完整" }));
     await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("a1b2", {
       executionOverrides: { modelId: "m1", contextPolicy: "full" }
@@ -511,6 +578,7 @@ export function registerAppConversationTests() {
 
   it("edits and restores advanced conversation execution overrides", async () => {
     await boot("/c/a1b2");
+    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     fireEvent.click(screen.getByRole("button", { name: "执行设置" }));
     expect(await screen.findByText("会话执行设置")).toBeInTheDocument();
 
