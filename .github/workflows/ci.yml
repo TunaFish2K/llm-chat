@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run quality checks
+        run: pnpm check
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod
+
+      - name: Run deployment smoke test
+        run: pnpm test:deploy
+
+      - name: Install Playwright browsers and system dependencies
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+
+      - name: Run browser end-to-end tests
+        run: pnpm test:e2e
