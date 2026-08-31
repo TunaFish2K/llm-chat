@@ -18,7 +18,7 @@ import type {
   ToolCatalogItemDto,
   ToolSettingsDto
 } from "@llm-chat/contracts";
-import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, ImportOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined, UploadOutlined } from "@ant-design/icons";
+import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, ImportOutlined, LogoutOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SafetyCertificateOutlined, SaveOutlined, ThunderboltOutlined, UploadOutlined } from "@ant-design/icons";
 import {
   App as AntApp,
   Button,
@@ -35,18 +35,84 @@ import {
   Menu,
   Select,
   Space,
+  Spin,
   Switch,
   Tag,
   Tabs,
   Tooltip,
   Typography
 } from "antd";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
+import { CapabilityCatalog, type CapabilityCatalogItem, type CapabilityCatalogSort } from "./CapabilityCatalog";
 import type { UiPreferences } from "./uiPreferences";
 
 const { Text, Title } = Typography;
 const { TextArea } = Input;
+
+const collator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+const toolCategoryLabels: Record<ToolCatalogItemDto["category"], string> = {
+  web: "网页",
+  local: "本地",
+  workspace: "工作区",
+  memory: "记忆",
+  conversation: "会话",
+  skill: "Skill",
+  mcp: "MCP",
+  background: "后台任务",
+  plugin: "插件"
+};
+const toolSourceLabels: Record<NonNullable<ToolCatalogItemDto["sourceKind"]>, string> = {
+  builtin: "内置",
+  plugin: "插件",
+  mcp: "MCP"
+};
+const skillStateLabels: Record<SkillDto["state"], string> = {
+  loaded: "已加载",
+  "pending-reload": "待重载",
+  error: "错误",
+  unloaded: "未加载"
+};
+const skillSourceLabels: Record<NonNullable<SkillDto["sourceKind"]>, string> = {
+  bundled: "内置",
+  manual: "手动安装",
+  agents: "~/.agents/skills"
+};
+
+function FormValueKeeper(_props: { value?: unknown; onChange?: (value: unknown) => void }) {
+  return null;
+}
+
+function CapabilityDetails({ rows }: { rows: Array<[string, ReactNode]> }) {
+  return <dl className="capability-details">
+    {rows.map(([label, value]) => <div className="capability-detail-row" key={label}>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </div>)}
+  </dl>;
+}
+
+function approvalLabel(value: AgentForm["toolApprovals"][string]): string {
+  return value === "always" ? "每次审批" : value === "never" ? "自动允许" : "按工具默认";
+}
+
+function uniqueOptions<T>(items: T[], valueOf: (item: T) => string, labelOf: (value: string) => string) {
+  return [...new Set(items.map(valueOf))]
+    .map((value) => ({ value, label: labelOf(value) }))
+    .sort((left, right) => collator.compare(left.label, right.label));
+}
+
+function catalogSorts(firstKey: string, firstLabel: string, secondKey: string, secondLabel: string): CapabilityCatalogSort[] {
+  const filterValue = (item: CapabilityCatalogItem, key: string) => {
+    const value = item.filterValues?.[key];
+    return Array.isArray(value) ? value.join(" ") : value ?? "";
+  };
+  return [
+    { value: "name", label: "名称", compare: (left, right) => collator.compare(left.title, right.title) },
+    { value: firstKey, label: firstLabel, compare: (left, right) => collator.compare(filterValue(left, firstKey), filterValue(right, firstKey)) || collator.compare(left.title, right.title) },
+    { value: secondKey, label: secondLabel, compare: (left, right) => collator.compare(filterValue(left, secondKey), filterValue(right, secondKey)) || collator.compare(left.title, right.title) }
+  ];
+}
 
 interface Props {
   open: boolean;
@@ -108,10 +174,72 @@ export function SettingsPanel(props: Props) {
         { key: "connections", label: "连接", children: <Connections connections={props.connections} busy={busy} mobile={mobile} run={run} /> },
         { key: "models", label: "模型", children: <Models connections={props.connections} models={props.models} busy={busy} mobile={mobile} run={run} /> },
         { key: "extensions", label: "扩展", children: <Extensions /> },
+        { key: "security", label: "设备", children: <SecuritySettings /> },
         { key: "general", label: "通用", children: <General settings={props.settings} models={props.models} onSettings={props.onSettings} uiPreferences={props.uiPreferences} onUiPreferences={props.onUiPreferences} /> }
       ]}
     />
   </Drawer>;
+}
+
+export function SecuritySettings() {
+  const [devices, setDevices] = useState<Awaited<ReturnType<typeof api.authDevices>> | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const { message, modal } = AntApp.useApp();
+  const load = async () => setDevices(await api.authDevices());
+  useEffect(() => { void load().catch((error) => void message.error(messageText(error))); }, []);
+  const revoke = (id: string, name: string, current: boolean) => modal.confirm({
+    title: current ? "撤销当前设备" : "撤销设备",
+    content: `撤销“${name}”后，它必须重新获得批准才能访问。`,
+    okText: "撤销",
+    cancelText: "取消",
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      setBusyId(id);
+      try {
+        await api.revokeAuthDevice(id);
+        if (current) window.location.reload();
+        else await load();
+        void message.success("设备已撤销");
+      } catch (error) {
+        void message.error(messageText(error));
+      } finally {
+        setBusyId(null);
+      }
+    }
+  });
+  const logout = async () => {
+    setBusyId("logout");
+    try {
+      await api.logout();
+      window.location.reload();
+    } catch (error) {
+      void message.error(messageText(error));
+      setBusyId(null);
+    }
+  };
+  return <Flex vertical gap="middle" className="security-settings">
+    <Flex justify="space-between" align="center" gap="middle" wrap>
+      <div><Title level={5}>可信设备</Title><Text type="secondary">Passkey 可能随系统账户同步。</Text></div>
+      <Button icon={<LogoutOutlined />} loading={busyId === "logout"} onClick={() => void logout()}>退出此浏览器</Button>
+    </Flex>
+    {devices === null ? <Flex justify="center"><Spin /></Flex> : devices.length ? <Listy
+      className="device-list"
+      items={devices}
+      rowKey="id"
+      virtual={false}
+      itemRender={(device) => <Flex className="device-row" align="center" gap="middle">
+        <SafetyCertificateOutlined className="device-icon" aria-hidden="true" />
+        <Flex vertical className="device-row-main" gap={2}>
+          <Space wrap><Text strong>{device.name}</Text>{device.current && <Tag color="success">当前</Tag>}{device.backedUp && <Tag>已同步</Tag>}</Space>
+          <Text type="secondary">最近使用 {new Date(device.lastUsedAt).toLocaleString("zh-CN")}</Text>
+          {device.approvedByName && <Text type="secondary">由 {device.approvedByName} 批准</Text>}
+        </Flex>
+        <Tooltip title="撤销访问">
+          <Button danger type="text" icon={<DeleteOutlined />} aria-label={`撤销设备 ${device.name}`} loading={busyId === device.id} onClick={() => revoke(device.id, device.name, device.current)} />
+        </Tooltip>
+      </Flex>}
+    /> : <div className="list-empty">没有已注册的 Passkey</div>}
+  </Flex>;
 }
 
 export function Agents({ agents, models, settings, busy, mobile, run }: {
@@ -202,6 +330,7 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   const avatarRef = useRef<HTMLInputElement>(null);
   const { modal } = AntApp.useApp();
   const enabledTools = Form.useWatch("enabledTools", form) as string[] | undefined;
+  const enabledSkillIds = Form.useWatch("enabledSkillIds", form) as string[] | undefined;
   useEffect(() => {
     void Promise.all([api.toolCatalog(), api.skills()]).then(([tools, nextSkills]) => {
       setCatalog(tools);
@@ -216,6 +345,122 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   const base = existing ?? newAgent(fallback);
   const shownCatalog = catalogWithMissing(catalog, base);
   const initial = agentForm(base, shownCatalog);
+  const setToolsEnabled = (names: string[], nextEnabled: boolean) => {
+    const next = new Set<string>(form.getFieldValue("enabledTools") ?? []);
+    for (const name of names) {
+      if (nextEnabled) next.add(name);
+      else next.delete(name);
+    }
+    form.setFieldValue("enabledTools", [...next]);
+  };
+  const setToolApprovals = (names: string[], approval: AgentForm["toolApprovals"][string]) => {
+    const next = { ...(form.getFieldValue("toolApprovals") ?? {}) };
+    for (const name of names) next[name] = approval;
+    form.setFieldValue("toolApprovals", next);
+  };
+  const setToolDirectness = (names: string[], direct: boolean) => {
+    const next = { ...(form.getFieldValue("toolDirectness") ?? {}) };
+    for (const name of names) next[name] = direct;
+    form.setFieldValue("toolDirectness", next);
+  };
+  const setSkillsEnabled = (ids: string[], nextEnabled: boolean) => {
+    const next = new Set<string>(form.getFieldValue("enabledSkillIds") ?? []);
+    for (const id of ids) {
+      if (nextEnabled) next.add(id);
+      else next.delete(id);
+    }
+    form.setFieldValue("enabledSkillIds", [...next]);
+  };
+  const applySkillRecommendations = (skill: SkillDto) => {
+    setToolsEnabled(skill.requiredTools, true);
+    form.setFieldValue("toolApprovals", {
+      ...(form.getFieldValue("toolApprovals") ?? {}),
+      ...skill.recommendedApprovals
+    });
+  };
+  const toolItems: CapabilityCatalogItem[] = shownCatalog.map((tool) => {
+    const enabled = enabledTools?.includes(tool.name) ?? false;
+    const sourceKind = tool.sourceKind ?? "builtin";
+    return {
+      key: tool.name,
+      title: tool.label,
+      description: tool.description,
+      keywords: [tool.name, tool.sourceId, tool.sourceName, toolCategoryLabels[tool.category], toolSourceLabels[sourceKind]],
+      filterValues: {
+        category: tool.category,
+        source: sourceKind,
+        availability: tool.available ? "available" : "unavailable",
+        enabled: enabled ? "enabled" : "disabled"
+      },
+      badges: <>
+        <Tag>{toolCategoryLabels[tool.category]}</Tag>
+        {!tool.available && <Tag color="warning">不可用</Tag>}
+      </>,
+      controls: <>
+        <Checkbox aria-label={tool.label} checked={enabled} onChange={(event) => setToolsEnabled([tool.name], event.target.checked)}>启用</Checkbox>
+        <label className="capability-control-field">
+          <Text type="secondary">审批</Text>
+          <Form.Item noStyle name={["toolApprovals", tool.name]}>
+            <Select
+              size="small"
+              aria-label={`${tool.label}审批`}
+              options={[
+                { label: "按工具默认", value: "default" },
+                { label: "每次审批", value: "always" },
+                { label: "自动允许", value: "never" }
+              ]}
+            />
+          </Form.Item>
+        </label>
+        <label className="capability-switch-field">
+          <Form.Item noStyle name={["toolDirectness", tool.name]} valuePropName="checked">
+            <Switch
+              size="small"
+              aria-label={`${tool.label}直接提供`}
+              disabled={!tool.available || !enabled}
+            />
+          </Form.Item>
+          <Text type="secondary">直接提供</Text>
+        </label>
+      </>,
+      details: <CapabilityDetails rows={[
+        ["内部 ID", <code>{tool.name}</code>],
+        ["来源", tool.sourceName ? `${toolSourceLabels[sourceKind]} · ${tool.sourceName}` : toolSourceLabels[sourceKind]],
+        ["默认审批", tool.requiresApproval ? "需要审批" : "自动执行"],
+        ...(tool.operationalState ? [["运行状态", tool.operationalState] as [string, ReactNode]] : []),
+        ...(tool.error ? [["错误", <Text type="danger">{tool.error}</Text>] as [string, ReactNode]] : [])
+      ]} />
+    };
+  });
+  const skillItems: CapabilityCatalogItem[] = skills.map((skill) => {
+    const enabled = enabledSkillIds?.includes(skill.id) ?? false;
+    const sourceKind = skill.sourceKind ?? (skill.bundled ? "bundled" : "manual");
+    const recommendations = Object.entries(skill.recommendedApprovals);
+    return {
+      key: skill.id,
+      title: skill.name,
+      description: skill.description,
+      keywords: [skill.id, skill.sourcePath, skill.compatibility, skillSourceLabels[sourceKind], ...skill.requiredTools],
+      filterValues: { source: sourceKind, state: skill.state, enabled: enabled ? "enabled" : "disabled" },
+      badges: <>
+        <Tag>{skillSourceLabels[sourceKind]}</Tag>
+        <Tag color={skill.state === "error" ? "error" : skill.state === "pending-reload" ? "warning" : "default"}>{skillStateLabels[skill.state]}</Tag>
+      </>,
+      controls: <Checkbox aria-label={`启用 ${skill.name}`} checked={enabled} onChange={(event) => setSkillsEnabled([skill.id], event.target.checked)}>启用</Checkbox>,
+      details: <Flex vertical gap="small">
+        <CapabilityDetails rows={[
+          ["Skill ID", <code>{skill.id}</code>],
+          ["源目录", <code>{skill.sourcePath}</code>],
+          ["版本", <code>{skill.revision}</code>],
+          ...(skill.compatibility ? [["兼容性", skill.compatibility] as [string, ReactNode]] : []),
+          ["所需工具", skill.requiredTools.length ? skill.requiredTools.join("、") : "无"],
+          ["建议审批", recommendations.length ? recommendations.map(([name, value]) => `${name}：${approvalLabel(value)}`).join("；") : "无"],
+          ...(skill.error ? [["错误", <Text type="danger">{skill.error}</Text>] as [string, ReactNode]] : [])
+        ]} />
+        {(skill.requiredTools.length > 0 || recommendations.length > 0) && <Button className="capability-detail-action" onClick={() => applySkillRecommendations(skill)}>应用建议权限</Button>}
+      </Flex>
+    };
+  });
   const save = async (values: AgentForm) => {
     let saved: AgentDto | undefined;
     const ok = await run(async () => {
@@ -286,42 +531,73 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
         <Form.Item className="settings-field" name="reasoningSummary" label="推理摘要"><Select allowClear placeholder="使用模型默认" options={["auto", "concise", "detailed"].map((item) => ({ label: item, value: item }))} /></Form.Item>
         <Form.Item className="settings-field" name="thinkingBudgetTokens" label="Thinking token 预算"><InputNumber className="settings-number-input" min={1024} placeholder="使用模型默认" /></Form.Item>
       </Flex>
-      <Form.Item name="toolDefaultEnabled" label="默认启用新工具" valuePropName="checked"><Switch /></Form.Item>
-      <Form.Item name="enabledTools" label="工具">
-        <Checkbox.Group className="agent-tool-grid">
-          {shownCatalog.map((tool) => <Flex key={tool.name} className="agent-tool-row" align="center" gap="small">
-            <Checkbox value={tool.name}><Space size={4}>{tool.label}{!tool.available && <Tag color="warning">不可用</Tag>}</Space></Checkbox>
-            <Form.Item noStyle name={["toolApprovals", tool.name]}>
-              <Select className="agent-tool-approval" aria-label={`${tool.label}审批`} options={[
-                { label: "按工具默认", value: "default" }, { label: "每次审批", value: "always" }, { label: "自动允许", value: "never" }
-              ]} />
-            </Form.Item>
-            <Form.Item noStyle name={["toolDirectness", tool.name]} valuePropName="checked">
-              <Switch
-                size="small"
-                aria-label={`${tool.label}直接提供`}
-                disabled={!tool.available || !enabledTools?.includes(tool.name)}
+      <Title level={5}>能力与权限</Title>
+      <Form.Item noStyle name="enabledTools"><FormValueKeeper /></Form.Item>
+      <Form.Item noStyle name="enabledSkillIds"><FormValueKeeper /></Form.Item>
+      <Tabs className="capability-tabs" items={[
+        { key: "tools", label: `工具 (${shownCatalog.length})`, children: <Flex vertical gap="middle">
+          <Form.Item className="capability-default-setting" name="toolDefaultEnabled" label="默认启用新工具" valuePropName="checked"><Switch /></Form.Item>
+          <CapabilityCatalog
+            ariaLabel="Agent 工具权限"
+            items={toolItems}
+            searchPlaceholder="搜索工具名称、ID、描述或来源"
+            emptyLabel="没有可配置的工具"
+            selectable
+            filters={[
+              { key: "category", label: "类别", options: uniqueOptions(shownCatalog, (tool) => tool.category, (value) => toolCategoryLabels[value as ToolCatalogItemDto["category"]]) },
+              { key: "source", label: "来源", options: uniqueOptions(shownCatalog, (tool) => tool.sourceKind ?? "builtin", (value) => toolSourceLabels[value as NonNullable<ToolCatalogItemDto["sourceKind"]>]) },
+              { key: "availability", label: "可用状态", options: [{ label: "可用", value: "available" }, { label: "不可用", value: "unavailable" }] },
+              { key: "enabled", label: "启用状态", options: [{ label: "已启用", value: "enabled" }, { label: "已停用", value: "disabled" }] }
+            ]}
+            sorts={catalogSorts("category", "类别", "source", "来源")}
+            renderBatchActions={(keys, clearSelection) => <>
+              <Button disabled={!keys.length} onClick={() => setToolsEnabled(keys, true)}>启用</Button>
+              <Button disabled={!keys.length} onClick={() => setToolsEnabled(keys, false)}>停用</Button>
+              <Select<AgentForm["toolApprovals"][string]>
+                className="capability-batch-select"
+                aria-label="批量设置审批策略"
+                disabled={!keys.length}
+                placeholder="设置审批"
+                value={null}
+                options={[
+                  { label: "按工具默认", value: "default" },
+                  { label: "每次审批", value: "always" },
+                  { label: "自动允许", value: "never" }
+                ]}
+                onChange={(value) => setToolApprovals(keys, value)}
               />
-            </Form.Item>
-            <Text type="secondary">直接</Text>
-          </Flex>)}
-        </Checkbox.Group>
-      </Form.Item>
-      <Form.Item name="enabledSkillIds" label="Skills">
-        <Checkbox.Group options={skills.map((skill) => ({
-          value: skill.id,
-          label: <Tooltip title={skill.requiredTools.length ? `需要工具：${skill.requiredTools.join("、")}` : skill.description}>{skill.name}</Tooltip>
-        }))} />
-      </Form.Item>
-      {skills.map((skill) => skill.requiredTools.length || Object.keys(skill.recommendedApprovals).length ? <Flex key={skill.id} className="skill-permission-preview" align="center" justify="space-between" gap="small">
-        <Text type="secondary" ellipsis>{skill.name}：{skill.requiredTools.join("、") || "无额外工具"}</Text>
-        <Button size="small" onClick={() => {
-          const enabled = new Set(form.getFieldValue("enabledTools") ?? []);
-          for (const name of skill.requiredTools) enabled.add(name);
-          form.setFieldValue("enabledTools", [...enabled]);
-          form.setFieldValue("toolApprovals", { ...(form.getFieldValue("toolApprovals") ?? {}), ...skill.recommendedApprovals });
-        }}>应用建议权限</Button>
-      </Flex> : null)}
+              <Select<"direct" | "lazy">
+                className="capability-batch-select"
+                aria-label="批量设置提供方式"
+                disabled={!keys.length}
+                placeholder="设置提供方式"
+                value={null}
+                options={[{ label: "直接提供", value: "direct" }, { label: "按需加载", value: "lazy" }]}
+                onChange={(value) => setToolDirectness(keys, value === "direct")}
+              />
+              <Button type="link" disabled={!keys.length} onClick={clearSelection}>清除选择</Button>
+            </>}
+          />
+        </Flex> },
+        { key: "skills", label: `Skills (${skills.length})`, children: <CapabilityCatalog
+          ariaLabel="Agent Skill 权限"
+          items={skillItems}
+          searchPlaceholder="搜索 Skill 名称、ID、描述或路径"
+          emptyLabel="没有已安装的 Skill"
+          selectable
+          filters={[
+            { key: "source", label: "来源", options: uniqueOptions(skills, (skill) => skill.sourceKind ?? (skill.bundled ? "bundled" : "manual"), (value) => skillSourceLabels[value as NonNullable<SkillDto["sourceKind"]>]) },
+            { key: "state", label: "状态", options: uniqueOptions(skills, (skill) => skill.state, (value) => skillStateLabels[value as SkillDto["state"]]) },
+            { key: "enabled", label: "启用状态", options: [{ label: "已启用", value: "enabled" }, { label: "已停用", value: "disabled" }] }
+          ]}
+          sorts={catalogSorts("state", "状态", "source", "来源")}
+          renderBatchActions={(keys, clearSelection) => <>
+            <Button disabled={!keys.length} onClick={() => setSkillsEnabled(keys, true)}>启用</Button>
+            <Button disabled={!keys.length} onClick={() => setSkillsEnabled(keys, false)}>停用</Button>
+            <Button type="link" disabled={!keys.length} onClick={clearSelection}>清除选择</Button>
+          </>}
+        /> }
+      ]} />
       <Flex className="settings-fields-row" gap="middle" wrap>
         <Form.Item className="settings-field" name="maxToolRounds" label="最大工具轮数"><InputNumber className="settings-number-input" min={1} placeholder="无限制" /></Form.Item>
         <Form.Item className="settings-field" name="maxBackgroundTasks" label="后台任务并发"><InputNumber className="settings-number-input" min={0} placeholder="无限制" /></Form.Item>
@@ -589,6 +865,37 @@ export function SkillSettings() {
     catch (error) { void message.error(messageText(error)); }
     finally { setBusy(false); }
   };
+  const items: CapabilityCatalogItem[] = skills.map((skill) => {
+    const sourceKind = skill.sourceKind ?? (skill.bundled ? "bundled" : "manual");
+    return {
+      key: skill.id,
+      title: skill.name,
+      description: skill.description,
+      keywords: [skill.id, skill.sourcePath, skill.compatibility, skillSourceLabels[sourceKind], ...skill.requiredTools],
+      filterValues: { source: sourceKind, state: skill.state },
+      badges: <>
+        <Tag>{skillSourceLabels[sourceKind]}</Tag>
+        <Tag color={skill.state === "error" ? "error" : skill.state === "pending-reload" ? "warning" : "default"}>{skillStateLabels[skill.state]}</Tag>
+      </>,
+      controls: <Tooltip title="重新加载">
+        <Button type="text" icon={<ReloadOutlined />} aria-label={`重新加载 ${skill.name}`} disabled={busy} onClick={async () => {
+          setBusy(true);
+          try { await api.reloadSkill(skill.id); await load(); void message.success("Skill 已重新加载"); }
+          catch (error) { void message.error(messageText(error)); }
+          finally { setBusy(false); }
+        }} />
+      </Tooltip>,
+      details: <CapabilityDetails rows={[
+        ["Skill ID", <code>{skill.id}</code>],
+        ["源目录", <code>{skill.sourcePath}</code>],
+        ["版本", <code>{skill.revision}</code>],
+        ...(skill.compatibility ? [["兼容性", skill.compatibility] as [string, ReactNode]] : []),
+        ["所需工具", skill.requiredTools.length ? skill.requiredTools.join("、") : "无"],
+        ["更新时间", new Date(skill.updatedAt).toLocaleString("zh-CN")],
+        ...(skill.error ? [["错误", <Text type="danger">{skill.error}</Text>] as [string, ReactNode]] : [])
+      ]} />
+    };
+  });
   return <Flex vertical gap="middle" className="extension-pane">
     <Flex vertical gap="small">
       <Text type="secondary">自动发现来源：~/.agents/skills</Text>
@@ -602,14 +909,17 @@ export function SkillSettings() {
     </Flex>
     <Space.Compact block><Input aria-label="Skill 源目录" value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="Skill 源目录绝对路径" />
       <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void install()}>安装</Button></Space.Compact>
-    {skills.length ? <Listy className="extension-list" items={skills} rowKey="id" virtual={false} itemRender={(skill) => <Flex className="extension-row" align="flex-start" gap="middle">
-      <Flex vertical className="extension-row-main"><Space wrap>{skill.name}{skill.sourceKind === "agents" && <Tag>来源：~/.agents/skills</Tag>}{(skill.sourceKind === "bundled" || skill.bundled) && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>
-        <Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.compatibility ? ` · 兼容：${skill.compatibility}` : ""}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>
-      <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} aria-label={`重新加载 ${skill.name}`} disabled={busy} onClick={async () => {
-        setBusy(true); try { await api.reloadSkill(skill.id); await load(); void message.success("Skill 已重新加载"); }
-        catch (error) { void message.error(messageText(error)); } finally { setBusy(false); }
-      }} /></Tooltip>
-    </Flex>} /> : <div className="list-empty">尚未安装 Skill</div>}
+    <CapabilityCatalog
+      ariaLabel="已安装的 Skills"
+      items={items}
+      searchPlaceholder="搜索 Skill 名称、ID、描述或路径"
+      emptyLabel="尚未安装 Skill"
+      filters={[
+        { key: "source", label: "来源", options: uniqueOptions(skills, (skill) => skill.sourceKind ?? (skill.bundled ? "bundled" : "manual"), (value) => skillSourceLabels[value as NonNullable<SkillDto["sourceKind"]>]) },
+        { key: "state", label: "状态", options: uniqueOptions(skills, (skill) => skill.state, (value) => skillStateLabels[value as SkillDto["state"]]) }
+      ]}
+      sorts={catalogSorts("state", "状态", "source", "来源")}
+    />
   </Flex>;
 }
 

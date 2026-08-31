@@ -30,16 +30,61 @@ import type {
   ToolSettingsDto,
   ToolSettingsInput
 } from "@llm-chat/contracts";
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON
+} from "@simplewebauthn/browser";
 
 export class ApiClientError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(public readonly code: string, message: string, public readonly status: number) {
     super(message);
   }
+}
+
+export interface BootstrapDto {
+  settings: AppSettings;
+  agents: AgentSummaryDto[];
+  connections: ConnectionDto[];
+  models: ModelDto[];
+  conversations: ConversationDto[];
+  messages?: MessageDto[];
+}
+
+export interface AuthDeviceDto {
+  id: string;
+  name: string;
+  current: boolean;
+  backupEligible: boolean;
+  backedUp: boolean;
+  approvedByName: string | null;
+  createdAt: number;
+  lastUsedAt: number;
+}
+
+export interface EnrollmentOptionsDto {
+  id: string;
+  tabSecret: string;
+  approvalSecret: string;
+  options: PublicKeyCredentialCreationOptionsJSON;
+  expiresAt: number;
+}
+
+export interface ApprovalDetailsDto {
+  id: string;
+  deviceName: string;
+  browser: string;
+  ip: string;
+  expiresAt: number;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body) headers.set("content-type", "application/json");
+  if (init?.method && !["GET", "HEAD", "OPTIONS"].includes(init.method.toUpperCase())) {
+    headers.set("x-llm-chat-request", "1");
+  }
   const response = await fetch(path, {
     ...init,
     headers
@@ -54,13 +99,48 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Keep the safe HTTP error message.
     }
-    throw new ApiClientError(code, message);
+    if (response.status === 401 && code === "authentication_required") {
+      window.dispatchEvent(new Event("llm-chat-auth-required"));
+    }
+    throw new ApiClientError(code, message, response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 export const api = {
+  bootstrap: (conversationId?: string | null) => request<BootstrapDto>(`/api/bootstrap${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`),
+  bootstrapOptions: (requestId: string, secret: string) => request<PublicKeyCredentialCreationOptionsJSON>("/api/auth/bootstrap/options", {
+    method: "POST", body: JSON.stringify({ requestId, secret })
+  }),
+  verifyBootstrap: (requestId: string, secret: string, deviceName: string, response: RegistrationResponseJSON) => request<{ ok: true }>("/api/auth/bootstrap/verify", {
+    method: "POST", body: JSON.stringify({ requestId, secret, deviceName, response })
+  }),
+  enrollmentOptions: (deviceName: string) => request<EnrollmentOptionsDto>("/api/auth/enrollments/options", {
+    method: "POST", body: JSON.stringify({ deviceName })
+  }),
+  finishEnrollment: (id: string, tabSecret: string, approvalSecret: string, response: RegistrationResponseJSON) => request<{ approvalQr: string; expiresAt: number }>(`/api/auth/enrollments/${encodeURIComponent(id)}/credential`, {
+    method: "POST", body: JSON.stringify({ tabSecret, approvalSecret, response })
+  }),
+  enrollmentStatus: (id: string, tabSecret: string) => request<{ state: "pending" | "authenticated"; expiresAt?: number }>(`/api/auth/enrollments/${encodeURIComponent(id)}/status`, {
+    headers: { "x-llm-chat-enrollment": tabSecret }
+  }),
+  approvalDetails: (id: string, secret: string) => request<ApprovalDetailsDto>(`/api/auth/approvals/${encodeURIComponent(id)}`, {
+    headers: { "x-llm-chat-approval": secret }
+  }),
+  approvalOptions: (id: string, secret: string) => request<PublicKeyCredentialRequestOptionsJSON>(`/api/auth/approvals/${encodeURIComponent(id)}/options`, {
+    method: "POST", headers: { "x-llm-chat-approval": secret }
+  }),
+  approveEnrollment: (id: string, secret: string, response: AuthenticationResponseJSON) => request<{ ok: true }>(`/api/auth/approvals/${encodeURIComponent(id)}/verify`, {
+    method: "POST", headers: { "x-llm-chat-approval": secret }, body: JSON.stringify(response)
+  }),
+  loginOptions: () => request<{ challengeId: string; options: PublicKeyCredentialRequestOptionsJSON }>("/api/auth/login/options", { method: "POST" }),
+  verifyLogin: (challengeId: string, response: AuthenticationResponseJSON) => request<{ ok: true }>("/api/auth/login/verify", {
+    method: "POST", body: JSON.stringify({ challengeId, response })
+  }),
+  authDevices: () => request<AuthDeviceDto[]>("/api/auth/devices"),
+  revokeAuthDevice: (id: string) => request<void>(`/api/auth/devices/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
   settings: () => request<AppSettings>("/api/settings"),
   updateSettings: (patch: Partial<AppSettings>) => request<AppSettings>("/api/settings", { method: "PATCH", body: JSON.stringify(patch) }),
   connections: () => request<ConnectionDto[]>("/api/connections"),

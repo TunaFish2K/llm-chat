@@ -18,6 +18,36 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("protects WebAuthn APIs with transport, source, origin, and session checks", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-auth-api-"));
+    dirs.push(dir);
+    const app = await buildApp({
+      dataFile: join(dir, "test.sqlite"), logger: false, serveWeb: false,
+      authMode: "webauthn", publicUrl: "http://localhost", rpId: "localhost",
+      skillDiscoveryRoot: join(dir, "agent-skills")
+    });
+    apps.push(app);
+
+    const health = await app.inject({ method: "GET", url: "/api/health" });
+    expect(health.statusCode).toBe(200);
+    expect(health.headers["cache-control"]).toBe("no-store");
+    const protectedRoute = await app.inject({ method: "GET", url: "/api/bootstrap" });
+    expect(protectedRoute.statusCode).toBe(401);
+    expect(protectedRoute.json()).toMatchObject({ error: { code: "authentication_required" } });
+    const missingSource = await app.inject({ method: "POST", url: "/api/auth/login/options" });
+    expect(missingSource.statusCode).toBe(403);
+    expect(missingSource.json()).toMatchObject({ error: { code: "request_header_required" } });
+    const crossOrigin = await app.inject({
+      method: "POST", url: "/api/auth/login/options",
+      headers: { "x-llm-chat-request": "1", origin: "https://attacker.example" }
+    });
+    expect(crossOrigin.statusCode).toBe(403);
+    expect(crossOrigin.json()).toMatchObject({ error: { code: "origin_mismatch" } });
+    const insecureRemote = await app.inject({ method: "GET", url: "/api/bootstrap", headers: { host: "192.0.2.2" } });
+    expect(insecureRemote.statusCode).toBe(426);
+    expect(insecureRemote.json()).toMatchObject({ error: { code: "secure_transport_required" } });
+  });
+
   it("never returns API key values from connection endpoints", async () => {
     const app = await testApp();
     const created = await app.inject({ method: "POST", url: "/api/connections", payload: {
@@ -361,6 +391,13 @@ describe("server API", () => {
 
   it("returns 404 for stale assets while preserving the SPA route fallback", async () => {
     const app = await testApp(true);
+    const index = await app.inject({ method: "GET", url: "/" });
+    const scriptPath = index.body.match(/src="([^"]+\.js)"/)?.[1];
+    expect(scriptPath).toBeTruthy();
+    const currentAsset = await app.inject({ method: "GET", url: scriptPath! });
+    expect(currentAsset.statusCode).toBe(200);
+    expect(currentAsset.headers["content-type"]).toContain("application/javascript");
+    expect(currentAsset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
     const asset = await app.inject({ method: "GET", url: "/assets/index-stale.js" });
     expect(asset.statusCode).toBe(404);
     expect(asset.headers["content-type"]).toContain("text/plain");

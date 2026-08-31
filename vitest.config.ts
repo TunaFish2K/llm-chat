@@ -9,7 +9,7 @@ const criticalCoverageThreshold = {
 
 export default defineConfig({
   test: {
-    maxWorkers: 4,
+    maxWorkers: 6,
     projects: [
       {
         test: {
@@ -62,7 +62,8 @@ export default defineConfig({
         "**/*.d.ts",
         "apps/server/src/index.ts",
         "apps/server/src/plugin-host.ts",
-        "apps/web/src/main.tsx"
+        "apps/web/src/main.tsx",
+        "apps/web/src/sw.ts"
       ],
       thresholds: {
         statements: 90,

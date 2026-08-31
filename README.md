@@ -23,8 +23,10 @@
 - 支持完整历史、自动裁剪和滚动摘要三种上下文策略。
 - 服务端使用单个 SQLite 文件，不依赖外部数据库。
 - Web UI 使用 Ant Design X 和 Ant Design 组件，支持浅色、深色和系统主题。
+- 支持安装为 PWA。应用外壳会缓存，API、消息、认证和实时事件始终使用网络。
+- 使用 Passkey 保护单用户服务。可信设备可以扫描二维码并批准新设备。
 
-当前版本不包含多用户、登录、附件或 Android 设备专属能力（剪贴板、日历、屏幕时长、TTS）。
+当前版本不包含多用户、附件或 Android 设备专属能力（剪贴板、日历、屏幕时长、TTS）。
 
 ## 环境要求
 
@@ -63,12 +65,35 @@ pnpm start
 | `LLM_CHAT_HOST` | `127.0.0.1` | 监听地址 |
 | `LLM_CHAT_PORT` | `3000` | HTTP 端口 |
 | `LLM_CHAT_DATA_DIR` | `./data` | SQLite 数据目录 |
+| `LLM_CHAT_AUTH_MODE` | `webauthn` | 认证模式。仅本机开发时可设为 `disabled` |
+| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 浏览器实际访问的公开地址。远程访问必须为 HTTPS |
+| `LLM_CHAT_RP_ID` | 公开地址的主机名 | WebAuthn RP ID。通常不需要设置 |
+| `LLM_CHAT_TRUST_PROXY` | `false` | TLS 由反向代理终止时设为 `true`、代理地址或 CIDR |
 
 例如：
 
 ```bash
-LLM_CHAT_PORT=3100 LLM_CHAT_DATA_DIR=/srv/llm-chat pnpm start
+LLM_CHAT_HOST=0.0.0.0 \
+LLM_CHAT_PUBLIC_URL=https://chat.example.com \
+LLM_CHAT_TRUST_PROXY=true \
+LLM_CHAT_DATA_DIR=/srv/llm-chat \
+pnpm start
 ```
+
+远程部署必须在可信反向代理后使用 HTTPS。不要让客户端绕过代理直接访问服务端端口。
+
+## 设备登录
+
+首次启动时，终端会显示一个 10 分钟有效的二维码和同等作用的链接。在准备作为首台可信设备的浏览器中打开它，然后创建 Passkey。远程手机首次注册前，必须先配置手机可访问的 `LLM_CHAT_PUBLIC_URL`。
+
+后续设备打开同一网址后，可以执行以下任一操作：
+
+1. 使用已经同步到该设备的 Passkey 登录。
+2. 创建新 Passkey，并让任意可信设备扫描页面上的二维码进行批准。
+
+二维码不使用手工配对码。目标标签页的兑换密钥只保存在内存中；关闭或刷新页面会使该次流程失效。登录会话使用 `HttpOnly`、`SameSite=Strict` Cookie。可以在“设置 > 设备”查看或撤销 Passkey，也可以只退出当前浏览器会话。
+
+Passkey 依赖 WebAuthn。请使用当前版本的 Safari、Chrome 或 Firefox。远程地址必须使用 HTTPS；本机调试只支持 `http://localhost`，不支持用 `http://127.0.0.1` 执行 WebAuthn。Firefox 桌面版可以使用网页，但不提供标准的 PWA 安装入口。
 
 ## 首次配置
 
@@ -110,9 +135,9 @@ API Key 和秘密请求头不会通过查询接口返回。SQLite 文件仍包�
 
 ## 安全边界
 
-这是单用户应用，服务端没有登录层。默认只监听回环地址。当前操作者被视为机器所有者，能够浏览服务端目录、运行进程和安装可信 Plugin。不要直接把端口暴露到局域网或公网；如需远程访问，应在反向代理或零信任网关上配置 TLS 和身份验证。
+这是单用户应用。Passkey 只验证设备是否属于同一个所有者，不提供多用户隔离。当前操作者能够浏览服务端目录、运行进程和安装可信 Plugin。默认只监听回环地址。远程访问必须通过 HTTPS 反向代理，并正确设置 `LLM_CHAT_PUBLIC_URL` 和 `LLM_CHAT_TRUST_PROXY`。
 
-浏览器不使用 `localStorage`、`sessionStorage` 或 IndexedDB 保存应用状态。页面 URL 只包含当前会话 ID。模型请求、上下文拼装、摘要生成、工具执行、审批和取消操作都发生在服务端。
+浏览器不使用 `localStorage`、`sessionStorage` 或 IndexedDB 保存聊天和认证状态。PWA 的 Cache Storage 只保存构建后的应用外壳。页面 URL 通常只包含当前会话 ID；扫码链接的秘密位于 URL fragment，并在页面读取后立即从地址栏删除。模型请求、上下文拼装、摘要生成、工具执行、审批和取消操作都发生在服务端。
 
 ## 数据与恢复
 

@@ -291,7 +291,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 15) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 16) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -618,6 +618,80 @@ function migrate(sqlite: DatabaseSyncType): void {
         SET source_kind = CASE WHEN bundled = 1 THEN 'bundled' ELSE 'manual' END
         WHERE source_kind IS NULL OR source_kind != 'agents';
         PRAGMA user_version = 15;
+      `);
+    }
+    if (current < 16) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS auth_owner (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          user_handle TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO auth_owner (id, user_handle)
+        VALUES (1, lower(hex(randomblob(32))));
+
+        CREATE TABLE IF NOT EXISTS auth_credentials (
+          id TEXT PRIMARY KEY,
+          credential_id TEXT NOT NULL UNIQUE,
+          public_key BLOB NOT NULL,
+          counter INTEGER NOT NULL DEFAULT 0,
+          transports_json TEXT NOT NULL DEFAULT '[]',
+          device_type TEXT NOT NULL,
+          backed_up INTEGER NOT NULL DEFAULT 0,
+          name TEXT NOT NULL,
+          approved_by TEXT REFERENCES auth_credentials(id) ON DELETE SET NULL,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL,
+          revoked_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_credentials_active
+          ON auth_credentials(revoked_at, last_used_at DESC);
+
+        CREATE TABLE IF NOT EXISTS auth_sessions (
+          id TEXT PRIMARY KEY,
+          credential_id TEXT NOT NULL REFERENCES auth_credentials(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          revoked_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_sessions_active
+          ON auth_sessions(token_hash, revoked_at, expires_at);
+
+        CREATE TABLE IF NOT EXISTS auth_enrollment_requests (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK (kind IN ('bootstrap', 'device')),
+          status TEXT NOT NULL CHECK (status IN ('created', 'awaiting_approval', 'approved', 'redeemed', 'expired')),
+          device_name TEXT NOT NULL,
+          registration_challenge TEXT,
+          tab_secret_hash TEXT,
+          approval_secret_hash TEXT NOT NULL,
+          pending_credential_id TEXT,
+          pending_public_key BLOB,
+          pending_counter INTEGER,
+          pending_transports_json TEXT,
+          pending_device_type TEXT,
+          pending_backed_up INTEGER,
+          approval_challenge TEXT,
+          approved_by TEXT REFERENCES auth_credentials(id) ON DELETE SET NULL,
+          request_ip TEXT,
+          user_agent TEXT,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          approved_at INTEGER,
+          consumed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_enrollment_active
+          ON auth_enrollment_requests(kind, status, expires_at);
+
+        CREATE TABLE IF NOT EXISTS auth_challenges (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL CHECK (kind = 'login'),
+          challenge TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL
+        );
+        PRAGMA user_version = 16;
       `);
     }
     sqlite.exec("COMMIT");
@@ -1921,7 +1995,6 @@ function defaultAgentCard(): CharacterCardV2 {
     }
   };
 }
-
 function effectiveModelId(
   execution: AgentExecutionConfig,
   overrides: ConversationExecutionOverrides

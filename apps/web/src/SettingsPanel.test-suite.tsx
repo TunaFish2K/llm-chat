@@ -3,7 +3,7 @@ import { App as AntApp } from "antd";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Agents, Connections, General, McpSettings, Models, PluginSettings, SettingsPanel, SkillSettings, ToolServices, agentForm, agentInput } from "./SettingsPanel";
+import { Agents, Connections, General, McpSettings, Models, PluginSettings, SecuritySettings, SettingsPanel, SkillSettings, ToolServices, agentForm, agentInput } from "./SettingsPanel";
 
 const state = vi.hoisted(() => ({ screens: { md: true, lg: true } as Record<string, boolean> }));
 const api = vi.hoisted(() => ({
@@ -16,7 +16,8 @@ const api = vi.hoisted(() => ({
   toolSettings: vi.fn(), updateToolSettings: vi.fn(), toolCatalog: vi.fn(),
   skills: vi.fn(), discoverSkills: vi.fn(), installSkill: vi.fn(), reloadSkill: vi.fn(),
   plugins: vi.fn(), installPlugin: vi.fn(), reloadPlugin: vi.fn(), unloadPlugin: vi.fn(), deletePlugin: vi.fn(), configurePlugin: vi.fn(),
-  mcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(), testMcpServer: vi.fn()
+  mcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(), testMcpServer: vi.fn(),
+  authDevices: vi.fn(), revokeAuthDevice: vi.fn(), logout: vi.fn()
 }));
 
 vi.mock("./api", () => ({ api }));
@@ -126,6 +127,12 @@ function resetApis() {
   api.updateMcpServer.mockResolvedValue({});
   api.deleteMcpServer.mockResolvedValue(undefined);
   api.testMcpServer.mockResolvedValue({ ok: true, tools: 2, serverName: "Docs" });
+  api.authDevices.mockResolvedValue([
+    { id: "current", name: "我的手机", current: true, backupEligible: true, backedUp: true, approvedByName: null, createdAt: 1, lastUsedAt: 2 },
+    { id: "desktop", name: "工作电脑", current: false, backupEligible: false, backedUp: false, approvedByName: "我的手机", createdAt: 1, lastUsedAt: 2 }
+  ]);
+  api.revokeAuthDevice.mockResolvedValue(undefined);
+  api.logout.mockResolvedValue(undefined);
 }
 
 function renderPanel(overrides: Partial<React.ComponentProps<typeof SettingsPanel>> = {}) {
@@ -192,7 +199,7 @@ export function registerSettingsResourceTests() {
     });
     const direct = await screen.findByRole("switch", { name: "Web search直接提供" });
     expect(direct).not.toBeChecked();
-    expect(screen.getAllByText("直接")).toHaveLength(2);
+    expect(screen.getAllByText("直接提供")).toHaveLength(2);
     expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
     expect(screen.getByRole("combobox", { name: "Web search审批" })).toBeInTheDocument();
     fireEvent.click(direct);
@@ -483,9 +490,10 @@ export function registerSettingsDetailTests() {
     api.skills.mockResolvedValue([skill]);
     render(<AntApp><SkillSettings /></AntApp>);
     expect(await screen.findByText("Sample Skill")).toBeInTheDocument();
-    expect(screen.getByText(/工具 web_search/)).toBeInTheDocument();
-    expect(screen.getByText("来源：~/.agents/skills")).toBeInTheDocument();
-    expect(screen.getByText(/兼容：Linux/)).toBeInTheDocument();
+    expect(screen.getByText("~/.agents/skills")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开 Sample Skill 详情" }));
+    expect(screen.getByText("web_search")).toBeInTheDocument();
+    expect(screen.getByText("Linux")).toBeInTheDocument();
 
     api.discoverSkills.mockResolvedValueOnce({
       discovered: 1, updated: 2, unchanged: 3, unloaded: 1,
@@ -501,10 +509,10 @@ export function registerSettingsDetailTests() {
     fireEvent.click(screen.getByRole("button", { name: /安装/ }));
     await waitFor(() => expect(api.installSkill).toHaveBeenCalledWith("/skills/new"));
 
-    fireEvent.click(document.querySelector(".anticon-reload")!.closest("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "重新加载 Sample Skill" }));
     await waitFor(() => expect(api.reloadSkill).toHaveBeenCalledWith("sample-skill"));
     api.reloadSkill.mockRejectedValueOnce(new Error("skill reload failed"));
-    fireEvent.click(document.querySelector(".anticon-reload")!.closest("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "重新加载 Sample Skill" }));
     expect(await screen.findByText("skill reload failed")).toBeInTheDocument();
   });
 
@@ -524,6 +532,16 @@ export function registerSettingsDetailTests() {
     fireEvent.click(document.querySelector(".extension-row .anticon-delete")!.closest("button")!);
     await confirmDelete();
     await waitFor(() => expect(api.deleteMcpServer).toHaveBeenCalledWith("s1"));
+  });
+
+  it("lists trusted Passkeys and revokes another device", async () => {
+    render(<AntApp><SecuritySettings /></AntApp>);
+    expect(await screen.findByText("我的手机")).toBeInTheDocument();
+    expect(screen.getByText("已同步")).toBeInTheDocument();
+    expect(screen.getByText("由 我的手机 批准")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "撤销设备 工作电脑" }));
+    await confirmDelete();
+    await waitFor(() => expect(api.revokeAuthDevice).toHaveBeenCalledWith("desktop"));
   });
 
   it("updates general settings and rolls API failures into a message", async () => {

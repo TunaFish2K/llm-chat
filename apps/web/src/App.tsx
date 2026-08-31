@@ -26,7 +26,11 @@ import {
   MenuOutlined,
   MenuUnfoldOutlined,
   MoreOutlined,
+  LoginOutlined,
+  MobileOutlined,
+  QrcodeOutlined,
   RightOutlined,
+  SafetyCertificateOutlined,
   SettingOutlined,
   StopOutlined,
   SyncOutlined
@@ -59,7 +63,8 @@ import {
   Typography
 } from "antd";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, appEvents, generationEvents } from "./api";
+import { api, ApiClientError, appEvents, generationEvents } from "./api";
+import { CapabilityCatalog, type CapabilityCatalogItem, type CapabilityCatalogSort } from "./CapabilityCatalog";
 import { ModelSelector, isModelUsable, protocolShortName } from "./ModelSelector";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
 import { applyGenerationEvent, blockText, streamEnded } from "./generationState";
@@ -93,9 +98,35 @@ const CONTEXT_POLICIES: Array<{ label: string; value: ContextPolicy }> = [
 ];
 
 const REASONING_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
+const toolCatalogCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+const conversationToolCategoryLabels: Record<ToolCatalogItemDto["category"], string> = {
+  web: "网页",
+  local: "本地",
+  workspace: "工作区",
+  memory: "记忆",
+  conversation: "会话",
+  skill: "Skill",
+  mcp: "MCP",
+  background: "后台任务",
+  plugin: "插件"
+};
+const conversationToolSourceLabels: Record<NonNullable<ToolCatalogItemDto["sourceKind"]>, string> = {
+  builtin: "内置",
+  plugin: "插件",
+  mcp: "MCP"
+};
+const conversationToolSorts: CapabilityCatalogSort[] = [
+  { value: "name", label: "名称", compare: (left, right) => toolCatalogCollator.compare(left.title, right.title) },
+  { value: "category", label: "类别", compare: (left, right) => toolCatalogCollator.compare(String(left.filterValues?.category ?? ""), String(right.filterValues?.category ?? "")) || toolCatalogCollator.compare(left.title, right.title) },
+  { value: "source", label: "来源", compare: (left, right) => toolCatalogCollator.compare(String(left.filterValues?.source ?? ""), String(right.filterValues?.source ?? "")) || toolCatalogCollator.compare(left.title, right.title) }
+];
 
 export function App() {
+  const [pairRequest, setPairRequest] = useState<PairRequest | null>(() => pairRequestFromHash());
   const [boot, setBoot] = useState<BootData | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [startupError, setStartupError] = useState("");
+  const [updateApp, setUpdateApp] = useState<null | (() => Promise<void>)>(null);
   const [currentId, setCurrentId] = useState(() => conversationFromPath());
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [draft, setDraft] = useState("");
@@ -122,13 +153,47 @@ export function App() {
   const mobileLayout = !screens.md;
 
   const refreshBoot = useCallback(async () => {
-    const [settings, agents, connections, models, conversations] = await Promise.all([
-      api.settings(), api.agents(), api.connections(), api.models(), api.conversations()
-    ]);
-    setBoot({ settings, agents, connections, models, conversations });
+    const data = await api.bootstrap();
+    setBoot(data);
+    setAuthRequired(false);
+    setStartupError("");
   }, []);
 
-  useEffect(() => { void refreshBoot().catch((value) => setError(messageOf(value))); }, [refreshBoot]);
+  useEffect(() => {
+    let active = true;
+    const start = async () => {
+      for (const delay of [0, 500, 1500]) {
+        if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+        if (!active) return;
+        try {
+          await refreshBoot();
+          return;
+        } catch (value) {
+          if (!active) return;
+          if (value instanceof ApiClientError && value.code === "authentication_required") {
+            setAuthRequired(true);
+            return;
+          }
+          if (delay === 1500) setStartupError(messageOf(value));
+        }
+      }
+    };
+    void start();
+    return () => { active = false; };
+  }, [refreshBoot]);
+  useEffect(() => {
+    const requireAuth = () => { setBoot(null); setAuthRequired(true); };
+    const updateReady = (event: Event) => {
+      const update = (event as CustomEvent<() => Promise<void>>).detail;
+      setUpdateApp(() => update);
+    };
+    window.addEventListener("llm-chat-auth-required", requireAuth);
+    window.addEventListener("llm-chat-update-ready", updateReady);
+    return () => {
+      window.removeEventListener("llm-chat-auth-required", requireAuth);
+      window.removeEventListener("llm-chat-update-ready", updateReady);
+    };
+  }, []);
   useEffect(() => {
     if (!boot || currentId || newWorkspacePath !== null || !boot.settings.lastWorkspacePath) return;
     setNewWorkspacePath(boot.settings.lastWorkspacePath);
@@ -402,8 +467,22 @@ export function App() {
   };
 
   const colorScheme = resolveColorScheme(boot?.settings.theme ?? "system", systemDark);
+  if (pairRequest) return <AppTheme colorScheme={colorScheme}>
+    <PairingScreen request={pairRequest} onAuthenticated={() => {
+      setPairRequest(null);
+      void refreshBoot();
+    }} />
+  </AppTheme>;
   if (!boot) return <AppTheme colorScheme={colorScheme}>
-    <Flex className="app-loading" align="center" justify="center" gap="small"><Spin />正在启动 llm-chat</Flex>
+    {authRequired ? <PairingScreen request={null} onAuthenticated={() => void refreshBoot()} />
+      : startupError ? <StartupError message={startupError} onRetry={() => {
+          setStartupError("");
+          void refreshBoot().catch((value) => {
+            if (value instanceof ApiClientError && value.code === "authentication_required") setAuthRequired(true);
+            else setStartupError(messageOf(value));
+          });
+        }} />
+      : <Flex className="app-loading" align="center" justify="center" gap="small"><Spin />正在启动 llm-chat</Flex>}
   </AppTheme>;
 
   const modelSelector = <ModelSelector
@@ -676,6 +755,14 @@ export function App() {
           </Content>
         </Layout>
       </Layout>
+      {updateApp && <div className="app-update-banner" role="status">
+        <Alert
+          type="info"
+          showIcon
+          title="新版本已就绪"
+          action={<Button size="small" disabled={Boolean(liveGenerationId)} onClick={() => void updateApp()}>立即更新</Button>}
+        />
+      </div>}
 
       <Drawer
         title="llm-chat"
@@ -744,6 +831,212 @@ export function App() {
       />
       <TaskDrawer open={tasksOpen} tasks={tasks} currentConversationId={currentId} onClose={() => setTasksOpen(false)} onRefresh={refreshTasks} />
   </AppTheme>;
+}
+
+export type PairRequest = { mode: "bootstrap" | "approve"; requestId: string; secret: string };
+
+export function PairingScreen({ request, onAuthenticated }: { request: PairRequest | null; onAuthenticated: () => void }) {
+  if (request?.mode === "approve") {
+    return <ApprovalScreen request={request} onApproved={onAuthenticated} />;
+  }
+  const [deviceName, setDeviceName] = useState(() => defaultDeviceName());
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [enrollment, setEnrollment] = useState<null | { id: string; tabSecret: string; approvalQr: string; expiresAt: number }>(null);
+  const supported = webAuthnSupported();
+
+  useEffect(() => {
+    if (!enrollment) return;
+    let active = true;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const status = await api.enrollmentStatus(enrollment.id, enrollment.tabSecret);
+        if (!active) return;
+        if (status.state === "authenticated") {
+          onAuthenticated();
+          return;
+        }
+        timer = window.setTimeout(() => void poll(), 1800);
+      } catch (error) {
+        if (active) setFormError(messageOf(error));
+      }
+    };
+    void poll();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [enrollment, onAuthenticated]);
+
+  const register = async () => {
+    if (!deviceName.trim() || !supported) return;
+    setBusy(true);
+    setFormError("");
+    try {
+      const { startRegistration } = await import("@simplewebauthn/browser");
+      if (request?.mode === "bootstrap") {
+        const options = await api.bootstrapOptions(request.requestId, request.secret);
+        const response = await startRegistration({ optionsJSON: options });
+        await api.verifyBootstrap(request.requestId, request.secret, deviceName.trim(), response);
+        onAuthenticated();
+      } else {
+        const started = await api.enrollmentOptions(deviceName.trim());
+        const response = await startRegistration({ optionsJSON: started.options });
+        const completed = await api.finishEnrollment(started.id, started.tabSecret, started.approvalSecret, response);
+        setEnrollment({ id: started.id, tabSecret: started.tabSecret, ...completed });
+      }
+    } catch (error) {
+      setFormError(passkeyMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const login = async () => {
+    if (!supported) return;
+    setBusy(true);
+    setFormError("");
+    try {
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const started = await api.loginOptions();
+      const response = await startAuthentication({ optionsJSON: started.options });
+      await api.verifyLogin(started.challengeId, response);
+      onAuthenticated();
+    } catch (error) {
+      setFormError(passkeyMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (enrollment) return <main className="pairing-page">
+    <section className="pairing-panel pairing-panel-wide" aria-labelledby="pairing-wait-title">
+      <div className="pairing-mark"><QrcodeOutlined /></div>
+      <Typography.Title id="pairing-wait-title" level={2}>用可信设备批准</Typography.Title>
+      <Typography.Paragraph type="secondary">打开已登录的手机相机，扫描二维码并使用 Passkey 确认。</Typography.Paragraph>
+      <img className="pairing-qr" src={enrollment.approvalQr} alt="添加此设备的批准二维码" />
+      <Flex vertical gap={4} className="pairing-wait-status" role="status" aria-live="polite">
+        <Text><Spin size="small" /> 等待批准</Text>
+        <Text type="secondary">二维码将在 {new Date(enrollment.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 过期</Text>
+      </Flex>
+      <div className="pairing-error-slot" aria-live="polite">
+        {formError && <Alert type="error" showIcon title={formError} />}
+      </div>
+    </section>
+  </main>;
+
+  return <main className="pairing-page">
+    <section className="pairing-panel" aria-labelledby="pairing-title">
+      <div className="pairing-mark" aria-hidden="true"><SafetyCertificateOutlined /></div>
+      <Typography.Title id="pairing-title" level={2}>{request ? "信任首台设备" : "进入 llm-chat"}</Typography.Title>
+      <Typography.Paragraph type="secondary">
+        {request ? "为这台设备创建 Passkey。以后可用它批准其他设备。" : "使用 Passkey 登录，或将这台设备添加到可信列表。"}
+      </Typography.Paragraph>
+      {!supported && <Alert className="pairing-support-error" type="error" showIcon title="当前环境不能使用 Passkey" description="请使用最新版 Safari、Chrome 或 Firefox，并通过 HTTPS 或 localhost 打开。" />}
+      <form onSubmit={(event) => { event.preventDefault(); void register(); }} noValidate>
+        <div className="pairing-field">
+          <label htmlFor="device-name">设备名称</label>
+          <Input
+            id="device-name"
+            autoComplete="name"
+            maxLength={80}
+            value={deviceName}
+            aria-invalid={Boolean(formError)}
+            aria-describedby={formError ? "pairing-error" : undefined}
+            onChange={(event) => setDeviceName(event.target.value)}
+          />
+        </div>
+        <div className="pairing-error-slot" aria-live="polite">
+          {formError && <Alert id="pairing-error" type="error" showIcon title={formError} />}
+        </div>
+        <Button className="pairing-submit" icon={<MobileOutlined />} type="primary" htmlType="submit" loading={busy} disabled={!supported || !deviceName.trim()}>
+          {request ? "创建 Passkey" : "添加这台设备"}
+        </Button>
+        {!request && <Button className="pairing-secondary" icon={<LoginOutlined />} block disabled={!supported || busy} onClick={() => void login()}>
+          使用已有 Passkey 登录
+        </Button>}
+      </form>
+    </section>
+  </main>;
+}
+
+function ApprovalScreen({ request, onApproved }: { request: PairRequest; onApproved: () => void }) {
+  const [details, setDetails] = useState<Awaited<ReturnType<typeof api.approvalDetails>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    void api.approvalDetails(request.requestId, request.secret).then(setDetails).catch((value) => setError(messageOf(value)));
+  }, [request]);
+  const approve = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const options = await api.approvalOptions(request.requestId, request.secret);
+      const response = await startAuthentication({ optionsJSON: options });
+      await api.approveEnrollment(request.requestId, request.secret, response);
+      onApproved();
+    } catch (value) {
+      setError(passkeyMessage(value));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <main className="pairing-page">
+    <section className="pairing-panel" aria-labelledby="approval-title">
+      <div className="pairing-mark" aria-hidden="true"><SafetyCertificateOutlined /></div>
+      <Typography.Title id="approval-title" level={2}>批准新设备</Typography.Title>
+      {details ? <dl className="approval-details">
+        <div><dt>设备</dt><dd>{details.deviceName}</dd></div>
+        <div><dt>浏览器</dt><dd>{details.browser}</dd></div>
+        <div><dt>网络地址</dt><dd>{details.ip}</dd></div>
+      </dl> : !error && <Flex justify="center"><Spin /></Flex>}
+      <div className="pairing-error-slot" aria-live="polite">
+        {error && <Alert id="approval-error" type="error" showIcon title={error} />}
+      </div>
+      <Button className="pairing-submit" type="primary" icon={<SafetyCertificateOutlined />} loading={busy} disabled={!details || !webAuthnSupported()} onClick={() => void approve()}>
+        用 Passkey 批准
+      </Button>
+    </section>
+  </main>;
+}
+
+function StartupError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <main className="pairing-page">
+    <section className="pairing-panel" aria-labelledby="startup-error-title">
+      <Typography.Title id="startup-error-title" level={2}>无法连接服务</Typography.Title>
+      <Alert type="error" showIcon title={message} />
+      <Button className="pairing-submit" type="primary" onClick={onRetry}>重试</Button>
+    </section>
+  </main>;
+}
+
+let cachedPairRequest: PairRequest | null | undefined;
+
+function pairRequestFromHash(): PairRequest | null {
+  if (cachedPairRequest !== undefined) return cachedPairRequest;
+  const hash = new URLSearchParams(window.location.hash.slice(1));
+  const mode = hash.get("mode");
+  const requestId = hash.get("request") ?? "";
+  const secret = hash.get("secret") ?? "";
+  cachedPairRequest = (mode === "bootstrap" || mode === "approve") && requestId && secret
+    ? { mode, requestId, secret }
+    : null;
+  if (cachedPairRequest) window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+  return cachedPairRequest;
+}
+
+function defaultDeviceName(): string {
+  const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+  return mobile ? "我的手机" : "我的电脑";
+}
+
+function webAuthnSupported(): boolean {
+  return window.isSecureContext && "PublicKeyCredential" in window && Boolean(navigator.credentials);
+}
+
+function passkeyMessage(value: unknown): string {
+  if (value instanceof DOMException && value.name === "NotAllowedError") return "Passkey 操作已取消或超时";
+  if (value instanceof DOMException && value.name === "InvalidStateError") return "这个 Passkey 已经用于 llm-chat，可直接登录";
+  return messageOf(value);
 }
 
 function AgentSelector({ value, agents, onChange }: {
@@ -896,6 +1189,16 @@ function renderGreeting(value: string, characterName: string, userName: string):
   return value.replace(/\{\{char\}\}|<BOT>/gi, characterName).replace(/\{\{user\}\}|<USER>/gi, userName);
 }
 
+function uniqueToolOptions(
+  items: ToolCatalogItemDto[],
+  valueOf: (item: ToolCatalogItemDto) => string,
+  labelOf: (value: string) => string
+) {
+  return [...new Set(items.map(valueOf))]
+    .map((value) => ({ value, label: labelOf(value) }))
+    .sort((left, right) => toolCatalogCollator.compare(left.label, right.label));
+}
+
 function ConversationOverridesModal({ open, conversation, agent, models, onClose, onSave }: {
   open: boolean;
   conversation: ConversationDto;
@@ -949,6 +1252,60 @@ function ConversationOverridesModal({ open, conversation, agent, models, onClose
       return output;
     });
   };
+  const setToolOverrides = (names: string[], next: "agent-default" | "enabled" | "disabled") => {
+    setValue((currentValue) => {
+      const tools = { ...(currentValue.tools ?? {}) };
+      for (const name of names) {
+        if (next === "agent-default") delete tools[name];
+        else tools[name] = next === "enabled";
+      }
+      const output = { ...currentValue };
+      if (Object.keys(tools).length) output.tools = tools;
+      else delete output.tools;
+      return output;
+    });
+  };
+  const toolItems: CapabilityCatalogItem[] = catalog.map((tool) => {
+    const override = value.tools?.[tool.name];
+    const overrideState = override === undefined ? "agent-default" : override ? "enabled" : "disabled";
+    const sourceKind = tool.sourceKind ?? "builtin";
+    return {
+      key: tool.name,
+      title: tool.label,
+      description: tool.description,
+      keywords: [tool.name, tool.sourceId, tool.sourceName, conversationToolCategoryLabels[tool.category], conversationToolSourceLabels[sourceKind]],
+      filterValues: {
+        category: tool.category,
+        source: sourceKind,
+        availability: tool.available ? "available" : "unavailable",
+        override: overrideState
+      },
+      badges: <>
+        <Tag>{conversationToolCategoryLabels[tool.category]}</Tag>
+        {!tool.available && <Tag color="warning">不可用</Tag>}
+      </>,
+      controls: <label className="capability-control-field">
+        <Text type="secondary">会话设置</Text>
+        <Select<"agent-default" | "enabled" | "disabled">
+          size="small"
+          aria-label={`${tool.label} 覆盖`}
+          value={overrideState}
+          options={[
+            { label: "Agent 默认", value: "agent-default" },
+            { label: "启用", value: "enabled" },
+            { label: "停用", value: "disabled" }
+          ]}
+          onChange={(next) => setToolOverrides([tool.name], next)}
+        />
+      </label>,
+      details: <dl className="capability-details">
+        <div className="capability-detail-row"><dt>内部 ID</dt><dd><code>{tool.name}</code></dd></div>
+        <div className="capability-detail-row"><dt>来源</dt><dd>{tool.sourceName ? `${conversationToolSourceLabels[sourceKind]} · ${tool.sourceName}` : conversationToolSourceLabels[sourceKind]}</dd></div>
+        <div className="capability-detail-row"><dt>默认审批</dt><dd>{tool.requiresApproval ? "需要审批" : "自动执行"}</dd></div>
+        {tool.error && <div className="capability-detail-row"><dt>错误</dt><dd><Text type="danger">{tool.error}</Text></dd></div>}
+      </dl>
+    };
+  });
   const save = async () => {
     setSaving(true);
     try { await onSave(value); } finally { setSaving(false); }
@@ -985,22 +1342,29 @@ function ConversationOverridesModal({ open, conversation, agent, models, onClose
         <label className="override-field"><Text type="secondary">推理摘要</Text><Select aria-label="会话推理摘要覆盖" allowClear value={value.generation?.protocol?.reasoningSummary} placeholder="Agent 默认" options={["auto", "concise", "detailed"].map((item) => ({ label: item, value: item }))} onChange={(next) => setProtocol("reasoningSummary", next ?? null)} /></label>
         <label className="override-field"><Text type="secondary">Thinking token 预算</Text><InputNumber aria-label="会话 Thinking token 预算覆盖" min={1024} value={value.generation?.protocol?.thinkingBudgetTokens ?? null} placeholder="Agent 默认" onChange={(next) => setProtocol("thinkingBudgetTokens", next)} /></label>
       </Flex>
-      {catalog.length > 0 && <div><Text type="secondary">工具</Text><Flex vertical gap="small" className="override-tools">
-        {catalog.map((tool) => <Flex key={tool.name} align="center" justify="space-between" gap="middle">
-          <Text ellipsis>{tool.label}</Text>
-          <Select aria-label={`${tool.label} 覆盖`} size="small" value={value.tools?.[tool.name] === undefined ? "agent-default" : value.tools[tool.name] ? "enabled" : "disabled"} options={[
-            { label: "Agent 默认", value: "agent-default" }, { label: "启用", value: "enabled" }, { label: "停用", value: "disabled" }
-          ]} onChange={(next) => setValue((currentValue) => {
-            const tools = { ...(currentValue.tools ?? {}) };
-            if (next === "agent-default") delete tools[tool.name];
-            else tools[tool.name] = next === "enabled";
-            const output = { ...currentValue };
-            if (Object.keys(tools).length) output.tools = tools;
-            else delete output.tools;
-            return output;
-          })} />
-        </Flex>)}
-      </Flex></div>}
+      {catalog.length > 0 && <div>
+        <Text strong>工具</Text>
+        <CapabilityCatalog
+          ariaLabel="会话工具覆盖"
+          items={toolItems}
+          searchPlaceholder="搜索工具名称、ID、描述或来源"
+          emptyLabel="没有可覆盖的工具"
+          selectable
+          filters={[
+            { key: "category", label: "类别", options: uniqueToolOptions(catalog, (tool) => tool.category, (value) => conversationToolCategoryLabels[value as ToolCatalogItemDto["category"]]) },
+            { key: "source", label: "来源", options: uniqueToolOptions(catalog, (tool) => tool.sourceKind ?? "builtin", (value) => conversationToolSourceLabels[value as NonNullable<ToolCatalogItemDto["sourceKind"]>]) },
+            { key: "availability", label: "可用状态", options: [{ label: "可用", value: "available" }, { label: "不可用", value: "unavailable" }] },
+            { key: "override", label: "会话设置", options: [{ label: "Agent 默认", value: "agent-default" }, { label: "启用", value: "enabled" }, { label: "停用", value: "disabled" }] }
+          ]}
+          sorts={conversationToolSorts}
+          renderBatchActions={(keys, clearSelection) => <>
+            <Button disabled={!keys.length} onClick={() => setToolOverrides(keys, "agent-default")}>恢复 Agent 默认</Button>
+            <Button disabled={!keys.length} onClick={() => setToolOverrides(keys, "enabled")}>启用</Button>
+            <Button disabled={!keys.length} onClick={() => setToolOverrides(keys, "disabled")}>停用</Button>
+            <Button type="link" disabled={!keys.length} onClick={clearSelection}>清除选择</Button>
+          </>}
+        />
+      </div>}
       <Button onClick={() => setValue({})}>恢复 Agent 默认</Button>
     </Flex>
   </Modal>;

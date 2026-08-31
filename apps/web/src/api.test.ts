@@ -34,6 +34,21 @@ describe("api client", () => {
 
   it("constructs every endpoint with its expected method and JSON body", async () => {
     const cases: Array<[() => Promise<unknown>, string, string, unknown?]> = [
+      [() => api.bootstrap(), "/api/bootstrap", "GET"],
+      [() => api.bootstrap("c 1"), "/api/bootstrap?conversationId=c%201", "GET"],
+      [() => api.bootstrapOptions("request", "secret"), "/api/auth/bootstrap/options", "POST", { requestId: "request", secret: "secret" }],
+      [() => api.verifyBootstrap("request", "secret", "phone", {} as never), "/api/auth/bootstrap/verify", "POST", { requestId: "request", secret: "secret", deviceName: "phone", response: {} }],
+      [() => api.enrollmentOptions("computer"), "/api/auth/enrollments/options", "POST", { deviceName: "computer" }],
+      [() => api.finishEnrollment("request/1", "tab", "approval", {} as never), "/api/auth/enrollments/request%2F1/credential", "POST", { tabSecret: "tab", approvalSecret: "approval", response: {} }],
+      [() => api.enrollmentStatus("request/1", "tab"), "/api/auth/enrollments/request%2F1/status", "GET"],
+      [() => api.approvalDetails("request/1", "approval"), "/api/auth/approvals/request%2F1", "GET"],
+      [() => api.approvalOptions("request/1", "approval"), "/api/auth/approvals/request%2F1/options", "POST"],
+      [() => api.approveEnrollment("request/1", "approval", {} as never), "/api/auth/approvals/request%2F1/verify", "POST", {}],
+      [api.loginOptions, "/api/auth/login/options", "POST"],
+      [() => api.verifyLogin("challenge", {} as never), "/api/auth/login/verify", "POST", { challengeId: "challenge", response: {} }],
+      [api.authDevices, "/api/auth/devices", "GET"],
+      [() => api.revokeAuthDevice("device/1"), "/api/auth/devices/device%2F1", "DELETE"],
+      [api.logout, "/api/auth/logout", "POST"],
       [api.settings, "/api/settings", "GET"],
       [() => api.updateSettings({ theme: "dark" }), "/api/settings", "PATCH", { theme: "dark" }],
       [api.connections, "/api/connections", "GET"],
@@ -127,6 +142,14 @@ describe("api client", () => {
     expect(headers.get("content-type")).toBe("application/json");
   });
 
+  it("keeps enrollment and approval secrets in request headers", async () => {
+    await api.enrollmentStatus("request", "tab-secret");
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]![1]?.headers).get("x-llm-chat-enrollment")).toBe("tab-secret");
+    vi.mocked(fetch).mockClear();
+    await api.approvalDetails("request", "approval-secret");
+    expect(new Headers(vi.mocked(fetch).mock.calls[0]![1]?.headers).get("x-llm-chat-approval")).toBe("approval-secret");
+  });
+
   it("returns undefined for a successful 204", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(null, { status: 204 }));
     await expect(api.deleteConnection("c1")).resolves.toBeUndefined();
@@ -134,7 +157,7 @@ describe("api client", () => {
 
   it("normalizes structured, partial, and non-JSON failures", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ error: { code: "invalid", message: "Nope" } }, { status: 422 }));
-    await expect(api.settings()).rejects.toEqual(new ApiClientError("invalid", "Nope"));
+    await expect(api.settings()).rejects.toEqual(new ApiClientError("invalid", "Nope", 422));
 
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ error: {} }, { status: 500 }));
     await expect(api.settings()).rejects.toMatchObject({ code: "request_failed", message: "请求失败（500）" });

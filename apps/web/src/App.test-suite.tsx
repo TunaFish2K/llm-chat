@@ -2,7 +2,8 @@ import type { AgentSummaryDto, AppSettings, BackgroundTaskDto, ConnectionDto, Co
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { App } from "./App";
+import { App, PairingScreen } from "./App";
+import { ApiClientError } from "./api";
 
 const state = vi.hoisted(() => ({
   screens: { md: true, lg: true } as Record<string, boolean>,
@@ -11,6 +12,10 @@ const state = vi.hoisted(() => ({
   unsubscribes: [] as ReturnType<typeof vi.fn>[]
 }));
 const api = vi.hoisted(() => ({
+  bootstrap: vi.fn(), bootstrapOptions: vi.fn(), verifyBootstrap: vi.fn(),
+  enrollmentOptions: vi.fn(), finishEnrollment: vi.fn(), enrollmentStatus: vi.fn(),
+  approvalDetails: vi.fn(), approvalOptions: vi.fn(), approveEnrollment: vi.fn(),
+  loginOptions: vi.fn(), verifyLogin: vi.fn(),
   settings: vi.fn(), agents: vi.fn(), connections: vi.fn(), models: vi.fn(), conversations: vi.fn(), messages: vi.fn(),
   updateConversation: vi.fn(), updateSettings: vi.fn(), startConversation: vi.fn(), send: vi.fn(), retry: vi.fn(),
   selectGeneration: vi.fn(), cancel: vi.fn(), approveTool: vi.fn(), deleteConversation: vi.fn(),
@@ -19,6 +24,7 @@ const api = vi.hoisted(() => ({
   backgroundTasks: vi.fn(), backgroundOutput: vi.fn(), backgroundTask: vi.fn(), stopBackgroundTask: vi.fn(),
   agentAvatarUrl: vi.fn((id: string) => `/api/agents/${id}/avatar`)
 }));
+const webauthn = vi.hoisted(() => ({ startRegistration: vi.fn(), startAuthentication: vi.fn() }));
 const generationEvents = vi.hoisted(() => vi.fn((id: string, callback: (event: GenerationEvent) => void) => {
   state.streams.set(id, callback);
   const unsubscribe = vi.fn(() => state.streams.delete(id));
@@ -27,7 +33,15 @@ const generationEvents = vi.hoisted(() => vi.fn((id: string, callback: (event: G
 }));
 const appEvents = vi.hoisted(() => vi.fn(() => vi.fn()));
 
-vi.mock("./api", () => ({ api, generationEvents, appEvents }));
+vi.mock("./api", () => ({
+  api,
+  generationEvents,
+  appEvents,
+  ApiClientError: class ApiClientError extends Error {
+    constructor(readonly code: string, message: string, readonly status: number) { super(message); }
+  }
+}));
+vi.mock("@simplewebauthn/browser", () => webauthn);
 vi.mock("@ant-design/icons", async () => {
   const { createElement } = await import("react");
   const Icon = () => createElement("span", { "aria-hidden": true });
@@ -35,8 +49,10 @@ vi.mock("@ant-design/icons", async () => {
     CheckOutlined: Icon, CloseOutlined: Icon, CodeOutlined: Icon, ControlOutlined: Icon,
     CopyOutlined: Icon, DeleteOutlined: Icon, FolderOpenOutlined: Icon, LeftOutlined: Icon,
     MenuFoldOutlined: Icon, MenuOutlined: Icon, MenuUnfoldOutlined: Icon, MoreOutlined: Icon,
-    RightOutlined: Icon, SettingOutlined: Icon, StopOutlined: Icon, SyncOutlined: Icon,
-    DownOutlined: Icon, LoadingOutlined: Icon, SearchOutlined: Icon, WalletOutlined: Icon, WarningOutlined: Icon
+    LoginOutlined: Icon, MobileOutlined: Icon, QrcodeOutlined: Icon, RightOutlined: Icon,
+    SafetyCertificateOutlined: Icon, SettingOutlined: Icon, StopOutlined: Icon, SyncOutlined: Icon,
+    DownOutlined: Icon, EditOutlined: Icon, LoadingOutlined: Icon, SearchOutlined: Icon,
+    UpOutlined: Icon, WalletOutlined: Icon, WarningOutlined: Icon
   };
 });
 vi.mock("./theme", async () => {
@@ -71,7 +87,7 @@ vi.mock("antd", async () => {
     onChange: (event: Event) => (onChange as ((value: string) => void) | undefined)?.((event.target as HTMLSelectElement).value)
   }, ...(options as Array<{ label: unknown; value: string }>).map((option) =>
     createElement("option", { key: option.value, value: option.value }, typeof option.label === "string" ? option.label : option.value)));
-  const Input = ({ onPressEnter, onKeyDown, ...props }: Record<string, unknown>) => createElement("input", {
+  const Input = ({ onPressEnter, onKeyDown, allowClear: _allowClear, prefix: _prefix, ...props }: Record<string, unknown>) => createElement("input", {
     ...props,
     onKeyDown: (event: KeyboardEvent) => {
       (onKeyDown as ((event: KeyboardEvent) => void) | undefined)?.(event);
@@ -96,6 +112,9 @@ vi.mock("antd", async () => {
   Layout.Content = ({ children, className }: Record<string, unknown>) => createElement("main", { className: className as string }, children as never);
   const Space = ({ children, className }: Record<string, unknown>) => createElement("div", { className: className as string }, children as never);
   Space.Compact = Space;
+  const Empty = ({ description }: Record<string, unknown>) => createElement("div", {}, description as never);
+  Empty.PRESENTED_IMAGE_SIMPLE = null;
+  const Pagination = () => createElement("nav", { "aria-label": "分页" });
   const Text = ({ children, strong, className }: Record<string, unknown>) => createElement("span", { className: className as string }, strong ? createElement("strong", {}, children as never) : children as never);
   const Typography = {
     Text,
@@ -129,8 +148,10 @@ vi.mock("antd", async () => {
     Badge: ({ children, className, count }: Record<string, unknown>) => createElement("div", { className: className as string },
       count ? createElement("span", {}, count as never) : null, children as never),
     Breadcrumb: ({ items = [] }: { items?: Array<{ title: unknown }> }) => createElement("nav", {}, ...items.map((item, index) => createElement("span", { key: index }, item.title as never))),
-    Button, Checkbox: ({ children, checked, onChange }: Record<string, unknown>) => createElement("label", {}, createElement("input", { type: "checkbox", checked, onChange }), children as never),
-    Collapse, Drawer, Flex, Grid: { useBreakpoint: () => state.screens }, Input, InputNumber, Layout, Listy, Modal, Popover, Select, Space,
+    Button, Checkbox: ({ children, checked, onChange, className, ...props }: Record<string, unknown>) => createElement("label", { className: className as string }, createElement("input", {
+      type: "checkbox", checked, onChange, "aria-label": props["aria-label"] as string | undefined
+    }), children as never),
+    Collapse, Drawer, Empty, Flex, Grid: { useBreakpoint: () => state.screens }, Input, InputNumber, Layout, Listy, Modal, Pagination, Popover, Select, Space,
     Spin: () => createElement("span", {}, "loading"),
     Switch: ({ checked, onChange }: Record<string, unknown>) => createElement("input", { type: "checkbox", checked, onChange: (event: Event) => (onChange as ((value: boolean) => void) | undefined)?.((event.target as HTMLInputElement).checked) }),
     Tag: ({ children }: Record<string, unknown>) => createElement("span", {}, children as never),
@@ -255,6 +276,9 @@ beforeAll(() => {
     removeEventListener: vi.fn(), dispatchEvent: vi.fn()
   })) });
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: vi.fn() } });
+  Object.defineProperty(navigator, "credentials", { configurable: true, value: {} });
+  Object.defineProperty(window, "isSecureContext", { configurable: true, value: true });
+  Object.defineProperty(window, "PublicKeyCredential", { configurable: true, value: class PublicKeyCredential {} });
 });
 
 const settings: AppSettings = {
@@ -311,6 +335,24 @@ function resetApi() {
   api.models.mockResolvedValue([model]);
   api.conversations.mockResolvedValue([conversation]);
   api.messages.mockResolvedValue([]);
+  api.bootstrap.mockImplementation(async () => {
+    const [nextSettings, agents, connections, models, conversations] = await Promise.all([
+      api.settings(), api.agents(), api.connections(), api.models(), api.conversations()
+    ]);
+    return { settings: nextSettings, agents, connections, models, conversations };
+  });
+  api.loginOptions.mockResolvedValue({ challengeId: "challenge", options: {} });
+  api.verifyLogin.mockResolvedValue({ ok: true });
+  webauthn.startAuthentication.mockResolvedValue({});
+  webauthn.startRegistration.mockResolvedValue({});
+  api.enrollmentOptions.mockResolvedValue({ id: "enrollment", tabSecret: "tab", approvalSecret: "approval", options: {}, expiresAt: Date.now() + 60_000 });
+  api.finishEnrollment.mockResolvedValue({ approvalQr: "data:image/png;base64,AA==", expiresAt: Date.now() + 60_000 });
+  api.enrollmentStatus.mockResolvedValue({ state: "authenticated" });
+  api.bootstrapOptions.mockResolvedValue({});
+  api.verifyBootstrap.mockResolvedValue({ ok: true });
+  api.approvalDetails.mockResolvedValue({ id: "approval", deviceName: "新电脑", browser: "Firefox", ip: "192.0.2.8", expiresAt: Date.now() + 60_000 });
+  api.approvalOptions.mockResolvedValue({});
+  api.approveEnrollment.mockResolvedValue({ ok: true });
   api.updateConversation.mockImplementation(async (_id: string, patch: Partial<ConversationDto>) => ({ ...conversation, ...patch }));
   api.updateSettings.mockImplementation(async (patch: Partial<AppSettings>) => ({ ...settings, ...patch }));
   api.startConversation.mockResolvedValue({ conversation, generation: { assistantMessageId: "a1", generationId: "g-live" } });
@@ -356,6 +398,52 @@ export function registerAppShellTests() {
     expect(screen.getByRole("textbox", { name: "消息输入" })).toBeEnabled();
     expect(document.querySelector(".app-theme-root")).toHaveAttribute("data-color-scheme", "light");
     expect(document.documentElement.style.colorScheme).toBe("light");
+  });
+
+  it("offers Passkey login when this browser has no trusted session", async () => {
+    api.bootstrap.mockRejectedValueOnce(new ApiClientError("authentication_required", "请登录", 401));
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "进入 llm-chat" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /使用已有 Passkey 登录/ }));
+    await waitFor(() => expect(webauthn.startAuthentication).toHaveBeenCalledWith({ optionsJSON: {} }));
+    await waitFor(() => expect(api.verifyLogin).toHaveBeenCalledWith("challenge", {}));
+    expect(await screen.findByRole("heading", { name: "默认助手" })).toBeInTheDocument();
+  });
+
+  it("creates a Passkey and redeems approval without persisting the tab secret", async () => {
+    api.bootstrap.mockRejectedValueOnce(new ApiClientError("authentication_required", "请登录", 401));
+    let approve!: (value: { state: "authenticated" }) => void;
+    api.enrollmentStatus.mockReturnValueOnce(new Promise((resolve) => { approve = resolve; }));
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /添加这台设备/ }));
+    await waitFor(() => expect(api.finishEnrollment).toHaveBeenCalledWith("enrollment", "tab", "approval", {}));
+    expect(await screen.findByRole("heading", { name: "用可信设备批准" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "添加此设备的批准二维码" })).toHaveAttribute("src", "data:image/png;base64,AA==");
+    await waitFor(() => expect(api.enrollmentStatus).toHaveBeenCalledWith("enrollment", "tab"));
+    approve({ state: "authenticated" });
+    expect(await screen.findByRole("heading", { name: "默认助手" })).toBeInTheDocument();
+  });
+
+  it("registers the first trusted Passkey from a terminal QR request", async () => {
+    const authenticated = vi.fn();
+    render(<PairingScreen request={{ mode: "bootstrap", requestId: "bootstrap", secret: "qr-secret" }} onAuthenticated={authenticated} />);
+    expect(screen.queryByRole("button", { name: /使用已有 Passkey 登录/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /创建 Passkey/ }));
+    await waitFor(() => expect(api.bootstrapOptions).toHaveBeenCalledWith("bootstrap", "qr-secret"));
+    await waitFor(() => expect(api.verifyBootstrap).toHaveBeenCalledWith("bootstrap", "qr-secret", "我的电脑", {}));
+    expect(authenticated).toHaveBeenCalledOnce();
+  });
+
+  it("shows approval context and signs a new-device request", async () => {
+    const authenticated = vi.fn();
+    render(<PairingScreen request={{ mode: "approve", requestId: "approval", secret: "qr-secret" }} onAuthenticated={authenticated} />);
+    expect(await screen.findByText("新电脑")).toBeInTheDocument();
+    expect(screen.getByText("Firefox")).toBeInTheDocument();
+    expect(screen.getByText("192.0.2.8")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /用 Passkey 批准/ }));
+    await waitFor(() => expect(api.approvalOptions).toHaveBeenCalledWith("approval", "qr-secret"));
+    await waitFor(() => expect(api.approveEnrollment).toHaveBeenCalledWith("approval", "qr-secret", {}));
+    expect(authenticated).toHaveBeenCalledOnce();
   });
 
   it("keeps an explicit dark theme when the system preference changes", async () => {
@@ -619,7 +707,14 @@ export function registerAppConversationTests() {
     const toolOverride = screen.getByRole("combobox", { name: "Web search 覆盖" });
     fireEvent.change(toolOverride, { target: { value: "disabled" } });
     expect(toolOverride).toHaveValue("disabled");
-    fireEvent.click(screen.getByRole("button", { name: "恢复 Agent 默认" }));
+    const toolCatalog = screen.getByRole("region", { name: "会话工具覆盖" });
+    fireEvent.click(within(toolCatalog).getByRole("button", { name: "批量编辑" }));
+    fireEvent.click(within(toolCatalog).getByRole("button", { name: "全选本页" }));
+    fireEvent.click(within(toolCatalog).getByRole("button", { name: "启用" }));
+    expect(toolOverride).toHaveValue("enabled");
+    fireEvent.click(within(toolCatalog).getByRole("button", { name: "恢复 Agent 默认" }));
+    expect(toolOverride).toHaveValue("agent-default");
+    fireEvent.click(screen.getAllByRole("button", { name: "恢复 Agent 默认" }).at(-1)!);
     fireEvent.click(document.querySelector(".ant-modal-footer .ant-btn-primary") as HTMLElement);
     await waitFor(() => expect(api.updateConversation).toHaveBeenCalledWith("a1b2", { executionOverrides: {} }));
   });
