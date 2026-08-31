@@ -77,6 +77,7 @@ describe("api client", () => {
       [() => api.unloadPlugin("p1"), "/api/plugins/p1/unload", "POST"],
       [() => api.deletePlugin("p1"), "/api/plugins/p1", "DELETE"],
       [api.skills, "/api/skills", "GET"],
+      [api.discoverSkills, "/api/skills/discover", "POST"],
       [() => api.installSkill("/tmp/skill"), "/api/skills/install", "POST", { sourcePath: "/tmp/skill" }],
       [() => api.reloadSkill("s1"), "/api/skills/s1/reload", "POST"],
       [() => api.deleteSkill("s1"), "/api/skills/s1", "DELETE"],

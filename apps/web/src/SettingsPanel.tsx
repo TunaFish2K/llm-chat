@@ -13,6 +13,7 @@ import type {
   ModelSettings,
   ProviderProtocol,
   PluginDto,
+  SkillDiscoverySummary,
   SkillDto,
   ToolCatalogItemDto,
   ToolSettingsDto
@@ -199,6 +200,7 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   const [avatar, setAvatar] = useState<File | null>(null);
   const avatarRef = useRef<HTMLInputElement>(null);
   const { modal } = AntApp.useApp();
+  const enabledTools = Form.useWatch("enabledTools", form) as string[] | undefined;
   useEffect(() => {
     void Promise.all([api.toolCatalog(), api.skills()]).then(([tools, nextSkills]) => {
       setCatalog(tools);
@@ -289,6 +291,14 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
                 { label: "按工具默认", value: "default" }, { label: "每次审批", value: "always" }, { label: "自动允许", value: "never" }
               ]} />
             </Form.Item>
+            <Form.Item noStyle name={["toolDirectness", tool.name]} valuePropName="checked">
+              <Switch
+                size="small"
+                aria-label={`${tool.label}直接提供`}
+                disabled={!tool.available || !enabledTools?.includes(tool.name)}
+              />
+            </Form.Item>
+            <Text type="secondary">直接</Text>
           </Flex>)}
         </Checkbox.Group>
       </Form.Item>
@@ -337,6 +347,7 @@ export interface AgentForm {
   temperature?: number | null | undefined; topP?: number | null | undefined; maxOutputTokens?: number | null | undefined; stopSequences?: string[] | undefined;
   reasoningSummary?: "auto" | "concise" | "detailed" | undefined; thinkingBudgetTokens?: number | null | undefined;
   toolDefaultEnabled: boolean; enabledTools: string[]; toolApprovals: Record<string, "default" | "always" | "never">;
+  toolDirectness: Record<string, boolean>;
   enabledSkillIds: string[]; maxToolRounds: number | null; maxBackgroundTasks: number | null; taskLogLimitMiB: number | null;
   userDisplayName?: string | undefined; userDescription?: string | undefined;
 }
@@ -352,9 +363,9 @@ function newAgent(fallback?: AgentSummaryDto): AgentDto {
       creator_notes: "", system_prompt: "{{original}}", post_history_instructions: "", alternate_greetings: [],
       tags: [], creator: "", character_version: "", extensions: {}
     } },
-    execution: fallback?.execution ?? {
+    execution: fallback ? { ...fallback.execution, tools: { ...fallback.execution.tools, directOverrides: fallback.execution.tools.directOverrides ?? {} } } : {
       modelId: null, contextPolicy: "trim", reasoningEffort: "none", generation: {},
-      tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} }, enabledSkillIds: [],
+      tools: { defaultEnabled: true, overrides: {}, directOverrides: {}, approvalOverrides: {} }, enabledSkillIds: [],
       maxToolRounds: 32, maxBackgroundTasks: 2, taskLogLimitBytes: 64 * 1024 * 1024
     },
     userProfile: {}
@@ -379,6 +390,7 @@ export function agentForm(agent: AgentDto, catalog: ToolCatalogItemDto[]): Agent
     toolDefaultEnabled: policy.defaultEnabled,
     enabledTools: catalog.filter((tool) => policy.overrides[tool.name] ?? policy.defaultEnabled).map((tool) => tool.name),
     toolApprovals: Object.fromEntries(catalog.map((tool) => [tool.name, policy.approvalOverrides[tool.name] ?? "default"])),
+    toolDirectness: Object.fromEntries(catalog.map((tool) => [tool.name, policy.directOverrides?.[tool.name] ?? true])),
     enabledSkillIds: agent.execution.enabledSkillIds,
     maxToolRounds: agent.execution.maxToolRounds,
     maxBackgroundTasks: agent.execution.maxBackgroundTasks,
@@ -396,7 +408,9 @@ export function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatal
   };
   const enabled = new Set(values.enabledTools ?? []);
   const overrides = { ...base.execution.tools.overrides };
+  const directOverrides = { ...(base.execution.tools.directOverrides ?? {}), ...(values.toolDirectness ?? {}) };
   for (const tool of catalog) overrides[tool.name] = values.toolDefaultEnabled ? !enabled.has(tool.name) ? false : true : enabled.has(tool.name);
+  for (const tool of catalog) directOverrides[tool.name] = values.toolDirectness?.[tool.name] ?? directOverrides[tool.name] ?? true;
   return {
     card: { ...base.card, data: { ...base.card.data,
       name: values.name.trim(), description: values.description ?? "", personality: values.personality ?? "", scenario: values.scenario ?? "",
@@ -411,7 +425,7 @@ export function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatal
         ...(values.reasoningSummary ? { reasoningSummary: values.reasoningSummary } : {}),
         ...(values.thinkingBudgetTokens ? { thinkingBudgetTokens: values.thinkingBudgetTokens } : {})
       } },
-      tools: { defaultEnabled: values.toolDefaultEnabled, overrides, approvalOverrides: { ...base.execution.tools.approvalOverrides, ...values.toolApprovals } },
+      tools: { defaultEnabled: values.toolDefaultEnabled, overrides, directOverrides, approvalOverrides: { ...base.execution.tools.approvalOverrides, ...values.toolApprovals } },
       enabledSkillIds: values.enabledSkillIds ?? [],
       maxToolRounds: values.maxToolRounds ?? null,
       maxBackgroundTasks: values.maxBackgroundTasks ?? null,
@@ -425,6 +439,7 @@ function catalogWithMissing(catalog: ToolCatalogItemDto[], agent: AgentDto): Too
   const known = new Set(catalog.map((tool) => tool.name));
   const missing = new Set([
     ...Object.keys(agent.execution.tools.overrides),
+    ...Object.keys(agent.execution.tools.directOverrides ?? {}),
     ...Object.keys(agent.execution.tools.approvalOverrides)
   ].filter((name) => !known.has(name)));
   return [...catalog, ...[...missing].map((name): ToolCatalogItemDto => ({
@@ -546,9 +561,23 @@ export function SkillSettings() {
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [sourcePath, setSourcePath] = useState("");
   const [busy, setBusy] = useState(false);
+  const [discovery, setDiscovery] = useState<SkillDiscoverySummary | null>(null);
   const { message } = AntApp.useApp();
   const load = async () => setSkills(await api.skills());
   useEffect(() => { void load().catch((error) => void message.error(messageText(error))); }, []);
+  const discover = async () => {
+    setBusy(true);
+    try {
+      const summary = await api.discoverSkills();
+      await load();
+      setDiscovery(summary);
+      void message.success("Skill 发现完成");
+    } catch (error) {
+      void message.error(messageText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
   const install = async () => {
     setBusy(true);
     try { await api.installSkill(sourcePath.trim()); await load(); void message.success("Skill 已安装"); }
@@ -556,11 +585,21 @@ export function SkillSettings() {
     finally { setBusy(false); }
   };
   return <Flex vertical gap="middle" className="extension-pane">
+    <Flex vertical gap="small">
+      <Text type="secondary">自动发现来源：~/.agents/skills</Text>
+      <Button icon={<ReloadOutlined />} loading={busy} onClick={() => void discover()}>重新扫描</Button>
+      {discovery && <Flex vertical gap={2}>
+        <Text type={discovery.errors.length ? "warning" : "secondary"}>
+          发现 {discovery.discovered}，更新 {discovery.updated}，未变化 {discovery.unchanged}，已卸载 {discovery.unloaded}
+        </Text>
+        {discovery.errors.map((error) => <Text key={`${error.path}:${error.message}`} type="danger">{error.path}：{error.message}</Text>)}
+      </Flex>}
+    </Flex>
     <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="Skill 源目录绝对路径" />
       <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void install()}>安装</Button></Space.Compact>
     {skills.length ? <Listy className="extension-list" items={skills} rowKey="id" virtual={false} itemRender={(skill) => <Flex className="extension-row" align="flex-start" gap="middle">
-      <Flex vertical className="extension-row-main"><Space wrap>{skill.name}{skill.bundled && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>
-        <Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>
+      <Flex vertical className="extension-row-main"><Space wrap>{skill.name}{skill.sourceKind === "agents" && <Tag>来源：~/.agents/skills</Tag>}{(skill.sourceKind === "bundled" || skill.bundled) && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>
+        <Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.compatibility ? ` · 兼容：${skill.compatibility}` : ""}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>
       <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={async () => {
         setBusy(true); try { await api.reloadSkill(skill.id); await load(); void message.success("Skill 已重新加载"); }
         catch (error) { void message.error(messageText(error)); } finally { setBusy(false); }

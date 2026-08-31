@@ -14,7 +14,7 @@ const api = vi.hoisted(() => ({
   createConnection: vi.fn(), updateConnection: vi.fn(), deleteConnection: vi.fn(), testConnection: vi.fn(), connectionBalance: vi.fn(), discoverModels: vi.fn(),
   createModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(),
   toolSettings: vi.fn(), updateToolSettings: vi.fn(), toolCatalog: vi.fn(),
-  skills: vi.fn(), installSkill: vi.fn(), reloadSkill: vi.fn(),
+  skills: vi.fn(), discoverSkills: vi.fn(), installSkill: vi.fn(), reloadSkill: vi.fn(),
   plugins: vi.fn(), installPlugin: vi.fn(), reloadPlugin: vi.fn(), unloadPlugin: vi.fn(), deletePlugin: vi.fn(), configurePlugin: vi.fn(),
   mcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(), testMcpServer: vi.fn()
 }));
@@ -77,7 +77,7 @@ const plugin: PluginDto = {
 const skill: SkillDto = {
   id: "sample-skill", name: "Sample Skill", description: "A test skill", revision: "rev-1",
   sourcePath: "/skills/sample", state: "loaded", error: null, requiredTools: ["web_search"],
-  recommendedApprovals: {}, bundled: false, installedAt: 1, updatedAt: 2
+  recommendedApprovals: {}, bundled: false, sourceKind: "agents", compatibility: "Linux", installedAt: 1, updatedAt: 2
 };
 
 function resetApis() {
@@ -112,6 +112,7 @@ function resetApis() {
     { name: "workspace_shell", label: "Shell", description: "Run commands", category: "workspace", requiresApproval: true, available: false }
   ]);
   api.skills.mockResolvedValue([]);
+  api.discoverSkills.mockResolvedValue({ discovered: 0, updated: 0, unchanged: 0, unloaded: 0, errors: [] });
   api.installSkill.mockResolvedValue(skill);
   api.reloadSkill.mockResolvedValue(skill);
   api.plugins.mockResolvedValue([]);
@@ -190,6 +191,49 @@ export function registerSettingsResourceTests() {
     const input = agentInput(values, agent, catalog);
 
     expect(input.execution.tools.overrides.workspace_shell).toBe(false);
+  });
+
+  it("keeps directness independent and preserves unknown direct tool keys", async () => {
+    const catalog = await api.toolCatalog();
+    const base: AgentDto = {
+      ...agent,
+      execution: {
+        ...agent.execution,
+        tools: {
+          ...agent.execution.tools,
+          directOverrides: { web_search: false, missing_tool: false }
+        }
+      }
+    };
+    const values = agentForm(base, catalog);
+    expect(values.toolDirectness).toMatchObject({ web_search: false, workspace_shell: true });
+    values.toolDirectness.web_search = true;
+    values.enabledTools = values.enabledTools.filter((name) => name !== "web_search");
+    const input = agentInput(values, base, catalog);
+
+    expect(input.execution.tools.directOverrides).toEqual({ web_search: true, missing_tool: false, workspace_shell: true });
+    expect(input.execution.tools.overrides.web_search).toBe(false);
+    expect(input.execution.tools.approvalOverrides).toEqual({ web_search: "default", workspace_shell: "default" });
+  });
+
+  it("renders accessible direct switches independently from tool authorization", async () => {
+    api.agent.mockResolvedValueOnce({
+      ...agent,
+      execution: {
+        ...agent.execution,
+        tools: { ...agent.execution.tools, directOverrides: { web_search: false } }
+      }
+    });
+    renderAgents();
+    const direct = await screen.findByRole("switch", { name: "Web search直接提供" });
+    expect(direct).not.toBeChecked();
+    expect(screen.getAllByText("直接")).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Web search审批" })).toBeInTheDocument();
+    fireEvent.click(direct);
+    expect(direct).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Shell直接提供" })).toBeDisabled();
   });
 
   it("imports a character card and selects the imported Agent", async () => {
@@ -425,6 +469,18 @@ export function registerSettingsDetailTests() {
     render(<AntApp><SkillSettings /></AntApp>);
     expect(await screen.findByText("Sample Skill")).toBeInTheDocument();
     expect(screen.getByText(/工具 web_search/)).toBeInTheDocument();
+    expect(screen.getByText("来源：~/.agents/skills")).toBeInTheDocument();
+    expect(screen.getByText(/兼容：Linux/)).toBeInTheDocument();
+
+    api.discoverSkills.mockResolvedValueOnce({
+      discovered: 1, updated: 2, unchanged: 3, unloaded: 1,
+      errors: [{ path: "~/.agents/skills/broken/SKILL.md", message: "缺少 description" }]
+    });
+    fireEvent.click(screen.getByRole("button", { name: /重新扫描/ }));
+    await waitFor(() => expect(api.discoverSkills).toHaveBeenCalledOnce());
+    expect(await screen.findByText("发现 1，更新 2，未变化 3，已卸载 1")).toBeInTheDocument();
+    expect(screen.getByText("~/.agents/skills/broken/SKILL.md：缺少 description")).toBeInTheDocument();
+    await waitFor(() => expect(api.skills).toHaveBeenCalledTimes(2));
 
     fireEvent.change(screen.getByPlaceholderText("Skill 源目录绝对路径"), { target: { value: " /skills/new " } });
     fireEvent.click(screen.getByRole("button", { name: /安装/ }));
