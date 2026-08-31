@@ -176,10 +176,29 @@ export function registerSettingsResourceTests() {
     beforeEach(() => { state.screens = { md: true, lg: true }; resetApis(); });
 
   it("requests the selected Agent detail", async () => {
-    api.agent.mockReturnValueOnce(new Promise(() => {}));
+    let resolveAgent: (value: AgentDto) => void = () => {};
+    const pendingAgent = new Promise<AgentDto>((resolve) => { resolveAgent = resolve; });
+    api.agent.mockReturnValueOnce(pendingAgent);
     renderPanel({ agents: [agent] });
     await waitFor(() => expect(api.agent).toHaveBeenCalledWith("agent1"));
     expect(screen.getByText("正在加载 Agent")).toBeInTheDocument();
+
+    resolveAgent({
+      ...agent,
+      execution: {
+        ...agent.execution,
+        tools: { ...agent.execution.tools, directOverrides: { web_search: false } }
+      }
+    });
+    const direct = await screen.findByRole("switch", { name: "Web search直接提供" });
+    expect(direct).not.toBeChecked();
+    expect(screen.getAllByText("直接")).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: "Web search审批" })).toBeInTheDocument();
+    fireEvent.click(direct);
+    expect(direct).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Shell直接提供" })).toBeDisabled();
   });
 
   it("allows unavailable Agent tools to be overridden and saves false", async () => {
@@ -214,26 +233,6 @@ export function registerSettingsResourceTests() {
     expect(input.execution.tools.directOverrides).toEqual({ web_search: true, missing_tool: false, workspace_shell: true });
     expect(input.execution.tools.overrides.web_search).toBe(false);
     expect(input.execution.tools.approvalOverrides).toEqual({ web_search: "default", workspace_shell: "default" });
-  });
-
-  it("renders accessible direct switches independently from tool authorization", async () => {
-    api.agent.mockResolvedValueOnce({
-      ...agent,
-      execution: {
-        ...agent.execution,
-        tools: { ...agent.execution.tools, directOverrides: { web_search: false } }
-      }
-    });
-    renderAgents();
-    const direct = await screen.findByRole("switch", { name: "Web search直接提供" });
-    expect(direct).not.toBeChecked();
-    expect(screen.getAllByText("直接")).toHaveLength(2);
-    expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
-    expect(screen.getByRole("combobox", { name: "Web search审批" })).toBeInTheDocument();
-    fireEvent.click(direct);
-    expect(direct).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Web search/ })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Shell直接提供" })).toBeDisabled();
   });
 
   it("imports a character card and selects the imported Agent", async () => {
