@@ -25,6 +25,7 @@ import {
   Checkbox,
   Collapse,
   Drawer,
+  Dropdown,
   Flex,
   Form,
   Grid,
@@ -158,7 +159,7 @@ export function Agents({ agents, models, settings, busy, mobile, run }: {
       <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setEditing("new")}>新建 Agent</Button>
       <Button type="dashed" block icon={<ImportOutlined />} onClick={() => importRef.current?.click()}>导入角色卡</Button>
     </Space.Compact>
-    <input ref={importRef} hidden type="file" accept="application/json,image/png,.json,.png" onChange={(event) => {
+    <input ref={importRef} className="settings-file-input" hidden type="file" accept="application/json,image/png,.json,.png" onChange={(event) => {
       const file = event.target.files?.[0];
       if (file) void importFile(file);
       event.currentTarget.value = "";
@@ -227,18 +228,22 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   return <>
     <Flex justify="space-between" align="center" gap="small" wrap>
       <Title level={5}>{existing?.name ?? "新建 Agent"}</Title>
-      {existing && <Space.Compact>
-        <Tooltip title="导出 JSON"><Button icon={<DownloadOutlined />} href={api.agentExportUrl(existing.id, "json")} /></Tooltip>
-        <Tooltip title="导出 PNG"><Button icon={<DownloadOutlined />} disabled={!existing.hasAvatar} href={api.agentExportUrl(existing.id, "png")} /></Tooltip>
-      </Space.Compact>}
+      {existing && <Dropdown placement="bottomRight" trigger={["click"]} menu={{ items: [
+        { key: "json", label: <a href={api.agentExportUrl(existing.id, "json")}>JSON 角色卡</a> },
+        existing.hasAvatar
+          ? { key: "png", label: <a href={api.agentExportUrl(existing.id, "png")}>PNG 角色卡</a> }
+          : { key: "png", label: "PNG 角色卡（需要头像）", disabled: true }
+      ] }}>
+        <Button icon={<DownloadOutlined />}>导出</Button>
+      </Dropdown>}
     </Flex>
     <Form<AgentForm> form={form} layout="vertical" initialValues={initial} onFinish={(values) => void save(values)}>
       <Flex className="settings-fields-row" gap="middle" wrap>
         <Form.Item className="settings-field" name="name" label="名称" rules={[{ required: true, whitespace: true }, { max: 200 }]}><Input /></Form.Item>
         <Form.Item className="settings-field" label="头像">
           <Space><Button icon={<UploadOutlined />} onClick={() => avatarRef.current?.click()}>{avatar?.name ?? (existing?.hasAvatar ? "替换 PNG" : "选择 PNG")}</Button>
-          {existing?.hasAvatar && <Button danger icon={<DeleteOutlined />} onClick={() => void run(() => api.deleteAgentAvatar(existing.id), "头像已删除")} />}</Space>
-          <input ref={avatarRef} hidden type="file" accept="image/png" onChange={(event) => setAvatar(event.target.files?.[0] ?? null)} />
+          {existing?.hasAvatar && <Tooltip title="删除头像"><Button danger icon={<DeleteOutlined />} aria-label="删除头像" onClick={() => void run(() => api.deleteAgentAvatar(existing.id), "头像已删除")} /></Tooltip>}</Space>
+          <input ref={avatarRef} className="settings-file-input" hidden type="file" accept="image/png" onChange={(event) => setAvatar(event.target.files?.[0] ?? null)} />
         </Form.Item>
       </Flex>
       <Form.Item name="description" label="描述"><TextArea rows={4} /></Form.Item>
@@ -527,7 +532,7 @@ export function PluginSettings() {
     finally { setBusy(false); }
   };
   return <Flex vertical gap="middle" className="extension-pane">
-    <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="插件源目录绝对路径" />
+    <Space.Compact block><Input aria-label="Plugin 源目录" value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="插件源目录绝对路径" />
       <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void act(() => api.installPlugin(sourcePath.trim()), "Plugin 已安装")}>安装</Button></Space.Compact>
     {plugins.length ? <Listy className="extension-list" items={plugins} rowKey="id" virtual={false} itemRender={(plugin) => <Flex className="extension-row" align="flex-start" gap="middle">
       <ApiOutlined />
@@ -538,9 +543,9 @@ export function PluginSettings() {
         <PluginConfig plugin={plugin} onSave={(config, secrets) => act(() => api.configurePlugin(plugin.id, config, secrets), "配置已保存，请重新加载")} />
       </Flex>
       <Space className="extension-row-actions">
-        <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={() => void act(() => api.reloadPlugin(plugin.id), "Plugin 已重新加载")} /></Tooltip>
-        <Switch checked={plugin.state !== "unloaded"} disabled={busy} onChange={(loaded) => void act(() => loaded ? api.reloadPlugin(plugin.id) : api.unloadPlugin(plugin.id), loaded ? "Plugin 已加载" : "Plugin 已卸载")} />
-        <Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({ title: "删除 Plugin", content: plugin.manifest.name, okButtonProps: { danger: true }, onOk: () => act(() => api.deletePlugin(plugin.id), "Plugin 已删除") })} /></Tooltip>
+        <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} aria-label={`重新加载 ${plugin.manifest.name}`} disabled={busy} onClick={() => void act(() => api.reloadPlugin(plugin.id), "Plugin 已重新加载")} /></Tooltip>
+        <Switch aria-label={`${plugin.manifest.name} 启用状态`} checked={plugin.state !== "unloaded"} disabled={busy} onChange={(loaded) => void act(() => loaded ? api.reloadPlugin(plugin.id) : api.unloadPlugin(plugin.id), loaded ? "Plugin 已加载" : "Plugin 已卸载")} />
+        <Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${plugin.manifest.name}`} disabled={busy} onClick={() => modal.confirm({ title: "删除 Plugin", content: plugin.manifest.name, okButtonProps: { danger: true }, onOk: () => act(() => api.deletePlugin(plugin.id), "Plugin 已删除") })} /></Tooltip>
       </Space>
     </Flex>} /> : <div className="list-empty">尚未安装 Plugin</div>}
   </Flex>;
@@ -552,7 +557,7 @@ function PluginConfig({ plugin, onSave }: { plugin: PluginDto; onSave: (config: 
   if (!plugin.manifest.configSchema && !plugin.manifest.secretFields.length) return null;
   return <Collapse ghost size="small" items={[{ key: "config", label: "配置", children: <Flex vertical gap="small">
     <TextArea rows={4} value={config} onChange={(event) => setConfig(event.target.value)} aria-label={`${plugin.manifest.name}配置 JSON`} />
-    {plugin.manifest.secretFields.length > 0 && <Input.Password value={secrets} onChange={(event) => setSecrets(event.target.value)} placeholder={`秘密 JSON；已配置 ${plugin.configuredSecretFields.join("、") || "无"}`} />}
+    {plugin.manifest.secretFields.length > 0 && <Input.Password aria-label={`${plugin.manifest.name} 秘密 JSON`} value={secrets} onChange={(event) => setSecrets(event.target.value)} placeholder={`秘密 JSON；已配置 ${plugin.configuredSecretFields.join("、") || "无"}`} />}
     <Button icon={<SaveOutlined />} onClick={() => void onSave(parseJson(config, {}), parseJson(secrets || "{}", {}))}>保存配置</Button>
   </Flex> }]} />;
 }
@@ -595,12 +600,12 @@ export function SkillSettings() {
         {discovery.errors.map((error) => <Text key={`${error.path}:${error.message}`} type="danger">{error.path}：{error.message}</Text>)}
       </Flex>}
     </Flex>
-    <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="Skill 源目录绝对路径" />
+    <Space.Compact block><Input aria-label="Skill 源目录" value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="Skill 源目录绝对路径" />
       <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void install()}>安装</Button></Space.Compact>
     {skills.length ? <Listy className="extension-list" items={skills} rowKey="id" virtual={false} itemRender={(skill) => <Flex className="extension-row" align="flex-start" gap="middle">
       <Flex vertical className="extension-row-main"><Space wrap>{skill.name}{skill.sourceKind === "agents" && <Tag>来源：~/.agents/skills</Tag>}{(skill.sourceKind === "bundled" || skill.bundled) && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>
         <Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.compatibility ? ` · 兼容：${skill.compatibility}` : ""}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>
-      <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={async () => {
+      <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} aria-label={`重新加载 ${skill.name}`} disabled={busy} onClick={async () => {
         setBusy(true); try { await api.reloadSkill(skill.id); await load(); void message.success("Skill 已重新加载"); }
         catch (error) { void message.error(messageText(error)); } finally { setBusy(false); }
       }} /></Tooltip>
@@ -651,9 +656,9 @@ export function McpSettings() {
       <ApiOutlined />
       <Flex vertical className="extension-row-main"><Text strong>{server.name}</Text><Text type="secondary" ellipsis>{server.url}</Text>{server.lastError && <Text type="danger">{server.lastError}</Text>}</Flex>
       <Space className="extension-row-actions">
-        <Tooltip title="测试连接"><Button type="text" icon={<ThunderboltOutlined />} disabled={busy || !server.enabled} onClick={() => void act(() => api.testMcpServer(server.id), "MCP 连接可用")} /></Tooltip>
-        <Switch checked={server.enabled} disabled={busy} onChange={(enabled) => void act(() => api.updateMcpServer(server.id, { enabled }), enabled ? "MCP 已启用" : "MCP 已停用")} />
-        <Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
+        <Tooltip title="测试连接"><Button type="text" icon={<ThunderboltOutlined />} aria-label={`测试 ${server.name}`} disabled={busy || !server.enabled} onClick={() => void act(() => api.testMcpServer(server.id), "MCP 连接可用")} /></Tooltip>
+        <Switch aria-label={`${server.name} 启用状态`} checked={server.enabled} disabled={busy} onChange={(enabled) => void act(() => api.updateMcpServer(server.id, { enabled }), enabled ? "MCP 已启用" : "MCP 已停用")} />
+        <Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${server.name}`} disabled={busy} onClick={() => modal.confirm({
           title: "删除 MCP 服务", content: `删除“${server.name}”？`, okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
           onOk: () => act(() => api.deleteMcpServer(server.id), "MCP 服务已删除")
         })} /></Tooltip>

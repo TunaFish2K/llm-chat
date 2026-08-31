@@ -260,6 +260,22 @@ export function registerSettingsResourceTests() {
     expect(screen.getByText("正在加载 Agent")).toBeInTheDocument();
   });
 
+  it("keeps file inputs hidden and exposes named Agent export actions", async () => {
+    const agentWithAvatar = { ...agent, hasAvatar: true };
+    api.agent.mockResolvedValue(agentWithAvatar);
+    renderAgents({ agents: [agentWithAvatar] });
+
+    expect(await screen.findByRole("heading", { name: "默认助手" })).toBeInTheDocument();
+    const fileInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+    expect(fileInputs).toHaveLength(2);
+    expect(fileInputs.every((input) => input.hidden && input.classList.contains("settings-file-input"))).toBe(true);
+    expect(screen.getByRole("button", { name: "删除头像" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /导出/ }));
+    expect(await screen.findByRole("link", { name: "JSON 角色卡" })).toHaveAttribute("href", "/api/agents/agent1/export?format=json");
+    expect(screen.getByRole("link", { name: "PNG 角色卡" })).toHaveAttribute("href", "/api/agents/agent1/export?format=png");
+  });
+
   it("renders desktop connection details, retains secrets, and saves parsed headers", async () => {
     renderConnections();
     expect(screen.getByText("选择一个连接查看详情")).toBeInTheDocument();

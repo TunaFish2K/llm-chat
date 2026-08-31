@@ -441,6 +441,7 @@ export function App() {
   />;
   const contextSelector = <Select
     className="context-selector"
+    aria-label="上下文策略"
     value={selectedContextPolicy}
     options={CONTEXT_POLICIES}
     onChange={chooseContextPolicy}
@@ -538,11 +539,6 @@ export function App() {
   const activeTaskCount = tasks.filter((task) => ["queued", "starting", "running"].includes(task.status)).length;
   const headerMenu = current && {
     items: [
-      ...(compactSidebar ? [{
-        key: "background-tasks",
-        label: activeTaskCount ? `后台任务 ${activeTaskCount}` : "后台任务",
-        icon: <CodeOutlined />
-      }] : []),
       {
         key: "context",
         label: "上下文策略",
@@ -565,8 +561,6 @@ export function App() {
         await patchConversation(current, { executionOverrides: {} });
       } else if (key === "execution-settings") {
         setExecutionOpen(true);
-      } else if (key === "background-tasks") {
-        setTasksOpen(true);
       }
     }
   };
@@ -579,8 +573,10 @@ export function App() {
         {persistentSidebarOpen && <Sider width={260} theme={colorScheme}>{sidebar}</Sider>}
         <Layout className="chat-layout">
           <Header className={current ? "chat-header" : "chat-header chat-header-welcome"}>
-            {(!current || !compactSidebar) && <Badge className="task-badge" count={activeTaskCount} size="small">
-              <Button className="task-button" type="text" icon={<CodeOutlined />} aria-label="后台任务" onClick={() => setTasksOpen(true)} />
+            {!current && <Badge className="task-badge" count={activeTaskCount} overflowCount={99} size="small">
+              <Tooltip title="后台任务">
+                <Button className="task-button" type="text" icon={<CodeOutlined />} aria-label={activeTaskCount ? `后台任务，${activeTaskCount} 个运行中` : "后台任务"} onClick={() => setTasksOpen(true)} />
+              </Tooltip>
             </Badge>}
             {openSidebarButton && <Button
               className="sidebar-open-button"
@@ -614,6 +610,12 @@ export function App() {
                 ><Text strong ellipsis>{current.title}</Text></Button>}
               </div>
               {agentSelector}
+              <div className="header-spacer" aria-hidden="true" />
+              <Badge className="header-task-badge" count={activeTaskCount} overflowCount={99} size="small">
+                <Tooltip title="后台任务">
+                  <Button className="task-button" type="text" icon={<CodeOutlined />} aria-label={activeTaskCount ? `后台任务，${activeTaskCount} 个运行中` : "后台任务"} onClick={() => setTasksOpen(true)} />
+                </Tooltip>
+              </Badge>
               {headerMenu && <Dropdown menu={headerMenu} trigger={["click"]}>
                 <Button className="header-menu-button" type="text" icon={<MoreOutlined />} aria-label="会话操作" />
               </Dropdown>}
@@ -751,6 +753,7 @@ function AgentSelector({ value, agents, onChange }: {
 }) {
   return <Select
     className="agent-selector"
+    aria-label="选择 Agent"
     value={value}
     placeholder="选择 Agent"
     options={agents.map((agent) => ({
@@ -1266,15 +1269,15 @@ function TaskDrawer({ open, tasks, currentConversationId, onClose, onRefresh }: 
       .then(([output, detail]) => { setRaw(output); setEvents(detail.events); }).catch(() => {});
   }, [open, selected?.id, selected?.outputCursor, selected?.earliestCursor]);
   return <Drawer open={open} onClose={onClose} title={<Flex align="center" justify="space-between"><Text strong>后台任务</Text>
-    <Space><Text type="secondary">全部</Text><Switch size="small" checked={all} onChange={setAll} /></Space></Flex>} size="min(920px, 100%)">
-    <Flex className="task-drawer-layout" gap="middle" vertical={false}>
-      {visible.length ? <Listy className="task-list" items={visible} rowKey="id" virtual={false} itemRender={(task) => <button type="button"
+    <Space><Text type="secondary">全部会话</Text><Switch aria-label="显示全部会话的后台任务" size="small" checked={all} onChange={setAll} /></Space></Flex>} size="min(920px, 100%)">
+    {visible.length ? <Flex className="task-drawer-layout" gap="middle" vertical={false}>
+      <Listy className="task-list" items={visible} rowKey="id" virtual={false} itemRender={(task) => <button type="button"
         className={selected?.id === task.id ? "task-row task-row-selected" : "task-row"} onClick={() => setSelectedId(task.id)}>
         <Flex vertical gap={2}><Flex align="center" gap="small"><Tag color={task.overdue ? "warning" : taskStatusColor(task.status)}>{task.status}</Tag><Text ellipsis>{task.command}</Text></Flex>
           <Text type="secondary" ellipsis>{task.agentName} r{task.agentRevision} · {task.workspacePath}</Text></Flex>
-      </button>} /> : <div className="task-list list-empty">没有后台任务</div>}
+      </button>} />
       <div className="task-detail">
-        {selected ? <Flex vertical gap="small">
+        {selected && <Flex vertical gap="small">
           <Flex align="center" justify="space-between" gap="small"><Text strong ellipsis>{selected.command}</Text>
             {["queued", "starting", "running"].includes(selected.status) && <Button danger icon={<StopOutlined />} onClick={async () => {
               await api.stopBackgroundTask(selected.id, "用户从任务抽屉停止"); await onRefresh();
@@ -1284,9 +1287,13 @@ function TaskDrawer({ open, tasks, currentConversationId, onClose, onRefresh }: 
           {events.some((event) => event.reason) && <Collapse size="small" items={[{ key: "audit", label: "审计记录", children: <ul className="task-audit-list">
             {events.filter((event) => event.reason).map((event) => <li key={event.id}><Text>{event.type}：{event.reason}</Text></li>)}
           </ul> }]} />}
-        </Flex> : <Flex align="center" justify="center"><Text type="secondary">选择任务查看输出</Text></Flex>}
+        </Flex>}
       </div>
-    </Flex>
+    </Flex> : <Flex className="task-empty" vertical align="center" justify="center" gap="small">
+      <CodeOutlined className="task-empty-icon" />
+      <Text strong>没有后台任务</Text>
+      <Text type="secondary">Agent 启动任务后，会在这里显示状态和输出。</Text>
+    </Flex>}
   </Drawer>;
 }
 

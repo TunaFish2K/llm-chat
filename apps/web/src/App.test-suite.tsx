@@ -416,6 +416,7 @@ export function registerAppShellTests() {
     await boot("/c/a1b2");
     expect(document.querySelector(".composer-toolbar-mobile")).not.toBeInTheDocument();
     expect(document.querySelector(".context-selector")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "上下文策略" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /推理:medium/ })).toBeInTheDocument();
   });
 
@@ -435,14 +436,23 @@ export function registerAppShellTests() {
     });
   });
 
-  it("moves the current conversation task action into the compact menu", async () => {
+  it("keeps the current conversation task action in the compact header", async () => {
     state.screens = { md: false, lg: false };
     await boot("/c/a1b2");
 
+    const rail = document.querySelector<HTMLElement>(".header-rail")!;
+    expect(rail.children[0]).toHaveClass("conversation-title-slot");
+    expect(rail.children[1]).toHaveClass("agent-selector");
+    expect(rail.children[2]).toHaveClass("header-spacer");
+    expect(rail.children[3]).toHaveClass("header-task-badge");
+    expect(within(rail).getByRole("button", { name: "会话操作" })).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox", { name: "选择 Agent" })).not.toHaveLength(0);
     expect(document.querySelector(".task-badge")).not.toBeInTheDocument();
+    expect(document.querySelector(".header-task-badge")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "后台任务" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     expect(screen.getByRole("menu")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "后台任务" })).toBeInTheDocument();
+    expect(screen.getByRole("menu")).not.toHaveTextContent("后台任务");
   });
 
   it("keeps the standalone task action on compact welcome", async () => {
@@ -455,27 +465,27 @@ export function registerAppShellTests() {
     expect(screen.queryByRole("button", { name: "会话操作" })).not.toBeInTheDocument();
   });
 
-  it("keeps the standalone task action and omits the menu duplicate on desktop", async () => {
+  it("keeps the inline task action and omits the menu duplicate on desktop", async () => {
     await boot("/c/a1b2");
 
-    expect(document.querySelector(".task-badge")).toBeInTheDocument();
+    expect(document.querySelector(".task-badge")).not.toBeInTheDocument();
+    expect(document.querySelector(".header-task-badge")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
     expect(screen.getByRole("menu")).not.toHaveTextContent("后台任务");
     expect(screen.getAllByRole("button", { name: "后台任务" })).toHaveLength(1);
   });
 
-  it("opens the task drawer from the compact conversation menu", async () => {
+  it("opens the task drawer from the compact conversation header", async () => {
     state.screens = { md: false, lg: false };
     api.backgroundTasks.mockResolvedValue([backgroundTask()]);
     await boot("/c/a1b2");
 
-    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
-    fireEvent.click(await screen.findByRole("button", { name: "后台任务 1" }));
+    fireEvent.click(await screen.findByRole("button", { name: "后台任务，1 个运行中" }));
     expect(await screen.findAllByText("npm test")).not.toHaveLength(0);
     expect(document.querySelector(".ant-drawer")).toBeInTheDocument();
   });
 
-  it("counts only queued, starting, and running tasks in the compact menu", async () => {
+  it("counts only queued, starting, and running tasks in the compact header", async () => {
     state.screens = { md: false, lg: false };
     api.backgroundTasks.mockResolvedValue([
       backgroundTask({ id: "task-running", status: "running" }),
@@ -485,8 +495,18 @@ export function registerAppShellTests() {
     ]);
     await boot("/c/a1b2");
 
-    fireEvent.click(screen.getByRole("button", { name: "会话操作" }));
-    expect(await screen.findByRole("button", { name: "后台任务 3" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "后台任务，3 个运行中" })).toBeInTheDocument();
+    expect(document.querySelector(".header-task-badge")).toHaveTextContent("3");
+  });
+
+  it("uses one informative empty state in the task drawer", async () => {
+    await boot("/c/a1b2");
+
+    fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+    expect(screen.getByText("没有后台任务")).toBeInTheDocument();
+    expect(screen.getByText("Agent 启动任务后，会在这里显示状态和输出。")).toBeInTheDocument();
+    expect(screen.queryByText("选择任务查看输出")).not.toBeInTheDocument();
+    expect(screen.getByText("全部会话")).toBeInTheDocument();
   });
 
   it("keeps the boot surface when boot fails", async () => {
@@ -854,7 +874,7 @@ export function registerAppOperationTests() {
       api.stopBackgroundTask.mockResolvedValue({ ...running, status: "stopped" });
 
       await boot("/c/a1b2");
-      fireEvent.click(screen.getByRole("button", { name: "后台任务" }));
+      fireEvent.click(screen.getByRole("button", { name: /^后台任务/ }));
       expect(await screen.findByText("firstsecond")).toBeInTheDocument();
       expect(screen.getByText(/started by agent/)).toBeInTheDocument();
       expect(screen.getByText("failed command")).toBeInTheDocument();
