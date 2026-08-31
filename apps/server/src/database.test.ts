@@ -124,7 +124,10 @@ describe("Store", () => {
     const sqlite = new DatabaseSync(path);
     sqlite.exec(MIGRATION_V1);
     const now = Date.now();
-    sqlite.prepare("INSERT INTO connections VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+    sqlite.prepare(`
+      INSERT INTO connections (id, name, protocol, base_url, api_key, secret_headers_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
       .run("connection", "Legacy", "openai-chat", "https://example.test/v1", "", "{}", now, now);
     sqlite.prepare(`
       INSERT INTO models VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -142,7 +145,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -155,6 +158,66 @@ describe("Store", () => {
       modelKey: "legacy-model"
     });
     store.close();
+  });
+
+  it("migrates v13 balance storage and safely repairs Anthropic usage", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-v13-"));
+    dirs.push(dir);
+    const path = join(dir, "legacy.sqlite");
+    const store = new Store(path);
+    const anthropic = store.createConnection({
+      name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://anthropic.test/v1",
+      secretHeaders: {}
+    });
+    const openai = store.createConnection({
+      name: "OpenAI", protocol: "openai-chat", baseUrl: "https://openai.test/v1", secretHeaders: {}
+    });
+    const model = store.createModel({
+      connectionId: anthropic.id, modelKey: "claude", displayName: "Claude", contextWindow: 4096,
+      maxOutputTokens: 256,
+      capabilities: {
+        tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
+        adaptiveThinking: false, manualThinking: false
+      },
+      defaultSettings: { common: { maxOutputTokens: 256, stopSequences: [] }, protocol: {} },
+      enabled: true
+    });
+    store.updateSettings({ defaultModelId: model.id });
+    const started = store.startConversation({ text: "legacy", modelId: model.id });
+    store.sqlite.prepare("UPDATE generations SET usage_json = ? WHERE id = ?")
+      .run('{"inputTokens":7,"cachedInputTokens":5,"outputTokens":3,"totalTokens":10}', started.generation.generationId);
+    const anthropicSummary = store.saveSummary({
+      conversationId: started.conversation.id, throughOrdinal: 1, fingerprint: "anthropic", text: "summary",
+      connectionId: anthropic.id, modelKey: "claude",
+      usage: { inputTokens: 11, cachedInputTokens: 2, outputTokens: 4, totalTokens: 15 }
+    });
+    const openaiSummary = store.saveSummary({
+      conversationId: started.conversation.id, throughOrdinal: 2, fingerprint: "openai", text: "summary",
+      connectionId: openai.id, modelKey: "gpt",
+      usage: { inputTokens: 9, cachedInputTokens: 3, outputTokens: 1, totalTokens: 10 }
+    });
+    const incompleteSummary = store.saveSummary({
+      conversationId: started.conversation.id, throughOrdinal: 3, fingerprint: "incomplete", text: "summary",
+      connectionId: anthropic.id, modelKey: "claude", usage: { cachedInputTokens: 8, outputTokens: 2 }
+    });
+    store.sqlite.exec("ALTER TABLE connections DROP COLUMN balance_config_json; PRAGMA user_version = 13;");
+    store.close();
+
+    const migrated = new Store(path);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
+    expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
+      .map((column) => column.name)).toContain("balance_config_json");
+    expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
+    expect(migrated.getGeneration(started.generation.generationId)?.usage).toEqual({
+      inputTokens: 12, cachedInputTokens: 5, outputTokens: 3, totalTokens: 15
+    });
+    const usage = (id: string) => JSON.parse(String((migrated.sqlite.prepare(
+      "SELECT usage_json FROM context_summaries WHERE id = ?"
+    ).get(id) as { usage_json: string }).usage_json));
+    expect(usage(anthropicSummary)).toEqual({ inputTokens: 13, cachedInputTokens: 2, outputTokens: 4, totalTokens: 17 });
+    expect(usage(openaiSummary)).toEqual({ inputTokens: 9, cachedInputTokens: 3, outputTokens: 1, totalTokens: 10 });
+    expect(usage(incompleteSummary)).toEqual({ cachedInputTokens: 8, outputTokens: 2 });
+    migrated.close();
   });
 
   it("repairs the numeric tools flag produced by the v9 hot migration", () => {
@@ -297,19 +360,30 @@ describe("Store", () => {
     const store = createStore();
     const first = store.createConnection({
       name: "Zulu", protocol: "openai-chat", baseUrl: "https://old.test/v1",
-      apiKey: "old-key", secretHeaders: { Authorization: "secret", "X-Key": "value" }
+      apiKey: "old-key", secretHeaders: { Authorization: "secret", "X-Key": "value" },
+      balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
     });
     const second = store.createConnection({
       name: "alpha", protocol: "anthropic-messages", baseUrl: "https://anthropic.test/v1",
       secretHeaders: {}
     });
     expect(store.listConnections().map((item) => item.name)).toEqual(["alpha", "Zulu"]);
-    expect(first).toMatchObject({ hasApiKey: true, secretHeaderNames: ["Authorization", "X-Key"] });
+    expect(first).toMatchObject({
+      hasApiKey: true,
+      secretHeaderNames: ["Authorization", "X-Key"],
+      balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
+    });
+    expect(second.balanceConfig).toBeUndefined();
     expect(JSON.stringify(first)).not.toContain("old-key");
     expect(JSON.stringify(first)).not.toContain("\"Authorization\":\"secret\"");
     expect(store.updateConnection("missing", { name: "none" })).toBeUndefined();
-    expect(store.updateConnection(first.id, { name: "Updated", apiKey: "", secretHeaders: { New: "hidden" } }))
-      .toMatchObject({ name: "Updated", hasApiKey: false, secretHeaderNames: ["New"] });
+    expect(store.updateConnection(first.id, {
+      name: "Updated", apiKey: "", secretHeaders: { New: "hidden" },
+      balanceConfig: { enabled: false, apiPath: "/next", resultExpression: "credits" }
+    })).toMatchObject({
+      name: "Updated", hasApiKey: false, secretHeaderNames: ["New"],
+      balanceConfig: { enabled: false, apiPath: "/next", resultExpression: "credits" }
+    });
     expect(store.getConnection(first.id)).toMatchObject({ apiKey: "", secretHeaders: { New: "hidden" } });
 
     const settings = { common: { maxOutputTokens: 64, stopSequences: [] }, protocol: {} };
@@ -537,7 +611,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(14);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

@@ -80,12 +80,37 @@ export const modelCapabilitiesSchema = z.object({
 });
 export type ModelCapabilities = z.infer<typeof modelCapabilitiesSchema>;
 
+export const BALANCE_EXPRESSION_MAX_LENGTH = 512;
+
+const rootRelativeApiPathSchema = z.string().trim().min(1).max(2048).superRefine((value, context) => {
+  if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+    context.addIssue({ code: "custom", message: "apiPath must be a root-relative path" });
+    return;
+  }
+  try {
+    const url = new URL(value, "https://balance.invalid");
+    if (url.origin !== "https://balance.invalid") {
+      context.addIssue({ code: "custom", message: "apiPath must stay on the connection origin" });
+    }
+  } catch {
+    context.addIssue({ code: "custom", message: "apiPath must be a valid root-relative path" });
+  }
+});
+
+export const balanceConfigSchema = z.object({
+  enabled: z.boolean(),
+  apiPath: rootRelativeApiPathSchema,
+  resultExpression: z.string().trim().min(1).max(BALANCE_EXPRESSION_MAX_LENGTH)
+});
+export type BalanceConfig = z.infer<typeof balanceConfigSchema>;
+
 export const connectionInputSchema = z.object({
   name: z.string().trim().min(1).max(80),
   protocol: protocolSchema,
   baseUrl: z.string().url(),
   apiKey: z.string().max(4096).optional(),
-  secretHeaders: z.record(z.string(), z.string().max(4096)).default({})
+  secretHeaders: z.record(z.string(), z.string().max(4096)).default({}),
+  balanceConfig: balanceConfigSchema.optional()
 });
 export type ConnectionInput = z.infer<typeof connectionInputSchema>;
 
@@ -96,8 +121,16 @@ export interface ConnectionDto {
   baseUrl: string;
   hasApiKey: boolean;
   secretHeaderNames: string[];
+  balanceConfig?: BalanceConfig;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface ConnectionBalanceDto {
+  connectionId: string;
+  value: number;
+  fetchedAt: number;
+  cached: boolean;
 }
 
 export const modelInputSchema = z.object({

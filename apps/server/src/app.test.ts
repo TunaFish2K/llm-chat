@@ -31,6 +31,65 @@ describe("server API", () => {
     await app.close();
   });
 
+  it("fetches configured connection balances with cache, refresh, and sanitized errors", async () => {
+    const app = await testApp();
+    const missing = await app.inject({ method: "GET", url: "/api/connections/missing/balance" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ error: { code: "connection_not_found" } });
+
+    const created = (await app.inject({ method: "POST", url: "/api/connections", payload: {
+      name: "Balance", protocol: "openai-chat", baseUrl: "https://provider.test/v1",
+      apiKey: "route-secret", secretHeaders: { "X-Secret": "header-secret" }
+    } })).json();
+    const disabled = await app.inject({ method: "GET", url: `/api/connections/${created.id}/balance` });
+    expect(disabled.statusCode).toBe(400);
+    expect(disabled.json()).toMatchObject({ error: { code: "balance_disabled" } });
+
+    const configured = await app.inject({
+      method: "PATCH",
+      url: `/api/connections/${created.id}`,
+      payload: {
+        balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.cents / 100" }
+      }
+    });
+    expect(configured.statusCode).toBe(200);
+    expect(configured.body).not.toContain("route-secret");
+    let cents = 1250;
+    const fetchMock = vi.fn(async () => Response.json({ data: { cents } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await app.inject({ method: "GET", url: `/api/connections/${created.id}/balance` });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ connectionId: created.id, value: 12.5, cached: false, fetchedAt: expect.any(Number) });
+    cents = 2000;
+    const cached = await app.inject({ method: "GET", url: `/api/connections/${created.id}/balance` });
+    expect(cached.json()).toMatchObject({ value: 12.5, cached: true });
+    const refreshed = await app.inject({ method: "GET", url: `/api/connections/${created.id}/balance?refresh=true` });
+    expect(refreshed.json()).toMatchObject({ value: 20, cached: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await app.inject({
+      method: "PATCH", url: `/api/connections/${created.id}`,
+      payload: { balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.missing" } }
+    });
+    const invalid = await app.inject({ method: "GET", url: `/api/connections/${created.id}/balance` });
+    expect(invalid.statusCode).toBe(422);
+    expect(invalid.json()).toMatchObject({ error: { code: "balance_invalid_result" } });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      JSON.stringify({ error: { message: "route-secret header-secret" } }), { status: 401 }
+    )));
+    await app.inject({
+      method: "PATCH", url: `/api/connections/${created.id}`,
+      payload: { balanceConfig: { enabled: true, apiPath: "/account/failed", resultExpression: "data.cents" } }
+    });
+    const upstream = await app.inject({ method: "GET", url: `/api/connections/${created.id}/balance` });
+    expect(upstream.statusCode).toBe(502);
+    expect(upstream.json()).toMatchObject({ error: { code: "balance_upstream_error" } });
+    expect(upstream.body).not.toContain("route-secret");
+    expect(upstream.body).not.toContain("header-secret");
+  });
+
   it("runs a generation in the background and persists the final snapshot", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => sse([
       { choices: [{ delta: { reasoning_content: "思考" } }] },

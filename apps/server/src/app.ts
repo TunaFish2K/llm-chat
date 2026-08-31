@@ -32,6 +32,7 @@ import { PluginManager } from "./plugins";
 import { SkillManager } from "./skills";
 import { ToolRegistry } from "./tool-registry";
 import { canonicalWorkspace, createDirectory, listDirectories } from "./workspaces";
+import { BalanceError, BalanceService } from "./balance";
 
 export interface AppOptions {
   dataFile: string;
@@ -42,6 +43,7 @@ export interface AppOptions {
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? true, bodyLimit: 15 * 1024 * 1024 });
   const store = new Store(options.dataFile);
+  const balanceService = new BalanceService();
   const eventHub = new EventHub();
   const taskManager = new TaskManager(store, eventHub);
   const pluginManager = new PluginManager(store, eventHub);
@@ -64,6 +66,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (error instanceof StoreError) {
       const status = error.code.endsWith("not_found") ? 404 : 400;
       return reply.code(status).send({ error: { code: error.code, message: error.message } });
+    }
+    if (error instanceof BalanceError) {
+      return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message } });
     }
     if (error instanceof ProviderError) {
       return reply.code(error.status && error.status < 500 ? error.status : 502).send({
@@ -225,6 +230,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!store.deleteConnection(request.params.id)) throw new StoreError("connection_not_found", "连接不存在");
     return reply.code(204).send();
   });
+  app.get<{ Params: { id: string }; Querystring: { refresh?: string } }>(
+    "/api/connections/:id/balance",
+    async (request) => {
+      const connection = store.getConnection(request.params.id);
+      if (!connection) throw new StoreError("connection_not_found", "连接不存在");
+      const query = z.object({ refresh: z.enum(["true", "false", "1", "0"]).optional() }).parse(request.query);
+      return balanceService.get(connection, query.refresh === "true" || query.refresh === "1");
+    }
+  );
   app.post<{ Params: { id: string } }>("/api/connections/:id/test", async (request) => {
     const connection = store.getConnection(request.params.id);
     if (!connection) throw new StoreError("connection_not_found", "连接不存在");
