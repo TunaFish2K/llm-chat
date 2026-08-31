@@ -1,7 +1,11 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/plugin-host.ts"],
+  entry: {
+    index: "src/index.ts",
+    "plugin-host": "src/plugin-host.ts",
+    "auth-reset": "src/runtime/auth-reset.ts"
+  },
   format: ["esm"],
   platform: "node",
   target: "node24",

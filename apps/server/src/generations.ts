@@ -50,7 +50,10 @@ const defaultDependencies: GenerationRunnerDependencies = {
 
 export class GenerationRunner {
   private readonly jobs = new Map<string, LiveJob>();
+  private readonly jobPromises = new Set<Promise<void>>();
   private readonly dependencies: GenerationRunnerDependencies;
+  private closing = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(private readonly store: Store, dependencies: Partial<GenerationRunnerDependencies> = {}) {
     this.dependencies = { ...defaultDependencies, ...dependencies };
@@ -61,6 +64,7 @@ export class GenerationRunner {
   }
 
   start(generationId: string): void {
+    if (this.closing) throw new Error("Generation runner is closing");
     if (this.jobs.has(generationId)) return;
     const record = this.store.getGenerationRecord(generationId);
     if (!record) throw new Error("Generation not found");
@@ -72,13 +76,17 @@ export class GenerationRunner {
       latestBlocks: new Map()
     };
     this.jobs.set(generationId, job);
-    void this.run(generationId, job).finally(() => {
+    let jobPromise: Promise<void>;
+    jobPromise = this.run(generationId, job).finally(() => {
       // Terminal state has already been persisted and emitted by run();
       // late SSE subscribers recover from the database snapshot instead,
       // so the job can be removed immediately (busy checks must not see
       // finished generations as active).
       this.jobs.delete(generationId);
+      this.jobPromises.delete(jobPromise);
     });
+    this.jobPromises.add(jobPromise);
+    void jobPromise.catch(() => {});
   }
 
   subscribe(generationId: string, subscriber: Subscriber): () => void {
@@ -112,6 +120,14 @@ export class GenerationRunner {
 
   stopAll(): void {
     for (const job of this.jobs.values()) job.controller.abort();
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
+    this.stopAll();
+    this.closePromise = Promise.allSettled([...this.jobPromises]).then(() => {});
+    return this.closePromise;
   }
 
   private emit(generationId: string, event: GenerationEvent): void {

@@ -1,48 +1,118 @@
+import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildApp, type AuthMode } from "./app";
+import { buildApp } from "./app";
+import { parseRuntimeConfig } from "./runtime/config";
+import { acquireInstanceLock, type InstanceLock } from "./runtime/instance-lock";
 
-const host = process.env.LLM_CHAT_HOST ?? "127.0.0.1";
-const port = Number(process.env.LLM_CHAT_PORT ?? "3000");
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const dataDir = process.env.LLM_CHAT_DATA_DIR ?? resolve(projectRoot, "data");
-const authMode = (process.env.LLM_CHAT_AUTH_MODE ?? "webauthn") as AuthMode;
-const trustProxySetting = process.env.LLM_CHAT_TRUST_PROXY;
-const trustProxy = trustProxySetting === "true" ? true : trustProxySetting && trustProxySetting !== "false" ? trustProxySetting : false;
-const configuredPublicUrl = process.env.LLM_CHAT_PUBLIC_URL;
-const loopbackHosts = new Set(["127.0.0.1", "::1", "localhost"]);
 
-if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error("LLM_CHAT_PORT 必须是有效端口");
-}
-if (authMode !== "webauthn" && authMode !== "disabled") {
-  throw new Error("LLM_CHAT_AUTH_MODE 必须是 webauthn 或 disabled");
-}
-if (authMode === "disabled" && !["127.0.0.1", "::1", "localhost"].includes(host)) {
-  process.stderr.write("警告：认证已关闭且服务正在监听非回环地址。请勿将该地址暴露到不可信网络。\n");
-}
-if (authMode === "webauthn" && !loopbackHosts.has(host) && !configuredPublicUrl) {
-  throw new Error("监听非本机地址时必须设置 LLM_CHAT_PUBLIC_URL=https://你的域名");
+async function main(): Promise<void> {
+  const config = parseRuntimeConfig(process.env, projectRoot);
+  let app: Awaited<ReturnType<typeof buildApp>> | undefined;
+  let instanceLock: InstanceLock | undefined;
+  let ready = false;
+  let closing = false;
+  let shutdownPromise: Promise<void> | undefined;
+
+  const removeSignalListeners = () => {
+    process.off("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+  };
+  const shutdown = (reason: string, exitCode: number): Promise<void> => {
+    if (shutdownPromise) {
+      if (exitCode !== 0) process.exitCode = exitCode;
+      return shutdownPromise;
+    }
+    closing = true;
+    ready = false;
+    if (app) app.log.info({ reason, buildId: config.buildId }, "server shutdown started");
+    const deadline = setTimeout(() => {
+      process.stderr.write(`Shutdown exceeded ${config.shutdownTimeoutMs}ms; forcing exit.\n`);
+      process.exit(1);
+    }, config.shutdownTimeoutMs);
+    shutdownPromise = (async () => {
+      try {
+        if (app) {
+          try {
+            await app.runner.close();
+          } finally {
+            await app.close();
+          }
+        }
+      } finally {
+        try {
+          await instanceLock?.release();
+        } finally {
+          instanceLock = undefined;
+          process.exitCode = exitCode;
+          clearTimeout(deadline);
+          removeSignalListeners();
+        }
+      }
+    })();
+    return shutdownPromise;
+  };
+  const fatalShutdown = (error: Error) => {
+    process.stderr.write(`${error.message}\n`);
+    void shutdown("instance lock compromised", 1).catch((shutdownError) => {
+      process.stderr.write(`Fatal shutdown failed: ${formatError(shutdownError)}\n`);
+      process.exit(1);
+    });
+  };
+  function onSigterm(): void { void shutdown("SIGTERM", 0).catch(handleShutdownFailure); }
+  function onSigint(): void { void shutdown("SIGINT", 0).catch(handleShutdownFailure); }
+  function handleShutdownFailure(error: unknown): void {
+    process.stderr.write(`Shutdown failed: ${formatError(error)}\n`);
+    process.exitCode = 1;
+  }
+
+  try {
+    instanceLock = await acquireInstanceLock(config.dataDir, fatalShutdown);
+    if (config.serveWeb && !existsSync(resolve(config.webRoot, "index.html"))) {
+      throw new Error(`Web build artifact is missing: ${resolve(config.webRoot, "index.html")}. Run pnpm build before starting the server.`);
+    }
+    app = await buildApp({
+      dataFile: resolve(instanceLock.dataDir, "llm-chat.sqlite"),
+      authMode: config.authMode,
+      trustProxy: config.trustProxy,
+      publicUrl: config.publicUrl,
+      rpId: config.rpId,
+      serveWeb: config.serveWeb
+    });
+    app.get("/healthz", async () => ({ ok: true, buildId: config.buildId }));
+    app.get("/readyz", async (_request, reply) => {
+      if (!ready || closing) return reply.code(503).send({ ok: false, buildId: config.buildId });
+      try {
+        app!.store.sqlite.prepare("SELECT 1").get();
+        if (config.serveWeb && !existsSync(resolve(config.webRoot, "index.html"))) {
+          return reply.code(503).send({ ok: false, buildId: config.buildId });
+        }
+        return { ok: true, buildId: config.buildId };
+      } catch {
+        return reply.code(503).send({ ok: false, buildId: config.buildId });
+      }
+    });
+    process.once("SIGTERM", onSigterm);
+    process.once("SIGINT", onSigint);
+    const address = await app.listen({ host: config.host, port: config.port });
+    ready = true;
+    app.log.info({ address, buildId: config.buildId, serveWeb: config.serveWeb }, "server ready");
+  } catch (error) {
+    try {
+      await shutdown("startup failure", 1);
+    } catch (shutdownError) {
+      process.stderr.write(`Startup cleanup failed: ${formatError(shutdownError)}\n`);
+    }
+    throw error;
+  }
 }
 
-const publicUrl = configuredPublicUrl ?? `http://localhost:${port}`;
-const parsedPublicUrl = new URL(publicUrl);
-if (parsedPublicUrl.username || parsedPublicUrl.password || parsedPublicUrl.pathname !== "/" || parsedPublicUrl.search || parsedPublicUrl.hash) {
-  throw new Error("LLM_CHAT_PUBLIC_URL 只能包含协议、主机和端口");
-}
-if (authMode === "webauthn" && parsedPublicUrl.protocol !== "https:" && parsedPublicUrl.hostname !== "localhost") {
-  throw new Error("WebAuthn 远程访问必须配置 HTTPS；本机调试请使用 http://localhost");
-}
-const rpId = process.env.LLM_CHAT_RP_ID ?? parsedPublicUrl.hostname;
-if (parsedPublicUrl.hostname !== rpId && !parsedPublicUrl.hostname.endsWith(`.${rpId}`)) {
-  throw new Error("LLM_CHAT_RP_ID 必须等于公开地址域名或它的父域名");
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
-const app = await buildApp({
-  dataFile: resolve(dataDir, "llm-chat.sqlite"),
-  authMode,
-  trustProxy,
-  publicUrl,
-  rpId
+main().catch((error) => {
+  process.stderr.write(`Server startup failed: ${formatError(error)}\n`);
+  process.exitCode = 1;
 });
-await app.listen({ host, port });

@@ -19,10 +19,14 @@ interface RuntimeTask {
   pipe?: ChildProcessWithoutNullStreams;
   pty?: pty.IPty;
   writeChain: Promise<void>;
+  exitPromise: Promise<void>;
+  resolveExit: () => void;
+  termination?: Promise<void>;
   segmentStart: number;
   segmentSize: number;
   timeout?: NodeJS.Timeout;
-  stoppingStatus?: "stopped" | "timed_out";
+  stoppingStatus?: "stopped" | "timed_out" | "interrupted";
+  failure?: string;
 }
 
 export interface StartTaskInput {
@@ -39,10 +43,12 @@ export class TaskManager {
   private readonly runtime = new Map<string, RuntimeTask>();
   private readonly listeners = new Map<string, Set<() => void>>();
   private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(private readonly store: Store, private readonly events: EventHub) {}
 
   create(input: StartTaskInput): BackgroundTaskDto {
+    if (this.closed) throw new Error("Task manager is closing");
     if (!input.snapshot.workspacePath) throw new Error("Conversation has no workspace");
     const id = randomUUID();
     const now = Date.now();
@@ -147,7 +153,7 @@ export class TaskManager {
     const live = this.runtime.get(id);
     if (live) {
       live.stoppingStatus = "stopped";
-      this.kill(live);
+      void this.terminate(live);
     }
     return this.get(id)!;
   }
@@ -175,15 +181,22 @@ export class TaskManager {
     })).join("\n")}\n</background_tasks>`;
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.closePromise ??= this.closeInternal();
+    return this.closePromise;
+  }
+
+  private async closeInternal(): Promise<void> {
     this.closed = true;
     const running = [...this.runtime.entries()];
-    for (const [, live] of running) this.kill(live);
-    await Promise.all(running.map(([, live]) => live.writeChain));
-    for (const [id] of running) {
-      if (!this.runtime.has(id)) continue;
+    for (const [id, live] of running) {
       this.event(id, "warning", "服务关闭", {});
-      this.finish(id, "interrupted", null, "服务关闭");
+      live.stoppingStatus = "interrupted";
+    }
+    await Promise.all(running.map(([, live]) => this.terminate(live)));
+    for (const task of this.list({ nonterminal: true })) {
+      this.event(task.id, "warning", "服务关闭", {});
+      this.finish(task.id, "interrupted", null, "服务关闭");
     }
   }
 
@@ -213,7 +226,15 @@ export class TaskManager {
     this.store.sqlite.prepare("UPDATE background_tasks SET status = 'starting' WHERE id = ? AND status = 'queued'").run(id);
     this.publish(id);
     await mkdir(this.logDir(id), { recursive: true, mode: 0o700 });
-    const live: RuntimeTask = { writeChain: Promise.resolve(), segmentStart: 0, segmentSize: 0 };
+    if (this.closed) {
+      this.finish(id, "interrupted", null, "服务关闭");
+      return;
+    }
+    let resolveExit!: () => void;
+    const exitPromise = new Promise<void>((resolvePromise) => { resolveExit = resolvePromise; });
+    const live: RuntimeTask = {
+      writeChain: Promise.resolve(), exitPromise, resolveExit, segmentStart: 0, segmentSize: 0
+    };
     this.runtime.set(id, live);
     const shell = process.env.SHELL || "/bin/sh";
     try {
@@ -242,11 +263,17 @@ export class TaskManager {
         live.timeout = setTimeout(() => {
           live.stoppingStatus = "timed_out";
           this.event(id, "warning", "达到硬超时", { hardTimeoutMs: refreshed.hardTimeoutMs });
-          this.kill(live);
+          void this.terminate(live);
         }, refreshed.hardTimeoutMs);
       }
     } catch (error) {
-      this.finish(id, "failed", null, error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (live.pipe || live.pty) {
+        live.failure = message;
+        void this.terminate(live);
+      } else {
+        this.finish(id, "failed", null, message);
+      }
     }
   }
 
@@ -260,7 +287,6 @@ export class TaskManager {
   }
 
   private append(id: string, data: Buffer): void {
-    if (this.closed) return;
     const live = this.runtime.get(id);
     if (!live || !data.length) return;
     live.writeChain = live.writeChain.then(async () => {
@@ -281,7 +307,10 @@ export class TaskManager {
       this.event(id, "output", null, { cursor });
       this.events.emit({ type: "task-output", taskId: id, cursor });
       this.notify(id);
-    }).catch((error) => this.finish(id, "failed", null, error instanceof Error ? error.message : String(error)));
+    }).catch((error) => {
+      live.failure = error instanceof Error ? error.message : String(error);
+      void this.terminate(live);
+    });
   }
 
   private async rotate(id: string): Promise<void> {
@@ -305,8 +334,11 @@ export class TaskManager {
     const live = this.runtime.get(id);
     if (!live) return;
     await live.writeChain;
-    const status = live.stoppingStatus ?? (exitCode === 0 ? "completed" : "failed");
-    this.finish(id, status, exitCode, status === "failed" ? `进程退出码 ${exitCode ?? "unknown"}` : null);
+    const status = live.stoppingStatus ?? (live.failure || exitCode !== 0 ? "failed" : "completed");
+    const error = status === "failed"
+      ? live.failure ?? `进程退出码 ${exitCode ?? "unknown"}`
+      : status === "interrupted" ? "服务关闭" : null;
+    this.finish(id, status, exitCode, error);
   }
 
   private finish(id: string, status: BackgroundTaskDto["status"], exitCode: number | null, error: string | null): void {
@@ -320,19 +352,34 @@ export class TaskManager {
     this.event(id, "state", null, { status, exitCode, error });
     this.publish(id);
     this.notify(id);
+    live?.resolveExit();
     const task = this.get(id);
     if (task) void this.drain(task.agentId);
   }
 
-  private kill(live: RuntimeTask): void {
+  private terminate(live: RuntimeTask): Promise<void> {
+    live.termination ??= this.terminateProcess(live);
+    return live.termination;
+  }
+
+  private async terminateProcess(live: RuntimeTask): Promise<void> {
+    this.signal(live, "SIGTERM");
+    if (!await exitsWithin(live.exitPromise, 2_000)) this.signal(live, "SIGKILL");
+    await live.exitPromise;
+  }
+
+  private signal(live: RuntimeTask, signal: "SIGTERM" | "SIGKILL"): void {
     const pid = live.pty?.pid ?? live.pipe?.pid;
     if (pid && process.platform !== "win32") {
-      try { process.kill(-pid, "SIGTERM"); } catch { live.pty?.kill(); live.pipe?.kill(); }
-      setTimeout(() => { try { process.kill(-pid, "SIGKILL"); } catch {} }, 2_000).unref();
-    } else {
-      live.pty?.kill();
-      live.pipe?.kill();
+      try {
+        process.kill(-pid, signal);
+        return;
+      } catch {}
     }
+    try {
+      if (live.pty) live.pty.kill(signal);
+      else live.pipe?.kill(signal);
+    } catch {}
   }
 
   private async readBytes(id: string, cursor: number, limit: number): Promise<{ bytes: Uint8Array; cursor: number }> {
@@ -385,6 +432,18 @@ export class TaskManager {
 
   private notify(id: string): void { for (const listener of this.listeners.get(id) ?? []) listener(); }
   private logDir(id: string): string { return resolve(this.store.dataDir, "tasks", id); }
+}
+
+async function exitsWithin(exitPromise: Promise<void>, timeoutMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      exitPromise.then(() => true),
+      new Promise<false>((resolvePromise) => { timer = setTimeout(() => resolvePromise(false), timeoutMs); })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function taskDto(row: Row): BackgroundTaskDto {
