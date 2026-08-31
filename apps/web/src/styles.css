@@ -139,17 +139,27 @@ body { overflow: hidden; overscroll-behavior: none; }
 .agent-tool-approval { width: 116px; flex: 0 0 116px; }
 .skill-permission-preview { padding-block: 4px; }
 .extension-pane { min-width: 0; max-width: 720px; }
+.extension-list, .directory-list, .task-list { width: 100%; }
+.extension-row, .directory-row, .task-row { border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+.extension-row { padding: 12px 8px; }
+.extension-row-main { min-width: 0; flex: 1; }
+.extension-row-actions { flex: 0 0 auto; }
+.list-empty { min-height: 96px; display: flex; align-items: center; justify-content: center; color: rgba(127, 127, 127, 0.9); }
 .workspace-browser { min-height: 440px; }
 .directory-list { min-height: 300px; max-height: 46vh; overflow-y: auto; }
-.directory-row { cursor: pointer; }
+.directory-row { width: 100%; padding: 10px 12px; border: 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); background: transparent; color: inherit; text-align: start; cursor: pointer; }
 .directory-row:hover { background: color-mix(in srgb, currentColor 5%, transparent); }
 .task-drawer-layout { height: 100%; min-height: 0; }
 .task-list { flex: 0 0 330px; min-width: 0; overflow-y: auto; }
-.task-row { cursor: pointer; padding-inline: 8px !important; }
+.task-row { width: 100%; padding: 10px 8px; border: 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); background: transparent; color: inherit; text-align: start; cursor: pointer; }
 .task-row-selected { background: color-mix(in srgb, currentColor 7%, transparent); }
 .task-detail { flex: 1; min-width: 0; overflow-y: auto; }
 .task-output { min-height: 320px; max-height: 65vh; margin: 0; padding: 12px; overflow: auto; border-radius: 6px; background: #101214; color: #e7e7e7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-terminal { width: 100%; height: min(60vh, 520px); padding: 8px; background: #101214; }
+.code-block { margin-block: 12px; overflow: hidden; border: 1px solid color-mix(in srgb, currentColor 14%, transparent); border-radius: 6px; }
+.code-block-header { min-height: 36px; padding-inline: 12px 6px; display: flex; align-items: center; justify-content: space-between; background: color-mix(in srgb, currentColor 6%, transparent); font-size: 12px; }
+.code-block-body { overflow-x: auto; }
+.code-block-body pre { padding: 12px; overflow: visible !important; }
 
 @media (min-width: 992px) {
   .chat-header-welcome { position: absolute; inset: 0 0 auto; z-index: 1; width: 100%; }

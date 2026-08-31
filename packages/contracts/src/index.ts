@@ -562,13 +562,22 @@ export type AppEvent =
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
   | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string };
 
-export const mcpServerInputSchema = z.object({
+const mcpServerFields = {
   name: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9]+$/, "名称只能包含英文字母和数字"),
   url: z.string().url(),
-  headers: z.record(z.string(), z.string().max(4096)).default({}),
-  enabled: z.boolean().default(true)
+  headers: z.record(z.string(), z.string().max(4096)),
+  enabled: z.boolean()
+};
+
+export const mcpServerInputSchema = z.object({
+  ...mcpServerFields,
+  headers: mcpServerFields.headers.default({}),
+  enabled: mcpServerFields.enabled.default(true)
 });
 export type McpServerInput = z.infer<typeof mcpServerInputSchema>;
+
+export const mcpServerPatchSchema = z.object(mcpServerFields).partial();
+export type McpServerPatch = z.infer<typeof mcpServerPatchSchema>;
 
 export interface McpServerDto {
   id: string;

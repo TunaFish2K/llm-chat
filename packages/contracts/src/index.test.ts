@@ -10,6 +10,7 @@ import {
   generationSettingsSchema,
   generationStatusSchema,
   mcpServerInputSchema,
+  mcpServerPatchSchema,
   modelCapabilitiesSchema,
   modelInputSchema,
   modelSettingsSchema,
@@ -147,10 +148,14 @@ describe("contract schemas", () => {
     expect(toolSettingsInputSchema.safeParse({ enabled: { tool: "yes" } }).success).toBe(false);
     expect(mcpServerInputSchema.parse({ name: "Server1", url: "https://mcp.test" }))
       .toEqual({ name: "Server1", url: "https://mcp.test", headers: {}, enabled: true });
+    expect(mcpServerPatchSchema.parse({ name: "Server2" })).toEqual({ name: "Server2" });
+    expect(mcpServerPatchSchema.parse({ enabled: false })).toEqual({ enabled: false });
+    expect(mcpServerPatchSchema.parse({ headers: {} })).toEqual({ headers: {} });
     for (const input of [
       { name: "with-dash", url: "https://mcp.test" }, { name: "Server", url: "bad" },
       { name: "Server", url: "https://mcp.test", headers: { Authorization: "x".repeat(4097) } }
     ]) expect(mcpServerInputSchema.safeParse(input).success).toBe(false);
+    expect(mcpServerPatchSchema.safeParse({ name: "with-dash" }).success).toBe(false);
     expect(apiErrorSchema.parse({ error: { code: "bad", message: "failed", details: { id: 1 } } }))
       .toMatchObject({ error: { code: "bad", message: "failed" } });
     expect(apiErrorSchema.safeParse({ error: { code: "bad" } }).success).toBe(false);

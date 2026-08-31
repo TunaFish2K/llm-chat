@@ -124,7 +124,7 @@ describe("Markdown code", () => {
     const { container } = render(<Markdown colorScheme="light">{fenced("js extra-parameter", source)}</Markdown>);
 
     expect(screen.getByText("javascript")).toBeInTheDocument();
-    const copyAction = screen.getByRole("button", { name: "Copy" });
+    const copyAction = screen.getByRole("button", { name: "复制代码" });
     expect(copyAction).toBeInTheDocument();
 
     await user.click(copyAction);

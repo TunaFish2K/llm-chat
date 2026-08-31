@@ -24,12 +24,6 @@ const models = [
   model("m3", "c2", "Sonnet", "claude-sonnet")
 ];
 
-beforeAll(() => vi.stubGlobal("ResizeObserver", class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}));
-
 function renderSelector(overrides: Partial<React.ComponentProps<typeof ModelSelector>> = {}) {
   const props = {
     value: "m1",

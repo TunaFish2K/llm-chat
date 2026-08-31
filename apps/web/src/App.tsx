@@ -47,7 +47,7 @@ import {
   Input,
   InputNumber,
   Layout,
-  List,
+  Listy,
   Modal,
   Popover,
   Select,
@@ -58,13 +58,10 @@ import {
   Tooltip,
   Typography
 } from "antd";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, appEvents, generationEvents } from "./api";
-import { Markdown } from "./Markdown";
 import { ModelSelector, isModelUsable, protocolShortName } from "./ModelSelector";
 import { ReasoningEffortControl } from "./ReasoningEffortControl";
-import { SettingsPanel } from "./SettingsPanel";
-import { TaskTerminal } from "./TaskTerminal";
 import { applyGenerationEvent, blockText, streamEnded } from "./generationState";
 import { AppTheme, resolveColorScheme, type ColorScheme } from "./theme";
 import {
@@ -76,6 +73,10 @@ import {
 
 const { Content, Header, Sider } = Layout;
 const { Text } = Typography;
+
+const Markdown = lazy(() => import("./Markdown").then((module) => ({ default: module.Markdown })));
+const SettingsPanel = lazy(() => import("./SettingsPanel").then((module) => ({ default: module.SettingsPanel })));
+const TaskTerminal = lazy(() => import("./TaskTerminal").then((module) => ({ default: module.TaskTerminal })));
 
 interface BootData {
   settings: AppSettings;
@@ -641,9 +642,9 @@ export function App() {
                       />}
                   </div>
                   <div className="composer-rail">
-                    {current && !selectedAgent && <Alert type="error" showIcon message="当前 Agent 已删除，请重新选择" />}
-                    {current && !selectedModelAvailable && <Alert type="error" showIcon message="当前模型已失效或不可用，请重新选择" />}
-                    {error && <Alert type="error" showIcon closable message={error} onClose={() => setError("")} />}
+                    {current && !selectedAgent && <Alert type="error" showIcon title="当前 Agent 已删除，请重新选择" />}
+                    {current && !selectedModelAvailable && <Alert type="error" showIcon title="当前模型已失效或不可用，请重新选择" />}
+                    {error && <Alert type="error" showIcon closable title={error} onClose={() => setError("")} />}
                     {pendingApprovals.length > 0 ? <ApprovalPanel
                       pendingApprovals={pendingApprovals}
                       loading={Boolean(approvalActionId)}
@@ -669,7 +670,7 @@ export function App() {
       <Drawer
         title="llm-chat"
         placement="left"
-        width="min(320px, 88vw)"
+        size="min(320px, 88vw)"
         open={sidebarDrawerOpen}
         onClose={() => setSidebarDrawerOpen(false)}
         styles={{
@@ -679,18 +680,18 @@ export function App() {
       >
         {sidebar}
       </Drawer>
-      <SettingsPanel
-        open={settingsOpen}
-        settings={boot.settings}
-        agents={boot.agents}
-        connections={boot.connections}
-        models={boot.models}
-        uiPreferences={uiPreferences}
-        onUiPreferences={updateUiPreferences}
-        onClose={() => setSettingsOpen(false)}
-        onRefresh={refreshBoot}
-        onSettings={(settings) => setBoot({ ...boot, settings })}
-      />
+      {settingsOpen && <Suspense fallback={<Spin fullscreen />}><SettingsPanel
+          open
+          settings={boot.settings}
+          agents={boot.agents}
+          connections={boot.connections}
+          models={boot.models}
+          uiPreferences={uiPreferences}
+          onUiPreferences={updateUiPreferences}
+          onClose={() => setSettingsOpen(false)}
+          onRefresh={refreshBoot}
+          onSettings={(settings) => setBoot({ ...boot, settings })}
+        /></Suspense>}
       <Modal
         open={Boolean(deleteTarget)}
         title="删除会话"
@@ -862,7 +863,7 @@ function WelcomeComposer({ error, draft, ready, mobile, agent, userName, agentSe
           {effortControl}
           {contextSelector}
         </Flex>}
-        {error && <Alert type="error" showIcon closable message={error} onClose={onDismissError} />}
+        {error && <Alert type="error" showIcon closable title={error} onClose={onDismissError} />}
         <Sender
           value={draft}
           disabled={!ready}
@@ -1060,15 +1061,15 @@ function AssistantContent({ generation, active, colorScheme, collapsePolicy }: {
       expanded={expanded}
       onExpand={setExpanded}
     >
-      <Markdown colorScheme={colorScheme} streaming={active}>{reasoning}</Markdown>
+      <Suspense fallback={<div className="markdown-fallback">{reasoning}</div>}><Markdown colorScheme={colorScheme} streaming={active}>{reasoning}</Markdown></Suspense>
     </Think>}
     {generation.toolCalls.map((toolCall) => <ToolCallView
       key={toolCall.id}
       toolCall={toolCall}
     />)}
-    {text && <Markdown colorScheme={colorScheme} streaming={active}>{text}</Markdown>}
-    {unsupported.map((block) => <Alert key={block.id} type="warning" showIcon message={block.content} />)}
-    {generation.error && <Alert type="error" showIcon message={generation.error.message} />}
+    {text && <Suspense fallback={<div className="markdown-fallback">{text}</div>}><Markdown colorScheme={colorScheme} streaming={active}>{text}</Markdown></Suspense>}
+    {unsupported.map((block) => <Alert key={block.id} type="warning" showIcon title={block.content} />)}
+    {generation.error && <Alert type="error" showIcon title={generation.error.message} />}
   </Flex>;
 }
 
@@ -1202,11 +1203,14 @@ function WorkspaceBrowser({ open, value, onClose, onSelect }: {
       <Input.Search value={path} onChange={(event) => setPath(event.target.value)} onSearch={(next) => void load(next)} enterButton="打开" />
       <Flex align="center" justify="space-between" gap="small"><Breadcrumb items={breadcrumb} />
         <Checkbox checked={showHidden} onChange={(event) => setShowHidden(event.target.checked)}>隐藏目录</Checkbox></Flex>
-      {error && <Alert type="error" showIcon message={error} />}
-      <List className="directory-list" bordered dataSource={(listing?.entries ?? []).filter((entry) => showHidden || !entry.hidden)}
-        locale={{ emptyText: "没有子目录" }} renderItem={(entry) => <List.Item onClick={() => void load(entry.path)} className="directory-row">
-          <Space><FolderOpenOutlined /><Text>{entry.name}</Text></Space>
-        </List.Item>} />
+      {error && <Alert type="error" showIcon title={error} />}
+      {(() => {
+        const entries = (listing?.entries ?? []).filter((entry) => showHidden || !entry.hidden);
+        return entries.length ? <Listy className="directory-list" items={entries} rowKey="path" virtual={false}
+          itemRender={(entry) => <button type="button" onClick={() => void load(entry.path)} className="directory-row">
+            <Space><FolderOpenOutlined /><Text>{entry.name}</Text></Space>
+          </button>} /> : <div className="directory-list list-empty">没有子目录</div>;
+      })()}
       <Space.Compact block><Input value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="新目录名称" />
         <Button icon={<FolderOpenOutlined />} disabled={!newName.trim()} onClick={async () => {
           try { await api.createDirectory(`${listing?.path ?? path}/${newName.trim()}`); setNewName(""); await load(listing?.path ?? path); }
@@ -1235,12 +1239,13 @@ function TaskDrawer({ open, tasks, currentConversationId, onClose, onRefresh }: 
       .then(([output, detail]) => { setRaw(output); setEvents(detail.events); }).catch(() => {});
   }, [open, selected?.id, selected?.outputCursor, selected?.earliestCursor]);
   return <Drawer open={open} onClose={onClose} title={<Flex align="center" justify="space-between"><Text strong>后台任务</Text>
-    <Space><Text type="secondary">全部</Text><Switch size="small" checked={all} onChange={setAll} /></Space></Flex>} width="min(920px, 100%)">
+    <Space><Text type="secondary">全部</Text><Switch size="small" checked={all} onChange={setAll} /></Space></Flex>} size="min(920px, 100%)">
     <Flex className="task-drawer-layout" gap="middle" vertical={false}>
-      <List className="task-list" dataSource={visible} locale={{ emptyText: "没有后台任务" }} renderItem={(task) => <List.Item className={selected?.id === task.id ? "task-row task-row-selected" : "task-row"} onClick={() => setSelectedId(task.id)}>
-        <List.Item.Meta title={<Flex align="center" gap="small"><Tag color={task.overdue ? "warning" : taskStatusColor(task.status)}>{task.status}</Tag><Text ellipsis>{task.command}</Text></Flex>}
-          description={<Text type="secondary" ellipsis>{task.agentName} r{task.agentRevision} · {task.workspacePath}</Text>} />
-      </List.Item>} />
+      {visible.length ? <Listy className="task-list" items={visible} rowKey="id" virtual={false} itemRender={(task) => <button type="button"
+        className={selected?.id === task.id ? "task-row task-row-selected" : "task-row"} onClick={() => setSelectedId(task.id)}>
+        <Flex vertical gap={2}><Flex align="center" gap="small"><Tag color={task.overdue ? "warning" : taskStatusColor(task.status)}>{task.status}</Tag><Text ellipsis>{task.command}</Text></Flex>
+          <Text type="secondary" ellipsis>{task.agentName} r{task.agentRevision} · {task.workspacePath}</Text></Flex>
+      </button>} /> : <div className="task-list list-empty">没有后台任务</div>}
       <div className="task-detail">
         {selected ? <Flex vertical gap="small">
           <Flex align="center" justify="space-between" gap="small"><Text strong ellipsis>{selected.command}</Text>
@@ -1248,8 +1253,10 @@ function TaskDrawer({ open, tasks, currentConversationId, onClose, onRefresh }: 
               await api.stopBackgroundTask(selected.id, "用户从任务抽屉停止"); await onRefresh();
             }}>停止</Button>}</Flex>
           <Text type="secondary">{selected.mode.toUpperCase()} · {selected.workspacePath}{selected.overdue ? " · 已超过预期时长" : ""}</Text>
-          {selected.mode === "pty" ? <TaskTerminal raw={raw} /> : <pre className="task-output">{raw || "暂无输出"}</pre>}
-          {events.some((event) => event.reason) && <Collapse size="small" items={[{ key: "audit", label: "审计记录", children: <List size="small" dataSource={events.filter((event) => event.reason)} renderItem={(event) => <List.Item><Text>{event.type}：{event.reason}</Text></List.Item>} /> }]} />}
+          {selected.mode === "pty" ? <Suspense fallback={<pre className="task-output">{raw || "暂无输出"}</pre>}><TaskTerminal raw={raw} /></Suspense> : <pre className="task-output">{raw || "暂无输出"}</pre>}
+          {events.some((event) => event.reason) && <Collapse size="small" items={[{ key: "audit", label: "审计记录", children: <ul className="task-audit-list">
+            {events.filter((event) => event.reason).map((event) => <li key={event.id}><Text>{event.type}：{event.reason}</Text></li>)}
+          </ul> }]} />}
         </Flex> : <Flex align="center" justify="center"><Text type="secondary">选择任务查看输出</Text></Flex>}
       </div>
     </Flex>

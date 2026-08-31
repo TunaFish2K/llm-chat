@@ -12,10 +12,11 @@
     "build": "pnpm --filter @llm-chat/web build && pnpm --filter @llm-chat/server build",
     "start": "pnpm --filter @llm-chat/server start",
     "test": "vitest run",
+    "test:web:budget": "node scripts/test-web-budget.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm test:coverage && pnpm build"
+    "check": "pnpm typecheck && pnpm test:web:budget && pnpm test:coverage && pnpm build"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",

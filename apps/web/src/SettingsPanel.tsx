@@ -29,7 +29,7 @@ import {
   Grid,
   Input,
   InputNumber,
-  List,
+  Listy,
   Menu,
   Select,
   Space,
@@ -88,7 +88,7 @@ export function SettingsPanel(props: Props) {
   };
   return <Drawer
     open={props.open}
-    width={screens.lg ? 960 : "100%"}
+    size={screens.lg ? 960 : "100%"}
     title={mobile
       ? <Title level={4}>设置</Title>
       : <Flex vertical><Title level={4}>设置</Title><Text type="secondary">Agent、模型、连接、工具与界面</Text></Flex>}
@@ -112,7 +112,7 @@ export function SettingsPanel(props: Props) {
   </Drawer>;
 }
 
-function Agents({ agents, models, settings, busy, mobile, run }: {
+export function Agents({ agents, models, settings, busy, mobile, run }: {
   agents: AgentSummaryDto[];
   models: ModelDto[];
   settings: AppSettings;
@@ -328,7 +328,7 @@ function AgentEditor({ value, fallback, models, busy, run, onDone }: {
   </>;
 }
 
-interface AgentForm {
+export interface AgentForm {
   name: string; description: string; personality: string; scenario: string; firstMessage: string;
   alternateGreetings: string; systemPrompt: string; postHistoryInstructions: string; messageExample: string;
   characterBook: string; creatorNotes: string; creator: string; characterVersion: string; tags: string; extensions: string;
@@ -361,7 +361,7 @@ function newAgent(fallback?: AgentSummaryDto): AgentDto {
   };
 }
 
-function agentForm(agent: AgentDto, catalog: ToolCatalogItemDto[]): AgentForm {
+export function agentForm(agent: AgentDto, catalog: ToolCatalogItemDto[]): AgentForm {
   const data = agent.card.data;
   const policy = agent.execution.tools;
   return {
@@ -387,7 +387,7 @@ function agentForm(agent: AgentDto, catalog: ToolCatalogItemDto[]): AgentForm {
   };
 }
 
-function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatalogItemDto[]): AgentInput {
+export function agentInput(values: AgentForm, base: AgentDto, catalog: ToolCatalogItemDto[]): AgentInput {
   const common = {
     ...(values.temperature !== undefined && values.temperature !== null ? { temperature: values.temperature } : {}),
     ...(values.topP !== undefined && values.topP !== null ? { topP: values.topP } : {}),
@@ -449,7 +449,7 @@ async function fileBase64(file: File): Promise<string> {
 }
 
 function Extensions() {
-  return <Tabs tabPosition="left" items={[
+  return <Tabs tabPlacement="start" items={[
     { key: "plugins", label: "Plugins", children: <PluginSettings /> },
     { key: "skills", label: "Skills", children: <SkillSettings /> },
     { key: "mcp", label: "MCP", children: <McpSettings /> },
@@ -457,7 +457,7 @@ function Extensions() {
   ]} />;
 }
 
-function ToolServices() {
+export function ToolServices() {
   const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
   const [saving, setSaving] = useState(false);
   const { message } = AntApp.useApp();
@@ -498,7 +498,7 @@ function ToolServices() {
   </Flex>;
 }
 
-function PluginSettings() {
+export function PluginSettings() {
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [sourcePath, setSourcePath] = useState("");
   const [busy, setBusy] = useState(false);
@@ -514,12 +514,20 @@ function PluginSettings() {
   return <Flex vertical gap="middle" className="extension-pane">
     <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="插件源目录绝对路径" />
       <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void act(() => api.installPlugin(sourcePath.trim()), "Plugin 已安装")}>安装</Button></Space.Compact>
-    <List locale={{ emptyText: "尚未安装 Plugin" }} dataSource={plugins} renderItem={(plugin) => <List.Item actions={[
-      <Tooltip key="reload" title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={() => void act(() => api.reloadPlugin(plugin.id), "Plugin 已重新加载")} /></Tooltip>,
-      <Switch key="state" checked={plugin.state !== "unloaded"} disabled={busy} onChange={(loaded) => void act(() => loaded ? api.reloadPlugin(plugin.id) : api.unloadPlugin(plugin.id), loaded ? "Plugin 已加载" : "Plugin 已卸载")} />,
-      <Tooltip key="delete" title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({ title: "删除 Plugin", content: plugin.manifest.name, okButtonProps: { danger: true }, onOk: () => act(() => api.deletePlugin(plugin.id), "Plugin 已删除") })} /></Tooltip>
-    ]}><List.Item.Meta avatar={<ApiOutlined />} title={<Space>{plugin.manifest.name}<Tag>{plugin.manifest.version}</Tag><Tag color={plugin.state === "error" ? "error" : plugin.state === "pending-reload" ? "warning" : "default"}>{plugin.state}</Tag></Space>}
-      description={<Flex vertical><Text type="secondary">{plugin.manifest.description || plugin.id} · {plugin.revision}</Text>{plugin.error && <Text type="danger">{plugin.error}</Text>}<PluginConfig plugin={plugin} onSave={(config, secrets) => act(() => api.configurePlugin(plugin.id, config, secrets), "配置已保存，请重新加载")} /></Flex>} /></List.Item>} />
+    {plugins.length ? <Listy className="extension-list" items={plugins} rowKey="id" virtual={false} itemRender={(plugin) => <Flex className="extension-row" align="flex-start" gap="middle">
+      <ApiOutlined />
+      <Flex vertical className="extension-row-main">
+        <Space wrap>{plugin.manifest.name}<Tag>{plugin.manifest.version}</Tag><Tag color={plugin.state === "error" ? "error" : plugin.state === "pending-reload" ? "warning" : "default"}>{plugin.state}</Tag></Space>
+        <Text type="secondary">{plugin.manifest.description || plugin.id} · {plugin.revision}</Text>
+        {plugin.error && <Text type="danger">{plugin.error}</Text>}
+        <PluginConfig plugin={plugin} onSave={(config, secrets) => act(() => api.configurePlugin(plugin.id, config, secrets), "配置已保存，请重新加载")} />
+      </Flex>
+      <Space className="extension-row-actions">
+        <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={() => void act(() => api.reloadPlugin(plugin.id), "Plugin 已重新加载")} /></Tooltip>
+        <Switch checked={plugin.state !== "unloaded"} disabled={busy} onChange={(loaded) => void act(() => loaded ? api.reloadPlugin(plugin.id) : api.unloadPlugin(plugin.id), loaded ? "Plugin 已加载" : "Plugin 已卸载")} />
+        <Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({ title: "删除 Plugin", content: plugin.manifest.name, okButtonProps: { danger: true }, onOk: () => act(() => api.deletePlugin(plugin.id), "Plugin 已删除") })} /></Tooltip>
+      </Space>
+    </Flex>} /> : <div className="list-empty">尚未安装 Plugin</div>}
   </Flex>;
 }
 
@@ -534,7 +542,7 @@ function PluginConfig({ plugin, onSave }: { plugin: PluginDto; onSave: (config: 
   </Flex> }]} />;
 }
 
-function SkillSettings() {
+export function SkillSettings() {
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [sourcePath, setSourcePath] = useState("");
   const [busy, setBusy] = useState(false);
@@ -550,13 +558,14 @@ function SkillSettings() {
   return <Flex vertical gap="middle" className="extension-pane">
     <Space.Compact block><Input value={sourcePath} onChange={(event) => setSourcePath(event.target.value)} placeholder="Skill 源目录绝对路径" />
       <Button icon={<ImportOutlined />} disabled={!sourcePath.trim()} loading={busy} onClick={() => void install()}>安装</Button></Space.Compact>
-    <List dataSource={skills} renderItem={(skill) => <List.Item actions={[
-      <Tooltip key="reload" title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={async () => {
+    {skills.length ? <Listy className="extension-list" items={skills} rowKey="id" virtual={false} itemRender={(skill) => <Flex className="extension-row" align="flex-start" gap="middle">
+      <Flex vertical className="extension-row-main"><Space wrap>{skill.name}{skill.bundled && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>
+        <Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>
+      <Tooltip title="重新加载"><Button type="text" icon={<ReloadOutlined />} disabled={busy} onClick={async () => {
         setBusy(true); try { await api.reloadSkill(skill.id); await load(); void message.success("Skill 已重新加载"); }
         catch (error) { void message.error(messageText(error)); } finally { setBusy(false); }
       }} /></Tooltip>
-    ]}><List.Item.Meta title={<Space>{skill.name}{skill.bundled && <Tag>内置</Tag>}<Tag color={skill.state === "pending-reload" ? "warning" : "default"}>{skill.state}</Tag></Space>}
-      description={<Flex vertical><Text type="secondary">{skill.description}</Text><Text type="secondary">版本 {skill.revision}{skill.requiredTools.length ? ` · 工具 ${skill.requiredTools.join("、")}` : ""}</Text></Flex>} /></List.Item>} />
+    </Flex>} /> : <div className="list-empty">尚未安装 Skill</div>}
   </Flex>;
 }
 
@@ -568,7 +577,7 @@ interface ToolSettingsForm {
   workspaceShellEnabled: boolean;
 }
 
-function McpSettings() {
+export function McpSettings() {
   const [servers, setServers] = useState<McpServerDto[]>([]);
   const [busy, setBusy] = useState(false);
   const [form] = Form.useForm<McpServerForm>();
@@ -599,24 +608,18 @@ function McpSettings() {
   };
   return <div>
     <Title level={5}>MCP 服务</Title>
-    <List
-      locale={{ emptyText: "尚未添加 MCP 服务" }}
-      dataSource={servers}
-      renderItem={(server) => <List.Item actions={[
-        <Tooltip key="test" title="测试连接"><Button type="text" icon={<ThunderboltOutlined />} disabled={busy || !server.enabled} onClick={() => void act(() => api.testMcpServer(server.id), "MCP 连接可用")} /></Tooltip>,
-        <Switch key="enabled" checked={server.enabled} disabled={busy} onChange={(enabled) => void act(() => api.updateMcpServer(server.id, { enabled }), enabled ? "MCP 已启用" : "MCP 已停用")} />,
-        <Tooltip key="delete" title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
+    {servers.length ? <Listy className="extension-list" items={servers} rowKey="id" virtual={false} itemRender={(server) => <Flex className="extension-row" align="center" gap="middle">
+      <ApiOutlined />
+      <Flex vertical className="extension-row-main"><Text strong>{server.name}</Text><Text type="secondary" ellipsis>{server.url}</Text>{server.lastError && <Text type="danger">{server.lastError}</Text>}</Flex>
+      <Space className="extension-row-actions">
+        <Tooltip title="测试连接"><Button type="text" icon={<ThunderboltOutlined />} disabled={busy || !server.enabled} onClick={() => void act(() => api.testMcpServer(server.id), "MCP 连接可用")} /></Tooltip>
+        <Switch checked={server.enabled} disabled={busy} onChange={(enabled) => void act(() => api.updateMcpServer(server.id, { enabled }), enabled ? "MCP 已启用" : "MCP 已停用")} />
+        <Tooltip title="删除"><Button type="text" danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
           title: "删除 MCP 服务", content: `删除“${server.name}”？`, okText: "删除", cancelText: "取消", okButtonProps: { danger: true },
           onOk: () => act(() => api.deleteMcpServer(server.id), "MCP 服务已删除")
         })} /></Tooltip>
-      ]}>
-        <List.Item.Meta
-          avatar={<ApiOutlined />}
-          title={server.name}
-          description={<Flex vertical><Text type="secondary" ellipsis>{server.url}</Text>{server.lastError && <Text type="danger">{server.lastError}</Text>}</Flex>}
-        />
-      </List.Item>}
-    />
+      </Space>
+    </Flex>} /> : <div className="list-empty">尚未添加 MCP 服务</div>}
     <Form form={form} layout="vertical" onFinish={(values) => void create(values)}>
       <Flex className="settings-fields-row" gap="middle" wrap>
         <Form.Item className="settings-field" name="name" label="名称" rules={[{ required: true }, { pattern: /^[A-Za-z0-9]+$/, message: "只允许英文字母和数字" }]}>
@@ -640,7 +643,7 @@ interface McpServerForm {
   headers?: string;
 }
 
-function Connections({ connections, busy, mobile, run }: { connections: ConnectionDto[]; busy: boolean; mobile: boolean; run: Run }) {
+export function Connections({ connections, busy, mobile, run }: { connections: ConnectionDto[]; busy: boolean; mobile: boolean; run: Run }) {
   const [editing, setEditing] = useState<ConnectionDto | "new" | null>(connections.length ? null : "new");
   if (mobile && editing) return <Flex className="settings-mobile-detail" vertical gap="middle">
     <Button className="settings-back-button" type="text" icon={<ArrowLeftOutlined />} onClick={() => setEditing(null)}>
@@ -726,7 +729,7 @@ function ConnectionEditor({ value, busy, run, onDone }: { value: ConnectionDto |
   </>;
 }
 
-function Models({ connections, models, busy, mobile, run }: { connections: ConnectionDto[]; models: ModelDto[]; busy: boolean; mobile: boolean; run: Run }) {
+export function Models({ connections, models, busy, mobile, run }: { connections: ConnectionDto[]; models: ModelDto[]; busy: boolean; mobile: boolean; run: Run }) {
   const [editing, setEditing] = useState<ModelDto | "new" | null>(models.length ? null : "new");
   if (mobile && editing) return <Flex className="settings-mobile-detail" vertical gap="middle">
     <Button className="settings-back-button" type="text" icon={<ArrowLeftOutlined />} onClick={() => setEditing(null)}>
@@ -903,7 +906,7 @@ function OptionalNumber({ value, onChange, min, max, step }: { value?: number | 
   />;
 }
 
-function General({ settings, models, onSettings, uiPreferences, onUiPreferences }: {
+export function General({ settings, models, onSettings, uiPreferences, onUiPreferences }: {
   settings: AppSettings;
   models: ModelDto[];
   onSettings: (settings: AppSettings) => void;

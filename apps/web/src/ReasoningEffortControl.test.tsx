@@ -25,12 +25,6 @@ vi.mock("antd", async (importOriginal) => {
   };
 });
 
-beforeAll(() => vi.stubGlobal("ResizeObserver", class {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}));
-
 describe("ReasoningEffortControl", () => {
   it("exposes every supported effort and previews and commits keyboard changes", async () => {
     const user = userEvent.setup();

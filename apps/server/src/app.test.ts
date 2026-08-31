@@ -325,9 +325,18 @@ describe("server API", () => {
     const duplicatePatch = await app.inject({ method: "PATCH", url: `/api/mcp/servers/${second.id}`, payload: { name: "Alpha" } });
     expect(duplicatePatch.statusCode).toBe(400);
 
+    const renamed = await app.inject({ method: "PATCH", url: `/api/mcp/servers/${first.id}`, payload: { name: "Alpha2" } });
+    expect(renamed.statusCode).toBe(200);
+    expect(renamed.json()).toMatchObject({ name: "Alpha2", headerNames: ["Authorization"], enabled: true });
     const updated = await app.inject({ method: "PATCH", url: `/api/mcp/servers/${first.id}`, payload: { enabled: false } });
     expect(updated.statusCode).toBe(200);
-    expect(updated.json()).toMatchObject({ enabled: false });
+    expect(updated.json()).toMatchObject({ name: "Alpha2", headerNames: ["Authorization"], enabled: false });
+    expect(app.store.getMcpServer(first.id)).toMatchObject({
+      name: "Alpha2", url: "https://alpha.example/mcp", headers: { Authorization: "secret" }, enabled: false
+    });
+    const cleared = await app.inject({ method: "PATCH", url: `/api/mcp/servers/${first.id}`, payload: { headers: {} } });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json()).toMatchObject({ headerNames: [], enabled: false });
     expect(invalidate).toHaveBeenCalledWith(first.id);
     expect((await app.inject({ method: "PATCH", url: "/api/mcp/servers/missing", payload: { enabled: true } })).statusCode).toBe(404);
 

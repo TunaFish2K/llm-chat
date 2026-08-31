@@ -1,30 +1,30 @@
-# Integrated Normal-Use QA Findings
+# Integrated Normal-Use QA Findings and Resolutions
 
 - Tested SHA: `acd7f5b798d6b0b548ece50ee6067044a1662ad8`
 - Test date: 2026-08-31 (Asia/Shanghai)
+- Fix verification: 2026-08-31, current worktree before the resolution commit
 - Environment: Debian GNU/Linux, Linux `6.12.105+deb13-amd64`, x86_64, Node.js `v24.20.0`, pnpm `11.7.0`
 - Scope: the integrated local, single-user product; compiled server and web client; API and static serving; existing node and jsdom suites; isolated runtime data under `/tmp`
 
 ## Executive Summary
 
-The integrated build boots and the main local workflows are broadly functional. Type checking and production builds pass. The final sequential node suite passes 166 assertions, and the web suite passes 115 assertions. The full coverage run passes all 281 assertions but `pnpm check` exits 1 at the known coverage gates, before its build phase.
+All six recorded findings are resolved. MCP partial updates preserve omitted values. The web build now uses bounded lazy chunks. The quality gate passes its configured coverage thresholds, and the DOM test suite has an enforced 60-second total and 30-second per-file budget. Ant Design deprecations and shared jsdom capability gaps are removed from normal test output.
 
-One high-severity product issue was confirmed: a partial MCP server update applies create-time defaults to omitted fields, which can erase configured secret headers and unexpectedly enable a disabled server. No credentials were exposed during testing; the reproduction used placeholder values in a disposable database.
+The final coverage verification passes 312 assertions across 33 files. Global coverage is 92.95% statements/lines, 91.97% functions, and 85.35% branches. The DOM suite passes 100 assertions in 56.64 seconds; 22 DOM-free web assertions run in the faster Node project.
 
 | Result class | Count | Summary |
 | --- | ---: | --- |
-| Passing primary gates | 4 | `typecheck`, `build`, sequential node suite, web suite |
-| Failing primary gates | 1 | `pnpm check`, due only to known coverage thresholds in the observed run |
-| Passing test assertions | 281 | 166 node and 115 web; the coverage run also passed 281/281 |
-| Confirmed product findings | 2 | MCP partial-update data loss; oversized production JavaScript chunks |
-| Baseline/harness findings | 4 | Coverage gate, long web tests, Ant Design deprecations, known ResizeObserver baseline note |
+| Resolved product findings | 2 | MCP partial-update data loss; oversized production JavaScript chunks |
+| Resolved harness findings | 4 | Coverage gate, long web tests, Ant Design deprecations, shared browser test stubs |
+| Passing coverage assertions | 312 | 33 test files; all configured global and critical-file thresholds pass |
+| Performance-gated DOM assertions | 100 | 56.64 seconds total; no file exceeds 30 seconds |
 
 ## Confirmed Findings
 
 ### QA-001: Partial MCP updates erase headers and can re-enable the server
 
 - Severity: High
-- Status: confirmed
+- Status: resolved
 - Affected workflow: Settings > Extensions > MCP; any caller of `PATCH /api/mcp/servers/:id`
 - Exact reproduction:
   1. Start the production build with a fresh `LLM_CHAT_DATA_DIR`.
@@ -37,11 +37,12 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 - Evidence: the production smoke returned HTTP 201 for creation, HTTP 200 for the partial update, then persisted `{"name":"QAMCP2","headerNames":[],"enabled":true}`. The existing server API test updates an MCP server with `{ enabled: false }`, but asserts only the enabled field and therefore does not detect header loss.
 - Impact: toggling an MCP server from the UI sends a partial update. That action can silently delete configured authorization headers, making the server unusable. Other partial API updates can also enable a server against the user's intent.
 - Suggested follow-up: introduce a PATCH-specific schema with no defaults, preserve every omitted field in storage, and add API regression tests for header and enabled-state preservation on name-only and enabled-only updates.
+- Resolution: `mcpServerPatchSchema` no longer applies create-time defaults. The PATCH route uses this schema, and regressions cover name-only updates, enabled-only updates, and explicit header clearing.
 
 ### QA-003: The repository quality gate fails after all assertions pass
 
 - Severity: Medium
-- Status: baseline
+- Status: resolved
 - Affected workflow: local `pnpm check` and CI/release gating
 - Exact reproduction: run `pnpm check` from a clean integrated checkout with dependencies installed.
 - Expected: after type checking and 281 passing tests, configured coverage meets the gate and the command proceeds to `pnpm build`.
@@ -54,11 +55,12 @@ One high-severity product issue was confirmed: a partial MCP server update appli
   - The earlier baseline expectation referenced 273 passing assertions; the integrated SHA now has 281, but the gate still fails.
 - Impact: the canonical all-in-one check is red even when behavior tests pass. This obscures real regressions and prevents the final build stage from running in that command.
 - Suggested follow-up: add focused coverage for uncalled API helpers and globally weak modules, or deliberately revise thresholds/exclusions if the current target is not the intended policy. Keep a separate build job so coverage failure does not hide build status.
+- Resolution: focused API, extension-host, workspace, Skill, EventHub, character-card, App workflow, and settings workflow tests raise coverage above every existing threshold without lowering the policy. Latest global coverage is 92.95% statements/lines, 91.97% functions, and 85.35% branches.
 
 ### QA-002: Production web build emits two oversized JavaScript entry chunks
 
 - Severity: Low
-- Status: confirmed
+- Status: resolved
 - Affected workflow: first load and cache refresh of the local web client
 - Exact reproduction: run `pnpm build` and inspect the Vite size report.
 - Expected: production chunks remain below the configured 500 kB warning threshold, or the project explicitly documents and budgets larger entry payloads.
@@ -66,11 +68,12 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 - Evidence: the build transformed 7,982 modules and printed the standard Vite large-chunk warning. The generated `apps/web/dist` directory was approximately 17 MiB including maps and assets.
 - Impact: this is a performance risk rather than a demonstrated functional failure. It can increase parse/startup time and makes cold loads heavier, especially on constrained machines.
 - Suggested follow-up: measure browser startup before setting a performance budget, then consider route/component-level dynamic imports or deliberate Rollup chunking.
+- Resolution: Markdown languages, settings, and terminal UI load on demand. Rollup separates React, Ant Design, Ant Design X, rc, terminal, and Markdown dependencies. The largest emitted JavaScript chunk is 424.73 kB, below the 500 kB warning threshold.
 
 ### QA-004: Web tests have excessive duration and poor feedback time
 
 - Severity: Low
-- Status: confirmed
+- Status: resolved
 - Affected workflow: local frontend development and CI feedback
 - Exact reproduction: run `pnpm exec vitest run --project web --reporter=verbose`, then run `pnpm check`.
 - Expected: component tests complete quickly enough for routine local iteration, without individual files taking minutes.
@@ -82,11 +85,12 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 - Evidence: Vitest's duration and slow-test reports in the observed runs. Node tests were materially faster; the final sequential acceptance run passed all 166 tests in 10.05 seconds.
 - Impact: slow feedback discourages frequent execution and increases the chance that frontend regressions are discovered late. This is a harness performance issue, not a user-visible runtime bug.
 - Suggested follow-up: profile expensive Ant Design mounting and async waits, reduce repeated full-app bootstrapping, and split broad SettingsPanel/App scenarios into smaller fixtures while retaining workflow coverage.
+- Resolution: broad App and SettingsPanel suites use shared fixtures with focused wrapper files; App tests use semantic component doubles where full Ant Design behavior is irrelevant. DOM-free API/state tests run under Node. `test:web:budget` enforces 60 seconds total and 30 seconds per file; the latest run passes 100/100 in 56.64 seconds.
 
 ### QA-005: Deprecated Ant Design contracts produce repeated warnings
 
 - Severity: Low
-- Status: baseline
+- Status: resolved
 - Affected workflow: frontend test output and future Ant Design upgrades
 - Exact reproduction: run `pnpm exec vitest run --project web` or `pnpm check` and inspect stderr.
 - Expected: application tests do not repeatedly invoke deprecated component APIs.
@@ -94,11 +98,12 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 - Evidence: warnings appeared throughout `App.test.tsx` and `SettingsPanel.test.tsx`. jsdom also reported unsupported canvas, pseudo-element `getComputedStyle`, and XNotification APIs; those are environment diagnostics, not Ant Design deprecation contracts.
 - Impact: no user-visible defect was observed. The volume masks more actionable stderr and indicates future framework-upgrade work.
 - Suggested follow-up: migrate supported prop replacements first, evaluate the List/Listy compatibility path, and filter only known jsdom capability diagnostics after application warnings are removed.
+- Resolution: deprecated Drawer, Alert, Tabs, and List contracts were migrated. Shared test setup now fails on unexpected console warnings or errors, so future deprecations cannot silently return.
 
 ### QA-006: Known ResizeObserver baseline exception was not reproduced at this SHA
 
 - Severity: Low
-- Status: baseline
+- Status: resolved
 - Affected workflow: web test harness reliability
 - Exact reproduction: run `pnpm check` under Node.js 24 with the jsdom project.
 - Expected: no unhandled `ResizeObserver` reference error; browser observer APIs used by components should have stable test doubles.
@@ -106,16 +111,18 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 - Evidence: both observed runs completed every web assertion. Their stderr contained canvas, pseudo-element style, XNotification, and deprecation warnings, but no ResizeObserver exception.
 - Impact: no current failure is claimed. The baseline may be timing/order dependent because stubbing is file-local rather than guaranteed by the web project setup.
 - Suggested follow-up: run the check repeatedly in CI and, if the exception recurs, install a minimal global ResizeObserver stub in the shared web test setup with a regression that verifies cleanup does not remove it.
+- Resolution: shared web setup now installs stable ResizeObserver, computed-style, canvas, and Notification test doubles. Individual test files no longer own the ResizeObserver baseline.
 
 ## Tested Workflows
 
 | Workflow | Method | Result |
 | --- | --- | --- |
 | Type safety | `pnpm typecheck` | Pass |
-| Production build | `pnpm build` | Pass; large-chunk warning recorded as QA-002 |
-| Node behavior | `pnpm exec vitest run --project node` | Pass sequentially: 14 files, 166 tests |
-| Web behavior | `pnpm exec vitest run --project web --reporter=verbose` | Pass: 9 files, 115 tests; warnings and duration recorded |
-| Full quality gate | `pnpm check` | Expected baseline failure after 281/281 passing tests; coverage evidence in QA-003 |
+| Production build | `pnpm build` | Pass; largest JavaScript chunk is 424.73 kB and no large-chunk warning remains |
+| Node behavior | `pnpm exec vitest run --project node` | Pass; includes 22 DOM-free web assertions moved from jsdom |
+| Web behavior | `pnpm test:web:budget` | Pass: 100 tests in 56.64 seconds; no file exceeds 30 seconds |
+| Full coverage gate | `pnpm test:coverage` | Pass: 33 files, 312 tests; all thresholds met |
+| Full quality gate | `pnpm check` | Pass: typecheck, web budget, coverage, web build, and server build |
 | Server boot and health | Built server, unused loopback port, fresh temporary data directory; `GET /api/health` | Pass: HTTP 200 JSON `{"ok":true}` |
 | Static index and asset MIME | `GET /`, built hashed JS, and stale `/assets/index-stale.js` | Pass: HTML 200, JavaScript 200 with `application/javascript`, stale asset 404 with `text/plain` body `Asset not found` |
 | SPA fallback | `GET /c/00000000-0000-4000-8000-000000000000` | Pass: HTTP 200 HTML identical in size/content to the index response |
@@ -129,7 +136,7 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 | Provider adapters | mocked OpenAI Chat, OpenAI Responses, and Anthropic request/stream/error tests | Pass: 28 tests |
 | Workspace tools | node file/list/glob/grep/edit/shell confinement tests, relative output, and legacy input compatibility | Pass |
 | Plugin and skill behavior | child-process plugin install/load/execute test and skill confinement tests; production catalog read | Pass |
-| MCP behavior | mocked transport fallback/session/tool mapping plus production CRUD | Transport/tool tests pass; partial-update preservation fails as QA-001 |
+| MCP behavior | mocked transport fallback/session/tool mapping plus production CRUD | Pass, including partial-update preservation and explicit header clearing |
 | Background tasks | pipe, PTY, queue/quota, incremental output, terminal screen, and audit-reason tests | Pass |
 | Responsive composer | jsdom desktop/mobile toolbar, gutter, settings, draft, and approval queue tests | Pass within jsdom limits |
 | Markdown | math, streaming formula, code aliases/highlighting/copy, dark surface, and executable HTML sanitization | Pass: 40 tests |
@@ -156,4 +163,4 @@ One high-severity product issue was confirmed: a partial MCP server update appli
 - No destructive operation was performed on real user data. All production CRUD used a fresh temporary data directory outside the worktree.
 - No full browser automation or screenshot/layout measurement was available. Responsive composer and Markdown behavior were verified in jsdom and by integration structure, not by pixel-level desktop/mobile rendering.
 - Production background task execution and production plugin installation were not repeated through live APIs; their pipe/PTY/plugin execution paths were covered by isolated node tests using disposable fixtures.
-- The ResizeObserver baseline issue was not reproduced, so no current regression is claimed for it.
+- Browser observer and notification behavior is represented by shared test doubles; real browser implementations remain outside jsdom coverage.

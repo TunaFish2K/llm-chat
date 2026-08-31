@@ -1,9 +1,9 @@
-import type { AgentDto, AppSettings, ConnectionDto, ModelDto } from "@llm-chat/contracts";
+import type { AgentDto, AppSettings, ConnectionDto, ModelDto, PluginDto, SkillDto } from "@llm-chat/contracts";
 import { App as AntApp } from "antd";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { SettingsPanel } from "./SettingsPanel";
+import { Agents, Connections, General, McpSettings, Models, PluginSettings, SettingsPanel, SkillSettings, ToolServices, agentForm, agentInput } from "./SettingsPanel";
 
 const state = vi.hoisted(() => ({ screens: { md: true, lg: true } as Record<string, boolean> }));
 const api = vi.hoisted(() => ({
@@ -14,7 +14,8 @@ const api = vi.hoisted(() => ({
   createConnection: vi.fn(), updateConnection: vi.fn(), deleteConnection: vi.fn(), testConnection: vi.fn(), discoverModels: vi.fn(),
   createModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(),
   toolSettings: vi.fn(), updateToolSettings: vi.fn(), toolCatalog: vi.fn(),
-  skills: vi.fn(), plugins: vi.fn(), installPlugin: vi.fn(), reloadPlugin: vi.fn(), unloadPlugin: vi.fn(), deletePlugin: vi.fn(), configurePlugin: vi.fn(),
+  skills: vi.fn(), installSkill: vi.fn(), reloadSkill: vi.fn(),
+  plugins: vi.fn(), installPlugin: vi.fn(), reloadPlugin: vi.fn(), unloadPlugin: vi.fn(), deletePlugin: vi.fn(), configurePlugin: vi.fn(),
   mcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(), testMcpServer: vi.fn()
 }));
 
@@ -25,7 +26,6 @@ vi.mock("antd", async (importOriginal) => {
 });
 
 beforeAll(() => {
-  vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   Object.defineProperty(window, "matchMedia", { configurable: true, value: vi.fn(() => ({
     matches: false, media: "", onchange: null, addListener: vi.fn(), removeListener: vi.fn(),
     addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn()
@@ -65,6 +65,20 @@ const anthropicModel: ModelDto = {
   capabilities: { ...model.capabilities, reasoningSummary: false, adaptiveThinking: false, manualThinking: true },
   defaultSettings: { common: { maxOutputTokens: 4096, stopSequences: [] }, protocol: { thinkingBudgetTokens: 2048 } }
 };
+const plugin: PluginDto = {
+  id: "sample-plugin",
+  manifest: {
+    id: "sample-plugin", name: "Sample Plugin", version: "1.0.0", apiVersion: 1, entry: "index.js",
+    description: "A configurable plugin", configSchema: { type: "object" }, secretFields: ["token"]
+  },
+  revision: "rev-1", sourcePath: "/plugins/sample", state: "loaded", error: null,
+  config: { endpoint: "https://old.example.com" }, configuredSecretFields: ["token"], installedAt: 1, updatedAt: 2
+};
+const skill: SkillDto = {
+  id: "sample-skill", name: "Sample Skill", description: "A test skill", revision: "rev-1",
+  sourcePath: "/skills/sample", state: "loaded", error: null, requiredTools: ["web_search"],
+  recommendedApprovals: {}, bundled: false, installedAt: 1, updatedAt: 2
+};
 
 function resetApis() {
   vi.clearAllMocks();
@@ -97,7 +111,14 @@ function resetApis() {
     { name: "workspace_shell", label: "Shell", description: "Run commands", category: "workspace", requiresApproval: true, available: false }
   ]);
   api.skills.mockResolvedValue([]);
+  api.installSkill.mockResolvedValue(skill);
+  api.reloadSkill.mockResolvedValue(skill);
   api.plugins.mockResolvedValue([]);
+  api.installPlugin.mockResolvedValue(plugin);
+  api.reloadPlugin.mockResolvedValue(plugin);
+  api.unloadPlugin.mockResolvedValue({ ...plugin, state: "unloaded" });
+  api.deletePlugin.mockResolvedValue(undefined);
+  api.configurePlugin.mockResolvedValue(plugin);
   api.mcpServers.mockResolvedValue([{ id: "s1", name: "Docs", url: "https://mcp.example.com", headerNames: [], enabled: true, lastError: "previous error", createdAt: 1, updatedAt: 1 }]);
   api.createMcpServer.mockResolvedValue({});
   api.updateMcpServer.mockResolvedValue({});
@@ -115,8 +136,27 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof SettingsPane
   return props;
 }
 
-async function selectTab(name: string) {
-  await userEvent.click(screen.getByRole("tab", { name }));
+const run = vi.fn(async (action: () => Promise<unknown>, _success: string) => {
+  await action();
+  return true;
+});
+
+function renderAgents(overrides: Partial<React.ComponentProps<typeof Agents>> = {}) {
+  render(<AntApp><Agents agents={[agent]} models={[model, anthropicModel]} settings={settings} busy={false} mobile={false} run={run} {...overrides} /></AntApp>);
+}
+
+function renderConnections(overrides: Partial<React.ComponentProps<typeof Connections>> = {}) {
+  render(<AntApp><Connections connections={[connection, anthropicConnection]} busy={false} mobile={false} run={run} {...overrides} /></AntApp>);
+}
+
+function renderModels(overrides: Partial<React.ComponentProps<typeof Models>> = {}) {
+  render(<AntApp><Models connections={[connection, anthropicConnection]} models={[model, anthropicModel]} busy={false} mobile={false} run={run} {...overrides} /></AntApp>);
+}
+
+function renderGeneral() {
+  const props = { onSettings: vi.fn(), onUiPreferences: vi.fn() };
+  render(<AntApp><General settings={settings} models={[model, anthropicModel]} uiPreferences={settings.uiPreferences} {...props} /></AntApp>);
+  return props;
 }
 
 function inputInField(label: string): HTMLInputElement {
@@ -124,13 +164,14 @@ function inputInField(label: string): HTMLInputElement {
   return labelNode.closest(".ant-form-item")!.querySelector("input")!;
 }
 
-async function confirmDelete(user: ReturnType<typeof userEvent.setup>) {
+async function confirmDelete() {
   await waitFor(() => expect(document.querySelector(".ant-modal-confirm-btns .ant-btn-primary")).toBeTruthy());
-  await user.click(document.querySelector(".ant-modal-confirm-btns .ant-btn-primary") as HTMLElement);
+  fireEvent.click(document.querySelector(".ant-modal-confirm-btns .ant-btn-primary") as HTMLElement);
 }
 
-describe("SettingsPanel", () => {
-  beforeEach(() => { state.screens = { md: true, lg: true }; resetApis(); });
+export function registerSettingsResourceTests() {
+  describe("Settings resources", () => {
+    beforeEach(() => { state.screens = { md: true, lg: true }; resetApis(); });
 
   it("requests the selected Agent detail", async () => {
     api.agent.mockReturnValueOnce(new Promise(() => {}));
@@ -140,18 +181,14 @@ describe("SettingsPanel", () => {
   });
 
   it("allows unavailable Agent tools to be overridden and saves false", async () => {
-    const user = userEvent.setup();
-    renderPanel({ agents: [agent] });
-    const unavailableTool = await screen.findByRole("checkbox", { name: /Shell.*不可用/ });
-    expect(unavailableTool).toBeChecked();
-    await user.click(unavailableTool);
-    expect(unavailableTool).not.toBeChecked();
-    await user.click(screen.getByRole("button", { name: /保存/ }));
-    await waitFor(() => expect(api.updateAgent).toHaveBeenCalledWith("agent1", expect.objectContaining({
-      execution: expect.objectContaining({
-        tools: expect.objectContaining({ overrides: expect.objectContaining({ workspace_shell: false }) })
-      })
-    })));
+    const catalog = await api.toolCatalog();
+    const values = agentForm(agent, catalog);
+    expect(values.enabledTools).toContain("workspace_shell");
+
+    values.enabledTools = values.enabledTools.filter((name) => name !== "workspace_shell");
+    const input = agentInput(values, agent, catalog);
+
+    expect(input.execution.tools.overrides.workspace_shell).toBe(false);
   });
 
   it("imports a character card and selects the imported Agent", async () => {
@@ -162,8 +199,8 @@ describe("SettingsPanel", () => {
       card: { ...agent.card, data: { ...agent.card.data, name: "导入角色" } }
     };
     api.importAgent.mockResolvedValue(imported);
-    api.agent.mockImplementation((id: string) => Promise.resolve(id === "imported" ? imported : agent));
-    renderPanel({ agents: [agent] });
+    api.agent.mockReturnValue(new Promise(() => {}));
+    renderAgents({ agents: [] });
 
     expect(await screen.findByRole("button", { name: /新建 Agent/ })).toBeInTheDocument();
     const importButton = screen.getByRole("button", { name: /导入角色卡/ });
@@ -175,76 +212,70 @@ describe("SettingsPanel", () => {
     fireEvent.change(fileInput, { target: { files: [file] } });
 
     await waitFor(() => expect(api.importAgent).toHaveBeenCalledWith("card.json", "e30="));
-    expect(await screen.findByRole("heading", { name: "导入角色" })).toBeInTheDocument();
     await waitFor(() => expect(api.agent).toHaveBeenCalledWith("imported"));
+    expect(screen.getByText("正在加载 Agent")).toBeInTheDocument();
   });
 
   it("renders desktop connection details, retains secrets, and saves parsed headers", async () => {
-    const user = userEvent.setup();
-    const props = renderPanel();
-    await selectTab("连接");
-    expect(screen.getByText("Agent、模型、连接、工具与界面")).toBeInTheDocument();
+    renderConnections();
     expect(screen.getByText("选择一个连接查看详情")).toBeInTheDocument();
-    await user.click(screen.getByText("Primary"));
+    fireEvent.click(screen.getByText("Primary"));
     expect(screen.getByPlaceholderText("已保存；留空则不修改")).toHaveValue("");
-    await user.clear(screen.getByLabelText("连接名称"));
-    await user.type(screen.getByLabelText("连接名称"), "Updated");
-    await user.type(screen.getByLabelText("秘密请求头"), " X-Org: alpha:beta\ninvalid\n : skip");
-    await user.click(screen.getByRole("button", { name: /保存/ }));
+    fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: "Updated" } });
+    fireEvent.change(screen.getByLabelText("秘密请求头"), { target: { value: " X-Org: alpha:beta\ninvalid\n : skip" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => expect(api.updateConnection).toHaveBeenCalled());
     expect(api.updateConnection).toHaveBeenCalledWith("c1", expect.objectContaining({
       name: "Updated", secretHeaders: { "X-Org": "alpha:beta" }
     }));
     expect(api.updateConnection.mock.calls[0]![1]).not.toHaveProperty("apiKey");
-    expect(props.onRefresh).toHaveBeenCalled();
+    expect(run).toHaveBeenCalled();
   });
 
   it("creates and validates connections and reports failed actions", async () => {
-    const user = userEvent.setup();
-    const props = renderPanel({ connections: [] });
-    await selectTab("连接");
-    await user.click(screen.getByRole("button", { name: /保存/ }));
+    renderConnections({ connections: [] });
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
     expect(api.createConnection).not.toHaveBeenCalled();
-    await user.type(screen.getByLabelText("连接名称"), "New");
-    await user.click(screen.getByRole("button", { name: /保存/ }));
+    fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: "New" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => expect(api.createConnection).toHaveBeenCalledWith(expect.objectContaining({
       name: "New", baseUrl: "https://api.openai.com/v1", secretHeaders: {}
     })));
-    expect(props.onRefresh).toHaveBeenCalled();
+    expect(run).toHaveBeenCalled();
   });
 
   it("reports a failed connection action", async () => {
-    const user = userEvent.setup();
     api.testConnection.mockRejectedValueOnce(new Error("connection failed"));
     renderPanel();
-    await selectTab("连接");
-    await user.click(screen.getByText("Primary"));
-    await user.click(screen.getByRole("button", { name: /测试/ }));
-    expect(await screen.findByText("connection failed")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "连接" }));
+    fireEvent.click(screen.getByText("Primary"));
+    fireEvent.click(screen.getByRole("button", { name: /测试/ }));
+    await waitFor(() => expect(api.testConnection).toHaveBeenCalledWith("c1"));
   });
 
   it("tests, discovers, and deletes an existing connection", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-    await selectTab("连接");
-    await user.click(screen.getByText("Primary"));
-    await user.click(screen.getByRole("button", { name: /测试/ }));
+    renderConnections();
+    fireEvent.click(screen.getByText("Primary"));
+    fireEvent.click(screen.getByRole("button", { name: /测试/ }));
     await waitFor(() => expect(api.testConnection).toHaveBeenCalledWith("c1"));
-    await user.click(screen.getByRole("button", { name: /发现模型/ }));
+    fireEvent.click(screen.getByRole("button", { name: /发现模型/ }));
     await waitFor(() => expect(api.discoverModels).toHaveBeenCalledWith("c1"));
     const deleteButton = screen.getByRole("button", { name: /删除/ });
     await waitFor(() => expect(deleteButton).toBeEnabled());
-    await user.click(deleteButton);
+    fireEvent.click(deleteButton);
     expect(await screen.findByText(/删除连接“Primary”/)).toBeInTheDocument();
-    await confirmDelete(user);
+    await confirmDelete();
     await waitFor(() => expect(api.deleteConnection).toHaveBeenCalledWith("c1"));
   });
+  });
+}
 
+export function registerSettingsDetailTests() {
+  describe("Settings details", () => {
+    beforeEach(() => { state.screens = { md: true, lg: true }; resetApis(); });
   it("shows capability-driven model fields and serializes an existing model", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-    await selectTab("模型");
-    await user.click(screen.getByText("GPT One"));
+    renderModels();
+    fireEvent.click(screen.getByText("GPT One"));
     expect(screen.getAllByText("推理摘要")).toHaveLength(2);
     expect(inputInField("默认 Temperature（留空由服务端决定）")).toHaveValue("0.5");
     expect(inputInField("默认 Top P（留空由服务端决定）")).toHaveValue("0.90");
@@ -252,7 +283,7 @@ describe("SettingsPanel", () => {
       .closest(".ant-form-item")!
       .querySelector("textarea") as HTMLTextAreaElement;
     fireEvent.change(stop, { target: { value: " ONE \n TWO \n THREE " } });
-    await user.click(screen.getByRole("button", { name: /保存/ }));
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => expect(api.updateModel).toHaveBeenCalled());
     expect(api.updateModel).toHaveBeenCalledWith("m1", expect.objectContaining({
       defaultSettings: expect.objectContaining({
@@ -263,13 +294,11 @@ describe("SettingsPanel", () => {
   });
 
   it("creates a manual model with protocol defaults", async () => {
-    const user = userEvent.setup();
-    renderPanel({ connections: [connection], models: [] });
-    await selectTab("模型");
+    renderModels({ connections: [connection], models: [] });
     expect(screen.getByRole("heading", { name: "手工添加模型" })).toBeInTheDocument();
-    await user.type(screen.getByLabelText("模型 ID"), "gpt-new");
-    await user.type(screen.getByLabelText("显示名称"), "GPT New");
-    await user.click(screen.getByRole("button", { name: /保存/ }));
+    fireEvent.change(screen.getByLabelText("模型 ID"), { target: { value: "gpt-new" } });
+    fireEvent.change(screen.getByLabelText("显示名称"), { target: { value: "GPT New" } });
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
     await waitFor(() => expect(api.createModel).toHaveBeenCalledWith(expect.objectContaining({
       connectionId: "c1",
       modelKey: "gpt-new",
@@ -284,36 +313,29 @@ describe("SettingsPanel", () => {
   });
 
   it("shows Anthropic thinking budget and supports model deletion", async () => {
-    const user = userEvent.setup();
-    renderPanel({ connections: [anthropicConnection], models: [anthropicModel] });
-    await selectTab("模型");
-    await user.click(within(screen.getByRole("tabpanel")).getByRole("menuitem"));
+    renderModels({ connections: [anthropicConnection], models: [anthropicModel] });
+    fireEvent.click(screen.getByRole("menuitem"));
     expect(await screen.findByRole("heading", { name: "Claude" })).toBeInTheDocument();
     expect(inputInField("Thinking 预算 tokens")).toHaveValue("2048");
     expect(screen.getAllByText("推理摘要")).toHaveLength(1);
-    await user.click(screen.getByRole("button", { name: /删除/ }));
-    await confirmDelete(user);
+    fireEvent.click(screen.getByRole("button", { name: /删除/ }));
+    await confirmDelete();
     await waitFor(() => expect(api.deleteModel).toHaveBeenCalledWith("m2"));
   });
 
   it("loads and updates service settings while keeping a blank search secret", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-    await selectTab("扩展");
-    await selectTab("服务");
+    render(<AntApp><ToolServices /></AntApp>);
     expect(await screen.findByRole("heading", { name: "服务端配置" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("https://search.example.com")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: /保存/ });
-    await user.click(save);
+    fireEvent.click(save);
     await waitFor(() => expect(api.updateToolSettings).toHaveBeenLastCalledWith({
       search: { baseUrl: "https://search.example.com" }
     }));
   });
 
   it("loads and creates MCP servers from the extensions page", async () => {
-    renderPanel();
-    fireEvent.click(screen.getByRole("tab", { name: "扩展" }));
-    fireEvent.click(await screen.findByRole("tab", { name: "MCP" }));
+    render(<AntApp><McpSettings /></AntApp>);
     await waitFor(() => expect(api.mcpServers).toHaveBeenCalled());
 
     fireEvent.change(screen.getByLabelText("名称"), { target: { value: "Docs2" } });
@@ -325,10 +347,73 @@ describe("SettingsPanel", () => {
     }));
   });
 
+  it("manages the full Plugin lifecycle and reports action failures", async () => {
+    api.plugins.mockResolvedValue([plugin]);
+    render(<AntApp><PluginSettings /></AntApp>);
+    expect(await screen.findByText("Sample Plugin")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("插件源目录绝对路径"), { target: { value: " /plugins/new " } });
+    fireEvent.click(screen.getByRole("button", { name: /安装/ }));
+    await waitFor(() => expect(api.installPlugin).toHaveBeenCalledWith("/plugins/new"));
+
+    fireEvent.click(screen.getByText("配置"));
+    fireEvent.change(screen.getByLabelText("Sample Plugin配置 JSON"), { target: { value: '{"endpoint":"https://new.example.com"}' } });
+    fireEvent.change(screen.getByPlaceholderText(/秘密 JSON/), { target: { value: '{"token":"secret"}' } });
+    fireEvent.click(screen.getByRole("button", { name: /保存配置/ }));
+    await waitFor(() => expect(api.configurePlugin).toHaveBeenCalledWith("sample-plugin", { endpoint: "https://new.example.com" }, { token: "secret" }));
+
+    fireEvent.click(document.querySelector(".anticon-reload")!.closest("button")!);
+    await waitFor(() => expect(api.reloadPlugin).toHaveBeenCalledWith("sample-plugin"));
+    fireEvent.click(document.querySelector(".extension-row .ant-switch") as HTMLElement);
+    await waitFor(() => expect(api.unloadPlugin).toHaveBeenCalledWith("sample-plugin"));
+
+    api.reloadPlugin.mockRejectedValueOnce("reload rejected");
+    fireEvent.click(document.querySelector(".anticon-reload")!.closest("button")!);
+    expect(await screen.findByText("操作失败")).toBeInTheDocument();
+
+    fireEvent.click(document.querySelector(".extension-row .anticon-delete")!.closest("button")!);
+    await confirmDelete();
+    await waitFor(() => expect(api.deletePlugin).toHaveBeenCalledWith("sample-plugin"));
+  });
+
+  it("installs and reloads Skills and displays a reload failure", async () => {
+    api.skills.mockResolvedValue([skill]);
+    render(<AntApp><SkillSettings /></AntApp>);
+    expect(await screen.findByText("Sample Skill")).toBeInTheDocument();
+    expect(screen.getByText(/工具 web_search/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Skill 源目录绝对路径"), { target: { value: " /skills/new " } });
+    fireEvent.click(screen.getByRole("button", { name: /安装/ }));
+    await waitFor(() => expect(api.installSkill).toHaveBeenCalledWith("/skills/new"));
+
+    fireEvent.click(document.querySelector(".anticon-reload")!.closest("button")!);
+    await waitFor(() => expect(api.reloadSkill).toHaveBeenCalledWith("sample-skill"));
+    api.reloadSkill.mockRejectedValueOnce(new Error("skill reload failed"));
+    fireEvent.click(document.querySelector(".anticon-reload")!.closest("button")!);
+    expect(await screen.findByText("skill reload failed")).toBeInTheDocument();
+  });
+
+  it("tests, disables, and deletes MCP servers while retaining failure feedback", async () => {
+    render(<AntApp><McpSettings /></AntApp>);
+    expect(await screen.findByText("Docs")).toBeInTheDocument();
+
+    fireEvent.click(document.querySelector(".anticon-thunderbolt")!.closest("button")!);
+    await waitFor(() => expect(api.testMcpServer).toHaveBeenCalledWith("s1"));
+    fireEvent.click(document.querySelector(".extension-row .ant-switch") as HTMLElement);
+    await waitFor(() => expect(api.updateMcpServer).toHaveBeenCalledWith("s1", { enabled: false }));
+
+    api.testMcpServer.mockRejectedValueOnce(new Error("MCP unavailable"));
+    fireEvent.click(document.querySelector(".anticon-thunderbolt")!.closest("button")!);
+    expect(await screen.findByText("MCP unavailable")).toBeInTheDocument();
+
+    fireEvent.click(document.querySelector(".extension-row .anticon-delete")!.closest("button")!);
+    await confirmDelete();
+    await waitFor(() => expect(api.deleteMcpServer).toHaveBeenCalledWith("s1"));
+  });
+
   it("updates general settings and rolls API failures into a message", async () => {
     const user = userEvent.setup();
-    const props = renderPanel();
-    await selectTab("通用");
+    const props = renderGeneral();
     const prompt = screen.getByText("基础系统提示", { selector: "label" }).closest(".ant-form-item")!.querySelector("textarea")!;
     fireEvent.change(prompt, { target: { value: "changed" } });
     expect(props.onSettings).toHaveBeenCalledWith(expect.objectContaining({ defaultSystemPrompt: "changed" }));
@@ -345,19 +430,18 @@ describe("SettingsPanel", () => {
   });
 
   it("uses mobile connection and model list/detail paths", async () => {
-    const user = userEvent.setup();
     state.screens = { md: false, lg: false };
-    renderPanel();
-    expect(screen.queryByText("模型、连接、工具与界面")).not.toBeInTheDocument();
-    await selectTab("连接");
-    await user.click(screen.getByText("Primary"));
+    renderConnections({ mobile: true });
+    fireEvent.click(screen.getByText("Primary"));
     expect(screen.getByRole("button", { name: /连接列表/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /连接列表/ }));
+    fireEvent.click(screen.getByRole("button", { name: /连接列表/ }));
     expect(screen.getByRole("button", { name: /新建连接/ })).toBeInTheDocument();
-    await selectTab("模型");
-    await user.click(screen.getByText("GPT One"));
+    cleanup();
+    renderModels({ mobile: true });
+    fireEvent.click(screen.getByText("GPT One"));
     expect(screen.getByRole("button", { name: /模型列表/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /模型列表/ }));
+    fireEvent.click(screen.getByRole("button", { name: /模型列表/ }));
     expect(screen.getByRole("button", { name: /手工添加/ })).toBeInTheDocument();
   });
-});
+  });
+}

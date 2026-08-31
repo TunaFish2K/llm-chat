@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiClientError, api, generationEvents } from "./api";
+import { ApiClientError, api, appEvents, generationEvents } from "./api";
 
 class FakeEventSource {
   static readonly CLOSED = 2;
@@ -68,6 +68,26 @@ describe("api client", () => {
       [api.toolSettings, "/api/tools/settings", "GET"],
       [() => api.updateToolSettings({ enabled: { search: true } }), "/api/tools/settings", "PATCH", { enabled: { search: true } }],
       [api.toolCatalog, "/api/tools/catalog", "GET"],
+      [api.plugins, "/api/plugins", "GET"],
+      [() => api.installPlugin("/tmp/plugin"), "/api/plugins/install", "POST", { sourcePath: "/tmp/plugin" }],
+      [() => api.configurePlugin("p1", { endpoint: "local" }, { token: "secret" }), "/api/plugins/p1/config", "PATCH", { config: { endpoint: "local" }, secrets: { token: "secret" } }],
+      [() => api.reloadPlugin("p1"), "/api/plugins/p1/reload", "POST"],
+      [() => api.unloadPlugin("p1"), "/api/plugins/p1/unload", "POST"],
+      [() => api.deletePlugin("p1"), "/api/plugins/p1", "DELETE"],
+      [api.skills, "/api/skills", "GET"],
+      [() => api.installSkill("/tmp/skill"), "/api/skills/install", "POST", { sourcePath: "/tmp/skill" }],
+      [() => api.reloadSkill("s1"), "/api/skills/s1/reload", "POST"],
+      [() => api.deleteSkill("s1"), "/api/skills/s1", "DELETE"],
+      [() => api.directories("/tmp/a b"), "/api/filesystem/directories?path=%2Ftmp%2Fa%20b", "GET"],
+      [() => api.createDirectory("/tmp/new"), "/api/filesystem/directories", "POST", { path: "/tmp/new" }],
+      [() => api.validateWorkspace("/tmp/project"), "/api/filesystem/validate", "POST", { path: "/tmp/project" }],
+      [() => api.backgroundTasks(), "/api/background-tasks?", "GET"],
+      [() => api.backgroundTasks("c 1"), "/api/background-tasks?conversationId=c%201", "GET"],
+      [() => api.backgroundTasks(undefined, true), "/api/background-tasks?scope=all", "GET"],
+      [() => api.backgroundTask("t1"), "/api/background-tasks/t1", "GET"],
+      [() => api.backgroundOutput("t1"), "/api/background-tasks/t1/output?cursor=0&limit=32768", "GET"],
+      [() => api.backgroundOutput("t1", 12, 500), "/api/background-tasks/t1/output?cursor=12&limit=500", "GET"],
+      [() => api.stopBackgroundTask("t1", "done"), "/api/background-tasks/t1/stop", "POST", { reason: "done" }],
       [() => api.approveTool("call/a b", true, "because"), "/api/tool-calls/call%2Fa%20b/approval", "POST", { approved: true, reason: "because" }],
       [() => api.approveTool("call", false), "/api/tool-calls/call/approval", "POST", { approved: false }],
       [api.mcpServers, "/api/mcp/servers", "GET"],
@@ -92,6 +112,10 @@ describe("api client", () => {
         expect(JSON.parse(String(init?.body))).toEqual(body);
       }
     }
+
+    expect(api.agentAvatarUrl("a1")).toBe("/api/agents/a1/avatar");
+    expect(api.agentAvatarUrl("a1", 3)).toBe("/api/agents/a1/avatar?v=3");
+    expect(api.agentExportUrl("a1", "png")).toBe("/api/agents/a1/export?format=png");
   });
 
   it("preserves caller headers while assigning JSON content type", async () => {
@@ -126,6 +150,20 @@ describe("api client", () => {
     source.emit("status", "{");
     expect(onEvent).toHaveBeenCalledTimes(6);
     expect(onEvent).toHaveBeenLastCalledWith({ type: "error", marker: "error" });
+    unsubscribe();
+    expect(source.close).toHaveBeenCalledOnce();
+  });
+
+  it("registers application events, ignores malformed data, and closes", () => {
+    const onEvent = vi.fn();
+    const unsubscribe = appEvents(onEvent);
+    const source = FakeEventSource.instances[0]!;
+    expect(source.url).toBe("/api/events");
+    expect([...source.listeners.keys()]).toEqual(["task", "task-output", "plugin", "skill"]);
+    source.emit("task", JSON.stringify({ type: "task", task: { id: "t1" } }));
+    source.emit("plugin", "{");
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(onEvent).toHaveBeenCalledWith({ type: "task", task: { id: "t1" } });
     unsubscribe();
     expect(source.close).toHaveBeenCalledOnce();
   });

@@ -9,20 +9,35 @@ const criticalCoverageThreshold = {
 
 export default defineConfig({
   test: {
+    maxWorkers: 4,
     projects: [
       {
         test: {
           name: "node",
           environment: "node",
-          include: ["apps/server/src/**/*.test.{ts,tsx}", "packages/**/*.test.{ts,tsx}"]
+          include: [
+            "apps/server/src/**/*.test.{ts,tsx}",
+            "apps/web/src/**/*.node.test.{ts,tsx}",
+            "apps/web/src/api.test.ts",
+            "apps/web/src/generationState.test.ts",
+            "apps/web/src/uiPreferences.test.ts",
+            "packages/**/*.test.{ts,tsx}"
+          ]
         }
       },
       {
         test: {
           name: "web",
           environment: "jsdom",
+          pool: "threads",
           testTimeout: 120_000,
           include: ["apps/web/src/**/*.test.{ts,tsx}"],
+          exclude: [
+            "apps/web/src/**/*.node.test.{ts,tsx}",
+            "apps/web/src/api.test.ts",
+            "apps/web/src/generationState.test.ts",
+            "apps/web/src/uiPreferences.test.ts"
+          ],
           setupFiles: ["apps/web/src/test/setup.ts"]
         }
       }
@@ -39,11 +54,14 @@ export default defineConfig({
       ],
       exclude: [
         "**/*.test.{ts,tsx}",
+        "**/*.test-suite.{ts,tsx}",
         "**/*.spec.{ts,tsx}",
         "**/*test-helper*.{ts,tsx}",
         "**/__tests__/**",
         "**/test/**",
+        "**/*.d.ts",
         "apps/server/src/index.ts",
+        "apps/server/src/plugin-host.ts",
         "apps/web/src/main.tsx"
       ],
       thresholds: {

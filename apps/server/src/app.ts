@@ -9,6 +9,7 @@ import {
   conversationInputSchema,
   encodedFileSchema,
   mcpServerInputSchema,
+  mcpServerPatchSchema,
   modelInputSchema,
   patchConversationSchema,
   retryGenerationSchema,
@@ -191,7 +192,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(201).send(store.createMcpServer(value));
   });
   app.patch<{ Params: { id: string } }>("/api/mcp/servers/:id", async (request) => {
-    const value = mcpServerInputSchema.partial().parse(request.body);
+    const value = mcpServerPatchSchema.parse(request.body);
     const duplicate = value.name && store.listMcpServers().some((item) => item.name === value.name && item.id !== request.params.id);
     if (duplicate) throw new StoreError("mcp_name_conflict", "MCP 名称已存在");
     const result = store.updateMcpServer(request.params.id, value);
