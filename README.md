@@ -51,12 +51,17 @@ Vite 只把 `/api` 代理到服务端。Web 不直接请求模型提供方。
 
 ## 生产运行
 
+生产启动前必须构建 Web 和服务端产物。`LLM_CHAT_SERVE_WEB` 默认是 `true`，此时
+`apps/web/dist/index.html` 必须存在；构建产物缺失会阻止服务启动。
+
 ```bash
 pnpm build
 pnpm start
 ```
 
 默认访问地址是 `http://127.0.0.1:3000`。服务端会同时提供 API 和构建后的 Web 静态文件。
+外部管理器、HTTPS 反向代理和数据目录布局请参阅[部署运维手册](docs/DEPLOYMENT.md)。本仓库不生成
+`served`、容器、systemd 或 nginx 配置。
 
 可用环境变量：
 
@@ -64,23 +69,41 @@ pnpm start
 | --- | --- | --- |
 | `LLM_CHAT_HOST` | `127.0.0.1` | 监听地址 |
 | `LLM_CHAT_PORT` | `3000` | HTTP 端口 |
-| `LLM_CHAT_DATA_DIR` | `./data` | SQLite 数据目录 |
-| `LLM_CHAT_AUTH_MODE` | `webauthn` | 认证模式。仅本机开发时可设为 `disabled` |
-| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 浏览器实际访问的公开地址。远程访问必须为 HTTPS |
-| `LLM_CHAT_RP_ID` | 公开地址的主机名 | WebAuthn RP ID。通常不需要设置 |
-| `LLM_CHAT_TRUST_PROXY` | `false` | TLS 由反向代理终止时设为 `true`、代理地址或 CIDR |
+| `LLM_CHAT_DATA_DIR` | `./data` | 完整持久化数据目录，路径相对于项目根目录解析 |
+| `LLM_CHAT_AUTH_MODE` | `webauthn` | 认证模式。`disabled` 只允许同时使用回环监听地址和回环公开地址 |
+| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 浏览器实际访问的公开地址。远程 WebAuthn 必须显式配置 HTTPS |
+| `LLM_CHAT_RP_ID` | 公开地址的主机名 | WebAuthn RP ID。必须是公开地址域名或其父域名 |
+| `LLM_CHAT_TRUST_PROXY` | `false` | `true` 启用代理信任；`false` 或未设置关闭；其他非空字符串原样作为代理地址/CIDR 规则传给 Fastify |
+| `LLM_CHAT_SERVE_WEB` | `true` | 是否提供 `apps/web/dist` 静态文件；设为 `false` 时只运行 API，不要求 Web 产物 |
+| `LLM_CHAT_SHUTDOWN_TIMEOUT_MS` | `30000` | 应用关闭总期限，允许 `1000` 到 `300000` 毫秒；外部管理器宽限期必须更长 |
+| `LLM_CHAT_BUILD_ID` | `development` | 单行构建标识，长度为 1 到 200 个字符；会出现在启动日志和探针响应中 |
 
-例如：
+远程部署可使用以下完整环境。示例假定 HTTPS 代理和服务端在同一主机；将
+`LLM_CHAT_TRUST_PROXY` 改为实际代理源地址或 CIDR：
 
 ```bash
-LLM_CHAT_HOST=0.0.0.0 \
+LLM_CHAT_HOST=127.0.0.1 \
+LLM_CHAT_PORT=3000 \
+LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
+LLM_CHAT_AUTH_MODE=webauthn \
 LLM_CHAT_PUBLIC_URL=https://chat.example.com \
-LLM_CHAT_TRUST_PROXY=true \
-LLM_CHAT_DATA_DIR=/srv/llm-chat \
+LLM_CHAT_RP_ID=chat.example.com \
+LLM_CHAT_TRUST_PROXY=127.0.0.1 \
+LLM_CHAT_SERVE_WEB=true \
+LLM_CHAT_SHUTDOWN_TIMEOUT_MS=30000 \
+LLM_CHAT_BUILD_ID=release-2026-09-01 \
 pnpm start
 ```
 
-远程部署必须在可信反向代理后使用 HTTPS。不要让客户端绕过代理直接访问服务端端口。
+远程部署必须在可信反向代理后使用 HTTPS。代理负责 TLS，服务端只监听内部地址；不要让客户端绕过代理
+直接访问服务端端口。`LLM_CHAT_AUTH_MODE=disabled` 不是远程部署选项：只要监听地址或公开 URL
+不是回环地址，服务就会拒绝启动。
+
+`/healthz` 是无数据库查询的存活探针，服务监听后返回 HTTP `200` 和 `{ "ok": true, "buildId": "..." }`。
+`/readyz` 是流量探针：启动完成、SQLite 可执行 `SELECT 1` 且（`LLM_CHAT_SERVE_WEB=true` 时）Web
+入口存在时返回 `200`；启动尚未完成、检查失败或关闭排空期间返回 `503`。两个响应都会包含
+`buildId`。关闭时先撤回 readiness，因此管理器必须按 `/readyz` 摘流量，并为
+`LLM_CHAT_SHUTDOWN_TIMEOUT_MS` 留出更长的停止宽限期。
 
 ## 设备登录
 
@@ -93,7 +116,22 @@ pnpm start
 
 二维码不使用手工配对码。目标标签页的兑换密钥只保存在内存中；关闭或刷新页面会使该次流程失效。登录会话使用 `HttpOnly`、`SameSite=Strict` Cookie。可以在“设置 > 设备”查看或撤销 Passkey，也可以只退出当前浏览器会话。
 
-Passkey 依赖 WebAuthn。请使用当前版本的 Safari、Chrome 或 Firefox。远程地址必须使用 HTTPS；本机调试只支持 `http://localhost`，不支持用 `http://127.0.0.1` 执行 WebAuthn。Firefox 桌面版可以使用网页，但不提供标准的 PWA 安装入口。
+Passkey 依赖 WebAuthn。请使用当前版本的 Safari、Chrome 或 Firefox；WebAuthn 只在 HTTPS 或
+`localhost` 安全上下文中可用，本机调试不支持用 `http://127.0.0.1` 执行 WebAuthn。
+
+手动浏览器矩阵应覆盖各平台可获得的当前版本：
+
+| 环境 | 说明 |
+| --- | --- |
+| 桌面 Chrome | 支持 WebAuthn 和 PWA；桌面自动化使用 Playwright Chromium |
+| 桌面 Firefox | 支持网页和 WebAuthn，但没有标准的 PWA 安装入口；自动化验证真实配对界面 |
+| 桌面 Safari | 支持网页、WebAuthn 和 PWA；自动化使用 Playwright WebKit 作为桌面 Safari 覆盖 |
+| Android Chrome、Android Firefox（平台提供时） | 使用 HTTPS 访问并验证 Passkey；移动自动化覆盖 390x844 Chromium |
+| iOS Safari（以及平台提供的其他浏览器） | iOS 上通过 Safari 安装 PWA；移动浏览器能力以当前系统版本为准 |
+
+自动化门禁覆盖 Playwright Chromium、Firefox、WebKit 桌面项目，以及 `390x844` 的移动 Chromium。
+通过 CDP 虚拟认证器完成首个 Passkey 注册只在 Chromium 项目运行；Firefox 和 WebKit 验证真实配对
+界面是否可用，或显示明确的降级状态。
 
 ## 首次配置
 
@@ -141,15 +179,46 @@ API Key 和秘密请求头不会通过查询接口返回。SQLite 文件仍包�
 
 ## 数据与恢复
 
-默认数据库位于 `data/llm-chat.sqlite`。备份时应同时停止服务，或使用支持 SQLite 在线备份的工具。生成任务只在单个服务进程内执行；服务异常退出后，正在请求模型或执行工具的任务会在下次启动时标记为中断，不会自动重放模型请求。
+`LLM_CHAT_DATA_DIR` 是唯一的备份和恢复单元，不能只备份 `llm-chat.sqlite`。目录包含 SQLite
+文件及其可能存在的 `-wal`/`-shm` 旁车文件、Plugin 和 Skill 的内容寻址修订、后台任务日志、持久化
+的大型工具输出，以及工作目录和其他服务端状态。该目录的 SQLite 还包含 API Key、秘密请求头、Passkey
+和会话相关材料；整个目录必须按密钥材料保护。
 
-## 检查
+简单且受支持的备份/恢复流程要求服务已停止，并且在备份或恢复期间没有其他进程使用该目录。停止后
+原样复制或归档整个 `LLM_CHAT_DATA_DIR`，恢复时将完整目录恢复到同一路径并保持权限；不要把新旧目录
+内容混合。生成任务只在单个服务进程内执行；服务异常退出后，正在请求模型或执行工具的任务会在下次
+启动时标记为中断，不会自动重放模型请求。
+
+## 离线认证恢复
+
+服务停止后，在项目或发布目录执行以下命令。`--confirm-reset-all-passkeys` 是唯一允许的参数；这里
+不要在它前面再写一个 `--`，因为 pnpm 会把额外分隔符转发给 CLI：
 
 ```bash
-pnpm check
+LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
+pnpm --filter @llm-chat/server auth:reset --confirm-reset-all-passkeys
 ```
 
-该命令依次运行 TypeScript 类型检查、Vitest 测试和生产构建。
+该 CLI 先取得与服务相同的数据目录实例锁，因此服务运行时会拒绝执行。它会撤销所有 Passkey 凭据和
+会话，使未完成的设备注册过期，并删除登录挑战；它保留所有者、聊天和审计数据。成功输出会列出
+`credentialsRevoked`、`sessionsRevoked`、`enrollmentsExpired` 和 `challengesDeleted` 数量，并提示
+重启服务后使用终端打印的新 bootstrap 链接注册 Passkey。应用没有 HTTP 恢复端点，也没有恢复密钥。
+
+## 检查与 CI
+
+CI 使用 Node.js 24、pnpm 11.7.0 和冻结安装。对应命令顺序如下：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm check
+pnpm audit --prod
+pnpm test:deploy
+pnpm exec playwright install --with-deps chromium firefox webkit
+pnpm test:e2e
+```
+
+`pnpm check` 依次运行 TypeScript 类型检查、Web 预算检查、覆盖率测试和生产构建；部署 smoke test
+验证构建后的服务、探针、静态资源、实例锁、关闭排空、后台任务回收和离线认证重置。
 
 ## 目录
 
