@@ -103,7 +103,7 @@ export function App() {
   const [newWorkspacePath, setNewWorkspacePath] = useState<string | null>(null);
   const [greetingIndex, setGreetingIndex] = useState(0);
   const [liveGenerationId, setLiveGenerationId] = useState<string | null>(null);
-  const [toolActionIds, setToolActionIds] = useState<Set<string>>(new Set());
+  const [approvalActionId, setApprovalActionId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [executionOpen, setExecutionOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -176,9 +176,14 @@ export function App() {
   const selectedContextPolicy = activeOverrides.contextPolicy ?? selectedAgent?.execution.contextPolicy ?? "trim";
   const selectedReasoningEffort = activeOverrides.reasoningEffort ?? selectedAgent?.execution.reasoningEffort ?? "none";
   const uiPreferences = boot?.settings.uiPreferences ?? defaultUiPreferences;
-  const waitingToolApproval = messages.some((message) => message.generations.some((generation) =>
-    generation.id === message.activeGenerationId && generation.status === "waiting-approval"
-  ));
+  const activeApprovalGeneration = messages
+    .filter((message) => message.role === "assistant")
+    .map((message) => message.generations.find((generation) => generation.id === message.activeGenerationId))
+    .find((generation) => generation?.toolCalls.some((toolCall) => toolCall.approvalState === "pending"));
+  const pendingApprovals = activeApprovalGeneration?.toolCalls
+    .filter((toolCall) => toolCall.approvalState === "pending")
+    .sort((left, right) => left.index - right.index) ?? [];
+  const waitingToolApproval = pendingApprovals.length > 0;
 
   const loadMessages = useCallback(async (conversationId: string) => {
     const data = await api.messages(conversationId);
@@ -349,6 +354,28 @@ export function App() {
     }
   };
 
+  const respondToToolApproval = async (toolCall: ToolCallDto, approved: boolean) => {
+    if (!currentId || approvalActionId) return;
+    setError("");
+    setApprovalActionId(toolCall.id);
+    try {
+      const result = await api.approveTool(toolCall.id, approved);
+      await loadMessages(currentId);
+      setMessages((value) => value.map((message) => ({
+        ...message,
+        generations: message.generations.map((generation) => ({
+          ...generation,
+          toolCalls: generation.toolCalls.map((item) => item.id === result.toolCall.id ? result.toolCall : item)
+        }))
+      })));
+      if (result.resumed) setLiveGenerationId(result.generationId);
+    } catch (value) {
+      setError(messageOf(value));
+    } finally {
+      setApprovalActionId(null);
+    }
+  };
+
   const retry = async (messageId: string) => {
     if (liveGenerationId || waitingToolApproval) return;
     try {
@@ -491,23 +518,6 @@ export function App() {
         active={active}
         colorScheme={colorScheme}
         collapsePolicy={uiPreferences.reasoningCollapsePolicy}
-        toolActionIds={toolActionIds}
-        onToolApproval={async (toolCall, approved) => {
-          setToolActionIds((value) => new Set(value).add(toolCall.id));
-          try {
-            const result = await api.approveTool(toolCall.id, approved);
-            if (result.resumed) setLiveGenerationId(result.generationId);
-            if (currentId) await loadMessages(currentId);
-          } catch (value) {
-            setError(messageOf(value));
-          } finally {
-            setToolActionIds((value) => {
-              const next = new Set(value);
-              next.delete(toolCall.id);
-              return next;
-            });
-          }
-        }}
       />,
       footer: <MessageFooter
         message={message}
@@ -634,18 +644,22 @@ export function App() {
                     {current && !selectedAgent && <Alert type="error" showIcon message="当前 Agent 已删除，请重新选择" />}
                     {current && !selectedModelAvailable && <Alert type="error" showIcon message="当前模型已失效或不可用，请重新选择" />}
                     {error && <Alert type="error" showIcon closable message={error} onClose={() => setError("")} />}
-                    <Sender
+                    {pendingApprovals.length > 0 ? <ApprovalPanel
+                      pendingApprovals={pendingApprovals}
+                      loading={Boolean(approvalActionId)}
+                      onRespond={(approved) => void respondToToolApproval(pendingApprovals[0]!, approved)}
+                    /> : <Sender
                       value={draft}
-                      disabled={!selectedAgent || !selectedModelAvailable || waitingToolApproval}
+                      disabled={!selectedAgent || !selectedModelAvailable}
                       loading={Boolean(liveGenerationId)}
-                      placeholder={waitingToolApproval ? "请先处理上方的工具审批" : !selectedAgent ? "请先选择 Agent" : selectedModelAvailable ? "输入消息" : selectedModel ? "当前模型失效" : "请先选择模型"}
+                      placeholder={!selectedAgent ? "请先选择 Agent" : selectedModelAvailable ? "输入消息" : selectedModel ? "当前模型失效" : "请先选择模型"}
                       autoSize={{ minRows: 1, maxRows: 6 }}
                       submitType="enter"
                       onChange={setDraft}
                       onSubmit={(value) => void send(value)}
                       onCancel={() => liveGenerationId && void api.cancel(liveGenerationId)}
                       footer={mobileLayout ? mobileComposerToolbar : desktopComposerToolbar}
-                    />
+                    />}
                   </div>
                 </>}
           </Content>
@@ -1017,13 +1031,11 @@ function EmptyState({ title, description, action, onAction }: { title: string; d
   </Flex>;
 }
 
-function AssistantContent({ generation, active, colorScheme, collapsePolicy, toolActionIds, onToolApproval }: {
+function AssistantContent({ generation, active, colorScheme, collapsePolicy }: {
   generation: GenerationDto;
   active: boolean;
   colorScheme: ColorScheme;
   collapsePolicy: ReasoningCollapsePolicy;
-  toolActionIds: Set<string>;
-  onToolApproval: (toolCall: ToolCallDto, approved: boolean) => Promise<void>;
 }) {
   const text = blockText(generation, ["text", "refusal"]);
   const reasoning = blockText(generation, ["reasoning"]);
@@ -1053,8 +1065,6 @@ function AssistantContent({ generation, active, colorScheme, collapsePolicy, too
     {generation.toolCalls.map((toolCall) => <ToolCallView
       key={toolCall.id}
       toolCall={toolCall}
-      loading={toolActionIds.has(toolCall.id)}
-      onApproval={onToolApproval}
     />)}
     {text && <Markdown colorScheme={colorScheme} streaming={active}>{text}</Markdown>}
     {unsupported.map((block) => <Alert key={block.id} type="warning" showIcon message={block.content} />)}
@@ -1062,12 +1072,9 @@ function AssistantContent({ generation, active, colorScheme, collapsePolicy, too
   </Flex>;
 }
 
-function ToolCallView({ toolCall, loading, onApproval }: {
+function ToolCallView({ toolCall }: {
   toolCall: ToolCallDto;
-  loading: boolean;
-  onApproval: (toolCall: ToolCallDto, approved: boolean) => Promise<void>;
 }) {
-  const pending = toolCall.approvalState === "pending";
   const body = <Flex vertical gap="small">
     <div>
       <Text type="secondary">参数</Text>
@@ -1077,10 +1084,6 @@ function ToolCallView({ toolCall, loading, onApproval }: {
       <Text type="secondary">{toolCall.error ? "错误" : "结果"}</Text>
       <pre className="tool-payload">{prettyJson(toolCall.error ?? toolCall.output ?? "")}</pre>
     </div>}
-    {pending && <Flex gap="small">
-      <Button type="primary" size="small" icon={<CheckOutlined />} loading={loading} onClick={() => void onApproval(toolCall, true)}>允许</Button>
-      <Button size="small" danger icon={<CloseOutlined />} disabled={loading} onClick={() => void onApproval(toolCall, false)}>拒绝</Button>
-    </Flex>}
   </Flex>;
   return <Collapse
     size="small"
@@ -1092,6 +1095,43 @@ function ToolCallView({ toolCall, loading, onApproval }: {
       children: body
     }]}
   />;
+}
+
+function ApprovalPanel({ pendingApprovals, loading, onRespond }: {
+  pendingApprovals: ToolCallDto[];
+  loading: boolean;
+  onRespond: (approved: boolean) => void;
+}) {
+  const toolCall = pendingApprovals[0];
+  if (!toolCall) return null;
+  return <section className="approval-panel" aria-label="工具审批">
+    <Flex className="approval-panel-header" align="center" justify="space-between" gap="small" wrap>
+      <Flex className="approval-tool-heading" align="center" gap="small">
+        <CodeOutlined />
+        <Text strong ellipsis>{toolName(toolCall.name)}</Text>
+        <Text type="secondary" ellipsis>{toolCall.name}</Text>
+      </Flex>
+      <Text type="secondary" className="approval-position">第 {1} 项，共 {pendingApprovals.length} 项</Text>
+    </Flex>
+    <Text type="secondary" className="approval-prompt">此工具调用需要你的许可</Text>
+    <pre className="approval-payload" aria-label="工具参数">{prettyJson(toolCall.arguments)}</pre>
+    <Flex className="approval-actions" justify="end" gap="small" wrap>
+      <Button
+        type="primary"
+        icon={<CheckOutlined />}
+        loading={loading}
+        disabled={loading}
+        onClick={() => onRespond(true)}
+      >允许</Button>
+      <Button
+        danger
+        icon={<CloseOutlined />}
+        loading={loading}
+        disabled={loading}
+        onClick={() => onRespond(false)}
+      >拒绝</Button>
+    </Flex>
+  </section>;
 }
 
 function MessageFooter({ message, generation, selectedIndex, active, mobile, onRetry, onSelect }: {
