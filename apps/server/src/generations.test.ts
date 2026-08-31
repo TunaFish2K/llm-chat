@@ -682,6 +682,47 @@ describe("GenerationRunner errors and cancellation", () => {
     expect((await terminal(store, first.generationId)).status).toBe("stopped");
     expect((await terminal(store, second.generationId)).status).toBe("stopped");
   });
+
+  it("closes idempotently, aborts a blocked provider, and rejects new starts", async () => {
+    const store = createStore();
+    const active = seedGeneration(store);
+    const notStarted = seedGeneration(store);
+    const runner = makeRunner(store, { stream: (_protocol, request) => abortableStream(request.signal) });
+    runner.start(active.generationId);
+    await until(() => store.getGeneration(active.generationId)?.status === "running");
+
+    const firstClose = runner.close();
+    const secondClose = runner.close();
+    expect(secondClose).toBe(firstClose);
+    await firstClose;
+
+    expect(store.getGeneration(active.generationId)).toMatchObject({ status: "stopped", stopReason: "cancelled" });
+    expect(runner.isConversationActive(active.conversationId)).toBe(false);
+    expect(() => runner.start(notStarted.generationId)).toThrow("Generation runner is closing");
+    await runner.close();
+  });
+
+  it("aborts and awaits a tool blocked on its cancellation signal", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const tool = serverTool("blocked", async (_input, signal) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+      return "unreachable";
+    });
+    const runner = makeRunner(store, {
+      buildTools: async () => [tool],
+      stream: () => events([toolCall("blocked-call", "blocked", "{}")])
+    });
+    runner.start(generation.generationId);
+    await until(() => store.getToolCall("blocked-call")?.approvalState === "running");
+
+    await runner.close();
+
+    expect(store.getGeneration(generation.generationId)).toMatchObject({ status: "stopped", stopReason: "cancelled" });
+    expect(runner.isConversationActive(generation.conversationId)).toBe(false);
+  });
 });
 
 function seedGeneration(store: Store) {

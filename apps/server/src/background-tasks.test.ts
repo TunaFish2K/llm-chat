@@ -23,7 +23,7 @@ describe("TaskManager", () => {
     expect(manager.eventsFor(task.id)).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "write", reason: "回答测试提示" })
     ]));
-    manager.close();
+    await manager.close();
   });
 
   it("runs PTY tasks and returns both raw output and a screen projection", async () => {
@@ -37,7 +37,7 @@ describe("TaskManager", () => {
     const output = await manager.read(task.id, 0);
     expect(output.raw).toContain("red");
     expect(output.screen).toContain("red");
-    manager.close();
+    await manager.close();
   });
 
   it("queues at a zero Agent quota and starts after a live policy update", async () => {
@@ -56,7 +56,31 @@ describe("TaskManager", () => {
     manager.notifyAgentPolicyChanged(agent.id);
     await until(() => manager.get(task.id)?.status === "completed");
     expect((await manager.read(task.id, 0)).text).toContain("queued");
-    manager.close();
+    await manager.close();
+  });
+
+  it("escalates shutdown to SIGKILL and waits until a TERM-ignoring child is gone", async () => {
+    const { store, record } = generation();
+    const manager = new TaskManager(store, new EventHub());
+    const task = manager.create({
+      conversationId: record.conversationId, generationId: record.id, snapshot: record.agentSnapshot,
+      command: "trap '' TERM; printf ready; while :; do sleep 1; done",
+      mode: "pipe", expectedDurationMs: null, hardTimeoutMs: null
+    });
+    await until(() => (manager.get(task.id)?.outputCursor ?? 0) > 0);
+    const row = store.sqlite.prepare("SELECT pid FROM background_tasks WHERE id = ?").get(task.id) as { pid: number };
+
+    const firstClose = manager.close();
+    expect(manager.close()).toBe(firstClose);
+    await firstClose;
+
+    expect(manager.get(task.id)).toMatchObject({ status: "interrupted", error: "服务关闭" });
+    expect((await manager.read(task.id, 0)).text).toContain("ready");
+    expectProcessGone(row.pid);
+    expect(() => manager.create({
+      conversationId: record.conversationId, generationId: record.id, snapshot: record.agentSnapshot,
+      command: "printf late", mode: "pipe", expectedDurationMs: null, hardTimeoutMs: null
+    })).toThrow("Task manager is closing");
   });
 });
 
@@ -78,4 +102,8 @@ async function until(predicate: () => boolean, timeout = 5_000): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("condition timed out");
+}
+
+function expectProcessGone(pid: number): void {
+  expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
 }
