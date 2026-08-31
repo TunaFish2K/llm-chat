@@ -53,6 +53,36 @@ export class AuthError extends Error {
   }
 }
 
+export interface AuthenticationResetResult {
+  credentialsRevoked: number;
+  sessionsRevoked: number;
+  enrollmentsExpired: number;
+  challengesDeleted: number;
+}
+
+export function resetAuthentication(store: Store, now = Date.now()): AuthenticationResetResult {
+  store.sqlite.exec("BEGIN IMMEDIATE");
+  try {
+    const credentialsRevoked = Number(store.sqlite.prepare(`
+      UPDATE auth_credentials SET revoked_at = ? WHERE revoked_at IS NULL
+    `).run(now).changes);
+    const sessionsRevoked = Number(store.sqlite.prepare(`
+      UPDATE auth_sessions SET revoked_at = ? WHERE revoked_at IS NULL
+    `).run(now).changes);
+    const enrollmentsExpired = Number(store.sqlite.prepare(`
+      UPDATE auth_enrollment_requests
+      SET status = 'expired', expires_at = MIN(expires_at, ?)
+      WHERE status NOT IN ('redeemed', 'expired')
+    `).run(now).changes);
+    const challengesDeleted = Number(store.sqlite.prepare("DELETE FROM auth_challenges").run().changes);
+    store.sqlite.exec("COMMIT");
+    return { credentialsRevoked, sessionsRevoked, enrollmentsExpired, challengesDeleted };
+  } catch (error) {
+    store.sqlite.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 export class AuthManager {
   private readonly origin: string;
   private readonly rpId: string;
