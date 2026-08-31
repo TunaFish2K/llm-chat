@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AuthError, AuthManager, describeBrowser } from "./auth";
+import { AuthError, AuthManager, describeBrowser, resetAuthentication } from "./auth";
 import { Store } from "./database";
 
 vi.mock("@simplewebauthn/server", () => ({
@@ -192,6 +192,170 @@ describe("WebAuthn device trust", () => {
       deviceName: "过期设备",
       response: registration("expired")
     }, 10_000 + 10 * 60 * 1000 + 1)).rejects.toMatchObject({ code: "enrollment_invalid" });
+  });
+
+  it("atomically resets every active authentication path and permits a fresh bootstrap", async () => {
+    const resetAt = 30_000;
+    const { auth, store } = createAuth([]);
+    const bootstrapUrl = await auth.ensureBootstrapRequest(20_000);
+    const bootstrap = pairParts(bootstrapUrl!);
+    await auth.bootstrapOptions(bootstrap.requestId, bootstrap.secret, 20_001);
+    const first = await auth.verifyBootstrap({
+      id: bootstrap.requestId,
+      secret: bootstrap.secret,
+      deviceName: "旧手机",
+      response: registration("credential-one")
+    }, 20_002);
+
+    const created = await auth.beginEnrollment({ deviceName: "尚未注册", ip: "", userAgent: "" }, 20_003);
+    const awaiting = await auth.beginEnrollment({ deviceName: "等待批准", ip: "", userAgent: "" }, 20_004);
+    await auth.finishEnrollment({
+      id: awaiting.id,
+      tabSecret: awaiting.tabSecret,
+      approvalSecret: awaiting.approvalSecret,
+      response: registration("credential-awaiting")
+    }, 20_005);
+
+    const approved = await auth.beginEnrollment({ deviceName: "已经批准", ip: "", userAgent: "" }, 20_006);
+    await auth.finishEnrollment({
+      id: approved.id,
+      tabSecret: approved.tabSecret,
+      approvalSecret: approved.approvalSecret,
+      response: registration("credential-approved")
+    }, 20_007);
+    await auth.approvalOptions(approved.id, approved.approvalSecret, 20_008);
+    await auth.approve({
+      id: approved.id,
+      secret: approved.approvalSecret,
+      response: authentication("credential-one")
+    }, 20_009);
+
+    const redeemed = await auth.beginEnrollment({ deviceName: "已兑换设备", ip: "", userAgent: "" }, 20_010);
+    await auth.finishEnrollment({
+      id: redeemed.id,
+      tabSecret: redeemed.tabSecret,
+      approvalSecret: redeemed.approvalSecret,
+      response: registration("credential-redeemed")
+    }, 20_011);
+    await auth.approvalOptions(redeemed.id, redeemed.approvalSecret, 20_012);
+    await auth.approve({
+      id: redeemed.id,
+      secret: redeemed.approvalSecret,
+      response: authentication("credential-one")
+    }, 20_013);
+    const redeemedResult = auth.enrollmentStatus(redeemed.id, redeemed.tabSecret, 20_014);
+    const secondToken = redeemedResult.state === "authenticated" ? redeemedResult.token : "";
+    const login = await auth.loginOptions(20_015);
+    store.sqlite.prepare(`
+      INSERT INTO auth_enrollment_requests
+        (id, kind, status, device_name, approval_secret_hash, created_at, expires_at)
+      VALUES ('already-expired', 'device', 'expired', '过期请求', 'hash', ?, ?)
+    `).run(19_000, resetAt - 1);
+
+    const ownerBefore = store.sqlite.prepare("SELECT user_handle FROM auth_owner WHERE id = 1").get();
+    expect(resetAuthentication(store, resetAt)).toEqual({
+      credentialsRevoked: 2,
+      sessionsRevoked: 4,
+      enrollmentsExpired: 3,
+      challengesDeleted: 1
+    });
+
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_credentials").get()).toEqual({ count: 2 });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_sessions").get()).toEqual({ count: 4 });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_enrollment_requests").get()).toEqual({ count: 6 });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_credentials WHERE revoked_at = ?").get(resetAt))
+      .toEqual({ count: 2 });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_sessions WHERE revoked_at = ?").get(resetAt))
+      .toEqual({ count: 4 });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_challenges").get()).toEqual({ count: 0 });
+    expect(store.sqlite.prepare("SELECT user_handle FROM auth_owner WHERE id = 1").get()).toEqual(ownerBefore);
+    expect(store.sqlite.prepare(`
+      SELECT id, status, expires_at, consumed_at FROM auth_enrollment_requests
+      WHERE id IN (?, ?, ?) ORDER BY id
+    `).all(created.id, awaiting.id, approved.id)).toEqual([
+      { id: approved.id, status: "expired", expires_at: resetAt, consumed_at: null },
+      { id: awaiting.id, status: "expired", expires_at: resetAt, consumed_at: null },
+      { id: created.id, status: "expired", expires_at: resetAt, consumed_at: null }
+    ].sort((left, right) => left.id.localeCompare(right.id)));
+    expect(store.sqlite.prepare(`
+      SELECT status, consumed_at FROM auth_enrollment_requests WHERE id = ?
+    `).get(redeemed.id)).toEqual({ status: "redeemed", consumed_at: 20_014 });
+    expect(store.sqlite.prepare(`
+      SELECT status, expires_at FROM auth_enrollment_requests WHERE id = 'already-expired'
+    `).get()).toEqual({ status: "expired", expires_at: resetAt - 1 });
+
+    const stateAfterReset = store.sqlite.prepare(`
+      SELECT id, status, expires_at, consumed_at FROM auth_enrollment_requests ORDER BY id
+    `).all();
+    expect(resetAuthentication(store, resetAt + 1)).toEqual({
+      credentialsRevoked: 0,
+      sessionsRevoked: 0,
+      enrollmentsExpired: 0,
+      challengesDeleted: 0
+    });
+    expect(store.sqlite.prepare(`
+      SELECT id, status, expires_at, consumed_at FROM auth_enrollment_requests ORDER BY id
+    `).all()).toEqual(stateAfterReset);
+
+    expect(auth.authenticate(first.token, resetAt + 2)).toBeNull();
+    expect(auth.authenticate(secondToken, resetAt + 2)).toBeNull();
+    expect(auth.listDevices("none")).toEqual([]);
+    await expect(auth.loginOptions(resetAt + 2)).rejects.toMatchObject({ code: "bootstrap_required" });
+    expect(() => auth.enrollmentStatus(created.id, created.tabSecret, resetAt + 2)).toThrow(AuthError);
+    expect(() => auth.approvalDetails(awaiting.id, awaiting.approvalSecret, resetAt + 2)).toThrow(AuthError);
+    expect(() => auth.enrollmentStatus(approved.id, approved.tabSecret, resetAt + 2)).toThrow(AuthError);
+    await expect(auth.login({ challengeId: login.challengeId, response: authentication("credential-one") }, resetAt + 2))
+      .rejects.toMatchObject({ code: "challenge_expired" });
+
+    const announcements: string[] = [];
+    const freshAuth = new AuthManager(
+      store,
+      { origin: "http://localhost:3000", rpId: "localhost" },
+      (message) => announcements.push(message)
+    );
+    const freshBootstrapUrl = await freshAuth.ensureBootstrapRequest(resetAt + 2);
+    expect(freshBootstrapUrl).toContain("/pair#mode=bootstrap");
+    expect(freshBootstrapUrl).not.toBe(bootstrapUrl);
+    expect(announcements).toHaveLength(1);
+  });
+
+  it("rolls back every reset mutation when one statement fails", async () => {
+    const { auth, store } = createAuth([]);
+    const bootstrapUrl = await auth.ensureBootstrapRequest(40_000);
+    const bootstrap = pairParts(bootstrapUrl!);
+    await auth.bootstrapOptions(bootstrap.requestId, bootstrap.secret, 40_001);
+    const first = await auth.verifyBootstrap({
+      id: bootstrap.requestId,
+      secret: bootstrap.secret,
+      deviceName: "仍然可信",
+      response: registration("credential-one")
+    }, 40_002);
+    await auth.beginEnrollment({ deviceName: "保留配对", ip: "", userAgent: "" }, 40_003);
+    await auth.loginOptions(40_004);
+    store.sqlite.exec(`
+      CREATE TRIGGER fail_auth_session_reset
+      BEFORE UPDATE OF revoked_at ON auth_sessions
+      WHEN OLD.revoked_at IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'forced reset failure');
+      END
+    `);
+
+    expect(() => resetAuthentication(store, 50_000)).toThrow("forced reset failure");
+    expect(store.sqlite.prepare("SELECT revoked_at FROM auth_credentials").get()).toEqual({ revoked_at: null });
+    expect(store.sqlite.prepare("SELECT revoked_at FROM auth_sessions").get()).toEqual({ revoked_at: null });
+    expect(store.sqlite.prepare("SELECT status FROM auth_enrollment_requests WHERE status = 'created'").get())
+      .toEqual({ status: "created" });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM auth_challenges").get()).toEqual({ count: 1 });
+    expect(auth.authenticate(first.token, 50_001)).toMatchObject({ name: "仍然可信" });
+
+    store.sqlite.exec("DROP TRIGGER fail_auth_session_reset");
+    expect(resetAuthentication(store, 50_002)).toEqual({
+      credentialsRevoked: 1,
+      sessionsRevoked: 1,
+      enrollmentsExpired: 1,
+      challengesDeleted: 1
+    });
   });
 });
 
