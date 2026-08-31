@@ -822,12 +822,12 @@ async function registerWeb(app: FastifyInstance): Promise<void> {
     root,
     wildcard: false,
     cacheControl: false,
-    setHeaders(response, filePath) {
+    setHeaders(reply, filePath) {
       const fileName = parsePath(filePath).base;
       if (filePath.includes(`${resolve(root, "assets")}/`) && /-[A-Za-z0-9_-]{8,}\./.test(fileName)) {
-        response.setHeader("cache-control", "public, max-age=31536000, immutable");
+        reply.header("cache-control", "public, max-age=31536000, immutable");
       } else {
-        response.setHeader("cache-control", "no-cache");
+        reply.header("cache-control", "no-cache");
       }
     }
   });
