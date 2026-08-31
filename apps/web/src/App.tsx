@@ -1160,7 +1160,15 @@ function MessageFooter({ message, generation, selectedIndex, active, mobile, onR
   const metadata = <>
     {generation.generatedAgent && <Text type="secondary">{generation.generatedAgent.name} r{generation.generatedAgent.revision}</Text>}
     {message.generatedModel && <Tooltip title={detail}><Text type="secondary" ellipsis className="message-model-label">{message.generatedModel.displayName}</Text></Tooltip>}
-    {generation.usage.totalTokens !== undefined && <Text type="secondary">{generation.usage.totalTokens.toLocaleString()} tokens</Text>}
+    {generation.usage.inputTokens !== undefined && <Text type="secondary" className="message-usage-fact">输入 {generation.usage.inputTokens.toLocaleString()}</Text>}
+    {generation.usage.outputTokens !== undefined && <Text type="secondary" className="message-usage-fact">输出 {generation.usage.outputTokens.toLocaleString()}</Text>}
+    {validCacheRate(generation.usage.inputTokens, generation.usage.cachedInputTokens) !== null && <Tooltip title={cacheUsageDetail(
+      generation.usage.cachedInputTokens!, generation.usage.inputTokens!, generation.usage.totalTokens
+    )}>
+      <Text type="secondary" className="message-usage-fact">缓存 {validCacheRate(generation.usage.inputTokens, generation.usage.cachedInputTokens)}%</Text>
+    </Tooltip>}
+    {generation.usage.inputTokens === undefined && generation.usage.outputTokens === undefined && generation.usage.totalTokens !== undefined
+      && <Text type="secondary" className="message-usage-fact">{generation.usage.totalTokens.toLocaleString()} tokens</Text>}
     {generation.status !== "completed" && <Tag color={statusColor(generation.status)}>{statusName(generation.status)}</Tag>}
     {generation.context?.omittedMessages ? <Text type="secondary">省略 {generation.context.omittedMessages} 条</Text> : null}
   </>;
@@ -1173,6 +1181,17 @@ function MessageFooter({ message, generation, selectedIndex, active, mobile, onR
     {versions}
     {metadata}
   </Flex>;
+}
+
+function validCacheRate(inputTokens: number | undefined, cachedInputTokens: number | undefined): number | null {
+  if (inputTokens === undefined || cachedInputTokens === undefined || !Number.isFinite(inputTokens) || !Number.isFinite(cachedInputTokens)
+    || inputTokens <= 0 || cachedInputTokens < 0 || cachedInputTokens > inputTokens) return null;
+  return Math.round(cachedInputTokens / inputTokens * 100);
+}
+
+function cacheUsageDetail(cachedInputTokens: number, inputTokens: number, totalTokens: number | undefined): string {
+  const inputDetail = `${cachedInputTokens.toLocaleString()} 个缓存输入 tokens / ${inputTokens.toLocaleString()} 个输入 tokens`;
+  return totalTokens === undefined ? inputDetail : `${inputDetail} / ${totalTokens.toLocaleString()} 个总 tokens`;
 }
 
 function WorkspaceBrowser({ open, value, onClose, onSelect }: {

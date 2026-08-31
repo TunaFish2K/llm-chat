@@ -14,7 +14,7 @@ const api = vi.hoisted(() => ({
   settings: vi.fn(), agents: vi.fn(), connections: vi.fn(), models: vi.fn(), conversations: vi.fn(), messages: vi.fn(),
   updateConversation: vi.fn(), updateSettings: vi.fn(), startConversation: vi.fn(), send: vi.fn(), retry: vi.fn(),
   selectGeneration: vi.fn(), cancel: vi.fn(), approveTool: vi.fn(), deleteConversation: vi.fn(),
-  toolCatalog: vi.fn(),
+  toolCatalog: vi.fn(), connectionBalance: vi.fn(),
   directories: vi.fn(), createDirectory: vi.fn(),
   backgroundTasks: vi.fn(), backgroundOutput: vi.fn(), backgroundTask: vi.fn(), stopBackgroundTask: vi.fn(),
   agentAvatarUrl: vi.fn((id: string) => `/api/agents/${id}/avatar`)
@@ -35,7 +35,8 @@ vi.mock("@ant-design/icons", async () => {
     CheckOutlined: Icon, CloseOutlined: Icon, CodeOutlined: Icon, ControlOutlined: Icon,
     CopyOutlined: Icon, DeleteOutlined: Icon, FolderOpenOutlined: Icon, LeftOutlined: Icon,
     MenuFoldOutlined: Icon, MenuOutlined: Icon, MenuUnfoldOutlined: Icon, MoreOutlined: Icon,
-    RightOutlined: Icon, SettingOutlined: Icon, StopOutlined: Icon, SyncOutlined: Icon
+    RightOutlined: Icon, SettingOutlined: Icon, StopOutlined: Icon, SyncOutlined: Icon,
+    DownOutlined: Icon, LoadingOutlined: Icon, SearchOutlined: Icon, WalletOutlined: Icon, WarningOutlined: Icon
   };
 });
 vi.mock("./theme", async () => {
@@ -308,6 +309,7 @@ function resetApi() {
   api.approveTool.mockResolvedValue({ toolCall: tool(), generationId: "g-resumed", resumed: true });
   api.deleteConversation.mockResolvedValue(undefined);
   api.toolCatalog.mockResolvedValue([{ name: "web_search", label: "Web search", description: "Search", category: "web", requiresApproval: false, available: true }]);
+  api.connectionBalance.mockResolvedValue({ connectionId: "c1", value: 1, fetchedAt: 1, cached: false });
   api.directories.mockResolvedValue({ path: "/workspace", parentPath: "/", entries: [] });
   api.createDirectory.mockResolvedValue({ path: "/workspace/new" });
   api.backgroundTasks.mockResolvedValue([]);
@@ -598,6 +600,29 @@ export function registerAppMessagingTests() {
     act(() => state.streams.get("g1")?.({ type: "snapshot", generation: generation({ status: "waiting-approval" }) }));
     await waitFor(() => expect(api.conversations).toHaveBeenCalledTimes(2));
     expect(state.unsubscribes.some((unsubscribe) => unsubscribe.mock.calls.length)).toBe(true);
+  });
+
+  it("shows structured usage, valid cache rates, and the legacy total fallback", async () => {
+    const messageWithUsage = (id: string, usage: GenerationDto["usage"]): MessageDto => ({
+      ...assistantMessage([generation({ id: `g-${id}`, usage })]),
+      id,
+      activeGenerationId: `g-${id}`
+    });
+    api.messages.mockResolvedValue([
+      messageWithUsage("positive", { inputTokens: 200, outputTokens: 40, cachedInputTokens: 84, totalTokens: 240 }),
+      messageWithUsage("zero", { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, totalTokens: 120 }),
+      messageWithUsage("missing", { inputTokens: 30, outputTokens: 4, totalTokens: 34 }),
+      messageWithUsage("invalid", { inputTokens: 10, outputTokens: 2, cachedInputTokens: 11, totalTokens: 12 }),
+      messageWithUsage("legacy", { totalTokens: 12 })
+    ]);
+    await boot("/c/a1b2");
+
+    expect(await screen.findByText("缓存 42%")).toBeInTheDocument();
+    expect(screen.getByText("缓存 0%")).toBeInTheDocument();
+    expect(screen.getAllByText("输入 10")).toHaveLength(1);
+    expect(screen.getAllByText("输出 2")).toHaveLength(1);
+    expect(screen.getAllByText(/缓存 /)).toHaveLength(2);
+    expect(screen.getByText("12 tokens")).toBeInTheDocument();
   });
   });
 }

@@ -111,10 +111,13 @@ body { overflow: hidden; overscroll-behavior: none; }
 .model-trigger { max-width: min(260px, 48vw); }
 .model-trigger-label { min-width: 0; max-width: 210px; }
 .model-popover-list { max-height: min(360px, 55vh); overflow-y: auto; }
-.model-group-title { display: block; padding: 8px 12px 4px; }
+.model-group-title { width: 100%; min-width: 0; padding: 8px 12px 4px; }
+.model-group-title > .ant-typography { min-width: 0; }
+.model-group-balance { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .model-option-button { height: auto; padding-block: 8px; }
 .model-option-button > span { width: 100%; }
 .model-option-copy { flex: 1; min-width: 0; }
+.message-usage-fact { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .reasoning-popover { padding-bottom: 12px; }
 .conversation-overrides { max-height: min(65vh, 640px); overflow-y: auto; padding-inline-end: 4px; }
 .override-field { flex: 1 1 140px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -133,6 +136,7 @@ body { overflow: hidden; overscroll-behavior: none; }
 .settings-fields-row { width: 100%; }
 .settings-field { flex: 1 1 220px; min-width: 0; }
 .settings-number-input { width: 100%; }
+.connection-balance-section { margin-bottom: 16px; }
 .agent-tool-grid { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
 .agent-tool-row { min-width: 0; }
 .agent-tool-row .ant-checkbox-wrapper { min-width: 0; flex: 1; }

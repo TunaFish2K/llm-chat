@@ -677,14 +677,21 @@ export function Connections({ connections, busy, mobile, run }: { connections: C
 function ConnectionEditor({ value, busy, run, onDone }: { value: ConnectionDto | "new"; busy: boolean; run: Run; onDone: () => void }) {
   const existing = value === "new" ? null : value;
   const [form] = Form.useForm<ConnectionForm>();
-  const { modal } = AntApp.useApp();
+  const [balanceTesting, setBalanceTesting] = useState(false);
+  const { message, modal } = AntApp.useApp();
+  const balanceEnabled = Form.useWatch("balanceEnabled", form) as boolean | undefined;
   const save = async (values: ConnectionForm) => {
     const input: ConnectionInput = {
       name: values.name,
       protocol: values.protocol,
       baseUrl: values.baseUrl,
       ...(values.apiKey ? { apiKey: values.apiKey } : {}),
-      secretHeaders: parseHeaders(values.secretHeaders ?? "")
+      secretHeaders: parseHeaders(values.secretHeaders ?? ""),
+      ...(values.balanceEnabled || existing?.balanceConfig ? { balanceConfig: {
+        enabled: Boolean(values.balanceEnabled),
+        apiPath: values.balanceApiPath.trim(),
+        resultExpression: values.balanceResultExpression.trim()
+      } } : {})
     };
     const ok = await run(
       () => existing ? api.updateConnection(existing.id, input) : api.createConnection(input),
@@ -692,13 +699,34 @@ function ConnectionEditor({ value, busy, run, onDone }: { value: ConnectionDto |
     );
     if (ok) onDone();
   };
+  const testBalance = async () => {
+    if (!existing) return;
+    setBalanceTesting(true);
+    try {
+      const result = await api.connectionBalance(existing.id, true);
+      void message.success(`账户余额：${result.value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`);
+    } catch (error) {
+      void message.error(error instanceof Error ? error.message : "余额测试失败");
+    } finally {
+      setBalanceTesting(false);
+    }
+  };
   return <>
     <Title level={5}>{existing ? existing.name : "新建连接"}</Title>
     <Form
       className="settings-form"
       form={form}
       layout="vertical"
-      initialValues={{ protocol: existing?.protocol ?? "openai-responses", name: existing?.name ?? "", baseUrl: existing?.baseUrl ?? defaults["openai-responses"], apiKey: "", secretHeaders: "" }}
+      initialValues={{
+        protocol: existing?.protocol ?? "openai-responses",
+        name: existing?.name ?? "",
+        baseUrl: existing?.baseUrl ?? defaults["openai-responses"],
+        apiKey: "",
+        secretHeaders: "",
+        balanceEnabled: existing?.balanceConfig?.enabled ?? false,
+        balanceApiPath: existing?.balanceConfig?.apiPath ?? "/credits",
+        balanceResultExpression: existing?.balanceConfig?.resultExpression ?? "data.total_credits - data.total_usage"
+      }}
       onFinish={(values) => void save(values)}
     >
       <Form.Item name="protocol" label="协议" rules={[{ required: true }]}>
@@ -712,9 +740,50 @@ function ConnectionEditor({ value, busy, run, onDone }: { value: ConnectionDto |
       <Form.Item name="baseUrl" label="Base URL" rules={[{ required: true }, { type: "url" }]}><Input /></Form.Item>
       <Form.Item name="apiKey" label="API Key"><Input.Password autoComplete="off" placeholder={existing?.hasApiKey ? "已保存；留空则不修改" : "可选"} /></Form.Item>
       <Form.Item name="secretHeaders" label="秘密请求头" extra="每行一个，例如 X-Org: value"><TextArea rows={3} /></Form.Item>
+      <Collapse
+        size="small"
+        className="connection-balance-section"
+        defaultActiveKey={existing?.balanceConfig?.enabled ? ["balance"] : []}
+        items={[{
+          key: "balance",
+          label: "账户余额",
+          extra: <Form.Item name="balanceEnabled" valuePropName="checked" noStyle>
+            <Switch aria-label="启用账户余额" onClick={(_checked, event) => event.stopPropagation()} />
+          </Form.Item>,
+          children: <>
+            <Form.Item
+              name="balanceApiPath"
+              label="余额 API 路径"
+              extra="以 / 开头的同源路径，可包含查询参数；不支持完整 URL。"
+              dependencies={["balanceEnabled"]}
+              rules={[{ validator: async (_, input: string) => {
+                if (!form.getFieldValue("balanceEnabled")) return;
+                if (!input?.trim() || !/^\/(?!\/)/.test(input.trim())) throw new Error("路径必须以一个 / 开头，且不能以 // 开头");
+              } }]}
+            >
+              <Input disabled={!balanceEnabled} placeholder="/credits" />
+            </Form.Item>
+            <Form.Item
+              name="balanceResultExpression"
+              label="数值结果表达式"
+              extra="支持 JSON 路径、数字、括号和 + - * / 算术，最长 512 个字符。"
+              dependencies={["balanceEnabled"]}
+              rules={[{ validator: async (_, input: string) => {
+                if (!form.getFieldValue("balanceEnabled")) return;
+                const expression = input?.trim() ?? "";
+                if (!expression) throw new Error("请输入数值结果表达式");
+                if (expression.length > 512) throw new Error("表达式不能超过 512 个字符");
+              } }]}
+            >
+              <Input disabled={!balanceEnabled} placeholder="data.total_credits - data.total_usage" />
+            </Form.Item>
+          </>
+        }]}
+      />
       <Space className="settings-actions" wrap>
         <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy}>保存</Button>
         {existing && <Button icon={<ThunderboltOutlined />} disabled={busy} onClick={() => void run(() => api.testConnection(existing.id), "连接可用")}>测试</Button>}
+        {existing?.balanceConfig?.enabled && <Button loading={balanceTesting} disabled={busy} onClick={() => void testBalance()}>测试余额</Button>}
         {existing && <Button icon={<ReloadOutlined />} disabled={busy} onClick={() => void run(() => api.discoverModels(existing.id), "模型列表已刷新")}>发现模型</Button>}
         {existing && <Button danger icon={<DeleteOutlined />} disabled={busy} onClick={() => modal.confirm({
           title: "删除连接",
@@ -937,6 +1006,9 @@ interface ConnectionForm {
   baseUrl: string;
   apiKey?: string;
   secretHeaders?: string;
+  balanceEnabled: boolean;
+  balanceApiPath: string;
+  balanceResultExpression: string;
 }
 
 interface ModelForm {

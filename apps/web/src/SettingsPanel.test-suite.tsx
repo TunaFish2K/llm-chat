@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
   agent: vi.fn(), createAgent: vi.fn(), updateAgent: vi.fn(), deleteAgent: vi.fn(),
   updateAgentAvatar: vi.fn(), deleteAgentAvatar: vi.fn(), importAgent: vi.fn(),
   agentExportUrl: vi.fn((id: string, format: string) => `/api/agents/${id}/export?format=${format}`),
-  createConnection: vi.fn(), updateConnection: vi.fn(), deleteConnection: vi.fn(), testConnection: vi.fn(), discoverModels: vi.fn(),
+  createConnection: vi.fn(), updateConnection: vi.fn(), deleteConnection: vi.fn(), testConnection: vi.fn(), connectionBalance: vi.fn(), discoverModels: vi.fn(),
   createModel: vi.fn(), updateModel: vi.fn(), deleteModel: vi.fn(),
   toolSettings: vi.fn(), updateToolSettings: vi.fn(), toolCatalog: vi.fn(),
   skills: vi.fn(), installSkill: vi.fn(), reloadSkill: vi.fn(),
@@ -94,6 +94,7 @@ function resetApis() {
   api.updateConnection.mockResolvedValue(connection);
   api.deleteConnection.mockResolvedValue(undefined);
   api.testConnection.mockResolvedValue({ ok: true, modelsFound: 1 });
+  api.connectionBalance.mockResolvedValue({ connectionId: "c1", value: 1234.56789, fetchedAt: 1, cached: false });
   api.discoverModels.mockResolvedValue({ discovered: 1, created: [] });
   api.createModel.mockResolvedValue(model);
   api.updateModel.mockResolvedValue(model);
@@ -229,6 +230,7 @@ export function registerSettingsResourceTests() {
       name: "Updated", secretHeaders: { "X-Org": "alpha:beta" }
     }));
     expect(api.updateConnection.mock.calls[0]![1]).not.toHaveProperty("apiKey");
+    expect(api.updateConnection.mock.calls[0]![1]).not.toHaveProperty("balanceConfig");
     expect(run).toHaveBeenCalled();
   });
 
@@ -273,6 +275,48 @@ export function registerSettingsResourceTests() {
 export function registerSettingsDetailTests() {
   describe("Settings details", () => {
     beforeEach(() => { state.screens = { md: true, lg: true }; resetApis(); });
+  it("defaults, validates, and serializes an enabled balance configuration", async () => {
+    renderConnections({ connections: [] });
+    fireEvent.click(screen.getByText("账户余额"));
+    fireEvent.click(screen.getByRole("switch", { name: "启用账户余额" }));
+    expect(inputInField("余额 API 路径")).toHaveValue("/credits");
+    expect(inputInField("数值结果表达式")).toHaveValue("data.total_credits - data.total_usage");
+
+    fireEvent.change(screen.getByLabelText("连接名称"), { target: { value: "New" } });
+    fireEvent.change(inputInField("余额 API 路径"), { target: { value: "//outside" } });
+    fireEvent.change(inputInField("数值结果表达式"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
+    expect(await screen.findByText(/路径必须以一个/)).toBeInTheDocument();
+    expect(await screen.findByText("请输入数值结果表达式")).toBeInTheDocument();
+    expect(api.createConnection).not.toHaveBeenCalled();
+
+    fireEvent.change(inputInField("余额 API 路径"), { target: { value: "/account/credits" } });
+    fireEvent.change(inputInField("数值结果表达式"), { target: { value: " data.credit - data.used " } });
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
+    await waitFor(() => expect(api.createConnection).toHaveBeenCalledWith(expect.objectContaining({
+      balanceConfig: { enabled: true, apiPath: "/account/credits", resultExpression: "data.credit - data.used" }
+    })));
+  });
+
+  it("retains balance settings and refresh-tests an existing enabled connection", async () => {
+    const configured: ConnectionDto = {
+      ...connection,
+      balanceConfig: { enabled: true, apiPath: "/wallet", resultExpression: "data.available" }
+    };
+    renderConnections({ connections: [configured] });
+    fireEvent.click(screen.getByText("Primary"));
+    expect(inputInField("余额 API 路径")).toHaveValue("/wallet");
+    fireEvent.click(screen.getByRole("button", { name: "测试余额" }));
+    await waitFor(() => expect(api.connectionBalance).toHaveBeenCalledWith("c1", true));
+    expect(await screen.findByText(/账户余额：1,234\.5679/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /保存/ }));
+    await waitFor(() => expect(api.updateConnection).toHaveBeenCalledWith("c1", expect.objectContaining({
+      balanceConfig: { enabled: true, apiPath: "/wallet", resultExpression: "data.available" }
+    })));
+    expect(api.updateConnection.mock.calls.at(-1)![1]).not.toHaveProperty("apiKey");
+  });
+
   it("shows capability-driven model fields and serializes an existing model", async () => {
     renderModels();
     fireEvent.click(screen.getByText("GPT One"));

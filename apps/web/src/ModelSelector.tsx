@@ -1,7 +1,8 @@
 import type { ConnectionDto, ModelDto, ProviderProtocol } from "@llm-chat/contracts";
-import { CheckOutlined, DownOutlined, SearchOutlined, SettingOutlined } from "@ant-design/icons";
-import { Button, Divider, Empty, Flex, Input, Popover, Tag, Typography, type PopoverProps } from "antd";
-import { useMemo, useState } from "react";
+import { CheckOutlined, DownOutlined, LoadingOutlined, SearchOutlined, SettingOutlined, WalletOutlined, WarningOutlined } from "@ant-design/icons";
+import { Button, Divider, Empty, Flex, Input, Popover, Tag, Tooltip, Typography, type PopoverProps } from "antd";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "./api";
 
 const { Text } = Typography;
 
@@ -18,6 +19,33 @@ interface Props {
   placement?: PopoverProps["placement"];
 }
 
+type BalanceState =
+  | { status: "loading" }
+  | { status: "success"; value: number }
+  | { status: "error"; message: string };
+
+const balanceFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 });
+
+function balanceErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return "余额获取失败";
+}
+
+function BalanceIndicator({ state }: { state: BalanceState | undefined }) {
+  if (!state) return null;
+  if (state.status === "loading") return <LoadingOutlined spin aria-label="正在加载账户余额" title="正在加载账户余额" />;
+  if (state.status === "error") return <Tooltip title={state.message}>
+    <WarningOutlined aria-label="账户余额获取失败" title="账户余额获取失败" />
+  </Tooltip>;
+  const formatted = balanceFormatter.format(state.value);
+  return <span className="model-group-balance" aria-label={`账户余额 ${formatted}`} title="账户余额">
+    <WalletOutlined />
+    <span>{formatted}</span>
+  </span>;
+}
+
 export function isModelUsable(model: ModelDto | null | undefined, connections: ConnectionDto[]): boolean {
   return Boolean(model && model.enabled && connections.some((connection) => connection.id === model.connectionId));
 }
@@ -25,10 +53,40 @@ export function isModelUsable(model: ModelDto | null | undefined, connections: C
 export function ModelSelector({ value, models, connections, onChange, onGoSettings, placement = "topLeft" }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const eligible = useMemo(() => models.filter((model) => isModelUsable(model, connections)), [models, connections]);
   const selected = models.find((model) => model.id === value) ?? null;
   const invalid = Boolean(value) && !isModelUsable(selected, connections);
   const normalizedQuery = query.trim().toLocaleLowerCase();
+
+  const balanceTargets = useMemo(() => connections.filter((connection) =>
+    connection.balanceConfig?.enabled && eligible.some((model) => model.connectionId === connection.id)
+  ), [connections, eligible]);
+  const balanceSignature = balanceTargets.map((connection) => [
+    connection.id,
+    connection.baseUrl,
+    connection.updatedAt,
+    connection.balanceConfig?.enabled,
+    connection.balanceConfig?.apiPath,
+    connection.balanceConfig?.resultExpression
+  ].join("\u0000")).join("\u0001");
+
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    const targetIds = new Set(balanceTargets.map((connection) => connection.id));
+    setBalances(Object.fromEntries(balanceTargets.map((connection) => [connection.id, { status: "loading" } satisfies BalanceState])));
+    for (const connection of balanceTargets) {
+      void api.connectionBalance(connection.id).then((result) => {
+        if (!active || !targetIds.has(result.connectionId)) return;
+        setBalances((current) => ({ ...current, [connection.id]: { status: "success", value: result.value } }));
+      }).catch((error: unknown) => {
+        if (!active) return;
+        setBalances((current) => ({ ...current, [connection.id]: { status: "error", message: balanceErrorMessage(error) } }));
+      });
+    }
+    return () => { active = false; };
+  }, [open, balanceSignature]);
 
   const groups = connections.map((connection) => ({
     connection,
@@ -57,7 +115,10 @@ export function ModelSelector({ value, models, connections, onChange, onGoSettin
     />
     <div className="model-popover-list">
       {groups.length ? groups.map(({ connection, models: groupModels }) => <Flex vertical gap={4} key={connection.id}>
-        <Text type="secondary" className="model-group-title">{connection.name}</Text>
+        <Flex align="center" justify="space-between" gap="small" className="model-group-title">
+          <Text type="secondary" ellipsis>{connection.name}</Text>
+          {connection.balanceConfig?.enabled ? <BalanceIndicator state={balances[connection.id]} /> : null}
+        </Flex>
         {groupModels.map((model) => <Button
           key={model.id}
           type="text"
