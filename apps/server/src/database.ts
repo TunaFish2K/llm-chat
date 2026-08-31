@@ -9,6 +9,7 @@ import type {
   AgentInput,
   AgentSummaryDto,
   AppSettings,
+  BalanceConfig,
   CharacterCardV2,
   ConnectionDto,
   ConnectionInput,
@@ -38,6 +39,7 @@ import type {
 import {
   agentExecutionConfigSchema,
   agentUserProfileOverrideSchema,
+  balanceConfigSchema,
   characterCardV2Schema,
   conversationExecutionOverridesSchema,
   generationSettingsSchema,
@@ -47,7 +49,7 @@ import {
 } from "@llm-chat/contracts";
 import { processStartIdentity } from "./background-tasks";
 
-interface ConnectionRecord extends ConnectionDto {
+export interface ConnectionRecord extends ConnectionDto {
   apiKey: string;
   secretHeaders: Record<string, string>;
 }
@@ -190,6 +192,7 @@ CREATE TABLE IF NOT EXISTS connections (
   base_url TEXT NOT NULL,
   api_key TEXT NOT NULL DEFAULT '',
   secret_headers_json TEXT NOT NULL DEFAULT '{}',
+  balance_config_json TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -288,7 +291,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 13) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 14) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -591,11 +594,49 @@ function migrate(sqlite: DatabaseSyncType): void {
       repairTerminalToolCalls(sqlite, Date.now());
       sqlite.exec("PRAGMA user_version = 13;");
     }
+    if (current < 14) {
+      if (!hasColumn(sqlite, "connections", "balance_config_json")) {
+        sqlite.exec("ALTER TABLE connections ADD COLUMN balance_config_json TEXT NOT NULL DEFAULT '{}'");
+      }
+      repairAnthropicUsage(sqlite, "generations", "protocol = 'anthropic-messages'");
+      repairAnthropicUsage(sqlite, "context_summaries", `EXISTS (
+        SELECT 1 FROM connections
+        WHERE connections.id = context_summaries.connection_id
+          AND connections.protocol = 'anthropic-messages'
+      )`);
+      sqlite.exec("PRAGMA user_version = 14;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
     throw error;
   }
+}
+
+function repairAnthropicUsage(sqlite: DatabaseSyncType, table: string, anthropicWhere: string): void {
+  sqlite.exec(`
+    UPDATE ${table}
+    SET usage_json = json_set(
+      usage_json,
+      '$.inputTokens',
+      json_extract(usage_json, '$.inputTokens') + json_extract(usage_json, '$.cachedInputTokens')
+    )
+    WHERE ${anthropicWhere}
+      AND json_valid(usage_json)
+      AND json_type(usage_json, '$.inputTokens') IN ('integer', 'real')
+      AND json_type(usage_json, '$.cachedInputTokens') IN ('integer', 'real');
+
+    UPDATE ${table}
+    SET usage_json = json_set(
+      usage_json,
+      '$.totalTokens',
+      json_extract(usage_json, '$.inputTokens') + json_extract(usage_json, '$.outputTokens')
+    )
+    WHERE ${anthropicWhere}
+      AND json_valid(usage_json)
+      AND json_type(usage_json, '$.inputTokens') IN ('integer', 'real')
+      AND json_type(usage_json, '$.outputTokens') IN ('integer', 'real');
+  `);
 }
 
 const TERMINAL_TOOL_FAILURE = "Generation ended before tool execution completed";
@@ -956,9 +997,13 @@ export class Store {
     const now = Date.now();
     const id = randomUUID();
     this.sqlite.prepare(`
-      INSERT INTO connections (id, name, protocol, base_url, api_key, secret_headers_json, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, input.name, input.protocol, input.baseUrl, input.apiKey ?? "", json(input.secretHeaders), now, now);
+      INSERT INTO connections (
+        id, name, protocol, base_url, api_key, secret_headers_json, balance_config_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, input.name, input.protocol, input.baseUrl, input.apiKey ?? "", json(input.secretHeaders),
+      json(input.balanceConfig ?? {}), now, now
+    );
     return this.listConnections().find((item) => item.id === id)!;
   }
 
@@ -967,7 +1012,8 @@ export class Store {
     if (!current) return undefined;
     const now = Date.now();
     this.sqlite.prepare(`
-      UPDATE connections SET name = ?, protocol = ?, base_url = ?, api_key = ?, secret_headers_json = ?, updated_at = ?
+      UPDATE connections SET name = ?, protocol = ?, base_url = ?, api_key = ?, secret_headers_json = ?,
+        balance_config_json = ?, updated_at = ?
       WHERE id = ?
     `).run(
       input.name ?? current.name,
@@ -975,6 +1021,7 @@ export class Store {
       input.baseUrl ?? current.baseUrl,
       input.apiKey === undefined ? current.apiKey : input.apiKey,
       json(input.secretHeaders ?? current.secretHeaders),
+      json(input.balanceConfig ?? current.balanceConfig ?? {}),
       now,
       id
     );
@@ -1749,6 +1796,7 @@ type Row = Record<string, unknown>;
 
 function connectionDto(row: Row): ConnectionDto {
   const secretHeaders = parse<Record<string, string>>(row.secret_headers_json, {});
+  const balanceConfig = parseBalanceConfig(row.balance_config_json);
   return {
     id: String(row.id),
     name: String(row.name),
@@ -1756,9 +1804,15 @@ function connectionDto(row: Row): ConnectionDto {
     baseUrl: String(row.base_url),
     hasApiKey: Boolean(row.api_key),
     secretHeaderNames: Object.keys(secretHeaders),
+    ...(balanceConfig ? { balanceConfig } : {}),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
   };
+}
+
+function parseBalanceConfig(value: unknown): BalanceConfig | undefined {
+  const result = balanceConfigSchema.safeParse(parse(value, {}));
+  return result.success ? result.data : undefined;
 }
 
 function connectionRecord(row: Row): ConnectionRecord {

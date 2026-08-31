@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   apiErrorSchema,
   appSettingsSchema,
+  balanceConfigSchema,
   blockTypeSchema,
   commonSettingsSchema,
   connectionInputSchema,
@@ -100,6 +101,27 @@ describe("contract schemas", () => {
       { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", apiKey: "x".repeat(4097) },
       { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } }
     ]) expect(connectionInputSchema.safeParse(input).success).toBe(false);
+  });
+
+  it("validates optional same-origin balance configuration", () => {
+    expect(balanceConfigSchema.parse({
+      enabled: true,
+      apiPath: "/api/account/balance?currency=usd",
+      resultExpression: "data.available / 100"
+    })).toEqual({
+      enabled: true,
+      apiPath: "/api/account/balance?currency=usd",
+      resultExpression: "data.available / 100"
+    });
+    expect(connectionInputSchema.parse({
+      name: "No balance", protocol: "openai-chat", baseUrl: "https://x.test"
+    }).balanceConfig).toBeUndefined();
+    for (const apiPath of ["https://other.test/balance", "//other.test/balance", "balance", "/\\other.test"]) {
+      expect(balanceConfigSchema.safeParse({ enabled: true, apiPath, resultExpression: "value" }).success).toBe(false);
+    }
+    expect(balanceConfigSchema.safeParse({
+      enabled: true, apiPath: "/balance", resultExpression: "1".repeat(513)
+    }).success).toBe(false);
   });
 
   it("validates model boundaries and required nested settings", () => {
