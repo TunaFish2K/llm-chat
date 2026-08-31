@@ -1,7 +1,8 @@
 import type { ConnectionDto, ModelDto, ProviderProtocol } from "@llm-chat/contracts";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { api } from "./api";
 import { isModelUsable, ModelSelector, protocolShortName } from "./ModelSelector";
 
 const connection = (id: string, name: string, protocol: ProviderProtocol): ConnectionDto => ({
@@ -38,6 +39,8 @@ function renderSelector(overrides: Partial<React.ComponentProps<typeof ModelSele
 }
 
 describe("ModelSelector", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("formats protocol names and determines model usability", () => {
     expect(protocolShortName("openai-responses")).toBe("Responses");
     expect(protocolShortName("openai-chat")).toBe("Chat");
@@ -99,5 +102,68 @@ describe("ModelSelector", () => {
     expect(screen.getByText("选择模型")).toHaveClass("ant-typography-danger");
     rerender(<ModelSelector value={null} models={[]} connections={[]} onChange={vi.fn()} onGoSettings={vi.fn()} />);
     expect(screen.getByText("暂无模型")).toBeVisible();
+  });
+
+  it("fetches enabled grouped balances only while open and formats the result", async () => {
+    const user = userEvent.setup();
+    const balanceConnections: ConnectionDto[] = [
+      { ...connections[0]!, balanceConfig: { enabled: true, apiPath: "/credits", resultExpression: "data.value" } },
+      { ...connections[1]!, balanceConfig: { enabled: false, apiPath: "/credits", resultExpression: "data.value" } },
+      { ...connection("c3", "No models", "openai-chat"), balanceConfig: { enabled: true, apiPath: "/credits", resultExpression: "data.value" } }
+    ];
+    const balance = 12_345.67891;
+    const request = vi.spyOn(api, "connectionBalance").mockResolvedValue({ connectionId: "c1", value: balance, fetchedAt: 1, cached: false });
+    renderSelector({ connections: balanceConnections });
+
+    expect(request).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "选择模型" }));
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    expect(request).toHaveBeenCalledWith("c1");
+    const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(balance);
+    expect(await screen.findByLabelText(`账户余额 ${formatted}`)).toBeInTheDocument();
+  });
+
+  it("isolates balance failures from search and model selection", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const balanceConnections = connections.map((item) => ({
+      ...item,
+      balanceConfig: { enabled: true, apiPath: "/credits", resultExpression: "data.value" }
+    }));
+    vi.spyOn(api, "connectionBalance").mockImplementation(async (id) => {
+      if (id === "c1") throw Object.assign(new Error("安全的余额错误"), { code: "balance_failed" });
+      return { connectionId: id, value: 9, fetchedAt: 1, cached: false };
+    });
+    renderSelector({ connections: balanceConnections, onChange });
+
+    await user.click(screen.getByRole("button", { name: "选择模型" }));
+    expect(await screen.findByLabelText("账户余额获取失败")).toBeInTheDocument();
+    expect(await screen.findByLabelText("账户余额 9")).toBeInTheDocument();
+    const search = screen.getByPlaceholderText("搜索模型、连接或协议");
+    await user.type(search, "sonnet");
+    await user.click(screen.getByRole("button", { name: /Sonnet/ }));
+    expect(onChange).toHaveBeenCalledWith("m3");
+  });
+
+  it("ignores a stale balance response after the selector is reopened", async () => {
+    const user = userEvent.setup();
+    let resolveFirst!: (value: Awaited<ReturnType<typeof api.connectionBalance>>) => void;
+    const first = new Promise<Awaited<ReturnType<typeof api.connectionBalance>>>((resolve) => { resolveFirst = resolve; });
+    const request = vi.spyOn(api, "connectionBalance")
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce({ connectionId: "c1", value: 2, fetchedAt: 2, cached: false });
+    const enabled = [{ ...connections[0]!, balanceConfig: { enabled: true, apiPath: "/credits", resultExpression: "data.value" } }];
+    const { unmount } = render(<ModelSelector value="m1" models={[models[0]!]} connections={enabled} onChange={vi.fn()} onGoSettings={vi.fn()} />);
+    const trigger = screen.getByRole("button", { name: "选择模型" });
+
+    await user.click(trigger);
+    await waitFor(() => expect(request).toHaveBeenCalledOnce());
+    await user.click(trigger);
+    await user.click(trigger);
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+    expect(await screen.findByLabelText("账户余额 2")).toBeInTheDocument();
+    await act(async () => resolveFirst({ connectionId: "c1", value: 1, fetchedAt: 1, cached: false }));
+    expect(screen.queryByLabelText("账户余额 1")).not.toBeInTheDocument();
+    unmount();
   });
 });

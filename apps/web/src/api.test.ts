@@ -41,6 +41,8 @@ describe("api client", () => {
       [() => api.updateConnection("c 1", { name: "new" }), "/api/connections/c 1", "PATCH", { name: "new" }],
       [() => api.deleteConnection("c1"), "/api/connections/c1", "DELETE"],
       [() => api.testConnection("c1"), "/api/connections/c1/test", "POST"],
+      [() => api.connectionBalance("c1"), "/api/connections/c1/balance", "GET"],
+      [() => api.connectionBalance("c1", true), "/api/connections/c1/balance?refresh=true", "GET"],
       [() => api.discoverModels("c1"), "/api/connections/c1/models/discover", "POST"],
       [api.models, "/api/models", "GET"],
       [() => api.createModel({} as never), "/api/models", "POST", {}],
