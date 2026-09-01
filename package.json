@@ -19,7 +19,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "check": "pnpm typecheck && pnpm test:web:budget && pnpm test:coverage && pnpm build"
+    "check": "pnpm typecheck && pnpm test:web:budget && pnpm build && pnpm test:coverage"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
