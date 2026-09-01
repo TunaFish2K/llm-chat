@@ -13,6 +13,7 @@ mkdirSync(runDir, { recursive: true, mode: 0o700 });
 process.once("SIGINT", () => void shutdown(0));
 process.once("SIGTERM", () => void shutdown(0));
 process.once("SIGHUP", () => void shutdown(0));
+process.once("exit", cleanupRunDir);
 
 try {
   await runBuild();
@@ -42,7 +43,6 @@ async function runBuild() {
   const build = spawn("pnpm", ["build"], {
     cwd: process.cwd(),
     env: process.env,
-    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"]
   });
   children.add(build);
@@ -69,7 +69,6 @@ function startServer(name, port, authMode, dataDir) {
       LLM_CHAT_PUBLIC_URL: `http://localhost:${port}`,
       LLM_CHAT_RP_ID: "localhost"
     },
-    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"]
   });
   children.add(child);
@@ -140,23 +139,36 @@ async function shutdown(exitCode) {
   if (shuttingDown) return;
   shuttingDown = true;
   const active = [...children];
-  const closed = active.map((child) => new Promise((resolve) => child.once("close", resolve)));
+  const closed = active.map(waitForClose);
   for (const child of active) signalChild(child, "SIGTERM");
   await Promise.race([
     Promise.all(closed),
     delay(5_000)
   ]);
-  for (const child of children) signalChild(child, "SIGKILL");
-  rmSync(runDir, { recursive: true, force: true });
+  const remaining = [...children];
+  for (const child of remaining) signalChild(child, "SIGKILL");
+  await Promise.race([
+    Promise.all(remaining.map(waitForClose)),
+    delay(1_000)
+  ]);
+  cleanupRunDir();
   process.exit(exitCode);
 }
 
 function signalChild(child, signal) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
   try {
-    if (process.platform === "win32") child.kill(signal);
-    else process.kill(-child.pid, signal);
+    child.kill(signal);
   } catch {}
+}
+
+function waitForClose(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => child.once("close", resolve));
+}
+
+function cleanupRunDir() {
+  rmSync(runDir, { recursive: true, force: true });
 }
 
 function delay(milliseconds) {
