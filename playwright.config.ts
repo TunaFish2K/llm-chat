@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
@@ -26,8 +26,9 @@ interface RuntimeConfig {
 
 const worktreeId = createHash("sha256").update(process.cwd()).digest("hex").slice(0, 16);
 const coordinationFile = join(tmpdir(), `llm-chat-playwright-${worktreeId}.json`);
+const ownsRuntime = process.env.TEST_WORKER_INDEX === undefined;
 let runtime: RuntimeConfig;
-if (process.env.TEST_WORKER_INDEX !== undefined) {
+if (!ownsRuntime) {
   runtime = JSON.parse(readFileSync(coordinationFile, "utf8")) as RuntimeConfig;
 } else {
   const appPort = await freePort();
@@ -40,6 +41,15 @@ if (process.env.TEST_WORKER_INDEX !== undefined) {
 const { appPort, authPort, runDir, stateFile } = runtime;
 const appUrl = `http://127.0.0.1:${appPort}`;
 const authUrl = `http://localhost:${authPort}`;
+
+if (ownsRuntime) {
+  process.once("exit", () => {
+    try {
+      rmSync(runDir, { recursive: true, force: true });
+      rmSync(coordinationFile, { force: true });
+    } catch {}
+  });
+}
 
 process.env.E2E_APP_URL = appUrl;
 process.env.E2E_AUTH_URL = authUrl;
@@ -72,6 +82,7 @@ export default defineConfig({
     url: `${appUrl}/api/health`,
     timeout: 180_000,
     reuseExistingServer: false,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     env: {
       E2E_APP_PORT: String(appPort),
       E2E_AUTH_PORT: String(authPort),
