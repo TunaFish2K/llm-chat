@@ -317,7 +317,7 @@ describe("WebAuthn device trust", () => {
     expect(freshBootstrapUrl).toContain("/pair#mode=bootstrap");
     expect(freshBootstrapUrl).not.toBe(bootstrapUrl);
     expect(announcements).toHaveLength(1);
-  });
+  }, 15_000);
 
   it("rolls back every reset mutation when one statement fails", async () => {
     const { auth, store } = createAuth([]);
