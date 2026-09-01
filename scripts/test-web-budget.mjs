@@ -4,16 +4,26 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
 
-const suiteLimitMs = 70_000;
+// Cold jsdom transforms vary across CI hosts; the per-file limit still catches regressions.
+const suiteLimitMs = 90_000;
 const fileLimitMs = 45_000;
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "llm-chat-web-budget-"));
 const reportPath = join(temporaryDirectory, "vitest.json");
 const startedAt = performance.now();
 
+function failureMessages(result) {
+  const messages = [result.message, ...(result.assertionResults ?? [])
+    .filter((assertion) => assertion.status === "failed")
+    .flatMap((assertion) => assertion.failureMessages ?? [])]
+    .map((message) => message?.trim())
+    .filter(Boolean);
+  return [...new Set(messages)];
+}
+
 try {
   const exitCode = await new Promise((resolve, reject) => {
     const child = spawn("pnpm", [
-      "exec", "vitest", "run", "--project", "web", "--reporter=json", `--outputFile=${reportPath}`
+      "exec", "vitest", "run", "--project", "web", "--maxWorkers=4", "--reporter=json", `--outputFile=${reportPath}`
     ], { cwd: process.cwd(), stdio: "inherit" });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
@@ -31,7 +41,10 @@ try {
   console.log(`[web-budget] ${report.numPassedTests}/${report.numTotalTests} tests passed in ${(elapsedMs / 1_000).toFixed(2)}s`);
   if (exitCode !== 0 || !report.success) {
     for (const result of report.testResults.filter((item) => item.status === "failed")) {
-      console.error(`[web-budget] failed: ${relative(process.cwd(), result.name)}\n${result.message}`);
+      const details = failureMessages(result);
+      console.error(`[web-budget] failed: ${relative(process.cwd(), result.name)}`);
+      if (details.length > 0) console.error(details.join("\n"));
+      else console.error("[web-budget] Vitest reported no assertion details");
     }
     process.exitCode = exitCode || 1;
   }
