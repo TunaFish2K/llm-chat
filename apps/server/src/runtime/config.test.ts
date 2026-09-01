@@ -9,9 +9,8 @@ describe("runtime config", () => {
       host: "127.0.0.1",
       port: 3000,
       dataDir: "/srv/llm-chat/data",
-      authMode: "webauthn",
+      authMode: "password",
       publicUrl: "http://localhost:3000",
-      rpId: "localhost",
       serveWeb: true,
       shutdownTimeoutMs: 30_000,
       buildId: "development",
@@ -51,21 +50,18 @@ describe("runtime config", () => {
     }, projectRoot)).toThrow("仅允许回环");
   });
 
-  it("preserves remote WebAuthn HTTPS and RP validation", () => {
+  it("allows password authentication on remote HTTP addresses", () => {
     expect(parseRuntimeConfig({
+      LLM_CHAT_AUTH_MODE: "password",
       LLM_CHAT_HOST: "0.0.0.0",
-      LLM_CHAT_PUBLIC_URL: "https://chat.example.com",
-      LLM_CHAT_RP_ID: "example.com"
-    }, projectRoot).rpId).toBe("example.com");
-    expect(() => parseRuntimeConfig({ LLM_CHAT_HOST: "0.0.0.0" }, projectRoot)).toThrow("LLM_CHAT_PUBLIC_URL");
-    expect(() => parseRuntimeConfig({
-      LLM_CHAT_HOST: "0.0.0.0",
-      LLM_CHAT_PUBLIC_URL: "http://chat.example.com"
-    }, projectRoot)).toThrow("HTTPS");
-    expect(() => parseRuntimeConfig({
-      LLM_CHAT_PUBLIC_URL: "https://chat.example.com",
-      LLM_CHAT_RP_ID: "other.example"
-    }, projectRoot)).toThrow("LLM_CHAT_RP_ID");
+      LLM_CHAT_PUBLIC_URL: "http://192.0.2.2:3000"
+    }, projectRoot)).toMatchObject({
+      authMode: "password",
+      host: "0.0.0.0",
+      publicUrl: "http://192.0.2.2:3000"
+    });
+    expect(() => parseRuntimeConfig({ LLM_CHAT_AUTH_MODE: "webauthn" }, projectRoot))
+      .toThrow("password 或 disabled");
   });
 
   it("recognizes common IPv4 and IPv6 loopback hosts", () => {

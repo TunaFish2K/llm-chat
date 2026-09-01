@@ -4,7 +4,7 @@
 
 Status: Deferred
 
-ADR-004 resolves authentication for one owner and multiple trusted Passkeys. It does not create separate application users. The directory browser, Plugin host, workspace tools, and background processes still run with the service account's host permissions.
+ADR-006 defines one shared application password. It does not create separate application users. The directory browser, Plugin host, workspace tools, and background processes still run with the service account's host permissions.
 
 Revisit authorization before either condition becomes true:
 

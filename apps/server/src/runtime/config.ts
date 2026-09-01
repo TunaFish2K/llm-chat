@@ -13,7 +13,6 @@ export interface RuntimeConfig {
   authMode: AuthMode;
   trustProxy: boolean | string;
   publicUrl: string;
-  rpId: string;
   serveWeb: boolean;
   shutdownTimeoutMs: number;
   buildId: string;
@@ -27,31 +26,18 @@ export function parseRuntimeConfig(
   const host = env.LLM_CHAT_HOST ?? "127.0.0.1";
   const port = parsePort(env.LLM_CHAT_PORT ?? "3000");
   const dataDir = resolve(env.LLM_CHAT_DATA_DIR ?? resolve(projectRoot, "data"));
-  const authMode = parseAuthMode(env.LLM_CHAT_AUTH_MODE ?? "webauthn");
+  const authMode = parseAuthMode(env.LLM_CHAT_AUTH_MODE ?? "password");
   const trustProxySetting = env.LLM_CHAT_TRUST_PROXY;
   const trustProxy = trustProxySetting === "true"
     ? true
     : trustProxySetting && trustProxySetting !== "false" ? trustProxySetting : false;
   const configuredPublicUrl = env.LLM_CHAT_PUBLIC_URL;
 
-  if (authMode === "webauthn" && !isLoopbackHostname(host) && !configuredPublicUrl) {
-    throw new Error("监听非本机地址时必须设置 LLM_CHAT_PUBLIC_URL=https://你的域名");
-  }
-
   const publicUrl = configuredPublicUrl ?? `http://localhost:${port}`;
   const parsedPublicUrl = parsePublicUrl(publicUrl);
   if (authMode === "disabled" && (!isLoopbackHostname(host) || !isLoopbackHostname(parsedPublicUrl.hostname))) {
     throw new Error("LLM_CHAT_AUTH_MODE=disabled 仅允许回环监听地址和回环公开地址");
   }
-  if (authMode === "webauthn" && parsedPublicUrl.protocol !== "https:" && parsedPublicUrl.hostname !== "localhost") {
-    throw new Error("WebAuthn 远程访问必须配置 HTTPS；本机调试请使用 http://localhost");
-  }
-
-  const rpId = env.LLM_CHAT_RP_ID ?? parsedPublicUrl.hostname;
-  if (parsedPublicUrl.hostname !== rpId && !parsedPublicUrl.hostname.endsWith(`.${rpId}`)) {
-    throw new Error("LLM_CHAT_RP_ID 必须等于公开地址域名或它的父域名");
-  }
-
   return {
     host,
     port,
@@ -59,7 +45,6 @@ export function parseRuntimeConfig(
     authMode,
     trustProxy,
     publicUrl,
-    rpId,
     serveWeb: parseBoolean(env.LLM_CHAT_SERVE_WEB, "LLM_CHAT_SERVE_WEB", true),
     shutdownTimeoutMs: parseBoundedInteger(
       env.LLM_CHAT_SHUTDOWN_TIMEOUT_MS,
@@ -89,8 +74,8 @@ function parsePort(value: string): number {
 }
 
 function parseAuthMode(value: string): AuthMode {
-  if (value !== "webauthn" && value !== "disabled") {
-    throw new Error("LLM_CHAT_AUTH_MODE 必须是 webauthn 或 disabled");
+  if (value !== "password" && value !== "disabled") {
+    throw new Error("LLM_CHAT_AUTH_MODE 必须是 password 或 disabled");
   }
   return value;
 }

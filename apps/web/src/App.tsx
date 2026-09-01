@@ -27,10 +27,8 @@ import {
   MenuUnfoldOutlined,
   MoreOutlined,
   LoginOutlined,
-  MobileOutlined,
-  QrcodeOutlined,
+  LockOutlined,
   RightOutlined,
-  SafetyCertificateOutlined,
   SettingOutlined,
   StopOutlined,
   SyncOutlined
@@ -122,7 +120,6 @@ const conversationToolSorts: CapabilityCatalogSort[] = [
 ];
 
 export function App() {
-  const [pairRequest, setPairRequest] = useState<PairRequest | null>(() => pairRequestFromHash());
   const [boot, setBoot] = useState<BootData | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
   const [startupError, setStartupError] = useState("");
@@ -467,14 +464,8 @@ export function App() {
   };
 
   const colorScheme = resolveColorScheme(boot?.settings.theme ?? "system", systemDark);
-  if (pairRequest) return <AppTheme colorScheme={colorScheme}>
-    <PairingScreen request={pairRequest} onAuthenticated={() => {
-      setPairRequest(null);
-      void refreshBoot();
-    }} />
-  </AppTheme>;
   if (!boot) return <AppTheme colorScheme={colorScheme}>
-    {authRequired ? <PairingScreen request={null} onAuthenticated={() => void refreshBoot()} />
+    {authRequired ? <PasswordLoginScreen onAuthenticated={() => void refreshBoot()} />
       : startupError ? <StartupError message={startupError} onRetry={() => {
           setStartupError("");
           void refreshBoot().catch((value) => {
@@ -833,168 +824,50 @@ export function App() {
   </AppTheme>;
 }
 
-export type PairRequest = { mode: "bootstrap" | "approve"; requestId: string; secret: string };
-
-export function PairingScreen({ request, onAuthenticated }: { request: PairRequest | null; onAuthenticated: () => void }) {
-  if (request?.mode === "approve") {
-    return <ApprovalScreen request={request} onApproved={onAuthenticated} />;
-  }
-  const [deviceName, setDeviceName] = useState(() => defaultDeviceName());
+export function PasswordLoginScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState("");
-  const [enrollment, setEnrollment] = useState<null | { id: string; tabSecret: string; approvalQr: string; expiresAt: number }>(null);
-  const supported = webAuthnSupported();
-
-  useEffect(() => {
-    if (!enrollment) return;
-    let active = true;
-    let timer = 0;
-    const poll = async () => {
-      try {
-        const status = await api.enrollmentStatus(enrollment.id, enrollment.tabSecret);
-        if (!active) return;
-        if (status.state === "authenticated") {
-          onAuthenticated();
-          return;
-        }
-        timer = window.setTimeout(() => void poll(), 1800);
-      } catch (error) {
-        if (active) setFormError(messageOf(error));
-      }
-    };
-    void poll();
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [enrollment, onAuthenticated]);
-
-  const register = async () => {
-    if (!deviceName.trim() || !supported) return;
-    setBusy(true);
-    setFormError("");
-    try {
-      const { startRegistration } = await import("@simplewebauthn/browser");
-      if (request?.mode === "bootstrap") {
-        const options = await api.bootstrapOptions(request.requestId, request.secret);
-        const response = await startRegistration({ optionsJSON: options });
-        await api.verifyBootstrap(request.requestId, request.secret, deviceName.trim(), response);
-        onAuthenticated();
-      } else {
-        const started = await api.enrollmentOptions(deviceName.trim());
-        const response = await startRegistration({ optionsJSON: started.options });
-        const completed = await api.finishEnrollment(started.id, started.tabSecret, started.approvalSecret, response);
-        setEnrollment({ id: started.id, tabSecret: started.tabSecret, ...completed });
-      }
-    } catch (error) {
-      setFormError(passkeyMessage(error));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const login = async () => {
-    if (!supported) return;
+    if (!password) return;
     setBusy(true);
     setFormError("");
     try {
-      const { startAuthentication } = await import("@simplewebauthn/browser");
-      const started = await api.loginOptions();
-      const response = await startAuthentication({ optionsJSON: started.options });
-      await api.verifyLogin(started.challengeId, response);
+      await api.login(password);
       onAuthenticated();
     } catch (error) {
-      setFormError(passkeyMessage(error));
+      setFormError(messageOf(error));
     } finally {
       setBusy(false);
     }
   };
-
-  if (enrollment) return <main className="pairing-page">
-    <section className="pairing-panel pairing-panel-wide" aria-labelledby="pairing-wait-title">
-      <div className="pairing-mark"><QrcodeOutlined /></div>
-      <Typography.Title id="pairing-wait-title" level={2}>用可信设备批准</Typography.Title>
-      <Typography.Paragraph type="secondary">打开已登录的手机相机，扫描二维码并使用 Passkey 确认。</Typography.Paragraph>
-      <img className="pairing-qr" src={enrollment.approvalQr} alt="添加此设备的批准二维码" />
-      <Flex vertical gap={4} className="pairing-wait-status" role="status" aria-live="polite">
-        <Text><Spin size="small" /> 等待批准</Text>
-        <Text type="secondary">二维码将在 {new Date(enrollment.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 过期</Text>
-      </Flex>
-      <div className="pairing-error-slot" aria-live="polite">
-        {formError && <Alert type="error" showIcon title={formError} />}
-      </div>
-    </section>
-  </main>;
 
   return <main className="pairing-page">
     <section className="pairing-panel" aria-labelledby="pairing-title">
-      <div className="pairing-mark" aria-hidden="true"><SafetyCertificateOutlined /></div>
-      <Typography.Title id="pairing-title" level={2}>{request ? "信任首台设备" : "进入 llm-chat"}</Typography.Title>
-      <Typography.Paragraph type="secondary">
-        {request ? "为这台设备创建 Passkey。以后可用它批准其他设备。" : "使用 Passkey 登录，或将这台设备添加到可信列表。"}
-      </Typography.Paragraph>
-      {!supported && <Alert className="pairing-support-error" type="error" showIcon title="当前环境不能使用 Passkey" description="请使用最新版 Safari、Chrome 或 Firefox，并通过 HTTPS 或 localhost 打开。" />}
-      <form onSubmit={(event) => { event.preventDefault(); void register(); }} noValidate>
+      <div className="pairing-mark" aria-hidden="true"><LockOutlined /></div>
+      <Typography.Title id="pairing-title" level={2}>进入 llm-chat</Typography.Title>
+      <Typography.Paragraph type="secondary">输入终端显示的初始密码，或你后来设置的密码。</Typography.Paragraph>
+      <form onSubmit={(event) => { event.preventDefault(); void login(); }} noValidate>
         <div className="pairing-field">
-          <label htmlFor="device-name">设备名称</label>
-          <Input
-            id="device-name"
-            autoComplete="name"
-            maxLength={80}
-            value={deviceName}
+          <label htmlFor="login-password">密码</label>
+          <Input.Password
+            id="login-password"
+            autoComplete="current-password"
+            maxLength={128}
+            value={password}
             aria-invalid={Boolean(formError)}
             aria-describedby={formError ? "pairing-error" : undefined}
-            onChange={(event) => setDeviceName(event.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
           />
         </div>
         <div className="pairing-error-slot" aria-live="polite">
           {formError && <Alert id="pairing-error" type="error" showIcon title={formError} />}
         </div>
-        <Button className="pairing-submit" icon={<MobileOutlined />} type="primary" htmlType="submit" loading={busy} disabled={!supported || !deviceName.trim()}>
-          {request ? "创建 Passkey" : "添加这台设备"}
+        <Button className="pairing-submit" icon={<LoginOutlined />} type="primary" htmlType="submit" loading={busy} disabled={!password}>
+          登录
         </Button>
-        {!request && <Button className="pairing-secondary" icon={<LoginOutlined />} block disabled={!supported || busy} onClick={() => void login()}>
-          使用已有 Passkey 登录
-        </Button>}
       </form>
-    </section>
-  </main>;
-}
-
-function ApprovalScreen({ request, onApproved }: { request: PairRequest; onApproved: () => void }) {
-  const [details, setDetails] = useState<Awaited<ReturnType<typeof api.approvalDetails>> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => {
-    void api.approvalDetails(request.requestId, request.secret).then(setDetails).catch((value) => setError(messageOf(value)));
-  }, [request]);
-  const approve = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const { startAuthentication } = await import("@simplewebauthn/browser");
-      const options = await api.approvalOptions(request.requestId, request.secret);
-      const response = await startAuthentication({ optionsJSON: options });
-      await api.approveEnrollment(request.requestId, request.secret, response);
-      onApproved();
-    } catch (value) {
-      setError(passkeyMessage(value));
-    } finally {
-      setBusy(false);
-    }
-  };
-  return <main className="pairing-page">
-    <section className="pairing-panel" aria-labelledby="approval-title">
-      <div className="pairing-mark" aria-hidden="true"><SafetyCertificateOutlined /></div>
-      <Typography.Title id="approval-title" level={2}>批准新设备</Typography.Title>
-      {details ? <dl className="approval-details">
-        <div><dt>设备</dt><dd>{details.deviceName}</dd></div>
-        <div><dt>浏览器</dt><dd>{details.browser}</dd></div>
-        <div><dt>网络地址</dt><dd>{details.ip}</dd></div>
-      </dl> : !error && <Flex justify="center"><Spin /></Flex>}
-      <div className="pairing-error-slot" aria-live="polite">
-        {error && <Alert id="approval-error" type="error" showIcon title={error} />}
-      </div>
-      <Button className="pairing-submit" type="primary" icon={<SafetyCertificateOutlined />} loading={busy} disabled={!details || !webAuthnSupported()} onClick={() => void approve()}>
-        用 Passkey 批准
-      </Button>
     </section>
   </main>;
 }
@@ -1009,35 +882,6 @@ function StartupError({ message, onRetry }: { message: string; onRetry: () => vo
   </main>;
 }
 
-let cachedPairRequest: PairRequest | null | undefined;
-
-function pairRequestFromHash(): PairRequest | null {
-  if (cachedPairRequest !== undefined) return cachedPairRequest;
-  const hash = new URLSearchParams(window.location.hash.slice(1));
-  const mode = hash.get("mode");
-  const requestId = hash.get("request") ?? "";
-  const secret = hash.get("secret") ?? "";
-  cachedPairRequest = (mode === "bootstrap" || mode === "approve") && requestId && secret
-    ? { mode, requestId, secret }
-    : null;
-  if (cachedPairRequest) window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
-  return cachedPairRequest;
-}
-
-function defaultDeviceName(): string {
-  const mobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
-  return mobile ? "我的手机" : "我的电脑";
-}
-
-function webAuthnSupported(): boolean {
-  return window.isSecureContext && "PublicKeyCredential" in window && Boolean(navigator.credentials);
-}
-
-function passkeyMessage(value: unknown): string {
-  if (value instanceof DOMException && value.name === "NotAllowedError") return "Passkey 操作已取消或超时";
-  if (value instanceof DOMException && value.name === "InvalidStateError") return "这个 Passkey 已经用于 llm-chat，可直接登录";
-  return messageOf(value);
-}
 
 function AgentSelector({ value, agents, onChange }: {
   value: string | null;

@@ -291,7 +291,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 16) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 17) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -692,6 +692,27 @@ function migrate(sqlite: DatabaseSyncType): void {
           expires_at INTEGER NOT NULL
         );
         PRAGMA user_version = 16;
+      `);
+    }
+    if (current < 17) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS auth_password (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          salt BLOB NOT NULL,
+          password_hash BLOB NOT NULL,
+          changed_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS auth_password_sessions (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          revoked_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_auth_password_sessions_active
+          ON auth_password_sessions(token_hash, revoked_at, expires_at);
+        PRAGMA user_version = 17;
       `);
     }
     sqlite.exec("COMMIT");

@@ -18,8 +18,8 @@ process.once("exit", cleanupRunDir);
 try {
   await runBuild();
   const app = startServer("app", appPort, "disabled", join(runDir, "app-data"));
-  const auth = startServer("auth", authPort, "webauthn", join(runDir, "auth-data"));
-  captureBootstrapUrl(auth, authPort);
+  const auth = startServer("auth", authPort, "password", join(runDir, "auth-data"));
+  captureInitialPassword(auth, authPort);
   await Promise.all([
     waitForHealth(`http://127.0.0.1:${appPort}/api/health`),
     waitForHealth(`http://localhost:${authPort}/api/health`),
@@ -57,17 +57,15 @@ async function runBuild() {
 }
 
 function startServer(name, port, authMode, dataDir) {
-  const host = authMode === "webauthn" ? "::1" : "127.0.0.1";
   const child = spawn("node", ["apps/server/dist/index.js"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
-      LLM_CHAT_HOST: host,
+      LLM_CHAT_HOST: "127.0.0.1",
       LLM_CHAT_PORT: port,
       LLM_CHAT_DATA_DIR: dataDir,
       LLM_CHAT_AUTH_MODE: authMode,
-      LLM_CHAT_PUBLIC_URL: `http://localhost:${port}`,
-      LLM_CHAT_RP_ID: "localhost"
+      LLM_CHAT_PUBLIC_URL: `http://localhost:${port}`
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -88,17 +86,17 @@ function startServer(name, port, authMode, dataDir) {
   return child;
 }
 
-function captureBootstrapUrl(child, port) {
+function captureInitialPassword(child, port) {
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr = `${stderr}${chunk}`.slice(-1_000_000);
-    const match = stderr.match(new RegExp(`http://localhost:${port}/pair#mode=bootstrap&request=[^\\s]+`));
+    const match = stderr.match(/初始登录密码：(\d{8})/);
     if (!match) return;
     const temporary = `${stateFile}.tmp`;
     writeFileSync(temporary, `${JSON.stringify({
       appUrl: `http://127.0.0.1:${appPort}`,
       authUrl: `http://localhost:${authPort}`,
-      bootstrapUrl: match[0]
+      initialPassword: match[1]
     })}\n`, { mode: 0o600 });
     renameSync(temporary, stateFile);
   });
@@ -127,12 +125,12 @@ async function waitForState() {
       const response = await fetch(`http://localhost:${authPort}/api/health`);
       if (response.ok) {
         const state = readFileSync(stateFile, "utf8");
-        if (JSON.parse(state).bootstrapUrl) return;
+        if (JSON.parse(state).initialPassword) return;
       }
     } catch {}
     await delay(100);
   }
-  throw new Error("Timed out waiting for the authentication bootstrap URL");
+  throw new Error("Timed out waiting for the initial authentication password");
 }
 
 async function shutdown(exitCode) {

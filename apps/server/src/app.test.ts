@@ -18,12 +18,14 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
-  it("protects WebAuthn APIs with transport, source, origin, and session checks", async () => {
+  it("protects password APIs with source, origin, and session checks over HTTP", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-auth-api-"));
     dirs.push(dir);
+    let initialPassword = "";
     const app = await buildApp({
       dataFile: join(dir, "test.sqlite"), logger: false, serveWeb: false,
-      authMode: "webauthn", publicUrl: "http://localhost", rpId: "localhost",
+      authMode: "password", publicUrl: "http://192.0.2.2",
+      authAnnounce: (message) => { initialPassword = message.match(/\d{8}/)?.[0] ?? ""; },
       skillDiscoveryRoot: join(dir, "agent-skills")
     });
     apps.push(app);
@@ -34,18 +36,47 @@ describe("server API", () => {
     const protectedRoute = await app.inject({ method: "GET", url: "/api/bootstrap" });
     expect(protectedRoute.statusCode).toBe(401);
     expect(protectedRoute.json()).toMatchObject({ error: { code: "authentication_required" } });
-    const missingSource = await app.inject({ method: "POST", url: "/api/auth/login/options" });
+    expect(initialPassword).toMatch(/^\d{8}$/);
+    const missingSource = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: initialPassword } });
     expect(missingSource.statusCode).toBe(403);
     expect(missingSource.json()).toMatchObject({ error: { code: "request_header_required" } });
     const crossOrigin = await app.inject({
-      method: "POST", url: "/api/auth/login/options",
+      method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
       headers: { "x-llm-chat-request": "1", origin: "https://attacker.example" }
     });
     expect(crossOrigin.statusCode).toBe(403);
     expect(crossOrigin.json()).toMatchObject({ error: { code: "origin_mismatch" } });
-    const insecureRemote = await app.inject({ method: "GET", url: "/api/bootstrap", headers: { host: "192.0.2.2" } });
-    expect(insecureRemote.statusCode).toBe(426);
-    expect(insecureRemote.json()).toMatchObject({ error: { code: "secure_transport_required" } });
+    const wrong = await app.inject({
+      method: "POST", url: "/api/auth/login", payload: { password: "00000000" },
+      headers: { "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+    });
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json()).toMatchObject({ error: { code: "password_invalid" } });
+    const login = await app.inject({
+      method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
+      headers: { "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+    });
+    expect(login.statusCode).toBe(200);
+    expect(login.headers["set-cookie"]).toContain("llm_chat_session=");
+    expect(login.headers["set-cookie"]).not.toContain("Secure");
+    const setCookie = login.headers["set-cookie"]!;
+    const cookie = (Array.isArray(setCookie) ? setCookie[0]! : setCookie).split(";", 1)[0]!;
+    const authenticated = await app.inject({ method: "GET", url: "/api/bootstrap", headers: { cookie } });
+    expect(authenticated.statusCode).toBe(200);
+    const tooShort = await app.inject({
+      method: "PUT", url: "/api/auth/password", payload: { password: "short" },
+      headers: { cookie, "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+    });
+    expect(tooShort.statusCode).toBe(400);
+    const changed = await app.inject({
+      method: "PUT", url: "/api/auth/password", payload: { password: "new-password-123" },
+      headers: { cookie, "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+    });
+    expect(changed.statusCode).toBe(200);
+    const changedSetCookie = changed.headers["set-cookie"]!;
+    const changedCookie = (Array.isArray(changedSetCookie) ? changedSetCookie[0]! : changedSetCookie).split(";", 1)[0]!;
+    expect((await app.inject({ method: "GET", url: "/api/bootstrap", headers: { cookie } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/api/bootstrap", headers: { cookie: changedCookie } })).statusCode).toBe(200);
   });
 
   it("never returns API key values from connection endpoints", async () => {

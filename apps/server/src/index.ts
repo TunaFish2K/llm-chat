@@ -77,7 +77,6 @@ async function main(): Promise<void> {
       authMode: config.authMode,
       trustProxy: config.trustProxy,
       publicUrl: config.publicUrl,
-      rpId: config.rpId,
       serveWeb: config.serveWeb
     });
     app.get("/healthz", async () => ({ ok: true, buildId: config.buildId }));

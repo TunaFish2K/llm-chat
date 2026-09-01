@@ -12,7 +12,7 @@ interface BootstrapPayload {
 interface SupervisorState {
   appUrl: string;
   authUrl: string;
-  bootstrapUrl: string;
+  initialPassword: string;
 }
 
 export async function ensureChatFixture(request: APIRequestContext): Promise<{ conversationId: string }> {
@@ -111,7 +111,7 @@ export async function readSupervisorState(): Promise<SupervisorState> {
   while (Date.now() < deadline) {
     try {
       const state = JSON.parse(await readFile(stateFile, "utf8")) as SupervisorState;
-      if (state.bootstrapUrl) return state;
+      if (state.initialPassword) return state;
     } catch (error) {
       lastError = error;
     }

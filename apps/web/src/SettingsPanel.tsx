@@ -18,7 +18,7 @@ import type {
   ToolCatalogItemDto,
   ToolSettingsDto
 } from "@llm-chat/contracts";
-import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, ImportOutlined, LogoutOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SafetyCertificateOutlined, SaveOutlined, ThunderboltOutlined, UploadOutlined } from "@ant-design/icons";
+import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, DownloadOutlined, ImportOutlined, LockOutlined, LogoutOutlined, PlusOutlined, QuestionCircleOutlined, ReloadOutlined, SaveOutlined, ThunderboltOutlined, UploadOutlined } from "@ant-design/icons";
 import {
   App as AntApp,
   Button,
@@ -174,7 +174,7 @@ export function SettingsPanel(props: Props) {
         { key: "connections", label: "连接", children: <Connections connections={props.connections} busy={busy} mobile={mobile} run={run} /> },
         { key: "models", label: "模型", children: <Models connections={props.connections} models={props.models} busy={busy} mobile={mobile} run={run} /> },
         { key: "extensions", label: "扩展", children: <Extensions /> },
-        { key: "security", label: "设备", children: <SecuritySettings /> },
+        { key: "security", label: "安全", children: <SecuritySettings /> },
         { key: "general", label: "通用", children: <General settings={props.settings} models={props.models} onSettings={props.onSettings} uiPreferences={props.uiPreferences} onUiPreferences={props.onUiPreferences} /> }
       ]}
     />
@@ -182,63 +182,55 @@ export function SettingsPanel(props: Props) {
 }
 
 export function SecuritySettings() {
-  const [devices, setDevices] = useState<Awaited<ReturnType<typeof api.authDevices>> | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const { message, modal } = AntApp.useApp();
-  const load = async () => setDevices(await api.authDevices());
-  useEffect(() => { void load().catch((error) => void message.error(messageText(error))); }, []);
-  const revoke = (id: string, name: string, current: boolean) => modal.confirm({
-    title: current ? "撤销当前设备" : "撤销设备",
-    content: `撤销“${name}”后，它必须重新获得批准才能访问。`,
-    okText: "撤销",
-    cancelText: "取消",
-    okButtonProps: { danger: true },
-    onOk: async () => {
-      setBusyId(id);
-      try {
-        await api.revokeAuthDevice(id);
-        if (current) window.location.reload();
-        else await load();
-        void message.success("设备已撤销");
-      } catch (error) {
-        void message.error(messageText(error));
-      } finally {
-        setBusyId(null);
-      }
+  const [form] = Form.useForm<{ password: string; confirm: string }>();
+  const [busy, setBusy] = useState<"password" | "logout" | null>(null);
+  const { message } = AntApp.useApp();
+  const changePassword = async ({ password }: { password: string }) => {
+    setBusy("password");
+    try {
+      await api.changePassword(password);
+      form.resetFields();
+      void message.success("密码已更新，其他浏览器需要重新登录");
+    } catch (error) {
+      void message.error(messageText(error));
+    } finally {
+      setBusy(null);
     }
-  });
+  };
   const logout = async () => {
-    setBusyId("logout");
+    setBusy("logout");
     try {
       await api.logout();
       window.location.reload();
     } catch (error) {
       void message.error(messageText(error));
-      setBusyId(null);
+      setBusy(null);
     }
   };
   return <Flex vertical gap="middle" className="security-settings">
     <Flex justify="space-between" align="center" gap="middle" wrap>
-      <div><Title level={5}>可信设备</Title><Text type="secondary">Passkey 可能随系统账户同步。</Text></div>
-      <Button icon={<LogoutOutlined />} loading={busyId === "logout"} onClick={() => void logout()}>退出此浏览器</Button>
+      <div><Title level={5}>访问密码</Title><Text type="secondary">修改后，其他浏览器需要使用新密码登录。</Text></div>
+      <Button icon={<LogoutOutlined />} loading={busy === "logout"} onClick={() => void logout()}>退出</Button>
     </Flex>
-    {devices === null ? <Flex justify="center"><Spin /></Flex> : devices.length ? <Listy
-      className="device-list"
-      items={devices}
-      rowKey="id"
-      virtual={false}
-      itemRender={(device) => <Flex className="device-row" align="center" gap="middle">
-        <SafetyCertificateOutlined className="device-icon" aria-hidden="true" />
-        <Flex vertical className="device-row-main" gap={2}>
-          <Space wrap><Text strong>{device.name}</Text>{device.current && <Tag color="success">当前</Tag>}{device.backedUp && <Tag>已同步</Tag>}</Space>
-          <Text type="secondary">最近使用 {new Date(device.lastUsedAt).toLocaleString("zh-CN")}</Text>
-          {device.approvedByName && <Text type="secondary">由 {device.approvedByName} 批准</Text>}
-        </Flex>
-        <Tooltip title="撤销访问">
-          <Button danger type="text" icon={<DeleteOutlined />} aria-label={`撤销设备 ${device.name}`} loading={busyId === device.id} onClick={() => revoke(device.id, device.name, device.current)} />
-        </Tooltip>
-      </Flex>}
-    /> : <div className="list-empty">没有已注册的 Passkey</div>}
+    <Form form={form} layout="vertical" className="settings-form security-password-form" onFinish={(values) => void changePassword(values)}>
+      <Form.Item name="password" label="新密码" rules={[
+        { required: true, message: "请输入新密码" },
+        { min: 8, max: 128, message: "密码必须为 8 到 128 个字符" }
+      ]}>
+        <Input.Password prefix={<LockOutlined />} autoComplete="new-password" maxLength={128} />
+      </Form.Item>
+      <Form.Item name="confirm" label="确认新密码" dependencies={["password"]} rules={[
+        { required: true, message: "请再次输入新密码" },
+        ({ getFieldValue }) => ({
+          validator: (_, value: string) => !value || getFieldValue("password") === value
+            ? Promise.resolve()
+            : Promise.reject(new Error("两次输入的密码不一致"))
+        })
+      ]}>
+        <Input.Password autoComplete="new-password" maxLength={128} />
+      </Form.Item>
+      <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={busy === "password"}>修改密码</Button>
+    </Form>
   </Flex>;
 }
 

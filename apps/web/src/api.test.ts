@@ -36,18 +36,8 @@ describe("api client", () => {
     const cases: Array<[() => Promise<unknown>, string, string, unknown?]> = [
       [() => api.bootstrap(), "/api/bootstrap", "GET"],
       [() => api.bootstrap("c 1"), "/api/bootstrap?conversationId=c%201", "GET"],
-      [() => api.bootstrapOptions("request", "secret"), "/api/auth/bootstrap/options", "POST", { requestId: "request", secret: "secret" }],
-      [() => api.verifyBootstrap("request", "secret", "phone", {} as never), "/api/auth/bootstrap/verify", "POST", { requestId: "request", secret: "secret", deviceName: "phone", response: {} }],
-      [() => api.enrollmentOptions("computer"), "/api/auth/enrollments/options", "POST", { deviceName: "computer" }],
-      [() => api.finishEnrollment("request/1", "tab", "approval", {} as never), "/api/auth/enrollments/request%2F1/credential", "POST", { tabSecret: "tab", approvalSecret: "approval", response: {} }],
-      [() => api.enrollmentStatus("request/1", "tab"), "/api/auth/enrollments/request%2F1/status", "GET"],
-      [() => api.approvalDetails("request/1", "approval"), "/api/auth/approvals/request%2F1", "GET"],
-      [() => api.approvalOptions("request/1", "approval"), "/api/auth/approvals/request%2F1/options", "POST"],
-      [() => api.approveEnrollment("request/1", "approval", {} as never), "/api/auth/approvals/request%2F1/verify", "POST", {}],
-      [api.loginOptions, "/api/auth/login/options", "POST"],
-      [() => api.verifyLogin("challenge", {} as never), "/api/auth/login/verify", "POST", { challengeId: "challenge", response: {} }],
-      [api.authDevices, "/api/auth/devices", "GET"],
-      [() => api.revokeAuthDevice("device/1"), "/api/auth/devices/device%2F1", "DELETE"],
+      [() => api.login("12345678"), "/api/auth/login", "POST", { password: "12345678" }],
+      [() => api.changePassword("new-password"), "/api/auth/password", "PUT", { password: "new-password" }],
       [api.logout, "/api/auth/logout", "POST"],
       [api.settings, "/api/settings", "GET"],
       [() => api.updateSettings({ theme: "dark" }), "/api/settings", "PATCH", { theme: "dark" }],
@@ -142,12 +132,12 @@ describe("api client", () => {
     expect(headers.get("content-type")).toBe("application/json");
   });
 
-  it("keeps enrollment and approval secrets in request headers", async () => {
-    await api.enrollmentStatus("request", "tab-secret");
-    expect(new Headers(vi.mocked(fetch).mock.calls[0]![1]?.headers).get("x-llm-chat-enrollment")).toBe("tab-secret");
-    vi.mocked(fetch).mockClear();
-    await api.approvalDetails("request", "approval-secret");
-    expect(new Headers(vi.mocked(fetch).mock.calls[0]![1]?.headers).get("x-llm-chat-approval")).toBe("approval-secret");
+  it("sends passwords only in marked JSON mutation requests", async () => {
+    await api.login("12345678");
+    const [path, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(path).toBe("/api/auth/login");
+    expect(new Headers(init?.headers).get("x-llm-chat-request")).toBe("1");
+    expect(JSON.parse(String(init?.body))).toEqual({ password: "12345678" });
   });
 
   it("returns undefined for a successful 204", async () => {

@@ -1,10 +1,10 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resetAuthentication } from "../auth";
+import { resetPassword } from "../auth";
 import { Store } from "../database";
 import { acquireInstanceLock } from "./instance-lock";
 
-const CONFIRMATION_FLAG = "--confirm-reset-all-passkeys";
+const CONFIRMATION_FLAG = "--confirm-reset-password";
 
 async function main(): Promise<void> {
   if (process.argv.length !== 3 || process.argv[2] !== CONFIRMATION_FLAG) {
@@ -20,14 +20,12 @@ async function main(): Promise<void> {
   let store: Store | undefined;
   try {
     store = new Store(resolve(instanceLock.dataDir, "llm-chat.sqlite"));
-    const result = resetAuthentication(store);
+    const result = await resetPassword(store);
     process.stdout.write([
-      "Passkey authentication reset complete.",
-      `credentialsRevoked: ${result.credentialsRevoked}`,
+      "Password authentication reset complete.",
       `sessionsRevoked: ${result.sessionsRevoked}`,
-      `enrollmentsExpired: ${result.enrollmentsExpired}`,
-      `challengesDeleted: ${result.challengesDeleted}`,
-      "Restart llm-chat, then use the bootstrap link printed by the server to register a new Passkey."
+      `initialPassword: ${result.password}`,
+      "Use this password to log in, then change it in Settings > Security."
     ].join("\n") + "\n");
   } finally {
     try {

@@ -65,7 +65,7 @@ try {
   assert(secondExit.code !== 0, "a second server acquired the same data directory");
   assert(/另一个 llm-chat 进程占用|already.*(?:held|use)/i.test(second.output()), "second server did not report an actionable lock error");
 
-  const activeReset = launchNode([resetEntry, "--confirm-reset-all-passkeys"], serverEnv);
+  const activeReset = launchNode([resetEntry, "--confirm-reset-password"], serverEnv);
   const activeResetExit = await waitForExit(activeReset, 10_000);
   assert(activeResetExit.code !== 0, "auth reset succeeded while the server held the data lock");
   assert(/另一个 llm-chat 进程占用|already.*(?:held|use)/i.test(activeReset.output()), "active reset did not report the instance lock");
@@ -129,17 +129,17 @@ try {
   assert(serverExit.code === 0, `SIGTERM shutdown exited ${serverExit.code}: ${server.output()}`);
   assert(!processExists(backgroundPid), `background child ${backgroundPid} survived server shutdown`);
 
-  const reset = launchNode([resetEntry, "--confirm-reset-all-passkeys"], serverEnv);
+  const reset = launchNode([resetEntry, "--confirm-reset-password"], serverEnv);
   const resetExit = await waitForExit(reset, 10_000);
   assert(resetExit.code === 0, `offline auth reset failed: ${reset.output()}`);
-  for (const field of ["credentialsRevoked", "sessionsRevoked", "enrollmentsExpired", "challengesDeleted"]) {
+  for (const field of ["sessionsRevoked", "initialPassword"]) {
     assert(new RegExp(`${field}: \\d+`).test(reset.output()), `offline auth reset omitted ${field}`);
   }
-  assert(/Restart llm-chat.*bootstrap/i.test(reset.output()), "offline auth reset omitted restart/bootstrap guidance");
+  assert(/Use this password to log in/i.test(reset.output()), "offline auth reset omitted login guidance");
   const unconfirmedReset = launchNode([resetEntry], serverEnv);
   const unconfirmedExit = await waitForExit(unconfirmedReset, 10_000);
   assert(unconfirmedExit.code !== 0, "auth reset accepted a missing confirmation flag");
-  assert(unconfirmedReset.output().includes("--confirm-reset-all-passkeys"), "auth reset did not explain the required confirmation flag");
+  assert(unconfirmedReset.output().includes("--confirm-reset-password"), "auth reset did not explain the required confirmation flag");
 
   process.stdout.write("Deployment smoke passed.\n");
 } finally {

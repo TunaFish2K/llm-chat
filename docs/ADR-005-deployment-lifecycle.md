@@ -55,18 +55,17 @@ The external manager's grace period must be longer than this application timeout
 
 ### Offline-only authentication reset
 
-Passkey recovery is an offline CLI operation, not an HTTP operation. It requires exactly
-`--confirm-reset-all-passkeys`, acquires the data-directory lock, revokes active credentials and sessions, expires
-pending enrollments, and deletes login challenges in one transaction. It preserves the owner, chat, and audit data.
-The service must be stopped while it runs. There is no HTTP recovery endpoint and no recovery key; the CLI prints
-restart and bootstrap guidance.
+Password recovery is an offline CLI operation, not an HTTP operation. It requires exactly
+`--confirm-reset-password`, acquires the data-directory lock, creates a new eight-digit password, and revokes active
+sessions in one transaction. It preserves chat and application data. The service must be stopped while it runs. The
+CLI prints the replacement password.
 
 ### Whole-directory backup
 
 The backup and restore unit is the complete `LLM_CHAT_DATA_DIR`, not only the SQLite file. SQLite sidecars,
 content-addressed Plugin and Skill revisions, background task logs, persisted large tool outputs, workspace files,
 and other runtime state can be required to interpret or recover the database. The directory also contains API keys,
-secret headers, Passkey data, session material, and Plugin secrets, so it is treated as secret material. The simple
+secret headers, password hashes, session material, and Plugin secrets, so it is treated as secret material. The simple
 supported backup and restore procedure requires a stopped service and restores the directory as a whole without
 merging it with a live or partially retained directory.
 
@@ -79,7 +78,7 @@ logs distinguish code versions during rollout and rollback.
 ### External manager and proxy boundary
 
 The repository defines the process and HTTP lifecycle contract only. The user's external `served` manager owns
-process supervision, replica count, restart ordering, and grace periods. The user's HTTPS reverse proxy owns TLS and
+process supervision, replica count, restart ordering, and grace periods. An optional reverse proxy owns TLS and
 the public network boundary. This repository deliberately does not generate or prescribe `served`, container,
 systemd, or nginx configuration.
 
@@ -95,7 +94,7 @@ systemd, or nginx configuration.
   rollback selection explicit.
 - Whole-directory backups are larger and contain secrets, but SQLite-only backups cannot restore managed revisions,
   task logs, or persisted tool outputs.
-- Authentication recovery requires host-level access to the stopped service's data directory. Losing all trusted
-  Passkeys cannot be repaired through the network.
+- Authentication recovery requires host-level access to the stopped service's data directory. It cannot be performed
+  through the application HTTP API.
 - Process-manager, container, TLS, and reverse-proxy policy remains an operator responsibility outside this
   repository.

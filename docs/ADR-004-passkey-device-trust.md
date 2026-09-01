@@ -1,8 +1,10 @@
-# ADR-004: Passkey Device Trust
+# ADR-004: Passkey Device Trust (Superseded)
 
 ## Status
 
-Accepted
+Superseded by ADR-006
+
+This document records the previous authentication design. It is not implemented by the current service.
 
 ## Decision
 

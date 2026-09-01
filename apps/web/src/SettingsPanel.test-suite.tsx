@@ -17,7 +17,7 @@ const api = vi.hoisted(() => ({
   skills: vi.fn(), discoverSkills: vi.fn(), installSkill: vi.fn(), reloadSkill: vi.fn(),
   plugins: vi.fn(), installPlugin: vi.fn(), reloadPlugin: vi.fn(), unloadPlugin: vi.fn(), deletePlugin: vi.fn(), configurePlugin: vi.fn(),
   mcpServers: vi.fn(), createMcpServer: vi.fn(), updateMcpServer: vi.fn(), deleteMcpServer: vi.fn(), testMcpServer: vi.fn(),
-  authDevices: vi.fn(), revokeAuthDevice: vi.fn(), logout: vi.fn()
+  changePassword: vi.fn(), logout: vi.fn()
 }));
 
 vi.mock("./api", () => ({ api }));
@@ -127,11 +127,7 @@ function resetApis() {
   api.updateMcpServer.mockResolvedValue({});
   api.deleteMcpServer.mockResolvedValue(undefined);
   api.testMcpServer.mockResolvedValue({ ok: true, tools: 2, serverName: "Docs" });
-  api.authDevices.mockResolvedValue([
-    { id: "current", name: "我的手机", current: true, backupEligible: true, backedUp: true, approvedByName: null, createdAt: 1, lastUsedAt: 2 },
-    { id: "desktop", name: "工作电脑", current: false, backupEligible: false, backedUp: false, approvedByName: "我的手机", createdAt: 1, lastUsedAt: 2 }
-  ]);
-  api.revokeAuthDevice.mockResolvedValue(undefined);
+  api.changePassword.mockResolvedValue({ ok: true, sessionsRevoked: 2 });
   api.logout.mockResolvedValue(undefined);
 }
 
@@ -534,14 +530,19 @@ export function registerSettingsDetailTests() {
     await waitFor(() => expect(api.deleteMcpServer).toHaveBeenCalledWith("s1"));
   });
 
-  it("lists trusted Passkeys and revokes another device", async () => {
+  it("changes the access password after matching confirmation", async () => {
     render(<AntApp><SecuritySettings /></AntApp>);
-    expect(await screen.findByText("我的手机")).toBeInTheDocument();
-    expect(screen.getByText("已同步")).toBeInTheDocument();
-    expect(screen.getByText("由 我的手机 批准")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "撤销设备 工作电脑" }));
-    await confirmDelete();
-    await waitFor(() => expect(api.revokeAuthDevice).toHaveBeenCalledWith("desktop"));
+    const password = screen.getByLabelText("新密码");
+    const confirm = screen.getByLabelText("确认新密码");
+    fireEvent.change(password, { target: { value: "new-password-123" } });
+    fireEvent.change(confirm, { target: { value: "different-password" } });
+    fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
+    expect(await screen.findByText("两次输入的密码不一致")).toBeInTheDocument();
+    expect(api.changePassword).not.toHaveBeenCalled();
+    fireEvent.change(confirm, { target: { value: "new-password-123" } });
+    fireEvent.click(screen.getByRole("button", { name: /修改密码/ }));
+    await waitFor(() => expect(api.changePassword).toHaveBeenCalledWith("new-password-123"));
+    expect(await screen.findByText("密码已更新，其他浏览器需要重新登录")).toBeInTheDocument();
   });
 
   it("updates general settings and rolls API failures into a message", async () => {

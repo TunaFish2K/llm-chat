@@ -24,7 +24,6 @@ import {
   type GenerationEvent
 } from "@llm-chat/contracts";
 import { adapterFor, ProviderError } from "@llm-chat/providers";
-import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { Store, StoreError } from "./database";
@@ -40,7 +39,7 @@ import { canonicalWorkspace, createDirectory, listDirectories } from "./workspac
 import { BalanceError, BalanceService } from "./balance";
 import { AuthError, AuthManager, type AuthIdentity } from "./auth";
 
-export type AuthMode = "webauthn" | "disabled";
+export type AuthMode = "password" | "disabled";
 
 export interface AppOptions {
   dataFile: string;
@@ -50,7 +49,6 @@ export interface AppOptions {
   authMode?: AuthMode;
   trustProxy?: boolean | string;
   publicUrl?: string;
-  rpId?: string;
   authAnnounce?: (message: string) => void;
 }
 
@@ -83,13 +81,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const store = new Store(options.dataFile);
   const authMode = options.authMode ?? "disabled";
   const publicOrigin = new URL(options.publicUrl ?? "http://localhost").origin;
-  const auth = new AuthManager(store, {
-    origin: publicOrigin,
-    rpId: options.rpId ?? new URL(publicOrigin).hostname
-  }, options.authAnnounce ?? ((message) => {
+  const auth = new AuthManager(store, options.authAnnounce ?? ((message) => {
     if (options.logger !== false) process.stderr.write(`\n${message}\n`);
   }));
-  if (authMode === "webauthn") await auth.ensureBootstrapRequest();
+  if (authMode === "password") await auth.ensurePassword();
   const balanceService = new BalanceService();
   const eventHub = new EventHub();
   const taskManager = new TaskManager(store, eventHub);
@@ -134,15 +129,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get("/api/health", async () => ({ ok: true }));
 
   app.addHook("preHandler", async (request, reply) => {
-    if (authMode !== "webauthn" || !request.url.startsWith("/api/")) return;
-    requireSafeTransport(request);
+    if (authMode !== "password" || !request.url.startsWith("/api/")) return;
     if (!isReadMethod(request.method)) requireMutationSource(request, publicOrigin);
     if (isPublicApiRoute(request)) return;
     const token = sessionToken(request);
     const identity = auth.authenticate(token);
     if (!identity) {
-      await auth.ensureBootstrapRequest();
-      return reply.code(401).send({ error: { code: "authentication_required", message: "请使用 Passkey 登录或扫描二维码添加此设备" } });
+      return reply.code(401).send({ error: { code: "authentication_required", message: "请输入访问密码" } });
     }
     if (identity.refreshCookie) setSessionCookie(request, reply, token!);
     request.authIdentity = identity;
@@ -153,91 +146,22 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return payload;
   });
 
-  app.post("/api/auth/bootstrap/options", authRateLimit(8), async (request) => {
+  app.post("/api/auth/login", authRateLimit(8), async (request, reply) => {
     requireAuthEnabled(authMode);
-    const value = bootstrapSecretSchema.parse(request.body);
-    return auth.bootstrapOptions(value.requestId, value.secret);
-  });
-  app.post("/api/auth/bootstrap/verify", authRateLimit(8), async (request, reply) => {
-    requireAuthEnabled(authMode);
-    const value = bootstrapVerifySchema.parse(request.body);
-    const result = await auth.verifyBootstrap({
-      id: value.requestId,
-      secret: value.secret,
-      deviceName: value.deviceName,
-      response: value.response as RegistrationResponseJSON
-    });
-    setSessionCookie(request, reply, result.token);
-    return reply.code(201).send({ ok: true });
-  });
-  app.post("/api/auth/enrollments/options", authRateLimit(12), async (request, reply) => {
-    requireAuthEnabled(authMode);
-    const value = z.object({ deviceName: deviceNameSchema }).parse(request.body);
-    return reply.code(201).send(await auth.beginEnrollment({
-      deviceName: value.deviceName,
-      ip: request.ip,
-      userAgent: request.headers["user-agent"] ?? ""
-    }));
-  });
-  app.post<{ Params: { id: string } }>("/api/auth/enrollments/:id/credential", authRateLimit(12), async (request) => {
-    requireAuthEnabled(authMode);
-    const value = enrollmentCredentialSchema.parse(request.body);
-    return auth.finishEnrollment({
-      id: request.params.id,
-      tabSecret: value.tabSecret,
-      approvalSecret: value.approvalSecret,
-      response: value.response as RegistrationResponseJSON
-    });
-  });
-  app.get<{ Params: { id: string } }>("/api/auth/enrollments/:id/status", authRateLimit(120), async (request, reply) => {
-    requireAuthEnabled(authMode);
-    const tabSecret = singleHeader(request.headers["x-llm-chat-enrollment"]);
-    if (!tabSecret) throw new AuthError(401, "enrollment_secret_required", "缺少本机配对凭据");
-    const result = auth.enrollmentStatus(request.params.id, tabSecret);
-    if (result.state === "authenticated") {
-      setSessionCookie(request, reply, result.token);
-      return { state: "authenticated" };
-    }
-    return result;
-  });
-  app.get<{ Params: { id: string } }>("/api/auth/approvals/:id", authRateLimit(60), async (request) => {
-    requireAuthEnabled(authMode);
-    return auth.approvalDetails(request.params.id, requireApprovalSecret(request));
-  });
-  app.post<{ Params: { id: string } }>("/api/auth/approvals/:id/options", authRateLimit(12), async (request) => {
-    requireAuthEnabled(authMode);
-    return auth.approvalOptions(request.params.id, requireApprovalSecret(request));
-  });
-  app.post<{ Params: { id: string } }>("/api/auth/approvals/:id/verify", authRateLimit(12), async (request, reply) => {
-    requireAuthEnabled(authMode);
-    const response = webAuthnAuthenticationResponseSchema.parse(request.body) as AuthenticationResponseJSON;
-    const result = await auth.approve({ id: request.params.id, secret: requireApprovalSecret(request), response });
+    const value = z.object({ password: z.string().min(1).max(128) }).parse(request.body);
+    const result = await auth.login(value.password);
     setSessionCookie(request, reply, result.token);
     return { ok: true };
   });
-  app.post("/api/auth/login/options", authRateLimit(12), async () => {
+  app.put("/api/auth/password", async (request, reply) => {
     requireAuthEnabled(authMode);
-    return auth.loginOptions();
-  });
-  app.post("/api/auth/login/verify", authRateLimit(12), async (request, reply) => {
-    requireAuthEnabled(authMode);
-    const value = z.object({ challengeId: z.string().uuid(), response: webAuthnAuthenticationResponseSchema }).parse(request.body);
-    const result = await auth.login({ challengeId: value.challengeId, response: value.response as AuthenticationResponseJSON });
+    const value = z.object({ password: passwordSchema }).parse(request.body);
+    const result = await auth.changePassword(request.authIdentity!.sessionId, value.password);
     setSessionCookie(request, reply, result.token);
-    return { ok: true };
-  });
-  app.get("/api/auth/devices", async (request) => {
-    return auth.listDevices(request.authIdentity!.credentialId);
-  });
-  app.delete<{ Params: { id: string } }>("/api/auth/devices/:id", async (request, reply) => {
-    if (!auth.revokeDevice(request.params.id)) {
-      throw new StoreError("auth_device_not_found", "设备不存在或已撤销");
-    }
-    if (request.authIdentity!.credentialId === request.params.id) clearSessionCookies(reply);
-    await auth.ensureBootstrapRequest();
-    return reply.code(204).send();
+    return { ok: true, sessionsRevoked: result.sessionsRevoked };
   });
   app.post("/api/auth/logout", async (request, reply) => {
+    requireAuthEnabled(authMode);
     auth.logout(sessionToken(request));
     clearSessionCookies(reply);
     return reply.code(204).send();
@@ -692,72 +616,24 @@ class AuthHttpError extends Error {
   }
 }
 
-const deviceNameSchema = z.string().trim().min(1).max(80);
-const webAuthnResponseBase = {
-  id: z.string().min(1).max(2048),
-  rawId: z.string().min(1).max(2048),
-  type: z.literal("public-key"),
-  clientExtensionResults: z.record(z.string(), z.unknown()),
-  authenticatorAttachment: z.enum(["cross-platform", "platform"]).nullable().optional()
-};
-const webAuthnRegistrationResponseSchema = z.object({
-  ...webAuthnResponseBase,
-  response: z.object({
-    clientDataJSON: z.string().min(1),
-    attestationObject: z.string().min(1),
-    transports: z.array(z.enum(["ble", "cable", "hybrid", "internal", "nfc", "smart-card", "usb"])).optional()
-  }).passthrough()
-}).passthrough();
-const webAuthnAuthenticationResponseSchema = z.object({
-  ...webAuthnResponseBase,
-  response: z.object({
-    clientDataJSON: z.string().min(1),
-    authenticatorData: z.string().min(1),
-    signature: z.string().min(1),
-    userHandle: z.string().nullable().optional()
-  }).passthrough()
-}).passthrough();
-const bootstrapSecretSchema = z.object({
-  requestId: z.string().uuid(),
-  secret: z.string().min(32).max(128)
-});
-const bootstrapVerifySchema = bootstrapSecretSchema.extend({
-  deviceName: deviceNameSchema,
-  response: webAuthnRegistrationResponseSchema
-});
-const enrollmentCredentialSchema = z.object({
-  tabSecret: z.string().min(32).max(128),
-  approvalSecret: z.string().min(32).max(128),
-  response: webAuthnRegistrationResponseSchema
-});
+const passwordSchema = z.string().min(8).max(128);
 
 function authRateLimit(max: number) {
   return { config: { rateLimit: { max, timeWindow: 60 * 1000 } } };
 }
 
 function requireAuthEnabled(mode: AuthMode): void {
-  if (mode !== "webauthn") throw new AuthHttpError(404, "not_found", "API 不存在");
+  if (mode !== "password") throw new AuthHttpError(404, "not_found", "API 不存在");
 }
 
 function isPublicApiRoute(request: FastifyRequest): boolean {
   const pathname = request.url.split("?", 1)[0] ?? "";
   if (pathname === "/api/health") return true;
-  return [
-    /^\/api\/auth\/bootstrap\/(options|verify)$/,
-    /^\/api\/auth\/enrollments\/options$/,
-    /^\/api\/auth\/enrollments\/[^/]+\/(credential|status)$/,
-    /^\/api\/auth\/approvals\/[^/]+(?:\/(options|verify))?$/,
-    /^\/api\/auth\/login\/(options|verify)$/
-  ].some((pattern) => pattern.test(pathname));
+  return pathname === "/api/auth/login";
 }
 
 function isReadMethod(method: string): boolean {
   return method === "GET" || method === "HEAD" || method === "OPTIONS";
-}
-
-function requireSafeTransport(request: FastifyRequest): void {
-  if (request.protocol === "https" || request.hostname.toLowerCase() === "localhost") return;
-  throw new AuthHttpError(426, "secure_transport_required", "远程访问必须使用 HTTPS");
 }
 
 function requireMutationSource(request: FastifyRequest, expectedOrigin: string): void {
@@ -778,16 +654,6 @@ function requireMutationSource(request: FastifyRequest, expectedOrigin: string):
     }
     if (actual !== expectedOrigin) throw new AuthHttpError(403, "origin_mismatch", "请求来源与公开地址不匹配");
   }
-}
-
-function singleHeader(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
-function requireApprovalSecret(request: FastifyRequest): string {
-  const secret = singleHeader(request.headers["x-llm-chat-approval"]);
-  if (!secret) throw new AuthError(401, "approval_secret_required", "二维码批准凭据缺失");
-  return secret;
 }
 
 function sessionToken(request: FastifyRequest): string | undefined {

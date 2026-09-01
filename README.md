@@ -24,7 +24,7 @@
 - 服务端使用单个 SQLite 文件，不依赖外部数据库。
 - Web UI 使用 Ant Design X 和 Ant Design 组件，支持浅色、深色和系统主题。
 - 支持安装为 PWA。应用外壳会缓存，API、消息、认证和实时事件始终使用网络。
-- 使用 Passkey 保护单用户服务。可信设备可以扫描二维码并批准新设备。
+- 使用单一访问密码保护服务。首次启动会在终端输出 8 位数字初始密码。
 
 当前版本不包含多用户、附件或 Android 设备专属能力（剪贴板、日历、屏幕时长、TTS）。
 
@@ -70,34 +70,30 @@ pnpm start
 | `LLM_CHAT_HOST` | `127.0.0.1` | 监听地址 |
 | `LLM_CHAT_PORT` | `3000` | HTTP 端口 |
 | `LLM_CHAT_DATA_DIR` | `./data` | 完整持久化数据目录，路径相对于项目根目录解析 |
-| `LLM_CHAT_AUTH_MODE` | `webauthn` | 认证模式。`disabled` 只允许同时使用回环监听地址和回环公开地址 |
-| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 浏览器实际访问的公开地址。远程 WebAuthn 必须显式配置 HTTPS |
-| `LLM_CHAT_RP_ID` | 公开地址的主机名 | WebAuthn RP ID。必须是公开地址域名或其父域名 |
+| `LLM_CHAT_AUTH_MODE` | `password` | 认证模式。`disabled` 只允许同时使用回环监听地址和回环公开地址 |
+| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 浏览器实际访问的公开地址，用于校验写请求来源 |
 | `LLM_CHAT_TRUST_PROXY` | `false` | `true` 启用代理信任；`false` 或未设置关闭；其他非空字符串原样作为代理地址/CIDR 规则传给 Fastify |
 | `LLM_CHAT_SERVE_WEB` | `true` | 是否提供 `apps/web/dist` 静态文件；设为 `false` 时只运行 API，不要求 Web 产物 |
 | `LLM_CHAT_SHUTDOWN_TIMEOUT_MS` | `30000` | 应用关闭总期限，允许 `1000` 到 `300000` 毫秒；外部管理器宽限期必须更长 |
 | `LLM_CHAT_BUILD_ID` | `development` | 单行构建标识，长度为 1 到 200 个字符；会出现在启动日志和探针响应中 |
 
-远程部署可使用以下完整环境。示例假定 HTTPS 代理和服务端在同一主机；将
-`LLM_CHAT_TRUST_PROXY` 改为实际代理源地址或 CIDR：
+内网 HTTP 部署可使用以下环境：
 
 ```bash
-LLM_CHAT_HOST=127.0.0.1 \
+LLM_CHAT_HOST=0.0.0.0 \
 LLM_CHAT_PORT=3000 \
 LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
-LLM_CHAT_AUTH_MODE=webauthn \
-LLM_CHAT_PUBLIC_URL=https://chat.example.com \
-LLM_CHAT_RP_ID=chat.example.com \
-LLM_CHAT_TRUST_PROXY=127.0.0.1 \
+LLM_CHAT_AUTH_MODE=password \
+LLM_CHAT_PUBLIC_URL=http://192.168.1.10:3000 \
 LLM_CHAT_SERVE_WEB=true \
 LLM_CHAT_SHUTDOWN_TIMEOUT_MS=30000 \
 LLM_CHAT_BUILD_ID=release-2026-09-01 \
 pnpm start
 ```
 
-远程部署必须在可信反向代理后使用 HTTPS。代理负责 TLS，服务端只监听内部地址；不要让客户端绕过代理
-直接访问服务端端口。`LLM_CHAT_AUTH_MODE=disabled` 不是远程部署选项：只要监听地址或公开 URL
-不是回环地址，服务就会拒绝启动。
+将示例 IP 改为服务端的内网地址。密码认证允许直接通过 HTTP 访问，但 HTTP 会明文传输密码和会话，
+不防止窃听或中间人攻击。需要传输安全时，仍应在可信反向代理后使用 HTTPS。
+`LLM_CHAT_AUTH_MODE=disabled` 不是远程部署选项。
 
 `/healthz` 是无数据库查询的存活探针，服务监听后返回 HTTP `200` 和 `{ "ok": true, "buildId": "..." }`。
 `/readyz` 是流量探针：启动完成、SQLite 可执行 `SELECT 1` 且（`LLM_CHAT_SERVE_WEB=true` 时）Web
@@ -105,33 +101,25 @@ pnpm start
 `buildId`。关闭时先撤回 readiness，因此管理器必须按 `/readyz` 摘流量，并为
 `LLM_CHAT_SHUTDOWN_TIMEOUT_MS` 留出更长的停止宽限期。
 
-## 设备登录
+## 密码登录
 
-首次启动时，终端会显示一个 10 分钟有效的二维码和同等作用的链接。在准备作为首台可信设备的浏览器中打开它，然后创建 Passkey。远程手机首次注册前，必须先配置手机可访问的 `LLM_CHAT_PUBLIC_URL`。
-
-后续设备打开同一网址后，可以执行以下任一操作：
-
-1. 使用已经同步到该设备的 Passkey 登录。
-2. 创建新 Passkey，并让任意可信设备扫描页面上的二维码进行批准。
-
-二维码不使用手工配对码。目标标签页的兑换密钥只保存在内存中；关闭或刷新页面会使该次流程失效。登录会话使用 `HttpOnly`、`SameSite=Strict` Cookie。可以在“设置 > 设备”查看或撤销 Passkey，也可以只退出当前浏览器会话。
-
-Passkey 依赖 WebAuthn。请使用当前版本的 Safari、Chrome 或 Firefox；WebAuthn 只在 HTTPS 或
-`localhost` 安全上下文中可用，本机调试不支持用 `http://127.0.0.1` 执行 WebAuthn。
+首次启动新的数据目录时，终端会输出一个 8 位数字初始密码。打开应用并输入该密码即可登录。初始密码
+只生成并输出一次；登录后可在“设置 > 安全”修改。修改密码会撤销其他浏览器的会话，当前浏览器继续
+保持登录。会话使用 180 天滑动有效期的 `HttpOnly`、`SameSite=Strict` Cookie。
 
 手动浏览器矩阵应覆盖各平台可获得的当前版本：
 
 | 环境 | 说明 |
 | --- | --- |
-| 桌面 Chrome | 支持 WebAuthn 和 PWA；桌面自动化使用 Playwright Chromium |
-| 桌面 Firefox | 支持网页和 WebAuthn，但没有标准的 PWA 安装入口；自动化验证真实配对界面 |
-| 桌面 Safari | 支持网页、WebAuthn 和 PWA；自动化使用 Playwright WebKit 作为桌面 Safari 覆盖 |
-| Android Chrome、Android Firefox（平台提供时） | 使用 HTTPS 访问并验证 Passkey；移动自动化覆盖 390x844 Chromium |
+| 桌面 Chrome | 支持密码登录和网页功能；桌面自动化使用 Playwright Chromium |
+| 桌面 Firefox | 支持密码登录和网页功能，但没有标准的 PWA 安装入口 |
+| 桌面 Safari | 支持密码登录和网页功能；自动化使用 Playwright WebKit 覆盖 |
+| Android Chrome、Android Firefox（平台提供时） | 支持密码登录和网页功能；移动自动化覆盖 390x844 Chromium |
 | iOS Safari（以及平台提供的其他浏览器） | iOS 上通过 Safari 安装 PWA；移动浏览器能力以当前系统版本为准 |
 
 自动化门禁覆盖 Playwright Chromium、Firefox、WebKit 桌面项目，以及 `390x844` 的移动 Chromium。
-通过 CDP 虚拟认证器完成首个 Passkey 注册只在 Chromium 项目运行；Firefox 和 WebKit 验证真实配对
-界面是否可用，或显示明确的降级状态。
+所有浏览器项目都执行真实密码登录。非本机 HTTP 通常不能注册 Service Worker，因此普通网页可用，
+但 PWA 安装和离线外壳不作保证。
 
 ## 首次配置
 
@@ -173,16 +161,19 @@ API Key 和秘密请求头不会通过查询接口返回。SQLite 文件仍包�
 
 ## 安全边界
 
-这是单用户应用。Passkey 只验证设备是否属于同一个所有者，不提供多用户隔离。当前操作者能够浏览服务端目录、运行进程和安装可信 Plugin。默认只监听回环地址。远程访问必须通过 HTTPS 反向代理，并正确设置 `LLM_CHAT_PUBLIC_URL` 和 `LLM_CHAT_TRUST_PROXY`。
+这是单用户应用。共享密码只控制是否能够进入应用，不提供多用户隔离。当前操作者能够浏览服务端目录、
+运行进程和安装可信 Plugin。HTTP 下密码和会话可能被同一网络中的其他设备截获；该模式只适用于用户接受
+这一风险的网络。需要安全边界时应使用 HTTPS 或其他受信传输层。
 
-浏览器不使用 `localStorage`、`sessionStorage` 或 IndexedDB 保存聊天和认证状态。PWA 的 Cache Storage 只保存构建后的应用外壳。页面 URL 通常只包含当前会话 ID；扫码链接的秘密位于 URL fragment，并在页面读取后立即从地址栏删除。模型请求、上下文拼装、摘要生成、工具执行、审批和取消操作都发生在服务端。
+浏览器不使用 `localStorage`、`sessionStorage` 或 IndexedDB 保存聊天和认证状态。PWA 的 Cache Storage
+只保存构建后的应用外壳。模型请求、上下文拼装、摘要生成、工具执行、审批和取消操作都发生在服务端。
 
 ## 数据与恢复
 
 `LLM_CHAT_DATA_DIR` 是唯一的备份和恢复单元，不能只备份 `llm-chat.sqlite`。目录包含 SQLite
 文件及其可能存在的 `-wal`/`-shm` 旁车文件、Plugin 和 Skill 的内容寻址修订、后台任务日志、持久化
-的大型工具输出，以及工作目录和其他服务端状态。该目录的 SQLite 还包含 API Key、秘密请求头、Passkey
-和会话相关材料；整个目录必须按密钥材料保护。
+的大型工具输出，以及工作目录和其他服务端状态。该目录的 SQLite 还包含 API Key、秘密请求头、密码
+哈希和会话相关材料；整个目录必须按密钥材料保护。
 
 简单且受支持的备份/恢复流程要求服务已停止，并且在备份或恢复期间没有其他进程使用该目录。停止后
 原样复制或归档整个 `LLM_CHAT_DATA_DIR`，恢复时将完整目录恢复到同一路径并保持权限；不要把新旧目录
@@ -191,18 +182,16 @@ API Key 和秘密请求头不会通过查询接口返回。SQLite 文件仍包�
 
 ## 离线认证恢复
 
-服务停止后，在项目或发布目录执行以下命令。`--confirm-reset-all-passkeys` 是唯一允许的参数；这里
+服务停止后，在项目或发布目录执行以下命令。`--confirm-reset-password` 是唯一允许的参数；这里
 不要在它前面再写一个 `--`，因为 pnpm 会把额外分隔符转发给 CLI：
 
 ```bash
 LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
-pnpm --filter @llm-chat/server auth:reset --confirm-reset-all-passkeys
+pnpm --filter @llm-chat/server auth:reset --confirm-reset-password
 ```
 
-该 CLI 先取得与服务相同的数据目录实例锁，因此服务运行时会拒绝执行。它会撤销所有 Passkey 凭据和
-会话，使未完成的设备注册过期，并删除登录挑战；它保留所有者、聊天和审计数据。成功输出会列出
-`credentialsRevoked`、`sessionsRevoked`、`enrollmentsExpired` 和 `challengesDeleted` 数量，并提示
-重启服务后使用终端打印的新 bootstrap 链接注册 Passkey。应用没有 HTTP 恢复端点，也没有恢复密钥。
+该 CLI 先取得与服务相同的数据目录实例锁，因此服务运行时会拒绝执行。它会设置新的 8 位数字密码并
+撤销所有登录会话，同时保留聊天、Agent、连接和工具数据。成功输出包含新密码和撤销的会话数量。
 
 ## 检查与 CI
 
