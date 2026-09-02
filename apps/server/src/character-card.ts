@@ -15,8 +15,9 @@ const MAX_CARD_BYTES = 10 * 1024 * 1024;
 
 interface PortableExtension {
   version: 1;
-  execution: Omit<AgentExecutionConfig, "modelId"> & {
+  execution: Omit<AgentExecutionConfig, "modelId" | "visionModelId"> & {
     model: { protocol: ProviderProtocol; modelKey: string; connectionName: string } | null;
+    visionModel?: { protocol: ProviderProtocol; modelKey: string; connectionName: string } | null;
   };
   userProfile: AgentUserProfileOverride;
 }
@@ -29,7 +30,11 @@ export function importCharacterCard(store: Store, fileName: string, bytes: Uint8
   const extension = readPortableExtension(card.data.extensions.llm_chat);
   const defaultAgent = store.getAgent(store.getSettings().defaultAgentId)!;
   const execution = extension
-    ? { ...extension.execution, modelId: resolvePortableModel(store, extension.execution.model) }
+    ? {
+        ...extension.execution,
+        modelId: resolvePortableModel(store, extension.execution.model),
+        visionModelId: resolvePortableModel(store, extension.execution.visionModel ?? null)
+      }
     : defaultAgent.execution;
   const input: AgentInput = {
     card,
@@ -65,6 +70,8 @@ export function exportCharacterCard(
 function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
   const model = agent.execution.modelId ? store.getModel(agent.execution.modelId) : undefined;
   const connection = model ? store.getConnection(model.connectionId) : undefined;
+  const visionModel = agent.execution.visionModelId ? store.getModel(agent.execution.visionModelId) : undefined;
+  const visionConnection = visionModel ? store.getConnection(visionModel.connectionId) : undefined;
   const extension: PortableExtension = {
     version: 1,
     execution: {
@@ -72,6 +79,11 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
         protocol: connection.protocol,
         modelKey: model.modelKey,
         connectionName: connection.name
+      } : null,
+      visionModel: visionModel && visionConnection ? {
+        protocol: visionConnection.protocol,
+        modelKey: visionModel.modelKey,
+        connectionName: visionConnection.name
       } : null,
       contextPolicy: agent.execution.contextPolicy,
       reasoningEffort: agent.execution.reasoningEffort,

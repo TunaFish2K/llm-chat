@@ -28,6 +28,26 @@ export interface SkillManagerOptions {
 
 const BUNDLED: Array<{ id: string; content: string }> = [
   {
+    id: "command-execution-guide",
+    content: `---
+id: command-execution-guide
+name: Command Execution Guide
+description: Choose correctly between foreground shell commands and durable background tasks.
+requiredTools: workspace_shell, background_start, background_list, background_status, background_read, background_wait, background_write, background_stop
+recommendedApprovals: workspace_shell=always, background_start=always, background_write=never, background_stop=never
+---
+# Command Execution Guide
+
+Use \`workspace_shell\` for short, non-interactive commands when their complete result is needed before the next reasoning step. It has a maximum timeout of 120 seconds. Examples include \`fastfetch\`, a focused test, reading command output, or a quick build that is expected to finish within the limit.
+
+Use \`background_start\` when a command is interactive, may run longer than 120 seconds, starts a server or watcher, must survive the current model step, or needs later input and incremental observation. Use \`pipe\` mode for ordinary long-running commands and services. Use \`pty\` only for a TUI, REPL, coding harness, or another program that genuinely requires a terminal.
+
+After starting a background task, retain its task id. Prefer \`background_wait\` to wait for new output or a state change, then use \`background_read\` with the returned cursor when more output is needed. Do not repeatedly poll without advancing the cursor. Use \`background_write\` only for an interactive task and include a concrete audit reason. Use \`background_stop\` only when the user requests cancellation, the task is no longer needed, or continuing is unsafe.
+
+Do not put a quick command in the background merely because background tools are available. Do not use \`workspace_shell\` for servers, watchers, interactive programs, or work likely to exceed its timeout. Report command results only after the corresponding tool returns.
+`
+  },
+  {
     id: "coding-supervisor",
     content: `---
 id: coding-supervisor

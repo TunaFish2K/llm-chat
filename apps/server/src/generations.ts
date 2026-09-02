@@ -9,9 +9,10 @@ import {
   type ProviderMessage
 } from "@llm-chat/providers";
 import { buildContext, ContextError, type BuiltContext } from "./context";
-import type { GenerationRecord, Store } from "./database";
+import { StoreError, type GenerationRecord, type Store } from "./database";
 import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
+import type { PreparedImages } from "./vision";
 
 type Subscriber = (event: GenerationEvent) => void;
 const schemaValidator = new Ajv({ allErrors: true, strict: false });
@@ -30,8 +31,16 @@ export interface GenerationRunnerDependencies {
     record: Parameters<typeof buildContext>[1],
     model: Parameters<typeof buildContext>[2],
     connection: ProviderConnection,
-    signal: AbortSignal
+    signal: AbortSignal,
+    preparedImages?: PreparedImages
   ) => Promise<BuiltContext>;
+  prepareImages: (
+    store: Store,
+    record: GenerationRecord,
+    model: Parameters<typeof buildContext>[2],
+    signal: AbortSignal,
+    onAnalysis: (analysis: import("@llm-chat/contracts").VisionAnalysisDto) => void
+  ) => Promise<PreparedImages>;
   buildTools: (store: Store, record: GenerationRecord) => Promise<ServerTool[]>;
   memoryPrompt: (store: Store) => string;
   runtimePrompt: (store: Store, record: GenerationRecord) => string;
@@ -41,6 +50,7 @@ export interface GenerationRunnerDependencies {
 
 const defaultDependencies: GenerationRunnerDependencies = {
   buildContext,
+  prepareImages: async () => new Map(),
   buildTools: (store, record) => buildServerTools(store, false, { workspacePath: record.agentSnapshot.workspacePath }),
   memoryPrompt: toolSystemPrompt,
   runtimePrompt: () => "",
@@ -180,7 +190,21 @@ export class GenerationRunner {
     };
 
     try {
-      const context = await this.dependencies.buildContext(this.store, record, model, connection, job.controller.signal);
+      const preparedImages = await this.dependencies.prepareImages(
+        this.store,
+        record,
+        model,
+        job.controller.signal,
+        (analysis) => this.emit(generationId, { type: "vision-analysis", generationId, analysis })
+      );
+      const context = await this.dependencies.buildContext(
+        this.store,
+        record,
+        model,
+        connection,
+        job.controller.signal,
+        preparedImages
+      );
       this.store.setGenerationContext(generationId, context.metadata);
       const toolPolicy = record.agentSnapshot.execution.tools;
       const authorizedTools = model.capabilities.tools
@@ -258,6 +282,7 @@ export class GenerationRunner {
               block: {
                 id: `${generationId}:${blockIndex}`,
                 index: blockIndex,
+                stepIndex,
                 type: event.blockType,
                 content: event.content,
                 complete: event.complete
@@ -400,7 +425,7 @@ export class GenerationRunner {
 }
 
 function normalizeError(error: unknown): { code: string; message: string } {
-  if (error instanceof ProviderError || error instanceof ContextError) {
+  if (error instanceof ProviderError || error instanceof ContextError || error instanceof StoreError) {
     return { code: error.code, message: error.message };
   }
   if (error instanceof Error) return { code: "generation_failed", message: error.message };

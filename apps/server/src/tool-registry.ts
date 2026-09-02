@@ -6,6 +6,7 @@ import type { SkillManager } from "./skills";
 import { buildServerTools, type ServerTool } from "./tools";
 import { isAbsolute, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
+import type { ImageService } from "./images";
 
 export const SEARCH_TOOLS_NAME = "search_tools";
 
@@ -76,7 +77,8 @@ export class ToolRegistry {
     private readonly store: Store,
     private readonly tasks: TaskManager,
     private readonly plugins: PluginManager,
-    private readonly skills: SkillManager
+    private readonly skills: SkillManager,
+    private readonly images?: ImageService
   ) {}
 
   async tools(record?: GenerationRecord, includeUnavailable = false): Promise<ServerTool[]> {
@@ -88,6 +90,7 @@ export class ToolRegistry {
     }
     const builtins = (await buildServerTools(this.store, true, {
       taskManager: this.tasks,
+      ...(this.images ? { imageService: this.images } : {}),
       ...(record ? { workspacePath: record.agentSnapshot.workspacePath } : {})
     })).filter((tool) => tool.definition.name !== "use_skill");
     const all = [...builtins, this.skills.tool(record), ...this.managementTools(), ...await this.plugins.tools(record)];

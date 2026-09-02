@@ -19,7 +19,16 @@ export class OpenAiChatAdapter implements ProviderAdapter {
         }
         continue;
       }
-      const converted: Record<string, unknown> = { role: message.role, content: message.text || null };
+      const content = message.images?.length && message.role === "user"
+        ? [
+            ...message.images.map((image) => ({
+              type: "image_url",
+              image_url: { url: `data:${image.mimeType};base64,${image.dataBase64}`, detail: "auto" }
+            })),
+            ...(message.text ? [{ type: "text", text: message.text }] : [])
+          ]
+        : message.text || null;
+      const converted: Record<string, unknown> = { role: message.role, content };
       if (message.role === "assistant" && message.toolCalls?.length) {
         converted.tool_calls = message.toolCalls.map((call) => ({
           id: call.id,

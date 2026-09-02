@@ -18,6 +18,47 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("serves immutable image assets through SHA-256 cache URLs", async () => {
+    const app = await testApp();
+    const dataBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const uploaded = await app.inject({
+      method: "POST",
+      url: "/api/images",
+      payload: { fileName: "pixel.png", dataBase64 }
+    });
+    expect(uploaded.statusCode).toBe(201);
+    const asset = uploaded.json();
+    expect(asset.url).toBe(`/api/images/${asset.id}?v=${asset.sha256}`);
+    expect(asset.sha256).toMatch(/^[a-f0-9]{64}$/);
+
+    const first = await app.inject({ method: "GET", url: asset.url });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["content-type"]).toContain("image/png");
+    expect(first.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(first.headers.etag).toBe(`"${asset.sha256}"`);
+    expect(first.rawPayload.equals(Buffer.from(dataBase64, "base64"))).toBe(true);
+
+    const canonical = await app.inject({ method: "GET", url: `/api/images/${asset.id}?v=wrong` });
+    expect(canonical.statusCode).toBe(307);
+    expect(canonical.headers.location).toBe(asset.url);
+    expect(canonical.headers["cache-control"]).toBe("no-store");
+
+    const cached = await app.inject({
+      method: "GET",
+      url: asset.url,
+      headers: { "if-none-match": first.headers.etag! }
+    });
+    expect(cached.statusCode).toBe(304);
+    expect(cached.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+
+    const privateProxy = await app.inject({
+      method: "GET",
+      url: "/api/image-proxy?url=http%3A%2F%2F127.0.0.1%2Fsecret.png"
+    });
+    expect(privateProxy.statusCode).toBe(400);
+    expect(privateProxy.json()).toMatchObject({ error: { code: "image_proxy_private_address" } });
+  });
+
   it("protects password APIs with source, origin, and session checks over HTTP", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-auth-api-"));
     dirs.push(dir);
@@ -171,7 +212,7 @@ describe("server API", () => {
       displayName: "Mock",
       contextWindow: 2048,
       maxOutputTokens: 128,
-      capabilities: { tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
+      capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
       defaultSettings: settings,
       enabled: true
     };
@@ -317,6 +358,61 @@ describe("server API", () => {
     await app.close();
   });
 
+  it("creates immutable conversation forks and exposes sanitized context checkpoints", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sse([
+      { choices: [{ delta: { content: "完成" }, finish_reason: "stop" }] },
+      { choices: [], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } }
+    ])));
+    const app = await testApp();
+    const model = await createApiModel(app);
+    const started = (await app.inject({
+      method: "POST", url: "/api/conversations/start", payload: agentStartPayload(app, model.id, { text: "原问题", contextPolicy: "auto" })
+    })).json();
+    await waitForGeneration(app, started.generation.generationId);
+    const sourceMessages = (await app.inject({
+      method: "GET", url: `/api/conversations/${started.conversation.id}/messages`
+    })).json();
+    const sourceUser = sourceMessages.find((message: { role: string }) => message.role === "user");
+
+    const editedResponse = await app.inject({
+      method: "POST",
+      url: `/api/conversations/${started.conversation.id}/forks`,
+      payload: { mode: "edit", messageId: sourceUser.id, text: "修改后的问题" }
+    });
+    expect(editedResponse.statusCode).toBe(202);
+    const edited = editedResponse.json();
+    expect(edited.conversation.forkedFrom).toEqual({
+      conversationId: started.conversation.id,
+      messageId: sourceUser.id
+    });
+    expect(edited.generation).toMatchObject({ generationId: expect.any(String) });
+    await waitForGeneration(app, edited.generation.generationId);
+    const editedMessages = (await app.inject({
+      method: "GET", url: `/api/conversations/${edited.conversation.id}/messages`
+    })).json();
+    expect(editedMessages.find((message: { role: string }) => message.role === "user"))
+      .toMatchObject({ role: "user", text: "修改后的问题" });
+    expect((await app.inject({
+      method: "GET", url: `/api/conversations/${started.conversation.id}/messages`
+    })).json().find((message: { role: string }) => message.role === "user")).toMatchObject({ text: "原问题" });
+
+    app.store.saveSummary({
+      conversationId: started.conversation.id,
+      throughOrdinal: 2,
+      fingerprint: "private-fingerprint",
+      text: "较早对话摘要",
+      connectionId: model.connectionId,
+      modelKey: model.modelKey,
+      usage: { totalTokens: 8 }
+    });
+    const checkpoint = await app.inject({
+      method: "GET", url: `/api/conversations/${started.conversation.id}/context/compact`
+    });
+    expect(checkpoint.statusCode).toBe(200);
+    expect(checkpoint.json()).toMatchObject({ conversationId: started.conversation.id, throughOrdinal: 2, text: "较早对话摘要" });
+    expect(checkpoint.json()).not.toHaveProperty("sourceFingerprint");
+  });
+
   it("executes an automatic tool and continues the same generation", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     let requestIndex = 0;
@@ -421,6 +517,9 @@ describe("server API", () => {
   });
 
   it("returns 404 for stale assets while preserving the SPA route fallback", async () => {
+    const runtimeAssetName = "runtime-added-12345678.js";
+    const runtimeAssetPath = join(process.cwd(), "apps/web/dist/assets", runtimeAssetName);
+    rmSync(runtimeAssetPath, { force: true });
     const app = await testApp(true);
     const index = await app.inject({ method: "GET", url: "/" });
     expect(index.headers["cache-control"]).toBe("no-cache");
@@ -430,6 +529,15 @@ describe("server API", () => {
     expect(currentAsset.statusCode).toBe(200);
     expect(currentAsset.headers["content-type"]).toContain("application/javascript");
     expect(currentAsset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    writeFileSync(runtimeAssetPath, "export const loadedAfterStartup = true;\n");
+    try {
+      const runtimeAsset = await app.inject({ method: "GET", url: `/assets/${runtimeAssetName}` });
+      expect(runtimeAsset.statusCode).toBe(200);
+      expect(runtimeAsset.headers["content-type"]).toContain("application/javascript");
+      expect(runtimeAsset.headers["cache-control"]).toBe("public, max-age=31536000, immutable");
+    } finally {
+      rmSync(runtimeAssetPath, { force: true });
+    }
     const asset = await app.inject({ method: "GET", url: "/assets/index-stale.js" });
     expect(asset.statusCode).toBe(404);
     expect(asset.headers["content-type"]).toContain("text/plain");
@@ -506,7 +614,7 @@ describe("server API", () => {
       subscriber({
         type: "block-delta",
         generationId,
-        block: { id: `${generationId}:0`, index: 0, type: "text", content: "buffered", complete: true }
+        block: { id: `${generationId}:0`, index: 0, stepIndex: 0, type: "text", content: "buffered", complete: true }
       });
       return unsubscribe;
     });
@@ -634,7 +742,7 @@ describe("server API", () => {
 function agentStartPayload(
   app: Awaited<ReturnType<typeof testApp>>,
   modelId: string,
-  options: { text: string; contextPolicy?: "trim" | "summarize" | "full"; reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"; workspacePath?: string | null }
+  options: { text: string; contextPolicy?: "auto" | "trim" | "summarize" | "full"; reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max"; workspacePath?: string | null }
 ) {
   return {
     text: options.text,
@@ -679,7 +787,7 @@ async function createApiModel(app: Awaited<ReturnType<typeof testApp>>) {
     displayName: "Tool Model",
     contextWindow: 4096,
     maxOutputTokens: 256,
-    capabilities: { tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
+    capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
     defaultSettings: { common: { maxOutputTokens: 256, stopSequences: [] }, protocol: {} },
     enabled: true
   } })).json();
@@ -703,7 +811,7 @@ function modelPayload(connectionId: string): ModelInput {
     displayName: "Route Model",
     contextWindow: 4096,
     maxOutputTokens: 256,
-    capabilities: { tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
+    capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
     defaultSettings: { common: { maxOutputTokens: 256, stopSequences: [] }, protocol: {} },
     enabled: true
   };

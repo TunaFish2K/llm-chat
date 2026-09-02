@@ -39,7 +39,7 @@ function fixture(): AgentSnapshot {
     workspacePath: null, extensionsPinned: false, skillRevisions: {}, toolRevisions: {},
     userProfile: { displayName: "Lin", description: "A careful tester" },
     execution: {
-      modelId: "model", contextPolicy: "trim", reasoningEffort: "none",
+      modelId: "model", visionModelId: null, contextPolicy: "trim", reasoningEffort: "none",
       settings: { common: { maxOutputTokens: 100, stopSequences: [] }, protocol: {}, reasoningEffort: "none" },
       tools: { defaultEnabled: true, overrides: {}, approvalOverrides: {} },
       enabledSkillIds: [], maxToolRounds: 32, maxBackgroundTasks: 2, taskLogLimitBytes: 64 * 1024 * 1024

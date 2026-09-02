@@ -10,6 +10,7 @@ import type { ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { AgentSnapshot } from "./database";
 import type { TaskManager } from "./background-tasks";
+import type { ImageService } from "./images";
 import { mcpManager } from "./mcp";
 
 const execFileAsync = promisify(execFile);
@@ -43,6 +44,7 @@ export interface ToolExecutionContext {
 export interface ToolDependencies {
   lookup?: typeof lookup;
   taskManager?: TaskManager;
+  imageService?: ImageService;
   workspacePath?: string | null;
 }
 
@@ -113,7 +115,17 @@ export async function buildServerTools(
       command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
       cwd: workspacePathProperty("Working directory for the command"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
-    }, true, async (input, signal) => runShell(workspace!, input, signal), Boolean(workspace))
+    }, true, async (input, signal) => runShell(workspace!, input, signal), Boolean(workspace)),
+    tool("workspace_publish_image", "发布图片", "workspace", "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. Use this before showing a machine-local image to the user.", {
+      path: workspacePathProperty("Image file to publish"),
+      alt: stringProperty("Short alternative text for the image")
+    }, false, async (input, _signal, context) => {
+      if (!dependencies.imageService || !context) throw new Error("Image service and tool context are required");
+      const asset = await dependencies.imageService.importWorkspaceImage(workspace!, requiredString(input, "path"));
+      store.attachImageToToolCall(context.toolCallId, asset.id);
+      const alt = (optionalString(input, "alt") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "image";
+      return JSON.stringify({ asset, markdown: `![${alt}](${asset.url})` });
+    }, Boolean(workspace && dependencies.imageService))
   ];
 
   if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager));
@@ -163,6 +175,7 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_glob: "使用 glob 模式查找沙箱工作区文件。",
   workspace_grep: "按文本或正则表达式搜索沙箱工作区文件。",
   workspace_shell: "在沙箱工作区目录中运行 Shell 命令，每次执行均需批准。",
+  workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
   use_skill: "按需加载服务端 Skills 目录中的专用说明。"
 };
 

@@ -7,7 +7,7 @@ export const protocolSchema = z.enum([
 ]);
 export type ProviderProtocol = z.infer<typeof protocolSchema>;
 
-export const contextPolicySchema = z.enum(["trim", "summarize", "full"]);
+export const contextPolicySchema = z.enum(["auto", "trim", "summarize", "full"]);
 export type ContextPolicy = z.infer<typeof contextPolicySchema>;
 
 export const generationStatusSchema = z.enum([
@@ -71,6 +71,7 @@ export type GenerationSettings = z.infer<typeof generationSettingsSchema>;
 
 export const modelCapabilitiesSchema = z.object({
   tools: z.boolean().default(true),
+  imageInput: z.boolean().default(false),
   temperature: z.boolean().default(true),
   topP: z.boolean().default(true),
   reasoning: z.boolean().default(false),
@@ -232,6 +233,7 @@ export type ApprovalPolicy = "default" | "always" | "never";
 
 export const agentExecutionConfigSchema = z.object({
   modelId: z.string().min(1).max(200).nullable(),
+  visionModelId: z.string().min(1).max(200).nullable().default(null),
   contextPolicy: contextPolicySchema,
   reasoningEffort: reasoningEffortSchema,
   generation: generationOverridesSchema.default({}),
@@ -325,6 +327,7 @@ export interface ConversationDto {
   agentId: string | null;
   executionOverrides: ConversationExecutionOverrides;
   workspacePath: string | null;
+  forkedFrom?: { conversationId: string; messageId: string | null } | null;
   draft: string;
   createdAt: number;
   updatedAt: number;
@@ -347,6 +350,7 @@ export interface GeneratedAgentDto {
 export interface GenerationBlockDto {
   id: string;
   index: number;
+  stepIndex: number;
   type: BlockType;
   content: string;
   complete: boolean;
@@ -373,7 +377,10 @@ export type ToolApprovalState = z.infer<typeof toolApprovalStateSchema>;
 
 export interface ToolCallDto {
   id: string;
+  /** Provider-visible call ID; differs from id for cloned branch history. */
+  providerId?: string;
   index: number;
+  stepIndex: number;
   name: string;
   arguments: string;
   approvalState: ToolApprovalState;
@@ -381,6 +388,30 @@ export interface ToolCallDto {
   output: string | null;
   error: string | null;
   startedAt: number | null;
+  completedAt: number | null;
+  artifacts: ImageAssetDto[];
+}
+
+export interface ImageAssetDto {
+  id: string;
+  fileName: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  byteSize: number;
+  sha256: string;
+  url: string;
+  createdAt: number;
+}
+
+export interface VisionAnalysisDto {
+  id: string;
+  asset: ImageAssetDto;
+  status: "running" | "completed" | "failed";
+  model: GeneratedModelDto;
+  description: string | null;
+  usage: UsageDto;
+  cached: boolean;
+  error: string | null;
+  createdAt: number;
   completedAt: number | null;
 }
 
@@ -396,14 +427,18 @@ export interface GenerationDto {
   generatedAgent?: GeneratedAgentDto | null;
   blocks: GenerationBlockDto[];
   toolCalls: ToolCallDto[];
+  visionAnalyses: VisionAnalysisDto[];
   usage: UsageDto;
   stopReason: string | null;
   error: { code: string; message: string } | null;
   context: {
     policy: ContextPolicy;
+    strategy?: "raw" | "full" | "trim" | "summary" | "summary-trim";
     omittedMessages: number;
     estimatedInputTokens: number;
     summaryUsed: boolean;
+    summaryId?: string | null;
+    fallbackReason?: string | null;
   } | null;
   createdAt: number;
   completedAt: number | null;
@@ -413,14 +448,21 @@ export interface MessageDto {
   id: string;
   role: "user" | "assistant";
   text: string | null;
+  attachments: ImageAssetDto[];
   generatedModel: GeneratedModelDto | null;
   activeGenerationId: string | null;
   generations: GenerationDto[];
   createdAt: number;
 }
 
+const messageTextSchema = z.string().trim().max(1_000_000).default("");
+const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
+
 export const sendMessageSchema = z.object({
-  text: z.string().trim().min(1).max(1_000_000)
+  text: messageTextSchema,
+  imageAssetIds: imageAssetIdsSchema
+}).refine((value) => value.text.length > 0 || value.imageAssetIds.length > 0, {
+  message: "Message text or at least one image is required"
 });
 
 export const startConversationSchema = sendMessageSchema.extend({
@@ -432,6 +474,22 @@ export const startConversationSchema = sendMessageSchema.extend({
 
 export const retryGenerationSchema = z.object({});
 
+export const forkConversationSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("edit"),
+    messageId: z.string().uuid(),
+    text: messageTextSchema,
+    imageAssetIds: imageAssetIdsSchema
+  }).refine((value) => value.text.length > 0 || value.imageAssetIds.length > 0, {
+    message: "Message text or at least one image is required"
+  }),
+  z.object({
+    mode: z.literal("continue"),
+    throughMessageId: z.string().uuid().nullable()
+  })
+]);
+export type ForkConversationInput = z.infer<typeof forkConversationSchema>;
+
 export const patchConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   agentId: z.string().uuid().nullable().optional(),
@@ -440,6 +498,12 @@ export const patchConversationSchema = z.object({
   workspacePath: z.string().max(4096).nullable().optional()
 });
 export type PatchConversationInput = z.infer<typeof patchConversationSchema>;
+
+export const imageUploadSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  dataBase64: z.string().min(1).max(7_500_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
+});
+export type ImageUploadInput = z.infer<typeof imageUploadSchema>;
 
 export interface GenerationCreatedDto {
   userMessageId?: string;
@@ -452,11 +516,28 @@ export interface ConversationStartedDto {
   generation: GenerationCreatedDto;
 }
 
+export interface ConversationForkDto {
+  conversation: ConversationDto;
+  generation: GenerationCreatedDto | null;
+}
+
+export interface ContextSummaryDto {
+  id: string;
+  conversationId: string;
+  throughOrdinal: number;
+  text: string;
+  connectionId: string;
+  modelKey: string;
+  usage: UsageDto;
+  createdAt: number;
+}
+
 export type GenerationEvent =
   | { type: "snapshot"; generation: GenerationDto }
   | { type: "block-delta"; generationId: string; block: GenerationBlockDto }
   | { type: "usage"; generationId: string; usage: UsageDto }
   | { type: "tool-call"; generationId: string; toolCall: ToolCallDto }
+  | { type: "vision-analysis"; generationId: string; analysis: VisionAnalysisDto }
   | { type: "status"; generationId: string; status: GenerationStatus; stopReason?: string }
   | { type: "error"; generationId: string; code: string; message: string };
 

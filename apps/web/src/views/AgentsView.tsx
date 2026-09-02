@@ -1,0 +1,227 @@
+import { useRef, useState } from "react";
+import type { AgentInput } from "@llm-chat/contracts";
+import { endpoints } from "../lib/api";
+import { appStore, refreshAgents, toast, toastError } from "../lib/app-state";
+import { fileToBase64 } from "../lib/format";
+import { navigate, routes } from "../lib/router";
+import { useStore } from "../lib/store";
+import { ConfirmModal, EmptyState, Modal } from "../lib/ui";
+
+export function defaultAgentInput(name: string): AgentInput {
+  return {
+    card: {
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        name,
+        description: "",
+        personality: "",
+        scenario: "",
+        first_mes: "",
+        mes_example: "",
+        creator_notes: "",
+        system_prompt: "",
+        post_history_instructions: "",
+        alternate_greetings: [],
+        tags: [],
+        creator: "",
+        character_version: "",
+        extensions: {}
+      }
+    },
+    execution: {
+      modelId: null,
+      visionModelId: null,
+      contextPolicy: "auto",
+      reasoningEffort: "medium",
+      generation: {},
+      tools: { defaultEnabled: true, overrides: {}, directOverrides: {}, approvalOverrides: {} },
+      enabledSkillIds: [],
+      maxToolRounds: 32,
+      maxBackgroundTasks: 2,
+      taskLogLimitBytes: 64 * 1024 * 1024
+    },
+    userProfile: {}
+  };
+}
+
+export function AgentsView() {
+  const agents = useStore(appStore, (s) => s.agents);
+  const models = useStore(appStore, (s) => s.models);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const create = async () => {
+    if (!newName.trim()) return;
+    setBusy(true);
+    try {
+      const agent = await endpoints.createAgent(defaultAgentInput(newName.trim()));
+      await refreshAgents();
+      setCreating(false);
+      setNewName("");
+      navigate(routes.agents(agent.id));
+    } catch (error) {
+      toastError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importCard = async (file: File) => {
+    setBusy(true);
+    try {
+      const dataBase64 = await fileToBase64(file);
+      const agent = await endpoints.importAgent(file.name, dataBase64);
+      await refreshAgents();
+      toast("success", `已导入 ${agent.name}`);
+      navigate(routes.agents(agent.id));
+    } catch (error) {
+      toastError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await endpoints.deleteAgent(deleting);
+      await refreshAgents();
+      setDeleting(null);
+      toast("success", "已删除 Agent");
+    } catch (error) {
+      toastError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="page-header">
+        <h2>Agent</h2>
+        <div className="actions">
+          <input
+            ref={fileInput}
+            type="file"
+            accept=".json,.png,application/json,image/png"
+            className="sr-only"
+            aria-label="选择角色卡文件"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void importCard(file);
+            }}
+          />
+          <button className="btn" onClick={() => fileInput.current?.click()} disabled={busy}>
+            导入角色卡
+          </button>
+          <button
+            className="btn primary"
+            onClick={() => {
+              setNewName("");
+              setCreating(true);
+            }}
+          >
+            新建 Agent
+          </button>
+        </div>
+      </div>
+      <div className="panel-scroll">
+        <div className="panel-inner">
+          {agents.length === 0 ? (
+            <EmptyState title="还没有 Agent" hint="新建一个 Agent 或导入 Character Card（JSON / PNG）。" />
+          ) : (
+            agents.map((agent) => (
+              <div key={agent.id} className="list-row">
+                <button
+                  className="btn ghost"
+                  style={{ padding: 0, border: "none" }}
+                  onClick={() => navigate(routes.agents(agent.id))}
+                  aria-label={`编辑 ${agent.name}`}
+                >
+                  {agent.hasAvatar ? (
+                    <img className="avatar-img" src={`/api/agents/${agent.id}/avatar`} alt="" />
+                  ) : (
+                    <span className="avatar-placeholder" aria-hidden="true">
+                      {agent.name.slice(0, 1)}
+                    </span>
+                  )}
+                </button>
+                <div className="grow">
+                  <div>
+                    <button className="btn ghost" onClick={() => navigate(routes.agents(agent.id))}>
+                      <strong>{agent.name}</strong>
+                    </button>
+                    {agent.protected ? <span className="tag accent">内置</span> : null}
+                    <span className="tag">修订 v{agent.revision}</span>
+                  </div>
+                  <div className="sub">
+                    {agent.description
+                      ? agent.description.slice(0, 120)
+                      : models.find((m) => m.id === agent.modelId)?.displayName ?? "未设置模型"}
+                  </div>
+                </div>
+                <a className="btn small" href={`/api/agents/${agent.id}/export?format=json`} download>
+                  导出 JSON
+                </a>
+                <a className="btn small" href={`/api/agents/${agent.id}/export?format=png`} download>
+                  导出 PNG
+                </a>
+                {!agent.protected ? (
+                  <button className="btn small danger" onClick={() => setDeleting(agent.id)}>
+                    删除
+                  </button>
+                ) : null}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      {creating ? (
+        <Modal
+          title="新建 Agent"
+          onClose={() => setCreating(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setCreating(false)}>
+                取消
+              </button>
+              <button className="btn primary" disabled={busy || !newName.trim()} onClick={() => void create()}>
+                创建
+              </button>
+            </>
+          }
+        >
+          <div className="field">
+            <label htmlFor="new-agent-name">名称</label>
+            <input
+              id="new-agent-name"
+              className="input"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void create();
+              }}
+            />
+          </div>
+        </Modal>
+      ) : null}
+      {deleting ? (
+        <ConfirmModal
+          title="删除 Agent"
+          message="删除后引用该 Agent 的会话会保留，但必须重新选择 Agent 才能继续生成。"
+          confirmLabel="删除"
+          danger
+          busy={busy}
+          onClose={() => setDeleting(null)}
+          onConfirm={() => void remove()}
+        />
+      ) : null}
+    </>
+  );
+}

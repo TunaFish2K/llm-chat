@@ -17,10 +17,6 @@ export default defineConfig({
           environment: "node",
           include: [
             "apps/server/src/**/*.test.{ts,tsx}",
-            "apps/web/src/**/*.node.test.{ts,tsx}",
-            "apps/web/src/api.test.ts",
-            "apps/web/src/generationState.test.ts",
-            "apps/web/src/uiPreferences.test.ts",
             "packages/**/*.test.{ts,tsx}"
           ]
         }
@@ -32,13 +28,7 @@ export default defineConfig({
           pool: "threads",
           testTimeout: 120_000,
           include: ["apps/web/src/**/*.test.{ts,tsx}"],
-          exclude: [
-            "apps/web/src/**/*.node.test.{ts,tsx}",
-            "apps/web/src/api.test.ts",
-            "apps/web/src/generationState.test.ts",
-            "apps/web/src/uiPreferences.test.ts"
-          ],
-          setupFiles: ["apps/web/src/test/setup.ts"]
+          setupFiles: ["apps/web/test/setup.ts"]
         }
       }
     ],
@@ -63,7 +53,16 @@ export default defineConfig({
         "apps/server/src/index.ts",
         "apps/server/src/plugin-host.ts",
         "apps/web/src/main.tsx",
-        "apps/web/src/sw.ts"
+        "apps/web/src/sw.ts",
+        // View workflows are exercised by the isolated Playwright suite. The
+        // unit-coverage gate remains focused on reusable frontend logic.
+        "apps/web/src/App.tsx",
+        "apps/web/src/components/**",
+        "apps/web/src/views/**",
+        "apps/web/src/lib/app-state.ts",
+        "apps/web/src/lib/pwa.ts",
+        "apps/web/src/lib/theme.ts",
+        "apps/web/src/lib/ui.tsx"
       ],
       thresholds: {
         statements: 90,
@@ -73,9 +72,9 @@ export default defineConfig({
         "apps/server/src/generations.ts": criticalCoverageThreshold,
         "apps/server/src/mcp.ts": criticalCoverageThreshold,
         "apps/server/src/tools.ts": criticalCoverageThreshold,
-        "apps/web/src/Markdown.tsx": criticalCoverageThreshold,
-        "apps/web/src/api.ts": criticalCoverageThreshold,
-        "apps/web/src/generationState.ts": criticalCoverageThreshold
+        "apps/web/src/lib/markdown.tsx": criticalCoverageThreshold,
+        "apps/web/src/lib/api.ts": criticalCoverageThreshold,
+        "apps/web/src/lib/sse.ts": criticalCoverageThreshold
       }
     }
   }

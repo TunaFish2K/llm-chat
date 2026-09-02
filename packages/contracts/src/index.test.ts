@@ -8,6 +8,7 @@ import {
   connectionInputSchema,
   contextPolicySchema,
   conversationInputSchema,
+  forkConversationSchema,
   generationSettingsSchema,
   generationStatusSchema,
   mcpServerInputSchema,
@@ -45,7 +46,7 @@ describe("contract schemas", () => {
   it("accepts every public enum member and rejects unknown values", () => {
     const cases = [
       [protocolSchema, ["openai-responses", "openai-chat", "anthropic-messages"]],
-      [contextPolicySchema, ["trim", "summarize", "full"]],
+      [contextPolicySchema, ["auto", "trim", "summarize", "full"]],
       [generationStatusSchema, ["queued", "running", "waiting-approval", "completed", "stopped", "failed", "interrupted"]],
       [blockTypeSchema, ["text", "reasoning", "refusal", "unsupported"]],
       [reasoningEffortSchema, ["none", "low", "medium", "high", "xhigh", "max"]],
@@ -63,7 +64,7 @@ describe("contract schemas", () => {
       .toMatchObject({ temperature: 0, topP: 1, maxOutputTokens: 1_000_000 });
     expect(modelSettingsSchema.parse({ common: { maxOutputTokens: 1 } }).protocol).toEqual({});
     expect(modelCapabilitiesSchema.parse({})).toEqual({
-      tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
+      tools: true, imageInput: false, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
       adaptiveThinking: false, manualThinking: false
     });
     expect(generationSettingsSchema.parse({ common: { maxOutputTokens: 2 }, reasoningEffort: "high" }))
@@ -158,18 +159,24 @@ describe("contract schemas", () => {
     };
     expect(appSettingsSchema.parse(app)).toEqual(app);
     expect(conversationInputSchema.parse({ agentId: uuid })).toEqual({ agentId: uuid, executionOverrides: {}, workspacePath: null });
-    expect(sendMessageSchema.parse({ text: "  hello  ", extra: 1 })).toEqual({ text: "hello" });
+    expect(sendMessageSchema.parse({ text: "  hello  ", extra: 1 })).toEqual({ text: "hello", imageAssetIds: [] });
     expect(startConversationSchema.parse({ text: "hello", agentId: uuid })).toEqual({
-      text: "hello", agentId: uuid, greetingIndex: 0, executionOverrides: {}, workspacePath: null
+      text: "hello", imageAssetIds: [], agentId: uuid, greetingIndex: 0, executionOverrides: {}, workspacePath: null
     });
     expect(retryGenerationSchema.parse({ ignored: true })).toEqual({});
     expect(patchConversationSchema.parse({ agentId: null, draft: "", ignored: true })).toEqual({ agentId: null, draft: "" });
     expect(patchConversationSchema.parse({ title: "Renamed" })).toEqual({ title: "Renamed" });
+    expect(forkConversationSchema.parse({ mode: "edit", messageId: uuid, text: " changed " }))
+      .toEqual({ mode: "edit", messageId: uuid, text: "changed", imageAssetIds: [] });
+    expect(forkConversationSchema.parse({ mode: "continue", throughMessageId: null }))
+      .toEqual({ mode: "continue", throughMessageId: null });
     for (const input of [{ text: " " }, { text: "x".repeat(1_000_001) }]) {
       expect(sendMessageSchema.safeParse(input).success).toBe(false);
     }
     expect(startConversationSchema.safeParse({ text: "x", agentId: "bad" }).success).toBe(false);
     expect(patchConversationSchema.safeParse({ executionOverrides: { contextPolicy: "recent" } }).success).toBe(false);
+    expect(forkConversationSchema.safeParse({ mode: "edit", messageId: uuid, text: " " }).success).toBe(false);
+    expect(forkConversationSchema.safeParse({ mode: "continue", throughMessageId: "bad" }).success).toBe(false);
     expect(appSettingsSchema.safeParse({ ...app, theme: "blue" }).success).toBe(false);
   });
 

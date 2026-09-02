@@ -86,6 +86,48 @@ describe("provider HTTP helpers", () => {
 });
 
 describe("provider adapters", () => {
+  it("maps image inputs into each provider's native multimodal format", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      if (url.endsWith("/responses")) {
+        return streamResponse([namedFrame("response.completed", { response: {} })]);
+      }
+      if (url.endsWith("/messages")) {
+        return streamResponse([namedFrame("message_stop", {})]);
+      }
+      return streamResponse(["data: [DONE]\n\n"]);
+    }));
+    const image = { mimeType: "image/png" as const, dataBase64: "aW1hZ2U=", fileName: "image.png" };
+
+    for (const [protocol, adapter] of [
+      ["openai-chat", new OpenAiChatAdapter()],
+      ["openai-responses", new OpenAiResponsesAdapter()],
+      ["anthropic-messages", new AnthropicAdapter()]
+    ] as const) {
+      const req = request(protocol);
+      req.messages = [{ role: "user", text: "describe", images: [image] }];
+      req.capabilities.imageInput = true;
+      await collect(adapter.stream(req));
+    }
+
+    const chatMessages = bodies[0]!.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(chatMessages.at(-1)?.content).toEqual([
+      { type: "image_url", image_url: { url: "data:image/png;base64,aW1hZ2U=", detail: "auto" } },
+      { type: "text", text: "describe" }
+    ]);
+    const responsesInput = bodies[1]!.input as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(responsesInput[0]?.content).toEqual([
+      { type: "input_image", image_url: "data:image/png;base64,aW1hZ2U=", detail: "auto" },
+      { type: "input_text", text: "describe" }
+    ]);
+    const anthropicMessages = bodies[2]!.messages as Array<{ content: Array<Record<string, unknown>> }>;
+    expect(anthropicMessages[0]?.content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "aW1hZ2U=" } },
+      { type: "text", text: "describe" }
+    ]);
+  });
+
   it("sends and reconstructs streamed Chat Completions tool calls", async () => {
     let sentBody: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
@@ -565,6 +607,7 @@ function request(protocol: ProviderConnection["protocol"]): GenerateRequest {
     messages: [{ role: "user", text: "hello" }],
     settings,
     capabilities: {
+      imageInput: false,
       tools: true,
       temperature: true,
       topP: true,

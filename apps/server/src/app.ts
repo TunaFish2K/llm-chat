@@ -12,6 +12,8 @@ import {
   connectionInputSchema,
   conversationInputSchema,
   encodedFileSchema,
+  forkConversationSchema,
+  imageUploadSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
   modelInputSchema,
@@ -38,6 +40,9 @@ import { ToolRegistry } from "./tool-registry";
 import { canonicalWorkspace, createDirectory, listDirectories } from "./workspaces";
 import { BalanceError, BalanceService } from "./balance";
 import { AuthError, AuthManager, type AuthIdentity } from "./auth";
+import { compactConversationContext, ContextError } from "./context";
+import { ImageService } from "./images";
+import { VisionService } from "./vision";
 
 export type AuthMode = "password" | "disabled";
 
@@ -79,6 +84,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
   });
   const store = new Store(options.dataFile);
+  const imageService = new ImageService(store);
+  await imageService.initialize();
+  const visionService = new VisionService(store, imageService);
   const authMode = options.authMode ?? "disabled";
   const publicOrigin = new URL(options.publicUrl ?? "http://localhost").origin;
   const auth = new AuthManager(store, options.authAnnounce ?? ((message) => {
@@ -92,9 +100,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const skillManager = new SkillManager(store, eventHub,
     options.skillDiscoveryRoot === undefined ? {} : { discoveryRoot: options.skillDiscoveryRoot });
   await skillManager.initialize();
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager);
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService);
   const runner = new GenerationRunner(store, {
     buildTools: (_currentStore, record) => registry.tools(record),
+    prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
+      visionService.prepare(record, model, signal, onAnalysis),
     runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId)
   });
   app.decorate("store", store);
@@ -142,8 +152,33 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
-    if (request.url.startsWith("/api/")) reply.header("cache-control", "no-store");
+    const immutableImage = request.method === "GET" && request.url.startsWith("/api/images/");
+    if (request.url.startsWith("/api/") && !immutableImage) reply.header("cache-control", "no-store");
     return payload;
+  });
+
+  app.post("/api/images", async (request, reply) => {
+    const value = imageUploadSchema.parse(request.body);
+    const asset = await imageService.importBytes(value.fileName, Buffer.from(value.dataBase64, "base64"));
+    return reply.code(201).send(asset);
+  });
+  app.get<{ Params: { id: string }; Querystring: { v?: string } }>("/api/images/:id", async (request, reply) => {
+    const { asset, bytes } = await imageService.readAsset(request.params.id);
+    if (request.query.v !== asset.sha256) {
+      return reply.header("cache-control", "no-store").redirect(asset.url, 307);
+    }
+    const etag = `"${asset.sha256}"`;
+    reply.header("etag", etag);
+    reply.header("cache-control", "private, max-age=31536000, immutable");
+    reply.header("x-content-type-options", "nosniff");
+    if (request.headers["if-none-match"] === etag) return reply.code(304).send();
+    return reply.type(asset.mimeType).send(Buffer.from(bytes));
+  });
+  app.get<{ Querystring: { url?: string } }>("/api/image-proxy", async (request, reply) => {
+    const value = z.object({ url: z.string().url().max(4096) }).parse(request.query);
+    const proxied = await imageService.proxy(value.url);
+    return reply.header("cache-control", "private, max-age=3600").header("x-content-type-options", "nosniff")
+      .type(proxied.mimeType).send(Buffer.from(proxied.bytes));
   });
 
   app.post("/api/auth/login", authRateLimit(8), async (request, reply) => {
@@ -385,6 +420,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.post("/api/conversations/start", async (request, reply) => {
     const value = startConversationSchema.parse(request.body);
+    if (value.imageAssetIds.length) {
+      const agent = store.getAgent(value.agentId);
+      const modelId = Object.hasOwn(value.executionOverrides, "modelId")
+        ? value.executionOverrides.modelId ?? null
+        : agent?.execution.modelId ?? null;
+      assertImageConfiguration(store, agent?.id ?? null, modelId, value.imageAssetIds);
+    }
     const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
     const result = store.startConversation({ ...value, workspacePath });
     runner.start(result.generation.generationId);
@@ -412,6 +454,40 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!store.deleteConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return reply.code(204).send();
   });
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/forks", async (request, reply) => {
+    const value = forkConversationSchema.parse(request.body);
+    if (value.mode === "edit" && value.imageAssetIds.length) {
+      const source = store.getConversation(request.params.id);
+      if (!source) throw new StoreError("conversation_not_found", "会话不存在");
+      const resolved = store.resolveGeneration(source);
+      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, value.imageAssetIds);
+    }
+    const result = store.forkConversation(request.params.id, value);
+    if (result.generation) runner.start(result.generation.generationId);
+    return reply.code(result.generation ? 202 : 201).send(result);
+  });
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/context/compact", async (request) => {
+    if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
+    return store.getContextSummary(request.params.id) ?? null;
+  });
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/context/compact", async (request, reply) => {
+    if (store.isConversationBusy(request.params.id)) {
+      throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
+    }
+    const controller = new AbortController();
+    const onClose = () => {
+      if (!reply.raw.writableEnded) controller.abort(new Error("压缩请求已断开"));
+    };
+    reply.raw.once("close", onClose);
+    try {
+      return await compactConversationContext(store, request.params.id, controller.signal);
+    } catch (error) {
+      if (error instanceof ContextError) throw new StoreError(error.code, error.message);
+      throw error;
+    } finally {
+      reply.raw.off("close", onClose);
+    }
+  });
   app.get<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request) => {
     if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return store.listMessages(request.params.id);
@@ -419,7 +495,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
     if (store.isConversationBusy(request.params.id)) throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
     const value = sendMessageSchema.parse(request.body);
-    const result = store.createMessageGeneration(request.params.id, value.text);
+    if (value.imageAssetIds.length) {
+      const conversation = store.getConversation(request.params.id);
+      if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+      const resolved = store.resolveGeneration(conversation);
+      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, value.imageAssetIds);
+    }
+    const result = store.createMessageGeneration(request.params.id, value.text, value.imageAssetIds);
     runner.start(result.generationId);
     return reply.code(202).send(result);
   });
@@ -586,6 +668,7 @@ function defaultModel(connectionId: string, protocol: "openai-responses" | "open
     contextWindow: null,
     maxOutputTokens: 4096,
     capabilities: {
+      imageInput: false,
       tools: true,
       temperature: true,
       topP: true,
@@ -604,6 +687,21 @@ function defaultModel(connectionId: string, protocol: "openai-responses" | "open
 
 function isStreamEnd(status: string): boolean {
   return ["waiting-approval", "completed", "stopped", "failed", "interrupted"].includes(status);
+}
+
+function assertImageConfiguration(store: Store, agentId: string | null, modelId: string | null, assetIds: string[]): void {
+  for (const assetId of assetIds) {
+    if (!store.getImageAsset(assetId)) throw new StoreError("image_asset_not_found", "图片资产不存在");
+  }
+  const agent = agentId ? store.getAgent(agentId) : undefined;
+  if (!agent) throw new StoreError("conversation_agent_required", "请先选择可用 Agent");
+  const model = modelId ? store.getModel(modelId) : undefined;
+  if (!model?.enabled) throw new StoreError("conversation_model_required", "请先选择可用模型");
+  if (model.capabilities.imageInput) return;
+  const vision = agent.execution.visionModelId ? store.getModel(agent.execution.visionModelId) : undefined;
+  if (!vision?.enabled || !vision.capabilities.imageInput) {
+    throw new StoreError("vision_model_required", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
+  }
 }
 
 class AuthHttpError extends Error {
@@ -686,7 +784,9 @@ async function registerWeb(app: FastifyInstance): Promise<void> {
   if (!existsSync(resolve(root, "index.html"))) return;
   await app.register(fastifyStatic, {
     root,
-    wildcard: false,
+    // Resolve files at request time so a running server survives web rebuilds
+    // that replace content-hashed asset names.
+    wildcard: true,
     cacheControl: false,
     setHeaders(reply, filePath) {
       const fileName = parsePath(filePath).base;

@@ -1,8 +1,8 @@
 import { adapterFor, type ProviderAdapter, type ProviderEvent } from "@llm-chat/providers";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildContext, ContextError, estimateTokens } from "./context";
+import { buildContext, compactConversationContext, ContextError, estimateTokens } from "./context";
 import type { Store } from "./database";
-import { cleanupStores, createStore, seedModel } from "./test-helpers";
+import { cleanupStores, createStore as createTestStore, seedModel } from "./test-helpers";
 
 vi.mock("@llm-chat/providers", async (importOriginal) => ({
   ...await importOriginal<typeof import("@llm-chat/providers")>(),
@@ -13,6 +13,12 @@ afterEach(() => {
   vi.mocked(adapterFor).mockReset();
   cleanupStores();
 });
+
+function createStore(): Store {
+  const store = createTestStore();
+  store.updateSettings({ defaultSystemPrompt: "" });
+  return store;
+}
 
 function completeTurn(store: Store, conversationId: string, user: string, assistant: string) {
   const created = store.createMessageGeneration(conversationId, user);
@@ -141,6 +147,55 @@ describe("context builder", () => {
     const usage = store.sqlite.prepare("SELECT usage_json FROM context_summaries WHERE conversation_id = ?").get(conversation.id) as { usage_json: string };
     expect(JSON.parse(usage.usage_json)).toEqual({ inputTokens: 12, outputTokens: 3 });
     expect(adapterFor).toHaveBeenCalledWith("openai-chat");
+    store.close();
+  });
+
+  it("uses automatic summary with trim fallback and supports manual compaction checkpoints", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "auto" });
+    completeTurn(store, conversation.id, "first question".repeat(25), "first answer".repeat(25));
+    completeTurn(store, conversation.id, "second question", "second answer");
+    completeTurn(store, conversation.id, "third question", "third answer");
+    vi.mocked(adapterFor).mockReturnValue(summaryAdapter([
+      { type: "block", index: 1, blockType: "text", content: "manual checkpoint", complete: true },
+      { type: "usage", usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 } },
+      { type: "complete", stopReason: "stop" }
+    ]));
+
+    const checkpoint = await compactConversationContext(store, conversation.id, new AbortController().signal);
+    expect(checkpoint).toMatchObject({ text: "manual checkpoint", usage: { totalTokens: 10 } });
+    expect(await compactConversationContext(store, conversation.id, new AbortController().signal)).toEqual(checkpoint);
+
+    const latest = store.createMessageGeneration(conversation.id, "latest question");
+    vi.mocked(adapterFor).mockReturnValue({
+      protocol: "openai-chat", listModels: async () => [],
+      async *stream() { throw new Error("summary unavailable"); }
+    });
+    const built = await buildContext(
+      store, store.getGenerationRecord(latest.generationId)!, model,
+      store.getConnection(seeded.connection.id)!, new AbortController().signal
+    );
+    expect(built.metadata).toMatchObject({ policy: "auto" });
+    expect(["summary", "trim", "raw"]).toContain(built.metadata.strategy);
+    store.close();
+  });
+
+  it("does not persist a partial manual checkpoint when compaction fails", async () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "auto" });
+    completeTurn(store, conversation.id, "first", "one");
+    completeTurn(store, conversation.id, "second", "two");
+    completeTurn(store, conversation.id, "third", "three");
+    vi.mocked(adapterFor).mockReturnValue({
+      protocol: "openai-chat", listModels: async () => [],
+      async *stream() { throw new Error("manual summary failed"); }
+    });
+    await expect(compactConversationContext(store, conversation.id, new AbortController().signal))
+      .rejects.toThrow("manual summary failed");
+    expect(store.getLatestSummary(conversation.id)).toBeUndefined();
     store.close();
   });
 

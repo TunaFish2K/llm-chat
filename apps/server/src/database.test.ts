@@ -78,6 +78,50 @@ describe("Store", () => {
     store.close();
   });
 
+  it("forks the visible path without mutating the source conversation", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const first = store.createMessageGeneration(conversation.id, "第一问");
+    store.updateGenerationBlock(first.generationId, 1, "text", "第一版", true);
+    store.finishGeneration(first.generationId, "completed", { stopReason: "stop" });
+    const retry = store.createRetryGeneration(first.assistantMessageId);
+    store.updateGenerationBlock(retry.generationId, 1, "text", "当前可见版本", true);
+    store.upsertToolCall(retry.generationId, { id: "provider-call", name: "lookup", arguments: "{}" }, 0, 0, false);
+    store.updateToolCall("provider-call", { approvalState: "completed", output: "result" });
+    store.finishGeneration(retry.generationId, "completed", { stopReason: "stop" });
+    const second = store.createMessageGeneration(conversation.id, "第二问");
+    store.updateGenerationBlock(second.generationId, 1, "text", "第二答", true);
+    store.finishGeneration(second.generationId, "completed", { stopReason: "stop" });
+
+    const fork = store.forkConversation(conversation.id, {
+      mode: "edit",
+      messageId: second.userMessageId!,
+      text: "修改后的第二问",
+      imageAssetIds: []
+    });
+    const forkMessages = store.listMessages(fork.conversation.id);
+
+    expect(fork.conversation.forkedFrom).toEqual({ conversationId: conversation.id, messageId: second.userMessageId });
+    expect(fork.generation).not.toBeNull();
+    expect(forkMessages.map((message) => [message.role, message.text])).toEqual([
+      ["user", "第一问"], ["assistant", null], ["user", "修改后的第二问"], ["assistant", null]
+    ]);
+    expect(forkMessages[1]?.generations).toEqual([
+      expect.objectContaining({ version: 1, blocks: [expect.objectContaining({ content: "当前可见版本" })] })
+    ]);
+    expect(forkMessages[1]?.generations[0]?.toolCalls[0]).toMatchObject({
+      providerId: "provider-call", name: "lookup", output: "result"
+    });
+    expect(forkMessages[1]?.generations[0]?.toolCalls[0]?.id).not.toBe("provider-call");
+    expect(store.listMessages(conversation.id)[1]?.generations).toHaveLength(2);
+
+    const root = store.forkConversation(conversation.id, { mode: "continue", throughMessageId: null });
+    expect(root.generation).toBeNull();
+    expect(store.listMessages(root.conversation.id)).toEqual([]);
+    store.close();
+  });
+
   it("starts a conversation and its first generation atomically", () => {
     const store = createStore();
     const { model } = seedModel(store);
@@ -145,7 +189,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -176,7 +220,7 @@ describe("Store", () => {
       connectionId: anthropic.id, modelKey: "claude", displayName: "Claude", contextWindow: 4096,
       maxOutputTokens: 256,
       capabilities: {
-        tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
+        imageInput: false, tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
         adaptiveThinking: false, manualThinking: false
       },
       defaultSettings: { common: { maxOutputTokens: 256, stopSequences: [] }, protocol: {} },
@@ -204,7 +248,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -240,7 +284,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -314,7 +358,7 @@ describe("Store", () => {
       displayName: "Claude Tiny",
       contextWindow: 4096,
       maxOutputTokens: 1024,
-      capabilities: { tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: false, adaptiveThinking: false, manualThinking: true },
+      capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: false, adaptiveThinking: false, manualThinking: true },
       defaultSettings: { common: { maxOutputTokens: 1024, stopSequences: [] }, protocol: {} },
       enabled: true
     });
@@ -341,7 +385,7 @@ describe("Store", () => {
       displayName: "Claude Capped",
       contextWindow: 4096,
       maxOutputTokens: 4096,
-      capabilities: { tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: false, adaptiveThinking: false, manualThinking: true },
+      capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: true, reasoningSummary: false, adaptiveThinking: false, manualThinking: true },
       defaultSettings: { common: { maxOutputTokens: 1024, stopSequences: [] }, protocol: { thinkingBudgetTokens: 1024 } },
       enabled: true
     });
@@ -375,7 +419,7 @@ describe("Store", () => {
       displayName: "Capped Model",
       contextWindow: 128000,
       maxOutputTokens: 4096,
-      capabilities: { tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
+      capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
       defaultSettings: { common: { maxOutputTokens: 1_000_000, stopSequences: [] }, protocol: {} },
       enabled: true
     });
@@ -421,7 +465,7 @@ describe("Store", () => {
     const input = {
       connectionId: first.id, modelKey: "same", displayName: "Original", contextWindow: 1024,
       maxOutputTokens: 64, capabilities: {
-        tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
+        imageInput: false, tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
         adaptiveThinking: false, manualThinking: false
       }, defaultSettings: settings, enabled: true
     };
@@ -642,7 +686,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

@@ -33,7 +33,7 @@ export function seedModel(store: Store) {
     displayName: "Mock Model",
     contextWindow: 2048,
     maxOutputTokens: 128,
-    capabilities: { tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
+    capabilities: { imageInput: false, tools: true, temperature: true, topP: true, reasoning: false, reasoningSummary: false, adaptiveThinking: false, manualThinking: false },
     defaultSettings: settings,
     enabled: true
   };

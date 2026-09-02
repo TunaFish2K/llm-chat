@@ -17,10 +17,17 @@ export interface ProviderConnection {
 export interface ProviderMessage {
   role: "user" | "assistant" | "tool";
   text: string;
+  images?: ProviderImage[];
   toolCalls?: ProviderToolCall[];
   toolResults?: ProviderToolResult[];
   providerPayload?: unknown;
   providerConnectionId?: string;
+}
+
+export interface ProviderImage {
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  dataBase64: string;
+  fileName?: string;
 }
 
 export interface ProviderToolDefinition {

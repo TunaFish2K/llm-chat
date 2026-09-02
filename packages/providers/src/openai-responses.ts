@@ -32,12 +32,21 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
       ) {
         input.push(...message.providerPayload);
       }
-      if (message.text) {
+      if (message.text || (message.role === "user" && message.images?.length)) {
         input.push({
           role: message.role,
           content: message.role === "assistant"
             ? [{ type: "output_text", text: message.text }]
-            : message.text
+            : message.images?.length
+              ? [
+                  ...message.images.map((image) => ({
+                    type: "input_image",
+                    image_url: `data:${image.mimeType};base64,${image.dataBase64}`,
+                    detail: "auto"
+                  })),
+                  ...(message.text ? [{ type: "input_text", text: message.text }] : [])
+                ]
+              : message.text
         });
       }
       for (const call of message.toolCalls ?? []) {

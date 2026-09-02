@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync 
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
+import { ImageService } from "./images";
 import { buildServerTools, persistLargeToolOutput, type ServerTool, toolCatalog, toolSystemPrompt } from "./tools";
 
 afterEach(() => {
@@ -59,6 +60,49 @@ describe("server tool catalog", () => {
 });
 
 describe("workspace tools", () => {
+  it("publishes a workspace image as an immutable tool artifact", async () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "show image");
+    const call = store.upsertToolCall(
+      created.generationId,
+      { id: "publish-call", name: "workspace_publish_image", arguments: '{"path":"screen.png"}' },
+      0,
+      0,
+      false
+    );
+    const workspace = join(store.dataDir, "workspace");
+    writeFileSync(join(workspace, "screen.png"), new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]));
+    const images = new ImageService(store);
+    await images.initialize();
+    const tools = await buildServerTools(store, false, { imageService: images });
+
+    const result = JSON.parse(await tool(tools, "workspace_publish_image").execute(
+      { path: "screen.png", alt: "machine screen" },
+      signal(),
+      {
+        conversationId: conversation.id,
+        generationId: created.generationId,
+        toolCallId: call.id,
+        snapshot: store.getGenerationRecord(created.generationId)!.agentSnapshot
+      }
+    ));
+    expect(result.markdown).toBe(`![machine screen](${result.asset.url})`);
+    expect(result.asset.url).toMatch(/^\/api\/images\/[0-9a-f-]+\?v=[a-f0-9]{64}$/);
+    expect(store.getToolCall(call.id)?.artifacts).toEqual([expect.objectContaining({ id: result.asset.id })]);
+    await expect(tool(tools, "workspace_publish_image").execute(
+      { path: "../outside.png" },
+      signal(),
+      {
+        conversationId: conversation.id,
+        generationId: created.generationId,
+        toolCallId: call.id,
+        snapshot: store.getGenerationRecord(created.generationId)!.agentSnapshot
+      }
+    )).rejects.toThrow("相对工作区");
+  });
+
   it("lists, reads, writes, and enforces overwrite rules", async () => {
     const store = createStore();
     const tools = await buildServerTools(store);

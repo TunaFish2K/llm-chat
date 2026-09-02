@@ -51,6 +51,18 @@ export class AnthropicAdapter implements ProviderAdapter {
         }
         return { role: "assistant", content };
       }
+      if (message.images?.length) {
+        return {
+          role: "user",
+          content: [
+            ...message.images.map((image) => ({
+              type: "image",
+              source: { type: "base64", media_type: image.mimeType, data: image.dataBase64 }
+            })),
+            ...(message.text ? [{ type: "text", text: message.text }] : [])
+          ]
+        };
+      }
       return { role: "user", content: message.text };
     });
     const body: Record<string, unknown> = {
