@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
@@ -30,7 +30,7 @@ function seedStore(messages: MessageDto[] = [], options: { draft?: string; model
     messages: { "conv-1": messages },
     toasts: [],
     eventsConnected: true,
-    runningTasks: 0
+    runningTasksByConversation: {}
   });
 }
 
@@ -44,6 +44,31 @@ function messageFetch(messages: MessageDto[]) {
 beforeEach(() => window.history.pushState(null, "", "/"));
 
 describe("ChatView", () => {
+  it("renders legacy user messages that omit attachments", async () => {
+    const { attachments: _attachments, ...legacyMessage } = makeMessage({ role: "user", text: "旧消息仍可显示" });
+    const messages = [legacyMessage as MessageDto];
+    seedStore(messages);
+    vi.stubGlobal("fetch", messageFetch(messages));
+
+    render(<ChatView conversationId="conv-1" />);
+
+    expect(screen.getByText("旧消息仍可显示")).toBeInTheDocument();
+    await waitFor(() => expect(appStore.get().messages["conv-1"]?.[0]?.attachments).toEqual([]));
+  });
+
+  it("shows the current conversation task count in the conversation view switch", async () => {
+    seedStore([]);
+    appStore.set({ runningTasksByConversation: { "conv-1": 2, "conv-2": 7 } });
+    vi.stubGlobal("fetch", messageFetch([]));
+    const onViewChange = vi.fn();
+
+    render(<ChatView conversationId="conv-1" onViewChange={onViewChange} />);
+
+    const tasksTab = screen.getByRole("tab", { name: "任务2" });
+    fireEvent.click(tasksTab);
+    expect(onViewChange).toHaveBeenCalledWith("tasks");
+  });
+
   it("renders reasoning, answer, model snapshot and token usage", async () => {
     const messages = [
       makeMessage({ id: "m-user", role: "user", text: "你好", createdAt: 1 }),
@@ -90,6 +115,42 @@ describe("ChatView", () => {
     render(<ChatView conversationId="conv-1" />);
     expect(await screen.findByRole("alert")).toHaveTextContent("模型拒绝回答");
     expect(screen.getByRole("alert")).toHaveTextContent("无法回答该问题");
+  });
+
+  it("shows first-token feedback and preserves reading position during streaming", async () => {
+    const generation = makeGeneration({ id: "gen-live", status: "running", blocks: [] });
+    const messages = [makeMessage({ id: "m-live", activeGenerationId: generation.id, generations: [generation] })];
+    seedStore(messages);
+    vi.stubGlobal("fetch", messageFetch(messages));
+    const { container } = render(<ChatView conversationId="conv-1" />);
+
+    expect(await screen.findByText("正在生成")).toBeInTheDocument();
+    const scroll = container.querySelector<HTMLElement>(".chat-scroll")!;
+    Object.defineProperties(scroll, {
+      scrollHeight: { configurable: true, value: 1_200 },
+      clientHeight: { configurable: true, value: 400 },
+      scrollTop: { configurable: true, value: 200, writable: true }
+    });
+    const scrollTo = vi.fn();
+    Object.defineProperty(scroll, "scrollTo", { configurable: true, value: scrollTo });
+    fireEvent.scroll(scroll);
+    expect(await screen.findByRole("button", { name: "回到最新消息" })).toBeVisible();
+
+    const updated = [{
+      ...messages[0]!,
+      generations: [{
+        ...generation,
+        blocks: [{ id: "answer", index: 0, stepIndex: 0, type: "text" as const, content: "新的流式内容", complete: false }]
+      }]
+    }];
+    appStore.set({ messages: { "conv-1": updated } });
+    expect(await screen.findByText("新的流式内容")).toBeInTheDocument();
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(scroll.scrollTop).toBe(200);
+
+    fireEvent.click(screen.getByRole("button", { name: "回到最新消息" }));
+    expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: "smooth" });
+    expect(screen.queryByRole("button", { name: "回到最新消息" })).not.toBeInTheDocument();
   });
 
   it("interleaves collapsed tool calls with generation steps", async () => {

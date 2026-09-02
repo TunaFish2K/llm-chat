@@ -102,7 +102,7 @@ export function AgentsView() {
 
   return (
     <>
-      <div className="page-header">
+      <div className="page-header mobile-redundant-title">
         <h2>Agent</h2>
         <div className="actions">
           <input

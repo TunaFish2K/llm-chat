@@ -17,6 +17,11 @@ import {
   toastError
 } from "../lib/app-state";
 import { formatTime } from "../lib/format";
+import {
+  generationHapticsEnabled,
+  generationHapticsSupported,
+  setGenerationHapticsEnabled
+} from "../lib/haptics";
 import { linkClick, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Modal } from "../lib/ui";
@@ -40,7 +45,7 @@ export function SettingsView({ section }: { section: string }) {
   const active = SECTIONS.some(([key]) => key === section) ? section : "general";
   return (
     <>
-      <div className="page-header">
+      <div className="page-header mobile-redundant-title">
         <h2>设置</h2>
       </div>
       <div className="tabs" role="tablist" aria-label="设置分区">
@@ -83,6 +88,8 @@ function GeneralSection() {
   const agents = useStore(appStore, (s) => s.agents);
   const models = useStore(appStore, (s) => s.models);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
+  const hapticsSupported = generationHapticsSupported();
+  const [hapticsEnabled, setHapticsEnabled] = useState(() => generationHapticsEnabled());
 
   if (!settings) return <LoadingState />;
 
@@ -97,7 +104,7 @@ function GeneralSection() {
   return (
     <div>
       <div className="card">
-        <h3>外观</h3>
+        <h3>外观与交互</h3>
         <Field label="主题">
           <select
             className="select"
@@ -119,6 +126,21 @@ function GeneralSection() {
             }
           />
           默认折叠侧边栏
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={hapticsEnabled}
+            disabled={!hapticsSupported}
+            onChange={(event) => {
+              setGenerationHapticsEnabled(event.target.checked);
+              setHapticsEnabled(event.target.checked);
+            }}
+          />
+          <span className="checkbox-copy">
+            <span>生成时触感反馈</span>
+            <small>{hapticsSupported ? "仅保存在当前设备" : "当前浏览器不支持振动"}</small>
+          </span>
         </label>
         <Field label="推理块折叠策略">
           <select

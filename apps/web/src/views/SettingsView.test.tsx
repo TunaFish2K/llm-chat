@@ -18,6 +18,19 @@ describe("SettingsView", () => {
     expect(screen.getByLabelText("默认推理档位")).toHaveValue("medium");
   });
 
+  it("stores generation haptics as a device-local preference", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(window.navigator, "vibrate", { configurable: true, value: vi.fn() });
+    appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
+    render(<SettingsView section="general" />);
+
+    const toggle = screen.getByRole("checkbox", { name: /生成时触感反馈/ });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
+    expect(window.localStorage.getItem("llm-chat.generation-haptics")).toBe("off");
+  });
+
   it("validates password confirmation before allowing change", async () => {
     const user = userEvent.setup();
     render(<SettingsView section="security" />);

@@ -28,17 +28,28 @@ test.describe("认证", () => {
 });
 
 test.describe("应用外壳", () => {
-  test("主导航在各区域间切换，深链接可直接打开", async ({ page }) => {
+  test("主导航与会话任务视图切换，深链接可直接打开", async ({ page, request }) => {
     await page.goto(APP_URL);
     await openDrawerIfNeeded(page);
     await expect(page.locator(".sidebar-brand")).toHaveText(/llm-chat/);
+    await expect(page.getByRole("link", { name: "后台任务" })).toHaveCount(0);
 
     await gotoPath(page, "/agents");
     await expect(page.getByRole("heading", { name: "Agent", exact: true })).toBeVisible();
 
-    await gotoPath(page, "/tasks");
-    await expect(page.getByRole("heading", { name: "后台任务" })).toBeVisible();
-    await expect(page.getByText("没有后台任务")).toBeVisible();
+    const agents = await api(request, APP_URL, "GET", "/api/agents");
+    const conversation = await api(request, APP_URL, "POST", "/api/conversations", {
+      agentId: agents[0].id,
+      title: `任务归属-${unique()}`
+    });
+    try {
+      await gotoPath(page, `/c/${conversation.id}`);
+      await page.getByRole("tab", { name: "任务" }).click();
+      await expect(page).toHaveURL(new RegExp(`/c/${conversation.id}/tasks$`));
+      await expect(page.getByText("没有后台任务")).toBeVisible();
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/conversations/${conversation.id}`).catch(() => {});
+    }
 
     await gotoPath(page, "/settings/general");
     await expect(page.getByLabel("主题")).toBeVisible();
@@ -403,10 +414,18 @@ test.describe("设置分区", () => {
       await gotoPath(page, "/agents");
       await expect(page.locator(".list-row-actions").first()).toBeVisible();
       await assertActionLayout(".list-row .list-row-actions", true);
+      if (project === "mobile-chromium") {
+        await expect(page.locator(".mobile-appbar strong")).toHaveText("Agent");
+        await expect(page.locator(".page-header h2")).toBeHidden();
+        const agentName = (await page.locator(".agent-name-button").first().innerText()).trim();
+        await page.locator(".agent-name-button").first().click();
+        await expect(page.locator(".mobile-appbar strong")).toHaveText(agentName);
+        await expect(page.locator(".page-header h2")).toBeHidden();
+      }
 
       await page.setViewportSize({ width: project === "mobile-chromium" ? 390 : 768, height: 1000 });
       await gotoPath(page, "/settings/connections");
-      await expect(page.locator(".management-card-header .list-row-actions")).toBeVisible();
+      await expect(page.locator(".management-card-header .list-row-actions").first()).toBeVisible();
       await assertActionLayout(".management-card-header .list-row-actions", true);
     } finally {
       await api(request, APP_URL, "DELETE", `/api/connections/${connection.id}`).catch(() => {});

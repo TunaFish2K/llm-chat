@@ -2,6 +2,17 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
+const storageValues = new Map<string, string>();
+const memoryStorage: Storage = {
+  get length() { return storageValues.size; },
+  clear: () => storageValues.clear(),
+  getItem: (key) => storageValues.get(key) ?? null,
+  key: (index) => [...storageValues.keys()][index] ?? null,
+  removeItem: (key) => { storageValues.delete(key); },
+  setItem: (key, value) => { storageValues.set(key, String(value)); }
+};
+Object.defineProperty(window, "localStorage", { configurable: true, value: memoryStorage });
+
 // jsdom does not implement EventSource or matchMedia; provide stable stubs.
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -50,6 +61,7 @@ if (!window.matchMedia) {
 
 afterEach(() => {
   cleanup();
+  memoryStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   FakeEventSource.instances.length = 0;

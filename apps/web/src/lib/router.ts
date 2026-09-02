@@ -1,7 +1,7 @@
 import { useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 
 export type Route =
-  | { name: "chat"; conversationId: string | null; view: "chat" | "trajectory" }
+  | { name: "chat"; conversationId: string | null; view: "chat" | "trajectory" | "tasks"; taskId: string | null }
   | { name: "agents"; agentId: string | null }
   | { name: "tasks"; taskId: string | null }
   | { name: "settings"; section: string };
@@ -13,20 +13,23 @@ function parsePath(pathname: string): Route {
   if (head === "tasks") return { name: "tasks", taskId: parts[1] ?? null };
   if (head === "settings") return { name: "settings", section: parts[1] ?? "general" };
   if (head === "c") {
+    const view = parts[2] === "trajectory" ? "trajectory" : parts[2] === "tasks" ? "tasks" : "chat";
     return {
       name: "chat",
       conversationId: parts[1] ?? null,
-      view: parts[2] === "trajectory" ? "trajectory" : "chat"
+      view,
+      taskId: view === "tasks" ? parts[3] ?? null : null
     };
   }
-  return { name: "chat", conversationId: null, view: "chat" };
+  return { name: "chat", conversationId: null, view: "chat", taskId: null };
 }
 
 export const routes = {
   chat: (conversationId?: string | null, view: "chat" | "trajectory" = "chat") =>
     conversationId ? `/c/${conversationId}${view === "trajectory" ? "/trajectory" : ""}` : "/",
+  conversationTasks: (conversationId: string, taskId?: string | null) =>
+    `/c/${conversationId}/tasks${taskId ? `/${taskId}` : ""}`,
   agents: (agentId?: string | null) => (agentId ? `/agents/${agentId}` : "/agents"),
-  tasks: (taskId?: string | null) => (taskId ? `/tasks/${taskId}` : "/tasks"),
   settings: (section = "general") => `/settings/${section}`
 };
 
@@ -37,7 +40,7 @@ function subscribe(listener: () => void): () => void {
 
 // useSyncExternalStore requires a referentially stable snapshot per location.
 let cachedPathname: string | null = null;
-let cachedRoute: Route = { name: "chat", conversationId: null, view: "chat" };
+let cachedRoute: Route = { name: "chat", conversationId: null, view: "chat", taskId: null };
 
 function currentRoute(): Route {
   const pathname = window.location.pathname;
@@ -59,6 +62,12 @@ export function useRoute(): Route {
 export function navigate(path: string): void {
   if (window.location.pathname === path) return;
   window.history.pushState(null, "", path);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+export function replaceRoute(path: string): void {
+  if (window.location.pathname === path) return;
+  window.history.replaceState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 

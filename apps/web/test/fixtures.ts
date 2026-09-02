@@ -1,4 +1,4 @@
-import type { AgentSummaryDto, AppSettings, ConnectionDto, ConversationDto, GenerationDto, MessageDto, ModelDto } from "@llm-chat/contracts";
+import type { AgentSummaryDto, AppSettings, BackgroundTaskDto, ConnectionDto, ConversationDto, GenerationDto, MessageDto, ModelDto } from "@llm-chat/contracts";
 
 export function makeSettings(patch: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -141,6 +141,32 @@ export function makeMessage(patch: Partial<MessageDto> = {}): MessageDto {
     activeGenerationId: null,
     generations: [],
     createdAt: 2,
+    ...patch
+  };
+}
+
+export function makeBackgroundTask(patch: Partial<BackgroundTaskDto> = {}): BackgroundTaskDto {
+  return {
+    id: "task-1",
+    conversationId: "conv-1",
+    generationId: "gen-1",
+    agentId: "agent-1",
+    agentName: "测试助手",
+    agentRevision: 1,
+    command: "pnpm test",
+    mode: "pipe",
+    workspacePath: "/workspace",
+    status: "completed",
+    expectedDurationMs: null,
+    hardTimeoutMs: null,
+    overdue: false,
+    exitCode: 0,
+    error: null,
+    outputCursor: 0,
+    earliestCursor: 0,
+    createdAt: 1,
+    startedAt: 2,
+    completedAt: 3,
     ...patch
   };
 }

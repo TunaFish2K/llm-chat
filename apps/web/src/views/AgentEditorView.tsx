@@ -107,7 +107,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
 
   return (
     <>
-      <div className="page-header">
+      <div className="page-header mobile-redundant-title">
         <h2>
           {agent.name}
           {agent.protected ? <span className="tag accent" style={{ marginLeft: 8 }}>内置</span> : null}

@@ -36,7 +36,6 @@ export function WorkspaceSidebar({
 }) {
   const conversations = useStore(appStore, (state) => state.conversations);
   const connected = useStore(appStore, (state) => state.eventsConnected);
-  const runningTasks = useStore(appStore, (state) => state.runningTasks);
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<ConversationDto | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -162,7 +161,6 @@ export function WorkspaceSidebar({
       <nav className="sidebar-navigation" aria-label="功能导航">
         <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label="聊天" compact={compact} />
         <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={compact} />
-        <SidebarLink active={route.name === "tasks"} href={routes.tasks()} icon={<CircleEllipsis size={17} />} label="后台任务" compact={compact} badge={runningTasks} />
         <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label="设置" compact={compact} />
       </nav>
 
@@ -192,10 +190,10 @@ export function WorkspaceSidebar({
   );
 }
 
-function SidebarLink({ active, href, icon, label, compact, badge }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean; badge?: number }) {
+function SidebarLink({ active, href, icon, label, compact }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean }) {
   return (
     <a className={active ? "active" : ""} href={href} onClick={linkClick(href)} aria-current={active ? "page" : undefined} title={compact ? label : undefined}>
-      {icon}<span>{compact ? <span className="sr-only">{label}</span> : label}</span>{badge ? <b>{badge > 99 ? "99+" : badge}</b> : null}
+      {icon}<span>{compact ? <span className="sr-only">{label}</span> : label}</span>
     </a>
   );
 }

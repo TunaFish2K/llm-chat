@@ -1,42 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackgroundTaskDto, BackgroundTaskEventDto } from "@llm-chat/contracts";
+import { RefreshCw, Square, X } from "lucide-react";
 import { endpoints } from "../lib/api";
 import { appStore, toast, toastError } from "../lib/app-state";
 import { formatBytes, formatTime } from "../lib/format";
-import { navigate, routes } from "../lib/router";
+import { navigate, replaceRoute, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, ErrorState, LoadingState, StatusTag } from "../lib/ui";
 
-export function TasksView({ taskId }: { taskId: string | null }) {
+export function ConversationTasksView({ conversationId, taskId }: { conversationId: string; taskId: string | null }) {
   const eventsConnected = useStore(appStore, (s) => s.eventsConnected);
+  const runningTasks = useStore(appStore, (s) => s.runningTasksByConversation[conversationId] ?? 0);
   const [tasks, setTasks] = useState<BackgroundTaskDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<BackgroundTaskDto | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setTasks(await endpoints.backgroundTasks(undefined, "all"));
+      setTasks(await endpoints.backgroundTasks(conversationId));
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载后台任务失败");
     }
-  }, []);
+  }, [conversationId]);
+
+  useEffect(() => setTasks(null), [conversationId]);
 
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), 5_000);
     return () => clearInterval(timer);
-  }, [load, eventsConnected]);
+  }, [load, eventsConnected, runningTasks]);
 
   return (
-    <>
-      <div className="page-header">
-        <h2>后台任务</h2>
-        <div className="actions">
-          <button className="btn small" onClick={() => void load()}>
-            刷新
-          </button>
-        </div>
+    <div className="conversation-tasks-view">
+      <div className="conversation-tasks-toolbar" role="toolbar" aria-label="后台任务工具栏">
+        <span className="small muted">
+          {tasks ? `${tasks.length} 个任务${runningTasks ? ` · ${runningTasks} 个运行中` : ""}` : "正在加载任务"}
+        </span>
+        <button className="button secondary small" onClick={() => void load()}>
+          <RefreshCw size={14} />刷新
+        </button>
       </div>
       <div className="panel-scroll">
         <div className="panel-inner">
@@ -63,7 +67,7 @@ export function TasksView({ taskId }: { taskId: string | null }) {
                 {tasks.map((task) => (
                   <tr key={task.id} style={task.id === taskId ? { background: "var(--accent-soft)" } : undefined}>
                     <td>
-                      <button className="btn ghost small mono" onClick={() => navigate(routes.tasks(task.id))}>
+                      <button className="btn ghost small mono" onClick={() => navigate(routes.conversationTasks(conversationId, task.id))}>
                         {task.command.length > 60 ? `${task.command.slice(0, 60)}…` : task.command}
                       </button>
                     </td>
@@ -78,7 +82,7 @@ export function TasksView({ taskId }: { taskId: string | null }) {
                     <td>
                       {["queued", "starting", "running"].includes(task.status) ? (
                         <button className="btn small danger" onClick={() => setStopping(task)}>
-                          停止
+                          <Square size={13} />停止
                         </button>
                       ) : null}
                     </td>
@@ -87,7 +91,7 @@ export function TasksView({ taskId }: { taskId: string | null }) {
               </tbody>
             </table>
           )}
-          {taskId ? <TaskDetail taskId={taskId} /> : null}
+          {taskId ? <TaskDetail conversationId={conversationId} taskId={taskId} /> : null}
         </div>
       </div>
       {stopping ? (
@@ -100,7 +104,7 @@ export function TasksView({ taskId }: { taskId: string | null }) {
           }}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -153,7 +157,7 @@ function StopTaskModal({
   );
 }
 
-function TaskDetail({ taskId }: { taskId: string }) {
+function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId: string }) {
   const eventsConnected = useStore(appStore, (s) => s.eventsConnected);
   const [detail, setDetail] = useState<{ task: BackgroundTaskDto; events: BackgroundTaskEventDto[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -166,12 +170,17 @@ function TaskDetail({ taskId }: { taskId: string }) {
 
   const loadDetail = useCallback(async () => {
     try {
-      setDetail(await endpoints.backgroundTask(taskId));
+      const next = await endpoints.backgroundTask(taskId);
+      if (next.task.conversationId !== conversationId) {
+        replaceRoute(routes.conversationTasks(next.task.conversationId, next.task.id));
+        return;
+      }
+      setDetail(next);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "任务加载失败");
     }
-  }, [taskId]);
+  }, [conversationId, taskId]);
 
   const loadOutput = useCallback(async () => {
     try {
@@ -215,13 +224,20 @@ function TaskDetail({ taskId }: { taskId: string }) {
 
   return (
     <div className="card" aria-label="任务详情">
-      <h3>
-        <span className="mono">{task.command}</span>
-        <StatusTag status={task.status} />
-      </h3>
+      <div className="task-detail-heading">
+        <h3>
+          <span className="mono">{task.command}</span>
+          <StatusTag status={task.status} />
+        </h3>
+        <button
+          className="icon-button"
+          onClick={() => navigate(routes.conversationTasks(conversationId))}
+          aria-label="关闭任务详情"
+          title="关闭任务详情"
+        ><X size={16} /></button>
+      </div>
       <p className="small muted">
-        会话 <span className="mono">{task.conversationId.slice(0, 8)}</span> · 工作目录{" "}
-        <span className="mono">{task.workspacePath}</span> · 模式 {task.mode} · 日志游标 {task.outputCursor} ·{" "}
+        工作目录 <span className="mono">{task.workspacePath}</span> · 模式 {task.mode} · 日志游标 {task.outputCursor} ·{" "}
         {task.hardTimeoutMs ? `硬超时 ${Math.round(task.hardTimeoutMs / 1000)}s` : "无硬超时"}
       </p>
       {task.error ? <p style={{ color: "var(--danger)" }}>{task.error}</p> : null}

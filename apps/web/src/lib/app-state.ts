@@ -8,6 +8,7 @@ import type {
   ModelDto
 } from "@llm-chat/contracts";
 import { api, endpoints, onAuthRequired } from "./api";
+import { cancelGenerationHaptic, scheduleGenerationHaptic } from "./haptics";
 import { createStore } from "./store";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
 
@@ -28,7 +29,7 @@ export interface AppState {
   messages: Record<string, MessageDto[]>;
   toasts: Toast[];
   eventsConnected: boolean;
-  runningTasks: number;
+  runningTasksByConversation: Record<string, number>;
 }
 
 export const appStore = createStore<AppState>({
@@ -42,7 +43,7 @@ export const appStore = createStore<AppState>({
   messages: {},
   toasts: [],
   eventsConnected: false,
-  runningTasks: 0
+  runningTasksByConversation: {}
 });
 
 let toastSeq = 0;
@@ -63,7 +64,8 @@ export async function bootstrap(conversationId?: string): Promise<void> {
   appStore.set({ auth: "loading", bootError: null });
   try {
     const data = await endpoints.bootstrap(conversationId);
-    const bootMessages = conversationId && data.messages ? { [conversationId]: data.messages } : {};
+    const normalizedMessages = data.messages ? normalizeMessages(data.messages) : undefined;
+    const bootMessages = conversationId && normalizedMessages ? { [conversationId]: normalizedMessages } : {};
     appStore.set({
       auth: "ready",
       settings: data.settings,
@@ -71,10 +73,10 @@ export async function bootstrap(conversationId?: string): Promise<void> {
       connections: data.connections,
       models: data.models,
       conversations: data.conversations,
-      ...(conversationId && data.messages ? { messages: bootMessages } : {})
+      ...(conversationId && normalizedMessages ? { messages: bootMessages } : {})
     });
-    if (conversationId && data.messages) {
-      for (const message of data.messages) {
+    if (conversationId && normalizedMessages) {
+      for (const message of normalizedMessages) {
         for (const generation of message.generations) {
           if (isGenerationActive(generation.status)) trackGeneration(conversationId, message.id, generation.id);
         }
@@ -110,7 +112,7 @@ export async function refreshSettings(): Promise<void> {
 }
 
 export async function loadMessages(conversationId: string): Promise<MessageDto[]> {
-  const messages = await endpoints.messages(conversationId);
+  const messages = normalizeMessages(await endpoints.messages(conversationId));
   appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: messages } }));
   for (const message of messages) {
     for (const generation of message.generations) {
@@ -118,6 +120,14 @@ export async function loadMessages(conversationId: string): Promise<MessageDto[]
     }
   }
   return messages;
+}
+
+function normalizeMessages(messages: MessageDto[]): MessageDto[] {
+  return messages.map((message) => ({
+    ...message,
+    attachments: Array.isArray(message.attachments) ? message.attachments : [],
+    generations: Array.isArray(message.generations) ? message.generations : []
+  }));
 }
 
 export function upsertMessage(conversationId: string, message: MessageDto): void {
@@ -182,6 +192,7 @@ async function handleGenerationEvent(
     else blocks.push(event.block);
     blocks.sort((a, b) => a.index - b.index);
     next.blocks = blocks;
+    scheduleGenerationHaptic();
   } else if (event.type === "usage") {
     next.usage = event.usage;
   } else if (event.type === "tool-call") {
@@ -200,9 +211,11 @@ async function handleGenerationEvent(
   } else if (event.type === "status") {
     next.status = event.status;
     if (event.stopReason !== undefined) next.stopReason = event.stopReason;
+    if (!isGenerationActive(event.status)) cancelGenerationHaptic();
   } else if (event.type === "error") {
     next.status = "failed";
     next.error = { code: event.code, message: event.message };
+    cancelGenerationHaptic();
   }
   applyGeneration(owner.conversationId, owner.messageId, next);
   if (event.type === "status" && !isGenerationActive(event.status)) {
@@ -255,25 +268,22 @@ export function startAppEvents(): void {
   appEventsSubscription = subscribeAppEvents(
     (event) => {
       if (event.type === "task") {
-        const nonterminal = ["queued", "starting", "running"];
-        appStore.set((state) => ({
-          runningTasks: nonterminal.includes(event.task.status)
-            ? Math.max(1, state.runningTasks)
-            : state.runningTasks
-        }));
+        void refreshTaskCounts();
       }
-      void refreshTaskBadge();
     },
     (connected) => appStore.set({ eventsConnected: connected })
   );
 }
 
-export async function refreshTaskBadge(): Promise<void> {
+export async function refreshTaskCounts(): Promise<void> {
   try {
-    const tasks = await api.get<Array<{ status: string }>>("/api/background-tasks?scope=all");
-    appStore.set({
-      runningTasks: tasks.filter((task) => ["queued", "starting", "running"].includes(task.status)).length
-    });
+    const tasks = await api.get<Array<{ conversationId: string; status: string }>>("/api/background-tasks?scope=all");
+    const runningTasksByConversation: Record<string, number> = {};
+    for (const task of tasks) {
+      if (!["queued", "starting", "running"].includes(task.status)) continue;
+      runningTasksByConversation[task.conversationId] = (runningTasksByConversation[task.conversationId] ?? 0) + 1;
+    }
+    appStore.set({ runningTasksByConversation });
   } catch {
     /* ignore */
   }

@@ -147,8 +147,8 @@ export function InspectorPanel({
             </InspectorSection>
             <CodeSection title="命令" value={task.task.command} />
             <TaskEvents events={task.events} />
-            <button className="button secondary full" onClick={() => navigate(routes.tasks(task.task.id))}>
-              <ExternalLink size={15} /> 在任务工作台打开
+            <button className="button secondary full" onClick={() => navigate(routes.conversationTasks(task.task.conversationId, task.task.id))}>
+              <ExternalLink size={15} /> 在会话任务中打开
             </button>
           </>
         ) : null}

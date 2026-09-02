@@ -4,9 +4,10 @@ import { LoginView } from "./views/LoginView";
 import { ChatView } from "./views/ChatView";
 import { WorkspaceSidebar } from "./views/WorkspaceSidebar";
 import { InspectorPanel } from "./views/InspectorPanel";
-import { appStore, bootstrap, initAuthGate, refreshTaskBadge, startAppEvents } from "./lib/app-state";
+import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents } from "./lib/app-state";
+import { endpoints } from "./lib/api";
 import type { InspectionTarget } from "./lib/inspection";
-import { navigate, routes, useRoute, type Route } from "./lib/router";
+import { navigate, replaceRoute, routes, useRoute, type Route } from "./lib/router";
 import { useStore } from "./lib/store";
 import { useTheme } from "./lib/theme";
 import { applyUpdate, getPwaState, initPwa, promptInstall, subscribePwa } from "./lib/pwa";
@@ -14,7 +15,6 @@ import { ErrorState, LoadingState } from "./lib/ui";
 
 const AgentsView = lazy(() => import("./views/AgentsView").then((module) => ({ default: module.AgentsView })));
 const AgentEditorView = lazy(() => import("./views/AgentEditorView").then((module) => ({ default: module.AgentEditorView })));
-const TasksView = lazy(() => import("./views/TasksView").then((module) => ({ default: module.TasksView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then((module) => ({ default: module.SettingsView })));
 
 const LEFT_MIN = 224;
@@ -54,7 +54,7 @@ export function App() {
   useEffect(() => {
     if (state.auth !== "ready") return;
     startAppEvents();
-    void refreshTaskBadge();
+    void refreshTaskCounts();
   }, [state.auth]);
 
   useEffect(() => {
@@ -76,7 +76,7 @@ export function App() {
   const showInspector = route.name === "chat" && Boolean(conversation) && inspectorOpen;
   const sidebarTrack = mobile ? 0 : sidebarCollapsed ? 64 : leftWidth;
   const inspectorTrack = mobile ? 0 : showInspector ? rightWidth : 0;
-  const title = routeTitle(route, state.conversations);
+  const title = routeTitle(route, state.conversations, state.agents);
 
   if (state.auth === "loading") {
     return <div className="boot-screen">{state.bootError ? <ErrorState message={`无法连接服务：${state.bootError}`} onRetry={() => void bootstrap(initialConversation.current)} /> : <LoadingState label="正在启动 llm-chat…" />}</div>;
@@ -98,7 +98,7 @@ export function App() {
       <main className="workspace-main">
         <header className="mobile-appbar">
           <button className="icon-button" onClick={() => setSidebarDrawer(true)} aria-label="打开导航"><Menu size={20} /></button>
-          <strong>{title}</strong>
+          <strong role="heading" aria-level={2}>{title}</strong>
           {conversation ? <button className="icon-button" onClick={() => setInspectorOpen(true)} aria-label="打开检查器"><PanelRightOpen size={19} /></button> : <span />}
         </header>
         <Suspense fallback={<LoadingState label="正在加载界面…" />}>
@@ -153,20 +153,49 @@ function RouteView({
   onInspect: (target: InspectionTarget) => void;
 }) {
   if (route.name === "agents") return <section className="admin-shell">{route.agentId ? <AgentEditorView agentId={route.agentId} /> : <AgentsView />}</section>;
-  if (route.name === "tasks") return <section className="admin-shell"><TasksView taskId={route.taskId} /></section>;
+  if (route.name === "tasks") return <LegacyTaskRedirect taskId={route.taskId} />;
   if (route.name === "settings") return <section className="admin-shell"><SettingsView section={route.section} /></section>;
   return (
     <ChatView
       conversationId={route.conversationId}
       view={route.view}
+      taskId={route.taskId}
       sidebarCollapsed={sidebarCollapsed}
       inspectorOpen={inspectorOpen}
       onToggleSidebar={onToggleSidebar}
       onToggleInspector={onToggleInspector}
       onInspect={onInspect}
-      onViewChange={(view) => navigate(routes.chat(route.conversationId, view))}
+      onViewChange={(view) => navigate(
+        view === "tasks"
+          ? route.conversationId ? routes.conversationTasks(route.conversationId) : routes.chat()
+          : routes.chat(route.conversationId, view)
+      )}
     />
   );
+}
+
+function LegacyTaskRedirect({ taskId }: { taskId: string | null }) {
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    if (!taskId) {
+      replaceRoute(routes.chat());
+      return () => { active = false; };
+    }
+    setError(null);
+    void endpoints.backgroundTask(taskId).then(({ task }) => {
+      if (active) replaceRoute(routes.conversationTasks(task.conversationId, task.id));
+    }).catch((cause) => {
+      if (active) setError(cause instanceof Error ? cause.message : "任务加载失败");
+    });
+    return () => { active = false; };
+  }, [taskId, attempt]);
+
+  return error
+    ? <ErrorState message={error} onRetry={() => setAttempt((value) => value + 1)} />
+    : <LoadingState label="正在打开会话任务…" />;
 }
 
 function ResizeHandle({ side, position, value, min, max, onChange }: { side: "left" | "right"; position: number; value: number; min: number; max: number; onChange: (value: number) => void }) {
@@ -219,9 +248,13 @@ function useStoredNumber(key: string, fallback: number, min: number, max: number
   return [value, (next) => { const safe = clamp(next, min, max); setValue(safe); localStorage.setItem(key, String(safe)); }];
 }
 
-function routeTitle(route: Route, conversations: Array<{ id: string; title: string }>): string {
+function routeTitle(
+  route: Route,
+  conversations: Array<{ id: string; title: string }>,
+  agents: Array<{ id: string; name: string }>
+): string {
   if (route.name === "chat") return route.conversationId ? conversations.find((item) => item.id === route.conversationId)?.title ?? "会话" : "新会话";
-  if (route.name === "agents") return "Agent";
+  if (route.name === "agents") return route.agentId ? agents.find((item) => item.id === route.agentId)?.name ?? "Agent" : "Agent";
   if (route.name === "tasks") return "后台任务";
   return "设置";
 }

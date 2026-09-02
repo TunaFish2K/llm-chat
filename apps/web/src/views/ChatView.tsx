@@ -10,6 +10,7 @@ import {
 } from "react";
 import { Popover } from "radix-ui";
 import {
+  ArrowDown,
   Bot,
   Check,
   ChevronDown,
@@ -36,6 +37,7 @@ import {
   Send,
   Settings2,
   Square,
+  TerminalSquare,
   Undo2,
   Wrench,
   X
@@ -75,6 +77,7 @@ import { EmptyState, ErrorState, LoadingState, Modal, StatusTag } from "../lib/u
 import { DirectoryPicker } from "../components/DirectoryPicker";
 
 const TrajectoryView = lazy(() => import("./TrajectoryView").then((module) => ({ default: module.TrajectoryView })));
+const ConversationTasksView = lazy(() => import("./TasksView").then((module) => ({ default: module.ConversationTasksView })));
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
 const EMPTY_MESSAGES: MessageDto[] = [];
@@ -83,18 +86,20 @@ const NO_MODEL = "__none__";
 
 interface ChatViewProps {
   conversationId: string | null;
-  view?: "chat" | "trajectory";
+  view?: "chat" | "trajectory" | "tasks";
+  taskId?: string | null;
   sidebarCollapsed?: boolean;
   inspectorOpen?: boolean;
   onToggleSidebar?: () => void;
   onToggleInspector?: () => void;
   onInspect?: (target: InspectionTarget) => void;
-  onViewChange?: (view: "chat" | "trajectory") => void;
+  onViewChange?: (view: "chat" | "trajectory" | "tasks") => void;
 }
 
 export function ChatView({
   conversationId,
   view = "chat",
+  taskId = null,
   sidebarCollapsed = false,
   inspectorOpen = false,
   onToggleSidebar = () => undefined,
@@ -106,12 +111,15 @@ export function ChatView({
     state.conversations.find((item) => item.id === conversationId) ?? null
   );
   const messages = useStore(appStore, (state) => conversationId ? state.messages[conversationId] ?? null : null);
+  const runningTasks = useStore(appStore, (state) => conversationId ? state.runningTasksByConversation[conversationId] ?? 0 : 0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState<MessageDto | null>(null);
   const [undoOpen, setUndoOpen] = useState(false);
   const [branching, setBranching] = useState(false);
   const [compacting, setCompacting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const busy = Boolean(messages?.some((message) => message.generations.some((generation) => isGenerationActive(generation.status))));
   const userMessageCount = messages?.filter((message) => message.role === "user").length ?? 0;
@@ -161,6 +169,8 @@ export function ChatView({
 
   useEffect(() => {
     setLoadError(null);
+    followLatest.current = true;
+    setShowJumpToLatest(false);
     if (!conversationId) return;
     let active = true;
     void loadMessages(conversationId).catch((error) => {
@@ -172,8 +182,31 @@ export function ChatView({
   useEffect(() => {
     if (view !== "chat") return;
     const element = scrollRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (element && followLatest.current) {
+      element.scrollTop = element.scrollHeight;
+      setShowJumpToLatest(false);
+    }
   }, [messages, view]);
+
+  const onChatScroll = () => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const atLatest = element.scrollHeight - element.scrollTop - element.clientHeight <= 96;
+    followLatest.current = atLatest;
+    setShowJumpToLatest((current) => current === !atLatest ? current : !atLatest);
+  };
+
+  const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    const element = scrollRef.current;
+    followLatest.current = true;
+    setShowJumpToLatest(false);
+    if (!element) return;
+    if (behavior === "smooth" && typeof element.scrollTo === "function") {
+      element.scrollTo({ top: element.scrollHeight, behavior });
+    } else {
+      element.scrollTop = element.scrollHeight;
+    }
+  };
 
   return (
     <div className="chat-workspace">
@@ -185,6 +218,7 @@ export function ChatView({
         onToggleSidebar={onToggleSidebar}
         onToggleInspector={onToggleInspector}
         onViewChange={onViewChange}
+        runningTasks={runningTasks}
         busy={busy || branching}
         compacting={compacting}
         canUndo={userMessageCount > 0}
@@ -192,7 +226,11 @@ export function ChatView({
         onUndo={() => setUndoOpen(true)}
         onCompact={() => void compactContext()}
       />
-      {view === "trajectory" && conversation ? (
+      {view === "tasks" && conversation ? (
+        <Suspense fallback={<LoadingState label="正在加载后台任务…" />}>
+          <ConversationTasksView conversationId={conversation.id} taskId={taskId} />
+        </Suspense>
+      ) : view === "trajectory" && conversation ? (
         <Suspense fallback={<LoadingState label="正在生成轨迹…" />}>
           <TrajectoryView
             conversation={conversation}
@@ -203,33 +241,40 @@ export function ChatView({
         </Suspense>
       ) : (
         <>
-          <div className="chat-scroll" ref={scrollRef} aria-live="polite" aria-label="消息列表">
-            <div className="chat-message-rail">
-              {!conversationId ? (
-                <NewConversationWelcome />
-              ) : loadError ? (
-                <ErrorState message={loadError} onRetry={() => {
-                  setLoadError(null);
-                  void loadMessages(conversationId).catch((error) => setLoadError(error instanceof Error ? error.message : "消息加载失败"));
-                }} />
-              ) : messages === null ? (
-                <LoadingState label="正在加载消息…" />
-              ) : messages.length === 0 ? (
-                <EmptyState title="这个会话还没有消息" hint="从下方发送第一条消息。" />
-              ) : messages.map((message) => (
-                <MessageView
-                  key={message.id}
-                  conversationId={conversationId}
-                  message={message}
-                  onInspect={onInspect}
-                  onEdit={setEditingMessage}
-                  onContinue={(messageId) => void forkConversation({ mode: "continue", throughMessageId: messageId })}
-                  branching={branching || busy}
-                />
-              ))}
+          <div className="chat-scroll-shell">
+            <div className="chat-scroll" ref={scrollRef} onScroll={onChatScroll} aria-live="polite" aria-label="消息列表">
+              <div className="chat-message-rail">
+                {!conversationId ? (
+                  <NewConversationWelcome />
+                ) : loadError ? (
+                  <ErrorState message={loadError} onRetry={() => {
+                    setLoadError(null);
+                    void loadMessages(conversationId).catch((error) => setLoadError(error instanceof Error ? error.message : "消息加载失败"));
+                  }} />
+                ) : messages === null ? (
+                  <LoadingState label="正在加载消息…" />
+                ) : messages.length === 0 ? (
+                  <EmptyState title="这个会话还没有消息" hint="从下方发送第一条消息。" />
+                ) : messages.map((message) => (
+                  <MessageView
+                    key={message.id}
+                    conversationId={conversationId}
+                    message={message}
+                    onInspect={onInspect}
+                    onEdit={setEditingMessage}
+                    onContinue={(messageId) => void forkConversation({ mode: "continue", throughMessageId: messageId })}
+                    branching={branching || busy}
+                  />
+                ))}
+              </div>
             </div>
+            {showJumpToLatest ? (
+              <button className="icon-button jump-to-latest" onClick={() => scrollToLatest("smooth")} aria-label="回到最新消息" title="回到最新消息">
+                <ArrowDown size={17} />
+              </button>
+            ) : null}
           </div>
-          <Composer conversation={conversation} onInspect={onInspect} />
+          <Composer conversation={conversation} onInspect={onInspect} onBeforeSend={() => scrollToLatest()} />
         </>
       )}
       {editingMessage ? (
@@ -242,7 +287,7 @@ export function ChatView({
               mode: "edit",
               messageId: editingMessage.id,
               text,
-              imageAssetIds: editingMessage.attachments.map((asset) => asset.id)
+              imageAssetIds: (editingMessage.attachments ?? []).map((asset) => asset.id)
             })) setEditingMessage(null);
           }}
         />
@@ -269,14 +314,16 @@ function ConversationHeader({
   onToggleSidebar,
   onToggleInspector,
   onViewChange,
+  runningTasks,
   busy,
   compacting,
   canUndo,
   canCompact,
   onUndo,
   onCompact
-}: Required<Omit<ChatViewProps, "conversationId" | "onInspect">> & {
+}: Required<Omit<ChatViewProps, "conversationId" | "taskId" | "onInspect">> & {
   conversation: ConversationDto | null;
+  runningTasks: number;
   busy: boolean;
   compacting: boolean;
   canUndo: boolean;
@@ -335,6 +382,9 @@ function ConversationHeader({
         <div className="view-switch" role="tablist" aria-label="会话视图">
           <button role="tab" aria-selected={view === "chat"} onClick={() => onViewChange("chat")}><MessageSquare size={15} />对话</button>
           <button role="tab" aria-selected={view === "trajectory"} onClick={() => onViewChange("trajectory")}><ListTree size={15} />轨迹</button>
+          <button role="tab" aria-selected={view === "tasks"} onClick={() => onViewChange("tasks")}>
+            <TerminalSquare size={15} />任务{runningTasks ? <b>{runningTasks > 99 ? "99+" : runningTasks}</b> : null}
+          </button>
         </div>
       ) : null}
       {conversation ? (
@@ -387,6 +437,7 @@ function MessageView({
   branching: boolean;
 }) {
   const agents = useStore(appStore, (state) => state.agents);
+  const messageAttachments = Array.isArray(message.attachments) ? message.attachments : [];
   const generation = message.role === "assistant" ? activeGeneration(message) : null;
   const agent = agents.find((item) => item.id === generation?.generatedAgent?.agentId);
 
@@ -394,7 +445,7 @@ function MessageView({
     return (
       <article className="chat-message user-message" data-role="user">
         <div className="message-content">
-          {message.attachments.length ? <ImageGallery assets={message.attachments} /> : null}
+          {messageAttachments.length ? <ImageGallery assets={messageAttachments} /> : null}
           {message.text ? <p>{message.text}</p> : null}
         </div>
         <footer className="message-footer">
@@ -453,6 +504,12 @@ function GenerationView({ conversationId, message, generation, onInspect, onCont
 
   return (
     <div className="generation-body">
+      {busy && timeline.length === 0 ? (
+        <div className="generation-pending" role="status">
+          <LoaderCircle className="spin" size={15} />
+          <span>{generation.status === "queued" ? "等待模型响应" : "正在生成"}</span>
+        </div>
+      ) : null}
       {timeline.map((item) => {
         if (item.kind === "tool") {
           return <ToolCallSummary key={item.call.id} call={item.call} onInspect={() => onInspect({ kind: "tool", messageId: message.id, generationId: generation.id, toolCallId: item.call.id })} />;
@@ -546,7 +603,11 @@ function ComposerImages({ assets, onRemove }: { assets: ImageAssetDto[]; onRemov
   );
 }
 
-function Composer({ conversation, onInspect }: { conversation: ConversationDto | null; onInspect: (target: InspectionTarget) => void }) {
+function Composer({ conversation, onInspect, onBeforeSend }: {
+  conversation: ConversationDto | null;
+  onInspect: (target: InspectionTarget) => void;
+  onBeforeSend: () => void;
+}) {
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
   const models = useStore(appStore, (state) => state.models);
@@ -705,6 +766,7 @@ function Composer({ conversation, onInspect }: { conversation: ConversationDto |
     if (!effectiveAgent) { toast("error", "请先选择一个 Agent"); return; }
     if (!modelAvailable) { toast("error", "请先选择一个可用模型"); return; }
     if (attachments.length && !imageConfigured) { toast("error", "当前模型不支持图片，请先为 Agent 配置备用识图模型"); return; }
+    onBeforeSend();
     setSending(true);
     try {
       if (!conversation) {

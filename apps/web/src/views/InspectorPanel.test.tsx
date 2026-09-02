@@ -1,7 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { appStore } from "../lib/app-state";
-import { makeAgent, makeConnection, makeConversation, makeGeneration, makeMessage, makeModel, makeSettings } from "../../test/fixtures";
+import { makeAgent, makeBackgroundTask, makeConnection, makeConversation, makeGeneration, makeMessage, makeModel, makeSettings } from "../../test/fixtures";
 import { InspectorPanel } from "./InspectorPanel";
 
 function seed() {
@@ -21,7 +21,7 @@ function seed() {
     messages: { "conv-1": [makeMessage({ id: "assistant-1", activeGenerationId: generation.id, generations: [generation] })] },
     toasts: [],
     eventsConnected: true,
-    runningTasks: 0
+    runningTasksByConversation: {}
   });
   return { conversation, generation };
 }
@@ -43,5 +43,19 @@ describe("InspectorPanel", () => {
     expect(screen.getByText("20 tokens")).toBeInTheDocument();
     expect(screen.getByText("上下文决策")).toBeInTheDocument();
     expect(screen.getByText("有效设置")).toBeInTheDocument();
+  });
+
+  it("opens task details inside the owning conversation", async () => {
+    const { conversation } = seed();
+    const task = makeBackgroundTask();
+    window.history.pushState(null, "", "/c/conv-1");
+    vi.stubGlobal("fetch", vi.fn((url: string) => Promise.resolve(new Response(JSON.stringify(
+      url === "/api/background-tasks/task-1" ? { task, events: [] } : { throughOrdinal: null }
+    ), { status: 200, headers: { "content-type": "application/json" } }))));
+
+    render(<InspectorPanel conversation={conversation} target={{ kind: "task", taskId: task.id }} onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "在会话任务中打开" }));
+    expect(window.location.pathname).toBe("/c/conv-1/tasks/task-1");
   });
 });
