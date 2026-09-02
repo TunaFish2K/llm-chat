@@ -10,7 +10,6 @@ describe("runtime config", () => {
       port: 3000,
       dataDir: "/srv/llm-chat/data",
       authMode: "password",
-      publicUrl: "http://localhost:3000",
       serveWeb: true,
       shutdownTimeoutMs: 30_000,
       buildId: "development",
@@ -34,32 +33,27 @@ describe("runtime config", () => {
     }
   });
 
-  it("allows disabled auth only when both addresses are loopback", () => {
+  it("allows disabled auth only on a loopback listener", () => {
     expect(parseRuntimeConfig({
       LLM_CHAT_AUTH_MODE: "disabled",
-      LLM_CHAT_HOST: "127.0.0.2",
-      LLM_CHAT_PUBLIC_URL: "http://localhost:3000"
+      LLM_CHAT_HOST: "127.0.0.2"
     }, projectRoot).authMode).toBe("disabled");
     expect(() => parseRuntimeConfig({
       LLM_CHAT_AUTH_MODE: "disabled",
       LLM_CHAT_HOST: "0.0.0.0"
     }, projectRoot)).toThrow("仅允许回环");
-    expect(() => parseRuntimeConfig({
-      LLM_CHAT_AUTH_MODE: "disabled",
-      LLM_CHAT_PUBLIC_URL: "https://chat.example.com"
-    }, projectRoot)).toThrow("仅允许回环");
   });
 
-  it("allows password authentication on remote HTTP addresses", () => {
+  it("allows password authentication on remote addresses and ignores the retired public URL setting", () => {
     expect(parseRuntimeConfig({
       LLM_CHAT_AUTH_MODE: "password",
       LLM_CHAT_HOST: "0.0.0.0",
-      LLM_CHAT_PUBLIC_URL: "http://192.0.2.2:3000"
+      LLM_CHAT_PUBLIC_URL: "not-a-url"
     }, projectRoot)).toMatchObject({
       authMode: "password",
-      host: "0.0.0.0",
-      publicUrl: "http://192.0.2.2:3000"
+      host: "0.0.0.0"
     });
+    expect(parseRuntimeConfig({ LLM_CHAT_PUBLIC_URL: "not-a-url" }, projectRoot)).not.toHaveProperty("publicUrl");
     expect(() => parseRuntimeConfig({ LLM_CHAT_AUTH_MODE: "webauthn" }, projectRoot))
       .toThrow("password 或 disabled");
   });

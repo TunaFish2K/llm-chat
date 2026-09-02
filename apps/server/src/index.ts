@@ -76,7 +76,6 @@ async function main(): Promise<void> {
       dataFile: resolve(instanceLock.dataDir, "llm-chat.sqlite"),
       authMode: config.authMode,
       trustProxy: config.trustProxy,
-      publicUrl: config.publicUrl,
       serveWeb: config.serveWeb
     });
     app.get("/healthz", async () => ({ ok: true, buildId: config.buildId }));
