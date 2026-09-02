@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "../lib/api";
@@ -74,6 +74,75 @@ describe("SettingsView", () => {
     );
     render(<SettingsView section="memories" />);
     expect(await screen.findByText("主人喜欢咖啡")).toBeInTheDocument();
+  });
+
+  it("opens complete tool and environment details from compact summaries", async () => {
+    const user = userEvent.setup();
+    const description = "A long tool description with every detail preserved in the read-only dialog.";
+    vi.spyOn(endpoints, "toolSettings").mockResolvedValue({
+      enabled: { long_tool: true },
+      search: { baseUrl: "", hasApiKey: false },
+      workspaceShellEnabled: true,
+      workspacePath: "/a/very/long/workspace/path",
+      skillsPath: "/a/very/long/skills/path"
+    });
+    vi.spyOn(endpoints, "toolCatalog").mockResolvedValue([{
+      name: "long_tool",
+      label: "Long Tool",
+      description,
+      category: "workspace",
+      requiresApproval: true,
+      available: true,
+      approvalMode: "always",
+      sourceKind: "plugin",
+      sourceId: "plugin-long",
+      sourceName: "Long Plugin Source",
+      revision: "1234567890abcdef",
+      operationalState: "loaded",
+      error: null
+    }]);
+
+    render(<SettingsView section="tools" />);
+    const toolTrigger = await screen.findByRole("button", { name: "查看工具 Long Tool 的完整信息" });
+    await user.click(toolTrigger);
+    const toolDialog = screen.getByRole("dialog", { name: "工具详情 · Long Tool" });
+    expect(within(toolDialog).getByText(description)).toBeInTheDocument();
+    expect(within(toolDialog).getByText("long_tool")).toBeInTheDocument();
+    expect(within(toolDialog).getByText("plugin-long")).toBeInTheDocument();
+    await user.click(within(toolDialog).getByRole("button", { name: "关闭对话框" }));
+    await waitFor(() => expect(toolTrigger).toHaveFocus());
+
+    await user.click(screen.getByRole("button", { name: "查看完整工作区路径" }));
+    const pathDialog = screen.getByRole("dialog", { name: "工作区路径" });
+    expect(within(pathDialog).getByText("/a/very/long/workspace/path")).toBeInTheDocument();
+  });
+
+  it("opens complete Skill descriptions, dependencies and errors", async () => {
+    const user = userEvent.setup();
+    const description = "A long Skill description that is clamped in the list and complete in its detail dialog.";
+    vi.spyOn(endpoints, "skills").mockResolvedValue([{
+      id: "skill-detail",
+      name: "Detail Skill",
+      description,
+      revision: "abcdef1234567890",
+      sourcePath: "/tmp/detail-skill",
+      state: "error",
+      error: "The complete Skill error",
+      requiredTools: ["workspace_shell", "background_start"],
+      recommendedApprovals: {},
+      bundled: false,
+      installedAt: 1,
+      updatedAt: 1
+    }]);
+
+    render(<SettingsView section="skills" />);
+    const trigger = await screen.findByRole("button", { name: "查看 Skill Detail Skill 的完整信息" });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Skill 详情 · Detail Skill" });
+    expect(within(dialog).getByText(description)).toBeInTheDocument();
+    expect(within(dialog).getByText("workspace_shell")).toBeInTheDocument();
+    expect(within(dialog).getByText("background_start")).toBeInTheDocument();
+    expect(within(dialog).getByText("The complete Skill error")).toBeInTheDocument();
   });
 
   it("groups Skill, Plugin and MCP actions outside their content columns", async () => {

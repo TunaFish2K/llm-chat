@@ -437,6 +437,38 @@ test.describe("设置分区", () => {
     await expect(page.getByRole("heading", { name: "工具目录" })).toBeVisible();
     await expect(page.locator(".table tbody tr").first()).toBeVisible();
     await expect(page.getByText("工作区：")).toBeVisible();
+
+    const skillTool = page.getByRole("button", { name: "查看工具 加载 Skill 的完整信息" });
+    await expect(skillTool).toBeVisible();
+    expect(await skillTool.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(86);
+    await skillTool.click();
+    const toolDialog = page.getByRole("dialog", { name: "工具详情 · 加载 Skill" });
+    await expect(toolDialog).toContainText("coding-supervisor");
+    await toolDialog.getByRole("button", { name: "关闭对话框" }).click();
+    await expect(skillTool).toBeFocused();
+
+    await page.getByRole("button", { name: "查看完整工作区路径" }).click();
+    await expect(page.getByRole("dialog", { name: "工作区路径" })).toContainText("workspace");
+    await page.getByRole("button", { name: "关闭对话框" }).click();
+
+    const skillToolRow = page.locator(".tool-catalog-table tbody tr").filter({ hasText: "use_skill" });
+    await expect(skillToolRow.getByRole("checkbox")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+      await page.evaluate(() => window.innerWidth)
+    );
+  });
+
+  test("Skill 摘要可打开完整详情", async ({ page }) => {
+    await gotoPath(page, "/settings/skills");
+    const summary = page.locator(".skill-summary-trigger").first();
+    await expect(summary).toBeVisible();
+    await expect(summary.locator(".skill-description-summary")).toHaveCSS("-webkit-line-clamp", "2");
+    await summary.click();
+    const dialog = page.getByRole("dialog", { name: /Skill 详情/ });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "描述" })).toBeVisible();
+    await dialog.getByRole("button", { name: "关闭对话框" }).click();
+    await expect(summary).toBeFocused();
   });
 
   test("记忆列表为只读", async ({ page }) => {
