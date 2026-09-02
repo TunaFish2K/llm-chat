@@ -64,8 +64,7 @@ function startServer(name, port, authMode, dataDir) {
       LLM_CHAT_HOST: "127.0.0.1",
       LLM_CHAT_PORT: port,
       LLM_CHAT_DATA_DIR: dataDir,
-      LLM_CHAT_AUTH_MODE: authMode,
-      LLM_CHAT_PUBLIC_URL: `http://localhost:${port}`
+      LLM_CHAT_AUTH_MODE: authMode
     },
     stdio: ["ignore", "pipe", "pipe"]
   });

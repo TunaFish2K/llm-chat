@@ -55,7 +55,6 @@ export interface AppOptions {
   skillDiscoveryRoot?: string;
   authMode?: AuthMode;
   trustProxy?: boolean | string;
-  publicUrl?: string;
   authAnnounce?: (message: string) => void;
 }
 
@@ -90,7 +89,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   await imageService.initialize();
   const visionService = new VisionService(store, imageService);
   const authMode = options.authMode ?? "disabled";
-  const publicOrigin = new URL(options.publicUrl ?? "http://localhost").origin;
   const auth = new AuthManager(store, options.authAnnounce ?? ((message) => {
     if (options.logger !== false) process.stderr.write(`\n${message}\n`);
   }));
@@ -143,7 +141,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.addHook("preHandler", async (request, reply) => {
     if (authMode !== "password" || !request.url.startsWith("/api/")) return;
-    if (!isReadMethod(request.method)) requireMutationSource(request, publicOrigin);
+    if (!isReadMethod(request.method)) requireMutationSource(request);
     if (isPublicApiRoute(request)) return;
     const token = sessionToken(request);
     const identity = auth.authenticate(token);
@@ -736,23 +734,13 @@ function isReadMethod(method: string): boolean {
   return method === "GET" || method === "HEAD" || method === "OPTIONS";
 }
 
-function requireMutationSource(request: FastifyRequest, expectedOrigin: string): void {
+function requireMutationSource(request: FastifyRequest): void {
   if (request.headers["x-llm-chat-request"] !== "1") {
     throw new AuthHttpError(403, "request_header_required", "缺少写请求验证标记");
   }
   const fetchSite = request.headers["sec-fetch-site"];
   if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
     throw new AuthHttpError(403, "cross_site_request_rejected", "已拒绝跨站请求");
-  }
-  const origin = request.headers.origin;
-  if (origin) {
-    let actual: string;
-    try {
-      actual = new URL(origin).origin;
-    } catch {
-      throw new AuthHttpError(403, "origin_mismatch", "请求来源无效");
-    }
-    if (actual !== expectedOrigin) throw new AuthHttpError(403, "origin_mismatch", "请求来源与公开地址不匹配");
   }
 }
 

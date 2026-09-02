@@ -12,7 +12,6 @@ export interface RuntimeConfig {
   dataDir: string;
   authMode: AuthMode;
   trustProxy: boolean | string;
-  publicUrl: string;
   serveWeb: boolean;
   shutdownTimeoutMs: number;
   buildId: string;
@@ -31,12 +30,8 @@ export function parseRuntimeConfig(
   const trustProxy = trustProxySetting === "true"
     ? true
     : trustProxySetting && trustProxySetting !== "false" ? trustProxySetting : false;
-  const configuredPublicUrl = env.LLM_CHAT_PUBLIC_URL;
-
-  const publicUrl = configuredPublicUrl ?? `http://localhost:${port}`;
-  const parsedPublicUrl = parsePublicUrl(publicUrl);
-  if (authMode === "disabled" && (!isLoopbackHostname(host) || !isLoopbackHostname(parsedPublicUrl.hostname))) {
-    throw new Error("LLM_CHAT_AUTH_MODE=disabled 仅允许回环监听地址和回环公开地址");
+  if (authMode === "disabled" && !isLoopbackHostname(host)) {
+    throw new Error("LLM_CHAT_AUTH_MODE=disabled 仅允许回环监听地址");
   }
   return {
     host,
@@ -44,7 +39,6 @@ export function parseRuntimeConfig(
     dataDir,
     authMode,
     trustProxy,
-    publicUrl,
     serveWeb: parseBoolean(env.LLM_CHAT_SERVE_WEB, "LLM_CHAT_SERVE_WEB", true),
     shutdownTimeoutMs: parseBoundedInteger(
       env.LLM_CHAT_SHUTDOWN_TIMEOUT_MS,
@@ -78,19 +72,6 @@ function parseAuthMode(value: string): AuthMode {
     throw new Error("LLM_CHAT_AUTH_MODE 必须是 password 或 disabled");
   }
   return value;
-}
-
-function parsePublicUrl(value: string): URL {
-  let parsed: URL;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("LLM_CHAT_PUBLIC_URL 必须是有效 URL");
-  }
-  if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
-    throw new Error("LLM_CHAT_PUBLIC_URL 只能包含协议、主机和端口");
-  }
-  return parsed;
 }
 
 function parseBoolean(value: string | undefined, name: string, defaultValue: boolean): boolean {

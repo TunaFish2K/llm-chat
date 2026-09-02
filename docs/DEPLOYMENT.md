@@ -50,15 +50,14 @@ LLM_CHAT_HOST=0.0.0.0 \
 LLM_CHAT_PORT=3000 \
 LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
 LLM_CHAT_AUTH_MODE=password \
-LLM_CHAT_PUBLIC_URL=http://192.168.1.10:3000 \
 LLM_CHAT_SERVE_WEB=true \
 LLM_CHAT_SHUTDOWN_TIMEOUT_MS=30000 \
 LLM_CHAT_BUILD_ID=release-2026-09-01 \
 pnpm start
 ```
 
-将示例 IP 改为浏览器实际访问的内网地址。`LLM_CHAT_PUBLIC_URL` 只能包含协议、主机和端口，不能包含
-路径、查询或 fragment。使用反向代理时，再设置与实际代理源匹配的 `LLM_CHAT_TRUST_PROXY`。
+浏览器可以通过 localhost、回环 IP、内网 IP 或反向代理域名访问，无需声明公开地址。使用反向代理时，
+根据代理拓扑设置 `LLM_CHAT_TRUST_PROXY`，以便服务正确识别协议和客户端地址。
 
 运行时配置的默认值和解析规则如下：
 
@@ -68,15 +67,13 @@ pnpm start
 | `LLM_CHAT_PORT` | `3000` | 1 到 65535 的整数 |
 | `LLM_CHAT_DATA_DIR` | 项目根目录下的 `data` | 解析为绝对路径；与其他进程共享会触发实例锁 |
 | `LLM_CHAT_AUTH_MODE` | `password` | 只能是 `password` 或 `disabled` |
-| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 只能是 origin，用于校验写请求来源 |
 | `LLM_CHAT_TRUST_PROXY` | `false` | `true` 启用代理信任；`false` 或未设置关闭；其他非空字符串原样作为代理地址/CIDR 规则传给 Fastify |
 | `LLM_CHAT_SERVE_WEB` | `true` | 只能是 `true` 或 `false`；`false` 时 API 不提供 Web 静态文件 |
 | `LLM_CHAT_SHUTDOWN_TIMEOUT_MS` | `30000` | 只能是无前导零的整数，范围 1000 到 300000 毫秒 |
 | `LLM_CHAT_BUILD_ID` | `development` | 1 到 200 个字符的非空单行文本 |
 
-`LLM_CHAT_AUTH_MODE=disabled` 有严格的双重回环限制：监听地址和 `LLM_CHAT_PUBLIC_URL` 的主机名都必须
-是 `localhost`、`::1` 或 `127.0.0.0/8`。例如 `0.0.0.0`、域名公开 URL 或代理后的远程 URL 都会在启动
-前被拒绝。远程访问应使用 `password` 模式，并设置浏览器实际访问的公开 URL。
+`LLM_CHAT_AUTH_MODE=disabled` 只允许监听 `localhost`、`::1` 或 `127.0.0.0/8`。例如 `0.0.0.0` 会在
+启动前被拒绝。不要通过反向代理公开无认证实例；远程访问必须使用 `password` 模式。
 
 若只需要 API，可以显式设置 `LLM_CHAT_SERVE_WEB=false`；此时不要求 Web 入口，`/readyz` 也不会检查
 Web 文件。浏览器 UI 和通常的生产部署应保留 `true`。
@@ -93,8 +90,9 @@ Web 文件。浏览器 UI 和通常的生产部署应保留 `true`。
 
 ## HTTP 边界和探针
 
-浏览器访问的 origin 必须与 `LLM_CHAT_PUBLIC_URL` 一致。服务可以直接监听内网地址，也可以位于反向代理
-之后。密码和会话 Cookie 在纯 HTTP 中可能被截获；需要传输安全时应使用 HTTPS 代理。
+服务可以直接监听内网地址，也可以位于反向代理之后。浏览器写请求通过专用请求头和 Fetch Metadata
+校验抵御跨站请求，不依赖固定公开地址。Web 前端和 API 仍应位于同一 origin；本服务不提供跨域 API。
+密码和会话 Cookie 在纯 HTTP 中可能被截获；需要传输安全时应使用 HTTPS 代理。
 
 管理器应使用以下端点：
 
@@ -211,7 +209,7 @@ Firefox。非本机 HTTP 下普通网页可用，但 Service Worker、PWA 安装
 | --- | --- |
 | 启动报告 Web build artifact missing | 在当前不可变发布目录执行 `pnpm build`，确认 `apps/web/dist/index.html` 存在，并确认 `LLM_CHAT_SERVE_WEB=true` 时管理器使用的是该发布目录。若只运行 API，可显式设为 `false`。 |
 | 报告数据目录被另一个 llm-chat 进程占用 | 检查 `served` 是否有旧副本、端口不同的副本或同一目录的别名进程。先停止并等待旧进程退出；不要删除锁文件绕过保护。 |
-| 报告 disabled auth 只允许回环 | 检查 `LLM_CHAT_AUTH_MODE`、`LLM_CHAT_HOST` 和 `LLM_CHAT_PUBLIC_URL`。远程部署改为 `password`；不要把 disabled auth 暴露给网络。 |
+| 报告 disabled auth 只允许回环 | 检查 `LLM_CHAT_AUTH_MODE` 和 `LLM_CHAT_HOST`。远程部署改为 `password`；不要通过反向代理公开 disabled auth。 |
 | `/healthz` 为 200 但 `/readyz` 为 503 | 这是启动检查失败或关闭排空的预期信号。查看日志中的 `buildId`，确认 SQLite 可读写、Web 入口存在且进程没有收到停止信号；排空时等待进程退出，不要立刻重叠启动。 |
 | 两个探针都无法连接 | 进程可能尚未监听、已退出或管理器已强制终止。检查管理器退出状态和启动日志，再确认端口、发布目录和运行时环境。 |
 | 密码始终错误 | 检查是否使用当前数据目录首次启动时输出的密码。忘记密码时停服并执行离线密码重置。 |

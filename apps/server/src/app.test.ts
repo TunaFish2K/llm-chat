@@ -59,13 +59,13 @@ describe("server API", () => {
     expect(privateProxy.json()).toMatchObject({ error: { code: "image_proxy_private_address" } });
   });
 
-  it("protects password APIs with source, origin, and session checks over HTTP", async () => {
+  it("protects password APIs with request-source and session checks without a configured public origin", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-auth-api-"));
     dirs.push(dir);
     let initialPassword = "";
     const app = await buildApp({
       dataFile: join(dir, "test.sqlite"), logger: false, serveWeb: false,
-      authMode: "password", publicUrl: "http://192.0.2.2",
+      authMode: "password",
       authAnnounce: (message) => { initialPassword = message.match(/\d{8}/)?.[0] ?? ""; },
       skillDiscoveryRoot: join(dir, "agent-skills")
     });
@@ -81,21 +81,27 @@ describe("server API", () => {
     const missingSource = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: initialPassword } });
     expect(missingSource.statusCode).toBe(403);
     expect(missingSource.json()).toMatchObject({ error: { code: "request_header_required" } });
-    const crossOrigin = await app.inject({
-      method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
-      headers: { "x-llm-chat-request": "1", origin: "https://attacker.example" }
-    });
-    expect(crossOrigin.statusCode).toBe(403);
-    expect(crossOrigin.json()).toMatchObject({ error: { code: "origin_mismatch" } });
+    for (const fetchSite of ["cross-site", "same-site"]) {
+      const crossSite = await app.inject({
+        method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
+        headers: {
+          "x-llm-chat-request": "1",
+          "sec-fetch-site": fetchSite,
+          origin: "https://attacker.example"
+        }
+      });
+      expect(crossSite.statusCode).toBe(403);
+      expect(crossSite.json()).toMatchObject({ error: { code: "cross_site_request_rejected" } });
+    }
     const wrong = await app.inject({
       method: "POST", url: "/api/auth/login", payload: { password: "00000000" },
-      headers: { "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { "x-llm-chat-request": "1", "sec-fetch-site": "same-origin", origin: "http://localhost:3000" }
     });
     expect(wrong.statusCode).toBe(401);
     expect(wrong.json()).toMatchObject({ error: { code: "password_invalid" } });
     const login = await app.inject({
       method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
-      headers: { "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { "x-llm-chat-request": "1", "sec-fetch-site": "same-origin", origin: "http://127.0.0.1:3000" }
     });
     expect(login.statusCode).toBe(200);
     expect(login.headers["set-cookie"]).toContain("llm_chat_session=");
@@ -106,12 +112,12 @@ describe("server API", () => {
     expect(authenticated.statusCode).toBe(200);
     const tooShort = await app.inject({
       method: "PUT", url: "/api/auth/password", payload: { password: "short" },
-      headers: { cookie, "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { cookie, "x-llm-chat-request": "1", origin: "http://chat.internal" }
     });
     expect(tooShort.statusCode).toBe(400);
     const changed = await app.inject({
       method: "PUT", url: "/api/auth/password", payload: { password: "new-password-123" },
-      headers: { cookie, "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { cookie, "x-llm-chat-request": "1", origin: "http://chat.internal" }
     });
     expect(changed.statusCode).toBe(200);
     const changedSetCookie = changed.headers["set-cookie"]!;

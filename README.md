@@ -77,8 +77,7 @@ pnpm start
 | `LLM_CHAT_HOST` | `127.0.0.1` | 监听地址 |
 | `LLM_CHAT_PORT` | `3000` | HTTP 端口 |
 | `LLM_CHAT_DATA_DIR` | `./data` | 完整持久化数据目录，路径相对于项目根目录解析 |
-| `LLM_CHAT_AUTH_MODE` | `password` | 认证模式。`disabled` 只允许同时使用回环监听地址和回环公开地址 |
-| `LLM_CHAT_PUBLIC_URL` | `http://localhost:<端口>` | 浏览器实际访问的公开地址，用于校验写请求来源 |
+| `LLM_CHAT_AUTH_MODE` | `password` | 认证模式。`disabled` 只允许使用回环监听地址，且不得通过代理公开 |
 | `LLM_CHAT_TRUST_PROXY` | `false` | `true` 启用代理信任；`false` 或未设置关闭；其他非空字符串原样作为代理地址/CIDR 规则传给 Fastify |
 | `LLM_CHAT_SERVE_WEB` | `true` | 是否提供 `apps/web/dist` 静态文件；设为 `false` 时只运行 API，不要求 Web 产物 |
 | `LLM_CHAT_SHUTDOWN_TIMEOUT_MS` | `30000` | 应用关闭总期限，允许 `1000` 到 `300000` 毫秒；外部管理器宽限期必须更长 |
@@ -91,15 +90,14 @@ LLM_CHAT_HOST=0.0.0.0 \
 LLM_CHAT_PORT=3000 \
 LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
 LLM_CHAT_AUTH_MODE=password \
-LLM_CHAT_PUBLIC_URL=http://192.168.1.10:3000 \
 LLM_CHAT_SERVE_WEB=true \
 LLM_CHAT_SHUTDOWN_TIMEOUT_MS=30000 \
 LLM_CHAT_BUILD_ID=release-2026-09-01 \
 pnpm start
 ```
 
-将示例 IP 改为服务端的内网地址。密码认证允许直接通过 HTTP 访问，但 HTTP 会明文传输密码和会话，
-不防止窃听或中间人攻击。需要传输安全时，仍应在可信反向代理后使用 HTTPS。
+密码认证允许从 localhost、回环 IP、内网 IP 或反向代理域名访问，无需声明公开地址。HTTP 会明文传输
+密码和会话，不防止窃听或中间人攻击。需要传输安全时，仍应在可信反向代理后使用 HTTPS。
 `LLM_CHAT_AUTH_MODE=disabled` 不是远程部署选项。
 
 `/healthz` 是无数据库查询的存活探针，服务监听后返回 HTTP `200` 和 `{ "ok": true, "buildId": "..." }`。
