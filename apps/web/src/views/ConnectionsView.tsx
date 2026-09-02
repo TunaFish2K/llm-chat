@@ -113,11 +113,12 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
               const connectionModels = models.filter((model) => model.connectionId === connection.id);
               return (
                 <div className="card" key={connection.id}>
-                  <h3>
-                    <span>
-                      {connection.name} <span className="tag">{connection.protocol}</span>
-                    </span>
-                    <span className="row">
+                  <header className="management-card-header">
+                    <h3 className="list-row-title">
+                      <strong>{connection.name}</strong>
+                      <span className="tag">{connection.protocol}</span>
+                    </h3>
+                    <div className="list-row-actions">
                       <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>
                         测试连接
                       </button>
@@ -130,8 +131,8 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       <button className="btn small danger" onClick={() => setDeletingConnection(connection)}>
                         删除
                       </button>
-                    </span>
-                  </h3>
+                    </div>
+                  </header>
                   <p className="small muted mono">{connection.baseUrl}</p>
                   <p className="small muted">
                     API Key：{connection.hasApiKey ? "已配置" : "未配置"}

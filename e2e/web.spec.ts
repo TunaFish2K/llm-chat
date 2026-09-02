@@ -344,6 +344,75 @@ test.describe("Agent 管理", () => {
 });
 
 test.describe("设置分区", () => {
+  test("管理列表在宽窄视口中保持操作区对齐", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖布局断点");
+
+    const connection = await api(request, APP_URL, "POST", "/api/connections", {
+      name: `布局测试连接-${unique()}`,
+      protocol: "openai-chat",
+      baseUrl: "http://127.0.0.1:9/v1",
+      secretHeaders: {}
+    });
+
+    const assertActionLayout = async (selector: string, stacked: boolean) => {
+      const report = await page.locator(selector).evaluateAll((groups) => groups.map((group) => {
+        const groupRect = group.getBoundingClientRect();
+        const container = group.parentElement;
+        const content = container?.querySelector(":scope > .list-row-content, :scope > .list-row-title");
+        const contentRect = content?.getBoundingClientRect();
+        return {
+          right: groupRect.right,
+          width: groupRect.width,
+          contentBottom: contentRect?.bottom ?? null,
+          top: groupRect.top,
+          buttons: [...group.querySelectorAll("button, a.btn")].map((button) => ({
+            height: button.getBoundingClientRect().height,
+            whiteSpace: getComputedStyle(button).whiteSpace
+          }))
+        };
+      }));
+
+      expect(report.length).toBeGreaterThan(0);
+      for (const group of report) {
+        expect(group.right).toBeLessThanOrEqual(await page.evaluate(() => window.innerWidth));
+        expect(group.width).toBeGreaterThan(0);
+        for (const button of group.buttons) {
+          expect(button.height).toBeLessThanOrEqual(32);
+          expect(button.whiteSpace).toBe("nowrap");
+        }
+        if (stacked && group.contentBottom !== null) {
+          expect(group.top).toBeGreaterThanOrEqual(group.contentBottom);
+        }
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+        await page.evaluate(() => window.innerWidth)
+      );
+    };
+
+    try {
+      const widths = project === "mobile-chromium" ? [390] : [1728, 1440, 1024, 768, 390];
+      for (const width of widths) {
+        await page.setViewportSize({ width, height: 1000 });
+        await gotoPath(page, "/settings/skills");
+        await expect(page.locator(".list-row-actions").first()).toBeVisible();
+        await assertActionLayout(".list-row .list-row-actions", width <= 900);
+      }
+
+      await page.setViewportSize({ width: 390, height: 1000 });
+      await gotoPath(page, "/agents");
+      await expect(page.locator(".list-row-actions").first()).toBeVisible();
+      await assertActionLayout(".list-row .list-row-actions", true);
+
+      await page.setViewportSize({ width: project === "mobile-chromium" ? 390 : 768, height: 1000 });
+      await gotoPath(page, "/settings/connections");
+      await expect(page.locator(".management-card-header .list-row-actions")).toBeVisible();
+      await assertActionLayout(".management-card-header .list-row-actions", true);
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/connections/${connection.id}`).catch(() => {});
+    }
+  });
+
   test("工具目录与工具设置", async ({ page }) => {
     await gotoPath(page, "/settings/tools");
     await expect(page.getByRole("heading", { name: "工具目录" })).toBeVisible();

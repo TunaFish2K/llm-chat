@@ -138,45 +138,48 @@ export function AgentsView() {
           ) : (
             agents.map((agent) => (
               <div key={agent.id} className="list-row">
-                <button
-                  className="btn ghost"
-                  style={{ padding: 0, border: "none" }}
-                  onClick={() => navigate(routes.agents(agent.id))}
-                  aria-label={`编辑 ${agent.name}`}
-                >
-                  {agent.hasAvatar ? (
-                    <img className="avatar-img" src={`/api/agents/${agent.id}/avatar`} alt="" />
-                  ) : (
-                    <span className="avatar-placeholder" aria-hidden="true">
-                      {agent.name.slice(0, 1)}
-                    </span>
-                  )}
-                </button>
-                <div className="grow">
-                  <div>
-                    <button className="btn ghost" onClick={() => navigate(routes.agents(agent.id))}>
-                      <strong>{agent.name}</strong>
-                    </button>
-                    {agent.protected ? <span className="tag accent">内置</span> : null}
-                    <span className="tag">修订 v{agent.revision}</span>
-                  </div>
-                  <div className="sub">
-                    {agent.description
-                      ? agent.description.slice(0, 120)
-                      : models.find((m) => m.id === agent.modelId)?.displayName ?? "未设置模型"}
+                <div className="list-row-content agent-list-content">
+                  <button
+                    className="btn ghost agent-avatar-button"
+                    onClick={() => navigate(routes.agents(agent.id))}
+                    aria-label={`编辑 ${agent.name}`}
+                  >
+                    {agent.hasAvatar ? (
+                      <img className="avatar-img" src={`/api/agents/${agent.id}/avatar`} alt="" />
+                    ) : (
+                      <span className="avatar-placeholder" aria-hidden="true">
+                        {agent.name.slice(0, 1)}
+                      </span>
+                    )}
+                  </button>
+                  <div className="grow">
+                    <div className="list-row-title">
+                      <button className="btn ghost agent-name-button" onClick={() => navigate(routes.agents(agent.id))}>
+                        <strong>{agent.name}</strong>
+                      </button>
+                      {agent.protected ? <span className="tag accent">内置</span> : null}
+                      <span className="tag">修订 v{agent.revision}</span>
+                    </div>
+                    <div className="sub">
+                      {agent.description
+                        ? agent.description.slice(0, 120)
+                        : models.find((m) => m.id === agent.modelId)?.displayName ?? "未设置模型"}
+                    </div>
                   </div>
                 </div>
-                <a className="btn small" href={`/api/agents/${agent.id}/export?format=json`} download>
-                  导出 JSON
-                </a>
-                <a className="btn small" href={`/api/agents/${agent.id}/export?format=png`} download>
-                  导出 PNG
-                </a>
-                {!agent.protected ? (
-                  <button className="btn small danger" onClick={() => setDeleting(agent.id)}>
-                    删除
-                  </button>
-                ) : null}
+                <div className="list-row-actions">
+                  <a className="btn small" href={`/api/agents/${agent.id}/export?format=json`} download>
+                    导出 JSON
+                  </a>
+                  <a className="btn small" href={`/api/agents/${agent.id}/export?format=png`} download>
+                    导出 PNG
+                  </a>
+                  {!agent.protected ? (
+                    <button className="btn small danger" onClick={() => setDeleting(agent.id)}>
+                      删除
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))
           )}

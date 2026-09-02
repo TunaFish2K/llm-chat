@@ -63,6 +63,66 @@ describe("SettingsView", () => {
     expect(await screen.findByText("主人喜欢咖啡")).toBeInTheDocument();
   });
 
+  it("groups Skill, Plugin and MCP actions outside their content columns", async () => {
+    vi.spyOn(endpoints, "skills").mockResolvedValue([{
+      id: "skill-1",
+      name: "Long Skill",
+      description: "A deliberately long description that must wrap without shrinking its actions.",
+      revision: "1234567890abcdef",
+      sourcePath: "/tmp/skill-1",
+      state: "loaded",
+      error: null,
+      requiredTools: ["workspace_shell"],
+      recommendedApprovals: {},
+      bundled: false,
+      installedAt: 1,
+      updatedAt: 1
+    }]);
+    vi.spyOn(endpoints, "plugins").mockResolvedValue([{
+      id: "plugin-1",
+      manifest: {
+        id: "plugin-1",
+        name: "Long Plugin",
+        version: "1.0.0",
+        apiVersion: 1,
+        entry: "index.mjs",
+        description: "Another long description used to exercise the shared management row.",
+        secretFields: []
+      },
+      revision: "abcdef1234567890",
+      sourcePath: "/tmp/plugin-1",
+      state: "loaded",
+      error: null,
+      config: {},
+      configuredSecretFields: [],
+      installedAt: 1,
+      updatedAt: 1
+    }]);
+    vi.spyOn(endpoints, "mcpServers").mockResolvedValue([{
+      id: "mcp-1",
+      name: "Long MCP",
+      url: "https://example.com/mcp",
+      headerNames: [],
+      enabled: true,
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 1
+    }]);
+
+    for (const [section, name, actionCount] of [
+      ["skills", "Long Skill", 2],
+      ["plugins", "Long Plugin", 4],
+      ["mcp", "Long MCP", 3]
+    ] as const) {
+      const view = render(<SettingsView section={section} />);
+      const title = await screen.findByText(name);
+      const row = title.closest(".list-row");
+      expect(row?.querySelector(":scope > .list-row-content")).toContainElement(title);
+      expect(row?.querySelectorAll(":scope > .list-row-actions .btn")).toHaveLength(actionCount);
+      view.unmount();
+    }
+  });
+
   it("exposes connection and model creation from the embedded settings section", async () => {
     const user = userEvent.setup();
     appStore.set({ connections: [], models: [] });

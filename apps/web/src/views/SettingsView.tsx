@@ -613,9 +613,9 @@ function SkillsSection() {
       ) : (
         skills.map((skill) => (
           <div className="list-row" key={skill.id}>
-            <div className="grow">
-              <div>
-                <strong>{skill.name}</strong>{" "}
+            <div className="list-row-content">
+              <div className="list-row-title">
+                <strong>{skill.name}</strong>
                 <SkillStateTag state={skill.state} />
                 {skill.bundled ? <span className="tag accent">内置</span> : null}
                 <span className="tag mono">{skill.revision.slice(0, 10)}</span>
@@ -626,28 +626,30 @@ function SkillsSection() {
                 <div className="sub">依赖工具：{skill.requiredTools.join(", ")}</div>
               ) : null}
             </div>
-            <button
-              className="btn small"
-              disabled={busy}
-              onClick={() => {
-                setBusy(true);
-                endpoints
-                  .reloadSkill(skill.id)
-                  .then(async () => {
-                    toast("success", "已重新加载");
-                    await load();
-                  })
-                  .catch(toastError)
-                  .finally(() => setBusy(false));
-              }}
-            >
-              重新加载
-            </button>
-            {!skill.bundled ? (
-              <button className="btn small danger" onClick={() => setRemoving(skill)}>
-                删除
+            <div className="list-row-actions">
+              <button
+                className="btn small"
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true);
+                  endpoints
+                    .reloadSkill(skill.id)
+                    .then(async () => {
+                      toast("success", "已重新加载");
+                      await load();
+                    })
+                    .catch(toastError)
+                    .finally(() => setBusy(false));
+                }}
+              >
+                重新加载
               </button>
-            ) : null}
+              {!skill.bundled ? (
+                <button className="btn small danger" onClick={() => setRemoving(skill)}>
+                  删除
+                </button>
+              ) : null}
+            </div>
           </div>
         ))
       )}
@@ -747,9 +749,9 @@ function PluginsSection() {
       ) : (
         plugins.map((plugin) => (
           <div className="list-row" key={plugin.id}>
-            <div className="grow">
-              <div>
-                <strong>{plugin.manifest.name}</strong>{" "}
+            <div className="list-row-content">
+              <div className="list-row-title">
+                <strong>{plugin.manifest.name}</strong>
                 <SkillStateTag state={plugin.state} />
                 <span className="tag mono">v{plugin.manifest.version}</span>
                 <span className="tag mono">{plugin.revision.slice(0, 10)}</span>
@@ -757,42 +759,44 @@ function PluginsSection() {
               <div className="sub">{plugin.manifest.description}</div>
               {plugin.error ? <div className="sub" style={{ color: "var(--danger)" }}>{plugin.error}</div> : null}
             </div>
-            <button className="btn small" onClick={() => setConfiguring(plugin)}>
-              配置
-            </button>
-            <button
-              className="btn small"
-              disabled={busy}
-              onClick={() => {
-                setBusy(true);
-                endpoints
-                  .reloadPlugin(plugin.id)
-                  .then(load)
-                  .catch(toastError)
-                  .finally(() => setBusy(false));
-              }}
-            >
-              重载
-            </button>
-            {plugin.state !== "unloaded" ? (
+            <div className="list-row-actions">
+              <button className="btn small" onClick={() => setConfiguring(plugin)}>
+                配置
+              </button>
               <button
                 className="btn small"
                 disabled={busy}
                 onClick={() => {
                   setBusy(true);
                   endpoints
-                    .unloadPlugin(plugin.id)
+                    .reloadPlugin(plugin.id)
                     .then(load)
                     .catch(toastError)
                     .finally(() => setBusy(false));
                 }}
               >
-                卸载
+                重载
               </button>
-            ) : null}
-            <button className="btn small danger" onClick={() => setRemoving(plugin)}>
-              删除
-            </button>
+              {plugin.state !== "unloaded" ? (
+                <button
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    endpoints
+                      .unloadPlugin(plugin.id)
+                      .then(load)
+                      .catch(toastError)
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  卸载
+                </button>
+              ) : null}
+              <button className="btn small danger" onClick={() => setRemoving(plugin)}>
+                删除
+              </button>
+            </div>
           </div>
         ))
       )}
@@ -951,38 +955,40 @@ function McpSection() {
         ) : (
           servers.map((server) => (
             <div className="list-row" key={server.id}>
-              <div className="grow">
-                <div>
-                  <strong>{server.name}</strong>{" "}
+              <div className="list-row-content">
+                <div className="list-row-title">
+                  <strong>{server.name}</strong>
                   {server.enabled ? <span className="tag ok">已启用</span> : <span className="tag">已停用</span>}
                 </div>
                 <div className="sub mono">{server.url}</div>
                 {server.headerNames.length > 0 ? <div className="sub">请求头：{server.headerNames.join(", ")}</div> : null}
                 {server.lastError ? <div className="sub" style={{ color: "var(--danger)" }}>{server.lastError}</div> : null}
               </div>
-              <button
-                className="btn small"
-                disabled={busy}
-                onClick={() => {
-                  setBusy(true);
-                  endpoints
-                    .testMcpServer(server.id)
-                    .then((result) => {
-                      if (result.ok) toast("success", `连接正常${result.tools !== undefined ? `，${result.tools} 个工具` : ""}`);
-                      else toast("error", result.error ?? "连接失败");
-                    })
-                    .catch(toastError)
-                    .finally(() => setBusy(false));
-                }}
-              >
-                测试
-              </button>
-              <button className="btn small" onClick={() => setEditing(server)}>
-                编辑
-              </button>
-              <button className="btn small danger" onClick={() => setRemoving(server)}>
-                删除
-              </button>
+              <div className="list-row-actions">
+                <button
+                  className="btn small"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    endpoints
+                      .testMcpServer(server.id)
+                      .then((result) => {
+                        if (result.ok) toast("success", `连接正常${result.tools !== undefined ? `，${result.tools} 个工具` : ""}`);
+                        else toast("error", result.error ?? "连接失败");
+                      })
+                      .catch(toastError)
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  测试
+                </button>
+                <button className="btn small" onClick={() => setEditing(server)}>
+                  编辑
+                </button>
+                <button className="btn small danger" onClick={() => setRemoving(server)}>
+                  删除
+                </button>
+              </div>
             </div>
           ))
         )}
