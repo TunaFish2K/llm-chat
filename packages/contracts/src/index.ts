@@ -139,6 +139,7 @@ export const modelInputSchema = z.object({
   modelKey: z.string().trim().min(1).max(200),
   displayName: z.string().trim().min(1).max(200),
   contextWindow: z.number().int().positive().max(10_000_000).nullable(),
+  maxInputTokens: z.number().int().positive().max(10_000_000).nullable().optional(),
   maxOutputTokens: z.number().int().positive().max(1_000_000),
   capabilities: modelCapabilitiesSchema,
   defaultSettings: modelSettingsSchema,
@@ -146,9 +147,41 @@ export const modelInputSchema = z.object({
 });
 export type ModelInput = z.infer<typeof modelInputSchema>;
 
-export interface ModelDto extends ModelInput {
+export const modelCatalogPricingSchema = z.object({
+  input: z.number().nonnegative(),
+  output: z.number().nonnegative(),
+  reasoning: z.number().nonnegative().optional(),
+  cacheRead: z.number().nonnegative().optional(),
+  cacheWrite: z.number().nonnegative().optional(),
+  tiers: z.array(z.object({
+    contextTokens: z.number().int().positive().optional(),
+    input: z.number().nonnegative(),
+    output: z.number().nonnegative(),
+    cacheRead: z.number().nonnegative().optional(),
+    cacheWrite: z.number().nonnegative().optional()
+  })).default([])
+});
+
+export const modelCatalogMetadataSchema = z.object({
+  providerId: z.string().min(1).max(200),
+  modelId: z.string().min(1).max(300),
+  description: z.string().max(20_000).optional(),
+  family: z.string().max(200).optional(),
+  releaseDate: z.string().max(40).optional(),
+  inputModalities: z.array(z.string().max(40)).max(20).default([]),
+  outputModalities: z.array(z.string().max(40)).max(20).default([]),
+  reasoningEfforts: z.array(reasoningEffortSchema).max(20).default([]),
+  pricing: modelCatalogPricingSchema.optional(),
+  fetchedAt: z.number().int().nonnegative()
+});
+export type ModelCatalogMetadata = z.infer<typeof modelCatalogMetadataSchema>;
+
+export interface ModelDto extends Omit<ModelInput, "maxInputTokens"> {
   id: string;
+  maxInputTokens: number | null;
   source: "manual" | "discovered";
+  catalogManaged: boolean;
+  catalogMetadata: ModelCatalogMetadata | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -347,6 +380,19 @@ export interface GeneratedAgentDto {
   revision: number;
 }
 
+export const greetingMessageSchema = z.object({
+  variants: z.array(z.string().max(200_000)).min(1).max(101),
+  activeIndex: z.number().int().nonnegative(),
+  agent: z.object({
+    agentId: z.string().uuid().nullable(),
+    name: z.string().min(1).max(200),
+    revision: z.number().int().positive()
+  })
+}).refine((value) => value.activeIndex < value.variants.length, {
+  message: "activeIndex must reference a greeting variant"
+});
+export type GreetingMessageDto = z.infer<typeof greetingMessageSchema>;
+
 export interface GenerationBlockDto {
   id: string;
   index: number;
@@ -452,6 +498,7 @@ export interface MessageDto {
   generatedModel: GeneratedModelDto | null;
   activeGenerationId: string | null;
   generations: GenerationDto[];
+  greeting: GreetingMessageDto | null;
   createdAt: number;
 }
 
@@ -486,6 +533,11 @@ export const forkConversationSchema = z.discriminatedUnion("mode", [
   z.object({
     mode: z.literal("continue"),
     throughMessageId: z.string().uuid().nullable()
+  }),
+  z.object({
+    mode: z.literal("greeting"),
+    messageId: z.string().uuid(),
+    greetingIndex: z.number().int().nonnegative().max(100)
   })
 ]);
 export type ForkConversationInput = z.infer<typeof forkConversationSchema>;

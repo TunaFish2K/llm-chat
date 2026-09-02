@@ -363,6 +363,45 @@ describe("ChatView", () => {
     ));
   });
 
+  it("switches a persisted greeting by creating a root branch", async () => {
+    const user = userEvent.setup();
+    const greeting = makeMessage({
+      id: "greeting-1",
+      text: "第一条开场白",
+      greeting: {
+        variants: ["第一条开场白", "第二条开场白"],
+        activeIndex: 0,
+        agent: { agentId: "agent-1", name: "测试助手", revision: 1 }
+      }
+    });
+    const branch = makeConversation({
+      id: "conv-greeting",
+      forkedFrom: { conversationId: "conv-1", messageId: greeting.id }
+    });
+    seedStore([greeting]);
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/conversations/conv-1/forks" && init?.method === "POST") {
+        return Promise.resolve(json({ conversation: branch, generation: null }, 201));
+      }
+      if (url === "/api/conversations") return Promise.resolve(json([makeConversation(), branch]));
+      if (url === "/api/conversations/conv-greeting/messages") return Promise.resolve(json([]));
+      if (url === "/api/conversations/conv-1/messages") return Promise.resolve(json([greeting]));
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatView conversationId="conv-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "下一条开场白" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/conversations/conv-1/forks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ mode: "greeting", messageId: "greeting-1", greetingIndex: 1 })
+      })
+    ));
+    await waitFor(() => expect(window.location.pathname).toBe("/c/conv-greeting"));
+  });
+
   it("undoes the last turn by branching from the prior assistant", async () => {
     const user = userEvent.setup();
     const messages = [
@@ -475,7 +514,7 @@ describe("ChatView", () => {
   it("uses the selected Agent identity on a new conversation", () => {
     seedStore([]);
     render(<ChatView conversationId={null} />);
-    expect(screen.getByRole("heading", { name: "测试助手" })).toBeInTheDocument();
-    expect(screen.getByText("测试用 Agent")).toBeInTheDocument();
+    expect(document.querySelector(".greeting-preview .msg-identity strong")).toHaveTextContent("测试助手");
+    expect(screen.getByText("你好！")).toBeInTheDocument();
   });
 });

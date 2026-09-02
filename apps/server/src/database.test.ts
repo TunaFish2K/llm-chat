@@ -161,6 +161,108 @@ describe("Store", () => {
     store.close();
   });
 
+  it("snapshots alternate greetings and switches them through an immutable root branch", () => {
+    const store = createStore();
+    const { model } = seedModel(store);
+    const settings = store.getSettings();
+    const agent = store.getAgent(settings.defaultAgentId)!;
+    const updated = store.updateAgent(agent.id, {
+      card: {
+        ...agent.card,
+        data: {
+          ...agent.card.data,
+          first_mes: "你好，{{user}}。",
+          alternate_greetings: ["欢迎来到 {{char}} 的世界。"]
+        }
+      }
+    })!;
+    store.updateSettings({ userProfile: { displayName: "旅行者", description: "" } });
+
+    const started = store.startConversation({
+      text: "开始",
+      agentId: updated.id,
+      greetingIndex: 1,
+      executionOverrides: { modelId: model.id },
+      workspacePath: null
+    });
+    store.finishGeneration(started.generation.generationId, "completed", { stopReason: "stop" });
+    const sourceGreeting = store.listMessages(started.conversation.id)[0]!;
+    expect(sourceGreeting).toMatchObject({
+      role: "assistant",
+      text: "欢迎来到 默认助手 的世界。",
+      greeting: {
+        activeIndex: 1,
+        variants: ["你好，旅行者。", "欢迎来到 默认助手 的世界。"],
+        agent: { agentId: updated.id, revision: updated.revision }
+      }
+    });
+
+    const fork = store.forkConversation(started.conversation.id, {
+      mode: "greeting",
+      messageId: sourceGreeting.id,
+      greetingIndex: 0
+    });
+    expect(fork.generation).toBeNull();
+    expect(fork.conversation.forkedFrom).toEqual({
+      conversationId: started.conversation.id,
+      messageId: sourceGreeting.id
+    });
+    expect(store.listMessages(fork.conversation.id)).toEqual([
+      expect.objectContaining({ text: "你好，旅行者。", greeting: expect.objectContaining({ activeIndex: 0 }) })
+    ]);
+    expect(store.listMessages(started.conversation.id)).toHaveLength(3);
+    store.close();
+  });
+
+  it("keeps catalog-managed models current until a manual metadata edit locks them", () => {
+    const store = createStore();
+    const { connection, model } = seedModel(store);
+    const metadata = {
+      providerId: "mock",
+      modelId: "mock-model",
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      reasoningEfforts: [],
+      fetchedAt: 1
+    };
+    const discovered = store.upsertDiscoveredModel({
+      ...model,
+      contextWindow: 8_192,
+      maxInputTokens: 7_000,
+      maxOutputTokens: 512
+    }, metadata);
+    expect(discovered.status).toBe("skipped");
+
+    const managedInput = {
+      ...model,
+      connectionId: connection.id,
+      modelKey: "catalog-model",
+      displayName: "Catalog Model",
+      contextWindow: 8_192,
+      maxInputTokens: 7_000,
+      maxOutputTokens: 512
+    };
+    const created = store.upsertDiscoveredModel(managedInput, metadata);
+    expect(created).toMatchObject({ status: "created", model: { catalogManaged: true, maxInputTokens: 7_000 } });
+    expect(store.upsertDiscoveredModel({
+      ...managedInput,
+      contextWindow: null,
+      maxInputTokens: null,
+      maxOutputTokens: 4_096
+    }, null).status).toBe("skipped");
+    expect(store.getModel(created.model.id)).toMatchObject({
+      contextWindow: 8_192,
+      maxInputTokens: 7_000,
+      catalogMetadata: metadata
+    });
+    expect(store.updateModel(created.model.id, { enabled: false })?.catalogManaged).toBe(true);
+    expect(store.updateModel(created.model.id, { contextWindow: 4_096 })?.catalogManaged).toBe(false);
+    expect(store.upsertDiscoveredModel({ ...managedInput, contextWindow: 16_384 }, metadata).status).toBe("skipped");
+    expect(store.restoreCatalogModel(created.model.id, { ...managedInput, contextWindow: 16_384 }, metadata))
+      .toMatchObject({ catalogManaged: true, contextWindow: 16_384, enabled: false });
+    store.close();
+  });
+
   it("migrates v1 data and backfills conversation and generation model fields", () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-v1-"));
     dirs.push(dir);
@@ -189,7 +291,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -248,7 +350,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -284,7 +386,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -686,7 +788,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

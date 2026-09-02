@@ -23,7 +23,8 @@ import {
   startConversationSchema,
   toolApprovalInputSchema,
   toolSettingsInputSchema,
-  type GenerationEvent
+  type GenerationEvent,
+  type ModelDto
 } from "@llm-chat/contracts";
 import { adapterFor, ProviderError } from "@llm-chat/providers";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -43,6 +44,7 @@ import { AuthError, AuthManager, type AuthIdentity } from "./auth";
 import { compactConversationContext, ContextError } from "./context";
 import { ImageService } from "./images";
 import { VisionService } from "./vision";
+import { ModelCatalogService } from "./model-catalog";
 
 export type AuthMode = "password" | "disabled";
 
@@ -94,6 +96,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   }));
   if (authMode === "password") await auth.ensurePassword();
   const balanceService = new BalanceService();
+  const modelCatalog = new ModelCatalogService();
   const eventHub = new EventHub();
   const taskManager = new TaskManager(store, eventHub);
   const pluginManager = new PluginManager(store, eventHub);
@@ -386,11 +389,26 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const connection = store.getConnection(request.params.id);
     if (!connection) throw new StoreError("connection_not_found", "连接不存在");
     const discovered = await adapterFor(connection.protocol).listModels(connection, AbortSignal.timeout(15_000));
-    const existing = new Set(store.listModels(connection.id).map((model) => model.modelKey));
-    const created = discovered
-      .filter((model) => !existing.has(model.id))
-      .map((model) => store.createModel(defaultModel(connection.id, connection.protocol, model.id, model.displayName), "discovered"));
-    return { discovered: discovered.length, created };
+    const enrichment = await modelCatalog.enrich(connection, discovered);
+    const created: ModelDto[] = [];
+    const updated: ModelDto[] = [];
+    let skipped = 0;
+    let unmatched = 0;
+    for (const item of enrichment.models) {
+      if (!item.matched) unmatched += 1;
+      const result = store.upsertDiscoveredModel(item.input, item.catalogMetadata);
+      if (result.status === "created") created.push(result.model);
+      else if (result.status === "updated") updated.push(result.model);
+      else skipped += 1;
+    }
+    return {
+      discovered: discovered.length,
+      created,
+      updated,
+      skipped,
+      unmatched,
+      warnings: enrichment.warning ? [enrichment.warning] : []
+    };
   });
 
   app.get<{ Querystring: { connectionId?: string } }>("/api/models", async (request) => {
@@ -406,6 +424,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const result = store.updateModel(request.params.id, value);
     if (!result) throw new StoreError("model_not_found", "模型不存在");
     return result;
+  });
+  app.post<{ Params: { id: string } }>("/api/models/:id/catalog/restore", async (request) => {
+    const model = store.getModel(request.params.id);
+    if (!model) throw new StoreError("model_not_found", "模型不存在");
+    const connection = store.getConnection(model.connectionId);
+    if (!connection) throw new StoreError("connection_not_found", "连接不存在");
+    const enriched = await modelCatalog.enrichOne(connection, model.modelKey, model.modelKey);
+    if (!enriched?.catalogMetadata) {
+      throw new StoreError("model_catalog_match_not_found", "models.dev 中没有找到可信的模型匹配");
+    }
+    return store.restoreCatalogModel(model.id, enriched.input, enriched.catalogMetadata)!;
   });
   app.delete<{ Params: { id: string } }>("/api/models/:id", async (request, reply) => {
     if (!store.deleteModel(request.params.id)) throw new StoreError("model_not_found", "模型不存在");
@@ -656,33 +685,6 @@ async function userOperation<T>(code: string, operation: () => T | Promise<T>): 
     if (error instanceof StoreError) throw error;
     throw new StoreError(code, error instanceof Error ? error.message : "操作失败");
   }
-}
-
-function defaultModel(connectionId: string, protocol: "openai-responses" | "openai-chat" | "anthropic-messages", modelKey: string, displayName: string) {
-  const anthropic = protocol === "anthropic-messages";
-  const responses = protocol === "openai-responses";
-  return {
-    connectionId,
-    modelKey,
-    displayName,
-    contextWindow: null,
-    maxOutputTokens: 4096,
-    capabilities: {
-      imageInput: false,
-      tools: true,
-      temperature: true,
-      topP: true,
-      reasoning: responses || anthropic,
-      reasoningSummary: responses,
-      adaptiveThinking: anthropic,
-      manualThinking: anthropic
-    },
-    defaultSettings: {
-      common: { maxOutputTokens: 4096, stopSequences: [] },
-      protocol: {}
-    },
-    enabled: true
-  };
 }
 
 function isStreamEnd(status: string): boolean {

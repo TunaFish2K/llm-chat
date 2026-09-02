@@ -324,9 +324,9 @@ test.describe("Agent 管理", () => {
     await page.getByRole("button", { name: "保存修改" }).click();
     await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
 
-    // Tool policy table lists catalog entries.
+    // Tool policy controls remain directly operable in desktop and compact layouts.
     await page.getByRole("tab", { name: "工具" }).click();
-    await expect(page.getByRole("columnheader", { name: "审批" })).toBeVisible();
+    await expect(page.getByRole("group", { name: /审批策略/ }).first()).toBeVisible();
 
     // Back to list and delete.
     await page.getByRole("button", { name: "返回列表" }).click();
@@ -452,7 +452,7 @@ test.describe("设置分区", () => {
     await page.getByRole("button", { name: "关闭对话框" }).click();
 
     const skillToolRow = page.locator(".tool-catalog-table tbody tr").filter({ hasText: "use_skill" });
-    await expect(skillToolRow.getByRole("checkbox")).toBeVisible();
+    await expect(skillToolRow.getByRole("switch")).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
       await page.evaluate(() => window.innerWidth)
     );

@@ -526,6 +526,15 @@
   flex-wrap: wrap;
 }
 
+.greeting-footer {
+  justify-content: flex-start;
+  margin-top: 2px;
+}
+
+.greeting-preview {
+  width: 100%;
+}
+
 .stream-actions {
   display: flex;
   align-items: center;
@@ -646,7 +655,16 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.composer-tool-scroll {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .chip {
@@ -1092,6 +1110,27 @@
 
   .composer {
     padding-inline: var(--space-3);
+  }
+
+  .composer-tool-scroll {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    touch-action: pan-x;
+  }
+
+  .composer-tool-scroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  .composer-tool-scroll > * {
+    flex: 0 0 auto;
+  }
+
+  .composer-hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tool-override-row {

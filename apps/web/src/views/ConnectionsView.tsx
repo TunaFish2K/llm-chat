@@ -10,9 +10,9 @@ import type {
 } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { appStore, refreshConnectionsAndModels, toast, toastError } from "../lib/app-state";
-import { formatTime } from "../lib/format";
+import { formatTime, formatTokens } from "../lib/format";
 import { useStore } from "../lib/store";
-import { ConfirmModal, EmptyState, Field, Modal } from "../lib/ui";
+import { ConfirmModal, EmptyState, Field, Modal, Switch } from "../lib/ui";
 
 const PROTOCOLS: ProviderProtocol[] = ["openai-responses", "openai-chat", "anthropic-messages"];
 
@@ -75,7 +75,14 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     try {
       const result = await endpoints.discoverModels(connection.id);
       await refreshConnectionsAndModels();
-      toast("success", `发现 ${result.discovered} 个模型，新增 ${result.created.length} 个`);
+      const details = [
+        `发现 ${result.discovered}`,
+        `新增 ${result.created.length}`,
+        `更新 ${result.updated.length}`,
+        `保留手动配置 ${result.skipped}`,
+        `目录未匹配 ${result.unmatched}`
+      ];
+      toast(result.warnings.length > 0 ? "info" : "success", `${details.join("，")}。${result.warnings.join("；")}`);
     } catch (error) {
       toastError(error);
     } finally {
@@ -178,19 +185,27 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                         {connectionModels.map((model) => (
                           <tr key={model.id}>
                             <td>
-                              <div>{model.displayName}</div>
+                              <div className="list-row-title">
+                                <span>{model.displayName}</span>
+                                {model.catalogManaged ? <span className="tag ok">自动维护</span> : null}
+                              </div>
                               <div className="small muted mono">{model.modelKey}</div>
                             </td>
-                            <td>{model.contextWindow ?? "—"}</td>
+                            <td>
+                              <div>{formatTokens(model.contextWindow ?? undefined)}</div>
+                              <div className="small muted">
+                                输入 {formatTokens(model.maxInputTokens ?? undefined)} · 输出 {formatTokens(model.maxOutputTokens)}
+                              </div>
+                            </td>
                             <td>{model.source === "discovered" ? "发现" : "手动"}</td>
                             <td>
-                              <input
-                                type="checkbox"
-                                aria-label={`启用 ${model.displayName}`}
+                              <Switch
+                                label={`启用 ${model.displayName}`}
+                                hideLabel
                                 checked={model.enabled}
-                                onChange={(event) => {
+                                onChange={(checked) => {
                                   endpoints
-                                    .updateModel(model.id, { enabled: event.target.checked })
+                                    .updateModel(model.id, { enabled: checked })
                                     .then(() => refreshConnectionsAndModels())
                                     .catch(toastError);
                                 }}
@@ -482,6 +497,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
   const [modelKey, setModelKey] = useState(model?.modelKey ?? "");
   const [displayName, setDisplayName] = useState(model?.displayName ?? "");
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");
+  const [maxInputTokens, setMaxInputTokens] = useState(model?.maxInputTokens?.toString() ?? "");
   const [maxOutputTokens, setMaxOutputTokens] = useState(String(model?.maxOutputTokens ?? 4096));
   const [capabilities, setCapabilities] = useState<ModelCapabilities>(
     model?.capabilities ?? {
@@ -509,6 +525,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
         modelKey: modelKey.trim(),
         displayName: displayName.trim(),
         contextWindow: contextWindow === "" ? null : Number(contextWindow),
+        maxInputTokens: maxInputTokens === "" ? null : Number(maxInputTokens),
         maxOutputTokens: Number(maxOutputTokens) || 4096,
         capabilities,
         defaultSettings: {
@@ -533,6 +550,22 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
     }
   };
 
+  const restoreCatalog = async () => {
+    if (!model) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await endpoints.restoreModelCatalog(model.id);
+      await refreshConnectionsAndModels();
+      toast("success", "已恢复目录托管并刷新模型参数");
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "恢复目录托管失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       title={model ? `编辑模型 ${model.displayName}` : "手动添加模型"}
@@ -540,6 +573,11 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
       wide
       footer={
         <>
+          {model && !model.catalogManaged ? (
+            <button className="btn" disabled={busy} onClick={() => void restoreCatalog()}>
+              恢复目录托管
+            </button>
+          ) : null}
           <button className="btn" onClick={onClose}>
             取消
           </button>
@@ -557,6 +595,23 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
         <p role="alert" style={{ color: "var(--danger)" }}>
           {error}
         </p>
+      ) : null}
+      {model ? (
+        <div className="model-management-note" data-managed={model.catalogManaged || undefined}>
+          <div>
+            <strong>{model.catalogManaged ? "自动维护模型参数" : "当前使用手动参数"}</strong>
+            <span>
+              {model.catalogManaged
+                ? model.catalogMetadata
+                  ? "参数来自 models.dev。保存下面的技术参数会转为手动配置，后续发现不会覆盖。"
+                  : "暂未匹配目录记录；重新发现时会继续尝试。保存参数后将转为手动配置。"
+                : model.catalogMetadata
+                  ? "可恢复目录托管，重新采用 models.dev 的能力、限制和价格数据。"
+                  : "该模型尚未匹配到目录记录。"}
+            </span>
+          </div>
+          <span className={`tag ${model.catalogManaged ? "ok" : ""}`}>{model.catalogManaged ? "自动" : "手动"}</span>
+        </div>
       ) : null}
       <div className="grid-2">
         <Field label="所属连接">
@@ -590,7 +645,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           onChange={(event) => setModelKey(event.target.value)}
         />
       </Field>
-      <div className="grid-2">
+      <div className="grid-3">
         <Field label="上下文窗口" hint="留空表示未知。">
           <input
             className="input"
@@ -598,6 +653,15 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
             aria-label="上下文窗口"
             value={contextWindow}
             onChange={(event) => setContextWindow(event.target.value)}
+          />
+        </Field>
+        <Field label="最大输入 token" hint="留空时按上下文窗口计算。">
+          <input
+            className="input"
+            type="number"
+            aria-label="最大输入 token"
+            value={maxInputTokens}
+            onChange={(event) => setMaxInputTokens(event.target.value)}
           />
         </Field>
         <Field label="最大输出 token">
@@ -610,6 +674,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           />
         </Field>
       </div>
+      {model?.catalogMetadata ? <ModelCatalogDetails model={model} /> : null}
       <Field label="能力">
         <div>
           {CAPABILITY_LABELS.map(([key, label]) => (
@@ -650,5 +715,34 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
         </Field>
       </div>
     </Modal>
+  );
+}
+
+function ModelCatalogDetails({ model }: { model: ModelDto }) {
+  const metadata = model.catalogMetadata;
+  if (!metadata) return null;
+  const pricing = metadata.pricing;
+  return (
+    <details className="model-catalog-details">
+      <summary>模型目录详情</summary>
+      <dl className="catalog-detail-grid">
+        <div><dt>目录标识</dt><dd className="mono">{metadata.providerId} / {metadata.modelId}</dd></div>
+        <div><dt>系列与发布</dt><dd>{metadata.family ?? "—"} · {metadata.releaseDate ?? "—"}</dd></div>
+        <div><dt>输入模态</dt><dd>{metadata.inputModalities.join("、") || "—"}</dd></div>
+        <div><dt>输出模态</dt><dd>{metadata.outputModalities.join("、") || "—"}</dd></div>
+        <div className="detail-grid-wide"><dt>推理档位</dt><dd>{metadata.reasoningEfforts.join("、") || "目录未声明"}</dd></div>
+        {metadata.description ? <div className="detail-grid-wide"><dt>说明</dt><dd>{metadata.description}</dd></div> : null}
+        {pricing ? (
+          <div className="detail-grid-wide">
+            <dt>价格（每百万 token）</dt>
+            <dd>
+              输入 ${pricing.input} · 输出 ${pricing.output}
+              {pricing.cacheRead !== undefined ? ` · 缓存读取 $${pricing.cacheRead}` : ""}
+              {pricing.cacheWrite !== undefined ? ` · 缓存写入 $${pricing.cacheWrite}` : ""}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </details>
   );
 }

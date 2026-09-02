@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { errorMessage, fileToBase64, formatBytes, formatTime, formatTokens } from "./format";
+import { errorMessage, fileToBase64, formatBytes, formatCachedTokens, formatTime, formatTokens } from "./format";
 
 describe("format helpers", () => {
   it("formats absent and scaled values", () => {
@@ -13,6 +13,9 @@ describe("format helpers", () => {
     expect(formatBytes(12)).toBe("12 B");
     expect(formatBytes(2048)).toBe("2.0 KiB");
     expect(formatBytes(2 * 1024 * 1024)).toBe("2.0 MiB");
+    expect(formatCachedTokens(40, 100)).toBe("40 tokens（40%）");
+    expect(formatCachedTokens(2, 1_000)).toBe("2 tokens（0.2%）");
+    expect(formatCachedTokens(40, undefined)).toBe("40 tokens");
   });
 
   it("normalizes errors", () => {

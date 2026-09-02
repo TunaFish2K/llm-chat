@@ -344,3 +344,32 @@ img {
   overflow-y: hidden;
   padding-bottom: 2px;
 }
+
+.markdown [data-llm-section="content"],
+.markdown [data-llm-section="status"] {
+  display: block;
+  min-width: 0;
+}
+
+.markdown [data-llm-section="status"] {
+  margin-top: 1em;
+}
+
+.markdown [data-llm-section="status"] p + p,
+.markdown [data-llm-section="status"] details + p,
+.markdown [data-llm-section="status"] p + details {
+  margin-top: 0.55em;
+}
+
+.markdown details {
+  margin: 0.55em 0;
+}
+
+.markdown summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.markdown small {
+  color: var(--text-muted);
+}

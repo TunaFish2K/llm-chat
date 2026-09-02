@@ -25,7 +25,7 @@ import {
 } from "../lib/haptics";
 import { linkClick, routes } from "../lib/router";
 import { useStore } from "../lib/store";
-import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Modal } from "../lib/ui";
+import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Modal, Switch } from "../lib/ui";
 import { ConnectionsView } from "./ConnectionsView";
 import { DirectoryPicker } from "../components/DirectoryPicker";
 import { OverflowText } from "../components/OverflowText";
@@ -455,22 +455,19 @@ function ToolsSection() {
             onOpen={() => setDetail({ kind: "text", title: "Skill 目录路径", text: settings.skillsPath })}
           />
         </div>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={settings.workspaceShellEnabled}
-            onChange={(event) => {
-              setSettings({ ...settings, workspaceShellEnabled: event.target.checked });
+        <Switch
+          label="启用工作区 Shell 工具"
+          checked={settings.workspaceShellEnabled}
+          onChange={(checked) => {
+              setSettings({ ...settings, workspaceShellEnabled: checked });
               endpoints
-                .updateToolSettings({ workspaceShellEnabled: event.target.checked })
+                .updateToolSettings({ workspaceShellEnabled: checked })
                 .catch((cause) => {
                   toastError(cause);
                   void load();
                 });
-            }}
-          />
-          启用工作区 Shell 工具
-        </label>
+          }}
+        />
       </div>
 
       <div className="card">
@@ -579,12 +576,12 @@ function ToolsSection() {
                     )}
                   </td>
                   <td className="tool-meta-cell" data-label="启用">
-                    <input
-                      type="checkbox"
-                      aria-label={`启用工具 ${tool.label}`}
+                    <Switch
+                      label={`启用工具 ${tool.label}`}
+                      hideLabel
                       checked={settings.enabled[tool.name] ?? true}
                       disabled={!tool.available}
-                      onChange={(event) => toggleTool(tool.name, event.target.checked)}
+                      onChange={(checked) => toggleTool(tool.name, checked)}
                     />
                   </td>
                 </tr>
@@ -648,7 +645,6 @@ function SkillsSection() {
   const [skills, setSkills] = useState<SkillDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installPath, setInstallPath] = useState("");
-  const [removing, setRemoving] = useState<SkillDto | null>(null);
   const [inspecting, setInspecting] = useState<SkillDto | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -766,33 +762,11 @@ function SkillsSection() {
               >
                 重新加载
               </button>
-              {!skill.bundled ? (
-                <button className="btn small danger" onClick={() => setRemoving(skill)}>
-                  删除
-                </button>
-              ) : null}
             </div>
           </div>
         ))
       )}
       {inspecting ? <SkillDetailModal skill={inspecting} onClose={() => setInspecting(null)} /> : null}
-      {removing ? (
-        <ConfirmModal
-          title={`删除 Skill ${removing.name}`}
-          message="删除后引用该 Skill 的 Agent 将无法再使用它。"
-          confirmLabel="删除"
-          danger
-          onClose={() => setRemoving(null)}
-          onConfirm={() => {
-            const target = removing;
-            setRemoving(null);
-            endpoints
-              .removeSkill(target.id)
-              .then(load)
-              .catch(toastError);
-          }}
-        />
-      ) : null}
     </div>
   );
 }

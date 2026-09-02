@@ -3,7 +3,7 @@ import type { AgentInput } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { appStore, refreshAgents, toast, toastError } from "../lib/app-state";
 import { fileToBase64 } from "../lib/format";
-import { navigate, routes } from "../lib/router";
+import { linkClick, navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, Modal } from "../lib/ui";
 
@@ -137,13 +137,14 @@ export function AgentsView() {
             <EmptyState title="还没有 Agent" hint="新建一个 Agent 或导入 Character Card（JSON / PNG）。" />
           ) : (
             agents.map((agent) => (
-              <div key={agent.id} className="list-row">
-                <div className="list-row-content agent-list-content">
-                  <button
-                    className="btn ghost agent-avatar-button"
-                    onClick={() => navigate(routes.agents(agent.id))}
-                    aria-label={`编辑 ${agent.name}`}
-                  >
+              <div key={agent.id} className="list-row agent-list-row">
+                <a
+                  className="agent-card-main"
+                  href={routes.agents(agent.id)}
+                  onClick={linkClick(routes.agents(agent.id))}
+                  aria-label={`编辑 ${agent.name}`}
+                >
+                  <div className="agent-list-content">
                     {agent.hasAvatar ? (
                       <img className="avatar-img" src={`/api/agents/${agent.id}/avatar`} alt="" />
                     ) : (
@@ -151,12 +152,9 @@ export function AgentsView() {
                         {agent.name.slice(0, 1)}
                       </span>
                     )}
-                  </button>
-                  <div className="grow">
+                    <div className="grow">
                     <div className="list-row-title">
-                      <button className="btn ghost agent-name-button" onClick={() => navigate(routes.agents(agent.id))}>
-                        <strong>{agent.name}</strong>
-                      </button>
+                      <strong className="agent-name-button">{agent.name}</strong>
                       {agent.protected ? <span className="tag accent">内置</span> : null}
                       <span className="tag">修订 v{agent.revision}</span>
                     </div>
@@ -166,7 +164,8 @@ export function AgentsView() {
                         : models.find((m) => m.id === agent.modelId)?.displayName ?? "未设置模型"}
                     </div>
                   </div>
-                </div>
+                  </div>
+                </a>
                 <div className="list-row-actions">
                   <a className="btn small" href={`/api/agents/${agent.id}/export?format=json`} download>
                     导出 JSON

@@ -192,7 +192,7 @@ describe("SettingsView", () => {
     }]);
 
     for (const [section, name, actionCount] of [
-      ["skills", "Long Skill", 2],
+      ["skills", "Long Skill", 1],
       ["plugins", "Long Plugin", 4],
       ["mcp", "Long MCP", 3]
     ] as const) {
