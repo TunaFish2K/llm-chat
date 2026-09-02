@@ -1,0 +1,346 @@
+/* Reset, typography, shared utilities and rendered-markdown styling. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  /* The shell owns every scroll container; the document itself never scrolls. */
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  height: 100%;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  margin: 0;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+}
+
+h1 { font-size: var(--text-2xl); }
+h2 { font-size: var(--text-xl); }
+h3 { font-size: var(--text-lg); }
+h4 { font-size: var(--text-md); }
+
+p { margin: 0; }
+
+a {
+  color: var(--link);
+  text-decoration-color: rgb(127 182 232 / 35%);
+  text-underline-offset: 2px;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+img {
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* Scrollbars ------------------------------------------------------------ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-color: var(--border-strong);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Utilities ------------------------------------------------------------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.muted { color: var(--text-muted); }
+.faint { color: var(--text-faint); }
+.small { font-size: var(--text-sm); }
+.tiny { font-size: var(--text-xs); }
+.grow { flex: 1 1 auto; min-width: 0; }
+.danger-text { color: var(--err); }
+.mono { font-family: var(--font-mono); }
+.nowrap { white-space: nowrap; }
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* Secondary line under a row title, used across every management list. */
+.sub {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.hint {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+/* Explanatory text that belongs to the checkbox above it. */
+.checkbox-copy {
+  margin: -2px 0 0 26px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/* A wrapper that exists only for markup symmetry; the parent owns scrolling. */
+.page-scroll {
+  display: contents;
+}
+
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+.icon-btn-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fade-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .spinner,
+  .spin {
+    animation: spin 1.6s linear infinite !important;
+  }
+}
+
+/* Rendered markdown ----------------------------------------------------- */
+
+.markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.markdown > * + * {
+  margin-top: 0.7em;
+}
+
+.markdown p {
+  margin: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin-top: 1.1em;
+  line-height: 1.35;
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0;
+  padding-left: 1.4em;
+}
+
+.markdown li + li {
+  margin-top: 0.25em;
+}
+
+.markdown blockquote {
+  margin: 0;
+  padding: 2px 0 2px var(--space-3);
+  border-left: 2px solid var(--accent-line);
+  color: var(--text-muted);
+}
+
+.markdown code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--surface-3);
+}
+
+.markdown pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+
+.markdown pre code {
+  padding: 0;
+  background: none;
+}
+
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.markdown th {
+  background: var(--surface-2);
+}
+
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.markdown img {
+  border-radius: var(--radius-md);
+}
+
+.markdown-image-link {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px 0 12px;
+}
+
+.markdown-image-link img {
+  display: block;
+  max-width: min(100%, 720px);
+  max-height: 72vh;
+  border: 1px solid var(--border);
+  object-fit: contain;
+}
+
+.image-unavailable {
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+
+.markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 2px;
+}
