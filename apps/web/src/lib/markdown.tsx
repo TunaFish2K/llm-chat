@@ -1,8 +1,11 @@
 import { memo, useMemo, type ComponentProps, type ReactNode } from "react";
-import { Streamdown, type Components } from "streamdown";
+import { Streamdown, type Components, type StreamdownProps } from "streamdown";
 import { cjk } from "@streamdown/cjk";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import { harden } from "rehype-harden";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
@@ -66,19 +69,124 @@ function SafeImage({ src, alt = "", ...props }: ComponentProps<"img">) {
   );
 }
 
-const markdownComponents = { a: SafeLink, img: SafeImage } as unknown as Components;
+const SAFE_TAGS = ["div", "span", "small", "details", "summary"];
+type SanitizeSchema = NonNullable<Parameters<typeof rehypeSanitize>[0]>;
 
-/** Streaming-safe GFM, math and highlighted code. Raw HTML is never enabled. */
+const safeHtmlSchema: SanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), ...SAFE_TAGS],
+  attributes: {
+    ...defaultSchema.attributes,
+    "*": [...(defaultSchema.attributes?.["*"] ?? []), "style"],
+    div: [...(defaultSchema.attributes?.div ?? []), "dataLlmSection"],
+    details: [...(defaultSchema.attributes?.details ?? []), "open"]
+  }
+};
+
+const SAFE_STYLE_PROPERTIES = new Set([
+  "color", "background-color", "border", "border-top", "border-right", "border-bottom", "border-left",
+  "border-color", "border-style", "border-width", "border-radius", "padding", "padding-top", "padding-right",
+  "padding-bottom", "padding-left", "margin", "margin-top", "margin-right", "margin-bottom", "margin-left",
+  "font-family", "font-size", "font-weight", "font-style", "text-align", "text-decoration", "list-style-type"
+]);
+
+function safeStyleValue(property: string, value: string): boolean {
+  if (!value || value.length > 120 || /url\s*\(|expression\s*\(|var\s*\(|javascript:|@import|[{}\\]/i.test(value)) return false;
+  if (!/^[\w\s#(),.%'"+\-\/]+$/.test(value)) return false;
+  if (property === "text-align") return ["left", "right", "center", "justify", "start", "end"].includes(value);
+  if (property === "font-style") return ["normal", "italic", "oblique"].includes(value);
+  if (property === "font-weight") return /^(normal|bold|[1-9]00)$/.test(value);
+  if (property === "list-style-type") return /^(disc|circle|square|decimal|lower-alpha|upper-alpha|none)$/.test(value);
+  if (property === "font-size") {
+    const match = /^(\d+(?:\.\d+)?)(px|em|rem|%)$/.exec(value);
+    if (!match) return false;
+    const amount = Number(match[1]);
+    return match[2] === "px" ? amount >= 10 && amount <= 32
+      : match[2] === "%" ? amount >= 60 && amount <= 200
+      : amount >= 0.6 && amount <= 2;
+  }
+  for (const match of value.matchAll(/(-?\d+(?:\.\d+)?)(px|em|rem|%)/g)) {
+    const amount = Math.abs(Number(match[1]));
+    if ((match[2] === "px" && amount > 64) || ((match[2] === "em" || match[2] === "rem") && amount > 4) ||
+      (match[2] === "%" && amount > 100)) return false;
+  }
+  return true;
+}
+
+export function sanitizeInlineStyle(value: string): string {
+  return value.split(";").flatMap((declaration) => {
+    const separator = declaration.indexOf(":");
+    if (separator < 1) return [];
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const candidate = declaration.slice(separator + 1).trim();
+    return SAFE_STYLE_PROPERTIES.has(property) && safeStyleValue(property, candidate)
+      ? [`${property}: ${candidate}`]
+      : [];
+  }).join("; ");
+}
+
+function rehypeSafeInlineStyles() {
+  return (tree: unknown) => {
+    const visit = (node: unknown): void => {
+      if (!node || typeof node !== "object") return;
+      const current = node as { properties?: Record<string, unknown>; children?: unknown[] };
+      if (current.properties && typeof current.properties.style === "string") {
+        const style = sanitizeInlineStyle(current.properties.style);
+        if (style) current.properties.style = style;
+        else delete current.properties.style;
+      }
+      current.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+const markdownComponents = {
+  a: SafeLink,
+  img: SafeImage
+} as unknown as Components;
+
+/** Converts common Character Card wrappers into block elements before HTML parsing. */
+export function normalizeRichHtmlTags(value: string): string {
+  const transform = (source: string) => source
+    .replace(/<\s*content\s*>/gi, '<div data-llm-section="content">')
+    .replace(/<\s*\/\s*content\s*>/gi, "</div>")
+    .replace(/<\s*statusblock\s*>/gi, '<div data-llm-section="status">')
+    .replace(/<\s*\/\s*statusblock\s*>/gi, "</div>");
+  let result = "";
+  let cursor = 0;
+  for (const match of value.matchAll(CODE)) {
+    result += transform(value.slice(cursor, match.index)) + match[0];
+    cursor = match.index + match[0].length;
+  }
+  return result + transform(value.slice(cursor));
+}
+
+const richHtmlPlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
+  rehypeRaw,
+  rehypeSafeInlineStyles,
+  [rehypeSanitize, safeHtmlSchema],
+  [harden, {
+    allowedImagePrefixes: ["*"],
+    allowedLinkPrefixes: ["*"],
+    allowedProtocols: ["http", "https", "mailto"],
+    allowDataImages: false
+  }],
+  [rehypeKatex, { strict: false, trust: false }]
+];
+
+/** Streaming-safe GFM, math, highlighted code, and sanitized model-authored HTML. */
 export const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
-  const content = useMemo(() => normalizeMarkdown(text), [text]);
+  const content = useMemo(() => normalizeRichHtmlTags(normalizeMarkdown(text)), [text]);
   return (
     <div className="markdown" data-streaming={streaming || undefined}>
       <Streamdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, { strict: false, trust: false }]]}
+        rehypePlugins={richHtmlPlugins}
         plugins={{ cjk }}
         controls={{ code: true, mermaid: false }}
         isAnimating={streaming}
+        normalizeHtmlIndentation
         components={markdownComponents}
       >
         {content}

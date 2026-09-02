@@ -18,9 +18,11 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { AgentAvatar } from "../components/chat/atoms";
 import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
-import { MessageItem } from "../components/chat/MessageStream";
+import { MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
+import { greetingOptions } from "../components/chat/model";
 import { EditForkDialog, UndoDialog } from "../components/chat/dialogs";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
+import { Markdown } from "../lib/markdown";
 
 const TrajectoryView = lazy(() => import("./TrajectoryView").then((module) => ({ default: module.TrajectoryView })));
 const ConversationTasksView = lazy(() =>
@@ -69,6 +71,8 @@ export function ChatView({
   const [undoOpen, setUndoOpen] = useState(false);
   const [branching, setBranching] = useState(false);
   const [compacting, setCompacting] = useState(false);
+  const [newGreetingIndex, setNewGreetingIndex] = useState(0);
+  const [previewAgentId, setPreviewAgentId] = useState<string | null>(null);
   const scroller = useStickToBottom([messages], view === "chat");
 
   const busy = Boolean(
@@ -83,6 +87,8 @@ export function ChatView({
 
   useEffect(() => {
     setLoadError(null);
+    setNewGreetingIndex(0);
+    setPreviewAgentId(null);
     scroller.reset();
     if (!conversationId) return;
     let active = true;
@@ -188,7 +194,11 @@ export function ChatView({
             >
               <div className="chat-thread">
                 {!conversationId ? (
-                  <NewConversationWelcome />
+                  <NewConversationWelcome
+                    agentId={previewAgentId}
+                    greetingIndex={newGreetingIndex}
+                    onGreetingIndexChange={setNewGreetingIndex}
+                  />
                 ) : loadError ? (
                   <ErrorState message={loadError} onRetry={() => readMessages(conversationId)} />
                 ) : messages === null ? (
@@ -205,6 +215,11 @@ export function ChatView({
                         onInspect,
                         onEdit: setEditingMessage,
                         onContinue: continueFrom,
+                        onGreetingFork: (message, greetingIndex) => void forkConversation({
+                          mode: "greeting",
+                          messageId: message.id,
+                          greetingIndex
+                        }),
                         branching: branching || busy
                       }}
                     />
@@ -224,7 +239,14 @@ export function ChatView({
               </button>
             ) : null}
           </div>
-          <Composer conversation={conversation} onInspect={onInspect} onBeforeSend={() => scroller.toBottom()} />
+          <Composer
+            conversation={conversation}
+            onInspect={onInspect}
+            onBeforeSend={() => scroller.toBottom()}
+            greetingIndex={newGreetingIndex}
+            onGreetingIndexChange={setNewGreetingIndex}
+            onPreviewAgentChange={setPreviewAgentId}
+          />
         </>
       )}
 
@@ -257,13 +279,52 @@ export function ChatView({
 }
 
 /** The pre-send state doubles as the Agent's own introduction. */
-function NewConversationWelcome() {
+function NewConversationWelcome({
+  agentId,
+  greetingIndex,
+  onGreetingIndexChange
+}: {
+  agentId: string | null;
+  greetingIndex: number;
+  onGreetingIndexChange: (index: number) => void;
+}) {
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
   const selected =
+    agents.find((agent) => agent.id === agentId) ??
     agents.find((agent) => agent.id === settings?.lastAgentId) ??
     agents.find((agent) => agent.id === settings?.defaultAgentId) ??
     agents[0];
+  const greetings = selected && settings ? greetingOptions(selected, settings) : [];
+  const activeIndex = Math.max(0, greetings.findIndex((item) => item.sourceIndex === greetingIndex));
+  const greeting = greetings[activeIndex];
+  if (selected && greeting) {
+    return (
+      <article className="msg greeting-preview" data-role="assistant">
+        <div className="msg-head">
+          <AgentAvatar agent={selected} label={selected.name} />
+          <div className="msg-identity">
+            <strong>{selected.name}</strong>
+            <span>开场白</span>
+          </div>
+        </div>
+        <Markdown text={greeting.text} />
+        {greetings.length > 1 ? (
+          <footer className="stream-footer greeting-footer">
+            <VersionSwitcher
+              label="开场白切换"
+              index={activeIndex}
+              total={greetings.length}
+              onChange={(index) => {
+                const option = greetings[index];
+                if (option) onGreetingIndexChange(option.sourceIndex);
+              }}
+            />
+          </footer>
+        ) : null}
+      </article>
+    );
+  }
   return (
     <div className="welcome">
       <AgentAvatar agent={selected} size="large" label={selected?.name ?? "新会话"} />

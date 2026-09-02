@@ -6,6 +6,8 @@
  * unit tested) on their own.
  */
 import type {
+  AgentSummaryDto,
+  AppSettings,
   ContextPolicy,
   ConversationExecutionOverrides,
   GenerationDto,
@@ -26,6 +28,24 @@ export const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "
 
 /** Stable identity so store selectors do not re-render on every read. */
 export const EMPTY_MESSAGES: MessageDto[] = [];
+
+export interface GreetingOption {
+  sourceIndex: number;
+  text: string;
+}
+
+/** Mirrors the server-side Character Card substitutions used when a greeting is persisted. */
+export function greetingOptions(agent: AgentSummaryDto, settings: AppSettings | null): GreetingOption[] {
+  const userName = agent.userProfile.displayName ?? settings?.userProfile.displayName ?? "User";
+  return [agent.firstMessage, ...agent.alternateGreetings]
+    .map((text, sourceIndex) => ({
+      sourceIndex,
+      text: text
+        .replace(/\{\{char\}\}|<BOT>/gi, agent.name)
+        .replace(/\{\{user\}\}|<USER>/gi, userName)
+    }))
+    .filter((item) => item.text.trim().length > 0);
+}
 
 export type TimelineEntry =
   | { kind: "block"; stepIndex: number; index: number; block: ContentBlock }

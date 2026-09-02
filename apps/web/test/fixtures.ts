@@ -84,6 +84,7 @@ export function makeModel(patch: Partial<ModelDto> = {}): ModelDto {
     modelKey: "gpt-test",
     displayName: "GPT 测试",
     contextWindow: 128_000,
+    maxInputTokens: null,
     maxOutputTokens: 8_192,
     capabilities: {
       imageInput: false,
@@ -98,6 +99,8 @@ export function makeModel(patch: Partial<ModelDto> = {}): ModelDto {
     defaultSettings: { common: { maxOutputTokens: 8_192, stopSequences: [] }, protocol: {} },
     enabled: true,
     source: "manual",
+    catalogManaged: false,
+    catalogMetadata: null,
     createdAt: 1,
     updatedAt: 1,
     ...patch
@@ -140,6 +143,7 @@ export function makeMessage(patch: Partial<MessageDto> = {}): MessageDto {
     attachments: [],
     activeGenerationId: null,
     generations: [],
+    greeting: null,
     createdAt: 2,
     ...patch
   };

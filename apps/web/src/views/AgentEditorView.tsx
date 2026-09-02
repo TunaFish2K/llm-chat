@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import type {
   AgentDto,
   ApprovalPolicy,
@@ -15,7 +16,7 @@ import { appStore, refreshAgents, toast, toastError } from "../lib/app-state";
 import { fileToBase64 } from "../lib/format";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
-import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState } from "../lib/ui";
+import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Switch } from "../lib/ui";
 
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
@@ -201,14 +202,71 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           onChange={(event) => setField("first_mes", event.target.value)}
         />
       </Field>
-      <Field label="备选开场白" hint="每行一条，新会话可选择不同开场白。">
-        <textarea
-          className="textarea"
-          aria-label="备选开场白"
-          value={data.alternate_greetings.join("\n")}
-          onChange={(event) => setField("alternate_greetings", event.target.value.split("\n"))}
-        />
-      </Field>
+      <div className="field greeting-editor">
+        <div className="field-heading">
+          <div>
+            <label>备选开场白</label>
+            <span className="hint">每条可包含多行；新会话中可预览和切换。</span>
+          </div>
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => setField("alternate_greetings", [...data.alternate_greetings, ""])}
+          >
+            <Plus size={15} aria-hidden="true" />新增
+          </button>
+        </div>
+        {data.alternate_greetings.length === 0 ? (
+          <p className="small muted">尚未添加备选开场白。</p>
+        ) : (
+          <div className="greeting-editor-list">
+            {data.alternate_greetings.map((greeting, index) => (
+              <div className="greeting-editor-item" key={index}>
+                <div className="greeting-editor-item-header">
+                  <span>备选 {index + 1}</span>
+                  <div className="row compact">
+                    <button
+                      type="button"
+                      className="btn ghost icon"
+                      title="上移"
+                      aria-label={`上移备选开场白 ${index + 1}`}
+                      disabled={index === 0}
+                      onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                        itemIndex === index - 1 ? greeting : itemIndex === index ? data.alternate_greetings[index - 1] : item
+                      ))}
+                    ><ArrowUp size={15} /></button>
+                    <button
+                      type="button"
+                      className="btn ghost icon"
+                      title="下移"
+                      aria-label={`下移备选开场白 ${index + 1}`}
+                      disabled={index === data.alternate_greetings.length - 1}
+                      onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                        itemIndex === index + 1 ? greeting : itemIndex === index ? data.alternate_greetings[index + 1] : item
+                      ))}
+                    ><ArrowDown size={15} /></button>
+                    <button
+                      type="button"
+                      className="btn ghost icon danger"
+                      title="删除"
+                      aria-label={`删除备选开场白 ${index + 1}`}
+                      onClick={() => setField("alternate_greetings", data.alternate_greetings.filter((_, itemIndex) => itemIndex !== index))}
+                    ><Trash2 size={15} /></button>
+                  </div>
+                </div>
+                <textarea
+                  className="textarea"
+                  aria-label={`备选开场白 ${index + 1}`}
+                  value={greeting}
+                  onChange={(event) => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                    itemIndex === index ? event.target.value : item
+                  ))}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <Field label="对话示例" htmlFor="agent-mes-example">
         <textarea
           id="agent-mes-example"
@@ -395,6 +453,11 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
   const models = useStore(appStore, (s) => s.models);
   const execution = agent.execution;
   const generation = execution.generation ?? {};
+  const selectedModel = models.find((model) => model.id === execution.modelId);
+  const advertisedReasoning = selectedModel?.catalogMetadata?.reasoningEfforts ?? [];
+  const reasoningLevels = advertisedReasoning.length > 0
+    ? [...new Set([...advertisedReasoning, execution.reasoningEffort])]
+    : REASONING_LEVELS;
 
   const setExecution = (patch: Partial<AgentDto["execution"]>) =>
     mutate((draft) => {
@@ -464,7 +527,7 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
               value={execution.reasoningEffort}
               onChange={(event) => setExecution({ reasoningEffort: event.target.value as ReasoningEffort })}
             >
-              {REASONING_LEVELS.map((level) => (
+              {reasoningLevels.map((level) => (
                 <option key={level} value={level}>
                   {level}
                 </option>
@@ -615,15 +678,12 @@ function ToolsTab({
   return (
     <div className="card">
       <h3>工具策略</h3>
-      <label className="checkbox-row">
-        <input
-          type="checkbox"
-          checked={tools.defaultEnabled}
-          onChange={(event) => setTools({ defaultEnabled: event.target.checked })}
-        />
-        默认启用所有工具
-      </label>
-      <table className="table" style={{ marginTop: 12 }}>
+      <Switch
+        label="默认启用所有工具"
+        checked={tools.defaultEnabled}
+        onChange={(checked) => setTools({ defaultEnabled: checked })}
+      />
+      <table className="table agent-policy-table" style={{ marginTop: 12 }}>
         <thead>
           <tr>
             <th>工具</th>
@@ -643,56 +703,66 @@ function ToolsTab({
                   <div>{tool.label}</div>
                   <div className="small muted mono">{tool.name}</div>
                 </td>
-                <td>
-                  <select
-                    className="select"
-                    aria-label={`${tool.label} 启用策略`}
+                <td data-label="启用">
+                  <PolicySelector
+                    label={`${tool.label} 启用策略`}
                     value={enabled === undefined ? "default" : enabled ? "on" : "off"}
-                    onChange={(event) => {
-                      const value = event.target.value;
+                    options={[["default", "默认"], ["on", "启用"], ["off", "停用"]]}
+                    onChange={(value) => {
                       setOverride("overrides", tool.name, value === "default" ? null : value === "on");
                     }}
-                  >
-                    <option value="default">默认</option>
-                    <option value="on">启用</option>
-                    <option value="off">停用</option>
-                  </select>
+                  />
                 </td>
-                <td>
-                  <select
-                    className="select"
-                    aria-label={`${tool.label} 直接性`}
+                <td data-label="直接性">
+                  <PolicySelector
+                    label={`${tool.label} 直接性`}
                     value={direct === undefined ? "default" : direct ? "direct" : "lazy"}
-                    onChange={(event) => {
-                      const value = event.target.value;
+                    options={[["default", "默认"], ["direct", "直接"], ["lazy", "惰性"]]}
+                    onChange={(value) => {
                       setOverride("directOverrides", tool.name, value === "default" ? null : value === "direct");
                     }}
-                  >
-                    <option value="default">默认</option>
-                    <option value="direct">直接</option>
-                    <option value="lazy">惰性</option>
-                  </select>
+                  />
                 </td>
-                <td>
-                  <select
-                    className="select"
-                    aria-label={`${tool.label} 审批策略`}
+                <td data-label="审批">
+                  <PolicySelector
+                    label={`${tool.label} 审批策略`}
                     value={approval ?? "default"}
-                    onChange={(event) => {
-                      const value = event.target.value as ApprovalPolicy;
+                    options={[["default", "默认"], ["always", "每次"], ["never", "免审"]]}
+                    onChange={(value) => {
                       setApproval(tool.name, value === "default" ? null : value);
                     }}
-                  >
-                    <option value="default">默认</option>
-                    <option value="always">每次审批</option>
-                    <option value="never">自动允许</option>
-                  </select>
+                  />
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function PolicySelector<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: Array<[T, string]>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="policy-segmented" role="group" aria-label={label}>
+      {options.map(([option, text]) => (
+        <button
+          type="button"
+          key={option}
+          aria-pressed={value === option}
+          onClick={() => onChange(option)}
+        >{text}</button>
+      ))}
     </div>
   );
 }
@@ -713,14 +783,19 @@ function SkillsTab({
       {skills.length === 0 ? (
         <EmptyState title="没有可用 Skill" hint="在设置中安装或发现 Skill。" />
       ) : (
-        skills.map((skill) => (
-          <label key={skill.id} className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={enabled.has(skill.id)}
-              disabled={skill.state === "error" || skill.state === "unloaded"}
-              onChange={(event) => {
-                const checked = event.target.checked;
+        <div className="agent-skill-list">
+          {skills.map((skill) => (
+            <div key={skill.id} className="agent-skill-row">
+              <div className="agent-skill-copy">
+                <strong>{skill.name}</strong>
+                <span>{skill.description || "无描述"}</span>
+              </div>
+              <Switch
+                label={`启用 ${skill.name}`}
+                hideLabel
+                checked={enabled.has(skill.id)}
+                disabled={skill.state === "error" || skill.state === "unloaded"}
+                onChange={(checked) => {
                 mutate((draft) => {
                   const next = new Set(draft.execution.enabledSkillIds);
                   if (checked) next.add(skill.id);
@@ -728,12 +803,10 @@ function SkillsTab({
                   draft.execution.enabledSkillIds = [...next];
                 });
               }}
-            />
-            <span>
-              {skill.name} <span className="small muted">{skill.description}</span>
-            </span>
-          </label>
-        ))
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

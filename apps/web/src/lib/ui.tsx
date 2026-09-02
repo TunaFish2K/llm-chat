@@ -60,6 +60,34 @@ export function Field({
   );
 }
 
+export function Switch({
+  label,
+  checked,
+  disabled = false,
+  hideLabel = false,
+  onChange
+}: {
+  label: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  hideLabel?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`switch-control${disabled ? " disabled" : ""}`}>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="switch-track" aria-hidden="true"><span /></span>
+      <span className={hideLabel ? "sr-only" : "switch-label"}>{label}</span>
+    </label>
+  );
+}
+
 export function Modal({
   title,
   onClose,

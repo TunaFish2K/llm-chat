@@ -11,6 +11,7 @@ import {
   forkConversationSchema,
   generationSettingsSchema,
   generationStatusSchema,
+  greetingMessageSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
   modelCapabilitiesSchema,
@@ -142,7 +143,9 @@ describe("contract schemas", () => {
       connectionId: uuid, modelKey: "model", displayName: "Model", contextWindow: null,
       maxOutputTokens: 1, capabilities: {}, defaultSettings: { common: { maxOutputTokens: 1 } }
     };
-    expect(modelInputSchema.parse(base)).toMatchObject({ enabled: true, contextWindow: null });
+    expect(modelInputSchema.parse({ ...base, maxInputTokens: 64_000 })).toMatchObject({
+      enabled: true, contextWindow: null, maxInputTokens: 64_000
+    });
     for (const patch of [
       { connectionId: "bad" }, { modelKey: " " }, { displayName: "x".repeat(201) },
       { contextWindow: 0 }, { contextWindow: 10_000_001 }, { maxOutputTokens: 0 }
@@ -170,6 +173,11 @@ describe("contract schemas", () => {
       .toEqual({ mode: "edit", messageId: uuid, text: "changed", imageAssetIds: [] });
     expect(forkConversationSchema.parse({ mode: "continue", throughMessageId: null }))
       .toEqual({ mode: "continue", throughMessageId: null });
+    expect(forkConversationSchema.parse({ mode: "greeting", messageId: uuid, greetingIndex: 2 }))
+      .toEqual({ mode: "greeting", messageId: uuid, greetingIndex: 2 });
+    expect(greetingMessageSchema.parse({
+      variants: ["你好", "欢迎"], activeIndex: 1, agent: { agentId: uuid, name: "Agent", revision: 3 }
+    })).toMatchObject({ activeIndex: 1, variants: ["你好", "欢迎"] });
     for (const input of [{ text: " " }, { text: "x".repeat(1_000_001) }]) {
       expect(sendMessageSchema.safeParse(input).success).toBe(false);
     }

@@ -16,7 +16,7 @@ import {
 import type { GenerationDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, toastError, trackGeneration } from "../../lib/app-state";
-import { formatTime, formatTokens } from "../../lib/format";
+import { formatCachedTokens, formatTime, formatTokens } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
 import { Markdown } from "../../lib/markdown";
 import { useStore } from "../../lib/store";
@@ -28,6 +28,7 @@ export interface StreamCallbacks {
   onInspect: (target: InspectionTarget) => void;
   onEdit: (message: MessageDto) => void;
   onContinue: (messageId: string) => void;
+  onGreetingFork: (message: MessageDto, greetingIndex: number) => void;
   /** True while a fork or a generation is in flight; blocks branching actions. */
   branching: boolean;
 }
@@ -45,7 +46,8 @@ export function MessageItem({
   const agents = useStore(appStore, (state) => state.agents);
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
   const generation = message.role === "assistant" ? activeGeneration(message) : null;
-  const agent = agents.find((item) => item.id === generation?.generatedAgent?.agentId);
+  const generatedAgent = message.greeting?.agent ?? generation?.generatedAgent;
+  const agent = agents.find((item) => item.id === generatedAgent?.agentId);
 
   if (message.role === "user") {
     return (
@@ -68,11 +70,13 @@ export function MessageItem({
   return (
     <article className="msg" data-role="assistant">
       <div className="msg-head">
-        <AgentAvatar agent={agent} label={generation?.generatedAgent?.name ?? "AI"} />
+        <AgentAvatar agent={agent} label={generatedAgent?.name ?? "AI"} />
         <div className="msg-identity">
-          <strong>{generation?.generatedAgent?.name ?? "助手"}</strong>
+          <strong>{generatedAgent?.name ?? "助手"}</strong>
           <span>
-            {message.generatedModel
+            {message.greeting
+              ? "开场白"
+              : message.generatedModel
               ? `${message.generatedModel.connectionName} / ${message.generatedModel.displayName}`
               : "历史回复"}
           </span>
@@ -88,7 +92,20 @@ export function MessageItem({
           callbacks={callbacks}
         />
       ) : message.text ? (
-        <Markdown text={message.text} />
+        <>
+          <Markdown text={message.text} />
+          {message.greeting && message.greeting.variants.length > 1 ? (
+            <footer className="stream-footer greeting-footer">
+              <VersionSwitcher
+                label="开场白切换"
+                index={message.greeting.activeIndex}
+                total={message.greeting.variants.length}
+                disabled={callbacks.branching}
+                onChange={(index) => callbacks.onGreetingFork(message, index)}
+              />
+            </footer>
+          ) : null}
+        </>
       ) : (
         <p className="muted">（无生成内容）</p>
       )}
@@ -245,33 +262,15 @@ function GenerationTimeline({
             <Settings2 size={14} />
           </MessageAction>
           {message.generations.length > 1 ? (
-            <span className="version-switch" aria-label="生成版本切换">
-              <button
-                type="button"
-                aria-label="上一版本"
-                disabled={versionIndex <= 0}
-                onClick={() => {
-                  const item = message.generations[versionIndex - 1];
-                  if (item) void selectVersion(item.id);
-                }}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span>
-                {versionIndex + 1} / {message.generations.length}
-              </span>
-              <button
-                type="button"
-                aria-label="下一版本"
-                disabled={versionIndex >= message.generations.length - 1}
-                onClick={() => {
-                  const item = message.generations[versionIndex + 1];
-                  if (item) void selectVersion(item.id);
-                }}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </span>
+            <VersionSwitcher
+              label="生成版本切换"
+              index={versionIndex}
+              total={message.generations.length}
+              onChange={(index) => {
+                const item = message.generations[index];
+                if (item) void selectVersion(item.id);
+              }}
+            />
           ) : null}
         </div>
 
@@ -280,12 +279,48 @@ function GenerationTimeline({
           {generation.usage.outputTokens !== undefined ? <span>↓ {formatTokens(generation.usage.outputTokens)}</span> : null}
           {generation.usage.totalTokens !== undefined ? <span>合计 {formatTokens(generation.usage.totalTokens)}</span> : null}
           {generation.usage.cachedInputTokens !== undefined ? (
-            <span>缓存 {formatTokens(generation.usage.cachedInputTokens)}</span>
+            <span>缓存 {formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens).replace(" tokens", "")}</span>
           ) : null}
           {generation.completedAt ? <span>{Math.max(0, generation.completedAt - generation.createdAt)} ms</span> : null}
         </button>
       </footer>
     </div>
+  );
+}
+
+export function VersionSwitcher({
+  label,
+  index,
+  total,
+  disabled = false,
+  onChange
+}: {
+  label: string;
+  index: number;
+  total: number;
+  disabled?: boolean;
+  onChange: (index: number) => void;
+}) {
+  return (
+    <span className="version-switch" aria-label={label}>
+      <button
+        type="button"
+        aria-label={`上一${label.includes("开场白") ? "条开场白" : "版本"}`}
+        disabled={disabled || index <= 0}
+        onClick={() => onChange(index - 1)}
+      >
+        <ChevronLeft size={14} />
+      </button>
+      <span>{index + 1} / {total}</span>
+      <button
+        type="button"
+        aria-label={`下一${label.includes("开场白") ? "条开场白" : "版本"}`}
+        disabled={disabled || index >= total - 1}
+        onClick={() => onChange(index + 1)}
+      >
+        <ChevronRight size={14} />
+      </button>
+    </span>
   );
 }
 

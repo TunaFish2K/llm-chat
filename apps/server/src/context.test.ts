@@ -116,7 +116,10 @@ describe("context builder", () => {
     const invalid = store.updateModel(seeded.model.id, { contextWindow: 300 })!;
     await expect(buildContext(store, record, invalid, connection, new AbortController().signal))
       .rejects.toMatchObject({ code: "context_budget_invalid" });
-    const small = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
+    const inputLimited = store.updateModel(seeded.model.id, { contextWindow: 8_192, maxInputTokens: 200 })!;
+    await expect(buildContext(store, record, inputLimited, connection, new AbortController().signal))
+      .rejects.toMatchObject({ code: "context_budget_invalid" });
+    const small = store.updateModel(seeded.model.id, { contextWindow: 512, maxInputTokens: null })!;
     await expect(buildContext(store, record, small, connection, new AbortController().signal))
       .rejects.toMatchObject({ code: "message_too_large" });
     store.close();

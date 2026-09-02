@@ -211,13 +211,21 @@ export const endpoints = {
     api.get<ConnectionBalanceDto>(`/api/connections/${id}/balance${refresh ? "?refresh=1" : ""}`),
   testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`),
   discoverModels: (id: string) =>
-    api.post<{ discovered: number; created: ModelDto[] }>(`/api/connections/${id}/models/discover`),
+    api.post<{
+      discovered: number;
+      created: ModelDto[];
+      updated: ModelDto[];
+      skipped: number;
+      unmatched: number;
+      warnings: string[];
+    }>(`/api/connections/${id}/models/discover`),
 
   models: (connectionId?: string) =>
     api.get<ModelDto[]>(`/api/models${connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : ""}`),
   createModel: (input: ModelInput) => api.post<ModelDto>("/api/models", input),
   updateModel: (id: string, patch: Partial<ModelInput>) => api.patch<ModelDto>(`/api/models/${id}`, patch),
   deleteModel: (id: string) => api.delete<undefined>(`/api/models/${id}`),
+  restoreModelCatalog: (id: string) => api.post<ModelDto>(`/api/models/${id}/catalog/restore`, {}),
 
   conversations: () => api.get<ConversationDto[]>("/api/conversations"),
   createConversation: (input: {

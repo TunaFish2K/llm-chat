@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import {
   Bot,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   FolderOpen,
   Gauge,
   ImagePlus,
@@ -32,7 +30,7 @@ import { useStore } from "../../lib/store";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
-import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, prettyJson, shortPath } from "./model";
+import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson, shortPath } from "./model";
 import { ModelPicker } from "./ModelPicker";
 
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
@@ -49,11 +47,17 @@ const DRAFT_DEBOUNCE_MS = 500;
 export function Composer({
   conversation,
   onInspect,
-  onBeforeSend
+  onBeforeSend,
+  greetingIndex,
+  onGreetingIndexChange,
+  onPreviewAgentChange
 }: {
   conversation: ConversationDto | null;
   onInspect: (target: InspectionTarget) => void;
   onBeforeSend: () => void;
+  greetingIndex: number;
+  onGreetingIndexChange: (index: number) => void;
+  onPreviewAgentChange: (agentId: string | null) => void;
 }) {
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
@@ -67,7 +71,6 @@ export function Composer({
   const [newAgentId, setNewAgentId] = useState<string | null>(null);
   const [newOverrides, setNewOverrides] = useState<ConversationExecutionOverrides>({});
   const [newWorkspace, setNewWorkspace] = useState<string | null>(null);
-  const [greetingIndex, setGreetingIndex] = useState(0);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const [editingOverrides, setEditingOverrides] = useState(false);
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
@@ -94,7 +97,8 @@ export function Composer({
     setNewAgentId(null);
     setNewOverrides({});
     setNewWorkspace(settings?.lastWorkspacePath ?? null);
-    setGreetingIndex(0);
+    onGreetingIndexChange(0);
+    onPreviewAgentChange(null);
   }, [conversation?.id]);
 
   /* Effective execution context — conversation wins, then local pre-send state. */
@@ -117,8 +121,20 @@ export function Composer({
     effectiveModel?.capabilities.imageInput || (visionModel?.enabled && visionModel.capabilities.imageInput)
   );
   const reasoning = overrides.reasoningEffort ?? effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none";
+  const advertisedReasoning = effectiveModel?.catalogMetadata?.reasoningEfforts ?? [];
+  const reasoningLevels = advertisedReasoning.length > 0
+    ? [...new Set([...advertisedReasoning, ...(overrides.reasoningEffort ? [overrides.reasoningEffort] : [])])]
+    : REASONING_LEVELS;
   const workspace = conversation?.workspacePath ?? newWorkspace;
-  const greetings = effectiveAgent ? [effectiveAgent.firstMessage, ...effectiveAgent.alternateGreetings].filter(Boolean) : [];
+  const greetings = effectiveAgent && settings ? greetingOptions(effectiveAgent, settings) : [];
+
+  useEffect(() => {
+    if (!isNew) return;
+    onPreviewAgentChange(effectiveAgent?.id ?? null);
+    if (greetings.length && !greetings.some((item) => item.sourceIndex === greetingIndex)) {
+      onGreetingIndexChange(greetings[0]!.sourceIndex);
+    }
+  }, [isNew, effectiveAgent?.id, greetingIndex, greetings.length]);
 
   const active = messages
     .flatMap((message) => message.generations.map((generation) => ({ message, generation })))
@@ -177,7 +193,10 @@ export function Composer({
     if (!conversation) {
       setNewAgentId(agentId);
       setNewOverrides({});
-      setGreetingIndex(0);
+      const selected = agents.find((item) => item.id === agentId);
+      const firstGreeting = selected && settings ? greetingOptions(selected, settings)[0]?.sourceIndex ?? 0 : 0;
+      onGreetingIndexChange(firstGreeting);
+      onPreviewAgentChange(agentId);
       return;
     }
     try {
@@ -339,30 +358,6 @@ export function Composer({
             }
           }}
         >
-          {isNew && greetings.length > 1 ? (
-            <div className="greeting-switch">
-              <button
-                type="button"
-                disabled={greetingIndex === 0}
-                onClick={() => setGreetingIndex((value) => value - 1)}
-                aria-label="上一条开场白"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              <span>
-                开场白 {greetingIndex + 1} / {greetings.length}
-              </span>
-              <button
-                type="button"
-                disabled={greetingIndex >= greetings.length - 1}
-                onClick={() => setGreetingIndex((value) => value + 1)}
-                aria-label="下一条开场白"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          ) : null}
-
           {pendingApprovals.length && conversation ? (
             <ApprovalCard
               conversationId={conversation.id}
@@ -418,7 +413,8 @@ export function Composer({
               ) : null}
 
               <div className="composer-tools">
-                <label className="chip chip-select">
+                <div className="composer-tool-scroll">
+                  <label className="chip chip-select">
                   <Bot size={15} aria-hidden="true" />
                   <select
                     aria-label="选择 Agent"
@@ -433,7 +429,7 @@ export function Composer({
                     ))}
                   </select>
                   <ChevronDown size={13} aria-hidden="true" />
-                </label>
+                  </label>
 
                 <ModelPicker
                   effectiveModelId={effectiveModelId}
@@ -454,7 +450,7 @@ export function Composer({
                     onChange={(event) => chooseReasoning(event.target.value)}
                   >
                     <option value={INHERIT}>跟随 Agent · {reasoning}</option>
-                    {REASONING_LEVELS.map((level) => (
+                    {reasoningLevels.map((level) => (
                       <option key={level} value={level}>
                         {level}
                       </option>
@@ -507,7 +503,7 @@ export function Composer({
                   {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
                 </button>
 
-                <span className="grow" />
+                </div>
 
                 {generating && active ? (
                   <button

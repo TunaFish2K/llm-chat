@@ -41,6 +41,7 @@ describe("InspectorPanel", () => {
     expect(screen.getByText("生成 v1")).toBeInTheDocument();
     expect(screen.getByText("100 tokens")).toBeInTheDocument();
     expect(screen.getByText("20 tokens")).toBeInTheDocument();
+    expect(screen.getByText("40 tokens（40%）")).toBeInTheDocument();
     expect(screen.getByText("上下文决策")).toBeInTheDocument();
     expect(screen.getByText("有效设置")).toBeInTheDocument();
   });

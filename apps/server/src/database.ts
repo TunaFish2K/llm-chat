@@ -27,6 +27,7 @@ import type {
   GeneratedModelDto,
   ImageAssetDto,
   MessageDto,
+  ModelCatalogMetadata,
   ModelDto,
   ModelInput,
   ModelSettings,
@@ -48,11 +49,14 @@ import {
   characterCardV2Schema,
   conversationExecutionOverridesSchema,
   generationSettingsSchema,
+  greetingMessageSchema,
+  modelCatalogMetadataSchema,
   modelCapabilitiesSchema,
   modelSettingsSchema,
   reasoningEffortSchema
 } from "@llm-chat/contracts";
 import { processStartIdentity } from "./background-tasks";
+import { fallbackModel } from "./model-catalog";
 
 export interface ConnectionRecord extends ConnectionDto {
   apiKey: string;
@@ -310,7 +314,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 19) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 20) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -819,6 +823,21 @@ function migrate(sqlite: DatabaseSyncType): void {
         WHERE id = 1 AND trim(default_system_prompt) = ''
       `).run(DEFAULT_AGENT_SYSTEM_PROMPT);
     }
+    if (current < 20) {
+      if (!hasColumn(sqlite, "models", "max_input_tokens")) {
+        sqlite.exec("ALTER TABLE models ADD COLUMN max_input_tokens INTEGER");
+      }
+      if (!hasColumn(sqlite, "models", "catalog_managed")) {
+        sqlite.exec("ALTER TABLE models ADD COLUMN catalog_managed INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!hasColumn(sqlite, "models", "catalog_metadata_json")) {
+        sqlite.exec("ALTER TABLE models ADD COLUMN catalog_metadata_json TEXT");
+      }
+      if (!hasColumn(sqlite, "messages", "greeting_json")) {
+        sqlite.exec("ALTER TABLE messages ADD COLUMN greeting_json TEXT");
+      }
+      sqlite.exec("PRAGMA user_version = 20;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -907,6 +926,10 @@ export class Store {
     }
     this.migrateLegacyToolPolicy();
     this.ensureDefaultAgent(priorVersion < 19);
+    if (priorVersion < 20) {
+      this.backfillLegacyCatalogManagement();
+      this.backfillLegacyGreetings();
+    }
     try {
       chmodSync(dirname(path), 0o700);
     } catch {
@@ -983,6 +1006,46 @@ export class Store {
       .run(validDefault, validLast);
     if (!priorDefaultId) {
       this.sqlite.prepare("UPDATE conversations SET agent_id = ? WHERE agent_id IS NULL").run(defaultId);
+    }
+  }
+
+  private backfillLegacyCatalogManagement(): void {
+    for (const model of this.listModels()) {
+      if (model.source !== "discovered") continue;
+      const connection = this.getConnection(model.connectionId);
+      if (!connection) continue;
+      const fallback = fallbackModel(model.connectionId, connection.protocol, model.modelKey, model.displayName);
+      const untouched = model.contextWindow === null && model.maxOutputTokens === fallback.maxOutputTokens &&
+        JSON.stringify(model.capabilities) === JSON.stringify(fallback.capabilities) &&
+        JSON.stringify(model.defaultSettings) === JSON.stringify(fallback.defaultSettings);
+      if (untouched) {
+        this.sqlite.prepare("UPDATE models SET catalog_managed = 1 WHERE id = ?").run(model.id);
+      }
+    }
+  }
+
+  private backfillLegacyGreetings(): void {
+    const rows = this.sqlite.prepare(`
+      SELECT m.id, m.text, c.agent_id
+      FROM messages m JOIN conversations c ON c.id = m.conversation_id
+      WHERE m.ordinal = 1 AND m.role = 'assistant' AND m.active_generation_id IS NULL
+        AND m.greeting_json IS NULL AND c.agent_id IS NOT NULL
+    `).all() as Row[];
+    for (const row of rows) {
+      const agent = this.getAgent(String(row.agent_id));
+      if (!agent) continue;
+      const userName = this.resolvedUserProfile(agent).displayName;
+      const variants = [agent.card.data.first_mes, ...agent.card.data.alternate_greetings]
+        .map((text) => substituteCardPlaceholders(text, agent.name, userName))
+        .filter((text) => text.trim().length > 0);
+      const activeIndex = variants.findIndex((text) => text === String(row.text ?? ""));
+      if (activeIndex < 0) continue;
+      const greeting = greetingMessageSchema.parse({
+        variants,
+        activeIndex,
+        agent: { agentId: agent.id, name: agent.name, revision: agent.revision }
+      });
+      this.sqlite.prepare("UPDATE messages SET greeting_json = ? WHERE id = ?").run(json(greeting), String(row.id));
     }
   }
 
@@ -1279,19 +1342,64 @@ export class Store {
     return row ? modelDto(row) : undefined;
   }
 
-  createModel(input: ModelInput, source: ModelDto["source"] = "manual"): ModelDto {
+  createModel(
+    input: ModelInput,
+    source: ModelDto["source"] = "manual",
+    catalogMetadata: ModelCatalogMetadata | null = null,
+    catalogManaged = source === "discovered"
+  ): ModelDto {
     const now = Date.now();
     const id = randomUUID();
     this.sqlite.prepare(`
       INSERT INTO models (id, connection_id, model_key, display_name, context_window, max_output_tokens,
-        capabilities_json, default_settings_json, source, enabled, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(connection_id, model_key) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at
+        capabilities_json, default_settings_json, source, enabled, created_at, updated_at,
+        max_input_tokens, catalog_managed, catalog_metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(connection_id, model_key) DO UPDATE SET
+        display_name = excluded.display_name,
+        catalog_managed = CASE WHEN excluded.source = 'manual' THEN 0 ELSE models.catalog_managed END,
+        updated_at = excluded.updated_at
     `).run(
       id, input.connectionId, input.modelKey, input.displayName, input.contextWindow, input.maxOutputTokens,
-      json(input.capabilities), json(input.defaultSettings), source, input.enabled ? 1 : 0, now, now
+      json(input.capabilities), json(input.defaultSettings), source, input.enabled ? 1 : 0, now, now,
+      input.maxInputTokens ?? null, catalogManaged ? 1 : 0, catalogMetadata ? json(catalogMetadata) : null
     );
     return this.listModels(input.connectionId).find((item) => item.modelKey === input.modelKey)!;
+  }
+
+  upsertDiscoveredModel(
+    input: ModelInput,
+    catalogMetadata: ModelCatalogMetadata | null
+  ): { model: ModelDto; status: "created" | "updated" | "skipped" } {
+    const current = this.listModels(input.connectionId).find((model) => model.modelKey === input.modelKey);
+    if (!current) {
+      return { model: this.createModel(input, "discovered", catalogMetadata, true), status: "created" };
+    }
+    if (!current.catalogManaged) return { model: current, status: "skipped" };
+    // A transient directory failure or unmatched response must not erase metadata
+    // from a model that was enriched successfully on an earlier discovery.
+    if (!catalogMetadata) return { model: current, status: "skipped" };
+    this.writeCatalogModel(current.id, input, catalogMetadata);
+    return { model: this.getModel(current.id)!, status: "updated" };
+  }
+
+  restoreCatalogModel(id: string, input: ModelInput, catalogMetadata: ModelCatalogMetadata): ModelDto | undefined {
+    const current = this.getModel(id);
+    if (!current) return undefined;
+    this.writeCatalogModel(id, { ...input, enabled: current.enabled }, catalogMetadata);
+    return this.getModel(id);
+  }
+
+  private writeCatalogModel(id: string, input: ModelInput, catalogMetadata: ModelCatalogMetadata | null): void {
+    this.sqlite.prepare(`
+      UPDATE models SET display_name = ?, context_window = ?, max_input_tokens = ?, max_output_tokens = ?,
+        capabilities_json = ?, default_settings_json = ?, source = 'discovered', catalog_managed = 1,
+        catalog_metadata_json = ?, updated_at = ? WHERE id = ?
+    `).run(
+      input.displayName, input.contextWindow, input.maxInputTokens ?? null, input.maxOutputTokens,
+      json(input.capabilities), json(input.defaultSettings), catalogMetadata ? json(catalogMetadata) : null,
+      Date.now(), id
+    );
   }
 
   updateModel(id: string, input: OptionalInput<ModelInput>): ModelDto | undefined {
@@ -1302,17 +1410,22 @@ export class Store {
       modelKey: input.modelKey ?? current.modelKey,
       displayName: input.displayName ?? current.displayName,
       contextWindow: input.contextWindow === undefined ? current.contextWindow : input.contextWindow,
+      maxInputTokens: input.maxInputTokens === undefined ? current.maxInputTokens : input.maxInputTokens,
       maxOutputTokens: input.maxOutputTokens ?? current.maxOutputTokens,
       capabilities: input.capabilities ?? current.capabilities,
       defaultSettings: input.defaultSettings ?? current.defaultSettings,
       enabled: input.enabled ?? current.enabled
     };
+    const metadataChanged = ["connectionId", "modelKey", "displayName", "contextWindow", "maxInputTokens",
+      "maxOutputTokens", "capabilities", "defaultSettings"].some((key) => Object.hasOwn(input, key));
     this.sqlite.prepare(`
       UPDATE models SET connection_id = ?, model_key = ?, display_name = ?, context_window = ?, max_output_tokens = ?,
-        capabilities_json = ?, default_settings_json = ?, enabled = ?, updated_at = ? WHERE id = ?
+        capabilities_json = ?, default_settings_json = ?, enabled = ?, max_input_tokens = ?, catalog_managed = ?,
+        updated_at = ? WHERE id = ?
     `).run(
       next.connectionId, next.modelKey, next.displayName, next.contextWindow, next.maxOutputTokens,
-      json(next.capabilities), json(next.defaultSettings), next.enabled ? 1 : 0, Date.now(), id
+      json(next.capabilities), json(next.defaultSettings), next.enabled ? 1 : 0, next.maxInputTokens ?? null,
+      metadataChanged ? 0 : current.catalogManaged ? 1 : 0, Date.now(), id
     );
     if (!next.enabled) {
       this.sqlite.prepare("UPDATE conversations SET model_id = NULL WHERE model_id = ?").run(id);
@@ -1565,12 +1678,25 @@ export class Store {
         workspacePath: "workspacePath" in input ? input.workspacePath : null
       });
       const agent = this.getAgent(conversation.agentId!)!;
-      const greetings = [agent.card.data.first_mes, ...agent.card.data.alternate_greetings];
-      const greeting = greetings["greetingIndex" in input ? input.greetingIndex : 0];
+      const rawGreetings = [agent.card.data.first_mes, ...agent.card.data.alternate_greetings];
+      const selectedSourceIndex = "greetingIndex" in input ? input.greetingIndex : 0;
+      const greeting = rawGreetings[selectedSourceIndex];
       if (greeting === undefined) throw new StoreError("greeting_not_found", "所选开场白不存在");
       if ("agentId" in input && greeting.trim()) {
-        this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, 1, 'assistant', ?, NULL, ?)")
-          .run(randomUUID(), conversation.id, substituteCardPlaceholders(greeting, agent.name, this.resolvedUserProfile(agent).displayName), now);
+        const userName = this.resolvedUserProfile(agent).displayName;
+        const candidates = rawGreetings
+          .map((text, sourceIndex) => ({ sourceIndex, text: substituteCardPlaceholders(text, agent.name, userName) }))
+          .filter((item) => item.text.trim().length > 0);
+        const activeIndex = candidates.findIndex((item) => item.sourceIndex === selectedSourceIndex);
+        const greetingSnapshot = greetingMessageSchema.parse({
+          variants: candidates.map((item) => item.text),
+          activeIndex,
+          agent: { agentId: agent.id, name: agent.name, revision: agent.revision }
+        });
+        this.sqlite.prepare(`
+          INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
+          VALUES (?, ?, 1, 'assistant', ?, NULL, ?, ?)
+        `).run(randomUUID(), conversation.id, greetingSnapshot.variants[activeIndex]!, now, json(greetingSnapshot));
       }
       const generation = this.insertMessageGeneration(
         conversation,
@@ -1636,6 +1762,42 @@ export class Store {
       if (!source) throw new StoreError("conversation_not_found", "会话不存在");
       if (!source.agentId) throw new StoreError("conversation_agent_required", "原会话的 Agent 已不可用");
 
+      if (input.mode === "greeting") {
+        const message = this.sqlite.prepare(
+          "SELECT id, ordinal, role, greeting_json FROM messages WHERE id = ? AND conversation_id = ?"
+        ).get(input.messageId, sourceConversationId) as Row | undefined;
+        const parsed = message?.greeting_json
+          ? greetingMessageSchema.safeParse(parse(message.greeting_json, null))
+          : null;
+        if (!message || message.role !== "assistant" || Number(message.ordinal) !== 1 || !parsed?.success) {
+          throw new StoreError("greeting_not_found", "要切换的开场白不存在");
+        }
+        const text = parsed.data.variants[input.greetingIndex];
+        if (text === undefined) throw new StoreError("greeting_not_found", "所选开场白不存在");
+        if (input.greetingIndex === parsed.data.activeIndex) {
+          throw new StoreError("greeting_unchanged", "所选开场白已经生效");
+        }
+        if (this.isConversationBusy(sourceConversationId)) {
+          throw new StoreError("conversation_busy", "会话仍有生成或工具审批未完成");
+        }
+        const fork = this.createConversation({
+          title: branchTitle(source.title),
+          agentId: source.agentId,
+          executionOverrides: source.executionOverrides,
+          workspacePath: source.workspacePath
+        });
+        this.sqlite.prepare(`
+          UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?
+          WHERE id = ?
+        `).run(source.systemPrompt, source.id, String(message.id), fork.id);
+        const greeting = { ...parsed.data, activeIndex: input.greetingIndex };
+        this.sqlite.prepare(`
+          INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
+          VALUES (?, ?, 1, 'assistant', ?, NULL, ?, ?)
+        `).run(randomUUID(), fork.id, text, Date.now(), json(greeting));
+        return { conversation: this.getConversation(fork.id)!, generation: null };
+      }
+
       let throughOrdinal = 0;
       let sourceMessageId: string | null = null;
       if (input.mode === "edit") {
@@ -1699,11 +1861,13 @@ export class Store {
     for (const message of messages) {
       const messageId = randomUUID();
       this.sqlite.prepare(`
-        INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at)
-        VALUES (?, ?, ?, ?, ?, NULL, ?)
+        INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
+        VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
       `).run(messageId, targetConversationId, Number(message.ordinal), String(message.role),
         message.text === null ? null : String(message.text),
-        Number(message.created_at));
+        Number(message.created_at), message.greeting_json === null || message.greeting_json === undefined
+          ? null
+          : String(message.greeting_json));
       for (const [index, asset] of this.messageImages(String(message.id)).entries()) {
         this.sqlite.prepare(`
           INSERT INTO message_image_assets (message_id, asset_id, asset_index) VALUES (?, ?, ?)
@@ -1898,10 +2062,16 @@ export class Store {
     const assistantMessageId = randomUUID();
     const generationId = randomUUID();
     const userOrdinal = Number(max.value) + 1;
-    this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, 'user', ?, NULL, ?)")
+    this.sqlite.prepare(`
+      INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at)
+      VALUES (?, ?, ?, 'user', ?, NULL, ?)
+    `)
       .run(userMessageId, conversation.id, userOrdinal, text, now);
     this.attachImagesToMessage(userMessageId, imageAssetIds);
-    this.sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, 'assistant', NULL, ?, ?)")
+    this.sqlite.prepare(`
+      INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at)
+      VALUES (?, ?, ?, 'assistant', NULL, ?, ?)
+    `)
       .run(assistantMessageId, conversation.id, userOrdinal + 1, generationId, now);
     this.insertGeneration(generationId, assistantMessageId, 1, connection, model, snapshot, now);
     const titleSource = text || this.getImageAsset(imageAssetIds[0] ?? "")?.fileName || "图片对话";
@@ -1936,6 +2106,9 @@ export class Store {
         generatedModel: assistant && activeGenerationId ? this.generatedModel(activeGenerationId) : null,
         activeGenerationId,
         generations: assistant ? this.listGenerations(String(message.id)) : [],
+        greeting: message.greeting_json
+          ? greetingMessageSchema.safeParse(parse(message.greeting_json, null)).data ?? null
+          : null,
         createdAt: Number(message.created_at)
       };
     });
@@ -2428,10 +2601,15 @@ function modelDto(row: Row): ModelDto {
     modelKey: String(row.model_key),
     displayName: String(row.display_name),
     contextWindow: row.context_window === null ? null : Number(row.context_window),
+    maxInputTokens: row.max_input_tokens === null || row.max_input_tokens === undefined ? null : Number(row.max_input_tokens),
     maxOutputTokens: Number(row.max_output_tokens),
     capabilities: modelCapabilitiesSchema.parse(parse(row.capabilities_json, {})),
     defaultSettings: parseModelSettings(row.default_settings_json),
     source: row.source as ModelDto["source"],
+    catalogManaged: Boolean(row.catalog_managed),
+    catalogMetadata: row.catalog_metadata_json
+      ? modelCatalogMetadataSchema.safeParse(parse(row.catalog_metadata_json, null)).data ?? null
+      : null,
     enabled: Boolean(row.enabled),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)

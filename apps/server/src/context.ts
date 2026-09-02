@@ -23,7 +23,7 @@ export async function buildContext(
   const rawMessages = store.contextMessages(record.conversationId, record.assistantMessageId);
   const policy = record.agentSnapshot.execution.contextPolicy;
   const preliminaryBudget = model.contextWindow
-    ? Math.max(256, model.contextWindow - record.settings.common.maxOutputTokens)
+    ? Math.max(256, availableInputBudget(model, record.settings.common.maxOutputTokens))
     : 8_000;
   const compiled = compileAgentPrompt(record.agentSnapshot, rawMessages, preliminaryBudget);
   const countedPrompt = [compiled.systemPrompt, compiled.postHistoryInstructions].filter(Boolean).join("\n\n");
@@ -51,7 +51,7 @@ export async function buildContext(
   if (!model.contextWindow) {
     throw new ContextError("context_window_required", "裁剪或摘要策略需要先配置模型上下文窗口");
   }
-  const budget = model.contextWindow - record.settings.common.maxOutputTokens;
+  const budget = availableInputBudget(model, record.settings.common.maxOutputTokens);
   if (budget < 256) throw new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口");
   if (estimated > budget && examples.length) {
     examples = [];
@@ -216,7 +216,10 @@ export async function compactConversationContext(
   if (!resolved.model.contextWindow) {
     throw new ContextError("context_window_required", "压缩上下文需要先配置模型上下文窗口");
   }
-  const availableBudget = resolved.model.contextWindow - resolved.snapshot.execution.settings.common.maxOutputTokens;
+  const availableBudget = availableInputBudget(
+    resolved.model,
+    resolved.snapshot.execution.settings.common.maxOutputTokens
+  );
   if (availableBudget < 256) {
     throw new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口");
   }
@@ -345,6 +348,11 @@ async function generateSummary(
   }
   if (!text.trim()) throw new ContextError("summary_empty", "上下文摘要模型没有返回文本");
   return { text: text.trim(), usage };
+}
+
+function availableInputBudget(model: ModelDto, reservedOutputTokens: number): number {
+  const contextBudget = (model.contextWindow ?? 0) - reservedOutputTokens;
+  return model.maxInputTokens ? Math.min(contextBudget, model.maxInputTokens) : contextBudget;
 }
 
 export function estimateTokens(systemPrompt: string, messages: ProviderMessage[]): number {
