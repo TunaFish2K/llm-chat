@@ -1,0 +1,118 @@
+/*
+ * Design tokens for the llm-chat console.
+ * Dark is the default surface; light is a warm paper variant. Both themes are
+ * resolved by lib/theme.ts onto <html data-theme>.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --font-sans: "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace, "Noto Sans Mono CJK SC", monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-md: 13.5px;
+  --text-lg: 15px;
+  --text-xl: 19px;
+  --text-2xl: 25px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 22px;
+  --space-6: 30px;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-pill: 999px;
+
+  --control-h: 34px;
+  --control-h-sm: 30px;
+
+  --dur-fast: 120ms;
+  --dur-med: 220ms;
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Dark palette: deep neutral slate with an amber signal colour. */
+  --bg: #0a0c10;
+  --bg-deep: #06070a;
+  --surface-1: #10131a;
+  --surface-2: #161a23;
+  --surface-3: #1d222d;
+  --surface-inset: #0c0e14;
+  --border: rgb(255 255 255 / 8%);
+  --border-strong: rgb(255 255 255 / 15%);
+  --border-focus: #d99a55;
+
+  --text: #e9ebf0;
+  --text-muted: #98a0b0;
+  --text-faint: #6a7280;
+  --text-invert: #16110a;
+
+  --accent: #d99a55;
+  --accent-soft: rgb(217 154 85 / 14%);
+  --accent-line: rgb(217 154 85 / 38%);
+  --link: #7fb6e8;
+
+  --ok: #5cb98d;
+  --ok-soft: rgb(92 185 141 / 14%);
+  --warn: #d9a441;
+  --warn-soft: rgb(217 164 65 / 15%);
+  --err: #e2716b;
+  --err-soft: rgb(226 113 107 / 15%);
+  --info: #6fa8dc;
+  --info-soft: rgb(111 168 220 / 14%);
+
+  /* Names still referenced by protocol-heavy views and inline error states. */
+  --danger: var(--err);
+  --success: var(--ok);
+  --surface-0: var(--surface-inset);
+
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-2: 0 8px 24px -8px rgb(0 0 0 / 60%);
+  --shadow-3: 0 24px 60px -20px rgb(0 0 0 / 75%);
+
+  --user-bubble: linear-gradient(180deg, #232936 0%, #1c212c 100%);
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f6f4f0;
+  --bg-deep: #efece6;
+  --surface-1: #ffffff;
+  --surface-2: #faf8f5;
+  --surface-3: #f1eee8;
+  --surface-inset: #f3f1ec;
+  --border: rgb(24 20 14 / 10%);
+  --border-strong: rgb(24 20 14 / 18%);
+
+  --text: #1e1c19;
+  --text-muted: #5f5b53;
+  --text-faint: #8b867c;
+  --text-invert: #fdfaf5;
+
+  --accent: #b4762c;
+  --accent-soft: rgb(180 118 44 / 12%);
+  --accent-line: rgb(180 118 44 / 34%);
+  --link: #245c95;
+
+  --ok: #2f855a;
+  --ok-soft: rgb(47 133 90 / 12%);
+  --warn: #9a6b12;
+  --warn-soft: rgb(154 107 18 / 14%);
+  --err: #b93f3a;
+  --err-soft: rgb(185 63 58 / 12%);
+  --info: #2c6ea8;
+  --info-soft: rgb(44 110 168 / 12%);
+
+  --shadow-1: 0 1px 2px rgb(60 50 35 / 10%);
+  --shadow-2: 0 8px 22px -10px rgb(60 50 35 / 25%);
+  --shadow-3: 0 22px 55px -22px rgb(60 50 35 / 35%);
+
+  --user-bubble: linear-gradient(180deg, #ffffff 0%, #f5f1ea 100%);
+}
