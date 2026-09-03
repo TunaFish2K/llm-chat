@@ -2,13 +2,19 @@ import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildApp } from "./app";
-import { parseRuntimeConfig } from "./runtime/config";
+import { loadRuntimeConfig, selectRuntimeConfig } from "./runtime/config";
 import { acquireInstanceLock, type InstanceLock } from "./runtime/instance-lock";
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 async function main(): Promise<void> {
-  const config = parseRuntimeConfig(process.env, projectRoot);
+  const selection = selectRuntimeConfig(process.argv.slice(2), projectRoot);
+  if (selection.remainingArgs.length) {
+    throw new Error(`未知启动参数：${selection.remainingArgs.join(" ")}`);
+  }
+  const loaded = await loadRuntimeConfig(selection.configPath, projectRoot, true);
+  const config = loaded.config;
+  if (loaded.generated) process.stderr.write(`已生成默认配置文件：${loaded.configPath}\n`);
   let app: Awaited<ReturnType<typeof buildApp>> | undefined;
   let instanceLock: InstanceLock | undefined;
   let ready = false;

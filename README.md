@@ -58,7 +58,7 @@ Vite 只把 `/api` 代理到服务端。Web 不直接请求模型提供方。
 
 ## 生产运行
 
-生产启动前必须构建 Web 和服务端产物。`LLM_CHAT_SERVE_WEB` 默认是 `true`，此时
+生产启动前必须构建 Web 和服务端产物。配置项 `serveWeb` 默认是 `true`，此时
 `apps/web/dist/index.html` 必须存在；构建产物缺失会阻止服务启动。
 
 ```bash
@@ -70,41 +70,45 @@ pnpm start
 外部管理器、HTTPS 反向代理和数据目录布局请参阅[部署运维手册](docs/DEPLOYMENT.md)。本仓库不生成
 `served`、容器、systemd 或 nginx 配置。
 
-可用环境变量：
+首次执行 `pnpm start` 时，如果项目根目录没有 `config.json`，服务会生成以下完整默认配置并继续
+启动。该文件是明文 JSON，不做应用层加密；生成权限为 `0600`。也可以执行
+`pnpm start --config /etc/llm-chat/config.json` 使用其他路径。显式路径的父目录必须已经存在。
 
-| 变量 | 默认值 | 用途 |
+| 配置项 | 默认值 | 用途 |
 | --- | --- | --- |
-| `LLM_CHAT_HOST` | `127.0.0.1` | 监听地址 |
-| `LLM_CHAT_PORT` | `3000` | HTTP 端口 |
-| `LLM_CHAT_DATA_DIR` | `./data` | 完整持久化数据目录，路径相对于项目根目录解析 |
-| `LLM_CHAT_AUTH_MODE` | `password` | 认证模式。`disabled` 只允许使用回环监听地址，且不得通过代理公开 |
-| `LLM_CHAT_TRUST_PROXY` | `false` | `true` 启用代理信任；`false` 或未设置关闭；其他非空字符串原样作为代理地址/CIDR 规则传给 Fastify |
-| `LLM_CHAT_SERVE_WEB` | `true` | 是否提供 `apps/web/dist` 静态文件；设为 `false` 时只运行 API，不要求 Web 产物 |
-| `LLM_CHAT_SHUTDOWN_TIMEOUT_MS` | `30000` | 应用关闭总期限，允许 `1000` 到 `300000` 毫秒；外部管理器宽限期必须更长 |
-| `LLM_CHAT_BUILD_ID` | `development` | 单行构建标识，长度为 1 到 200 个字符；会出现在启动日志和探针响应中 |
+| `host` | `127.0.0.1` | 监听地址 |
+| `port` | `3000` | HTTP 端口 |
+| `dataDir` | `./data` | 完整持久化数据目录；相对路径按配置文件所在目录解析 |
+| `authMode` | `password` | 认证模式。`disabled` 只允许使用回环监听地址，且不得通过代理公开 |
+| `trustProxy` | `false` | `true` 启用代理信任；也可以填写 Fastify 接受的代理地址或 CIDR 字符串 |
+| `serveWeb` | `true` | 是否提供 `apps/web/dist` 静态文件；设为 `false` 时只运行 API |
+| `shutdownTimeoutMs` | `30000` | 应用关闭总期限，允许 `1000` 到 `300000` 毫秒 |
+| `buildId` | `development` | 1 到 200 个字符的单行构建标识；出现在启动日志和探针响应中 |
 
-内网 HTTP 部署可使用以下环境：
+内网 HTTP 部署可将 `config.json` 改为：
 
-```bash
-LLM_CHAT_HOST=0.0.0.0 \
-LLM_CHAT_PORT=3000 \
-LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
-LLM_CHAT_AUTH_MODE=password \
-LLM_CHAT_SERVE_WEB=true \
-LLM_CHAT_SHUTDOWN_TIMEOUT_MS=30000 \
-LLM_CHAT_BUILD_ID=release-2026-09-01 \
-pnpm start
+```json
+{
+  "host": "0.0.0.0",
+  "port": 3000,
+  "dataDir": "/srv/llm-chat/data",
+  "authMode": "password",
+  "trustProxy": false,
+  "serveWeb": true,
+  "shutdownTimeoutMs": 30000,
+  "buildId": "release-2026-09-03"
+}
 ```
 
 密码认证允许从 localhost、回环 IP、内网 IP 或反向代理域名访问，无需声明公开地址。HTTP 会明文传输
 密码和会话，不防止窃听或中间人攻击。需要传输安全时，仍应在可信反向代理后使用 HTTPS。
-`LLM_CHAT_AUTH_MODE=disabled` 不是远程部署选项。
+`authMode: "disabled"` 不是远程部署选项。
 
 `/healthz` 是无数据库查询的存活探针，服务监听后返回 HTTP `200` 和 `{ "ok": true, "buildId": "..." }`。
-`/readyz` 是流量探针：启动完成、SQLite 可执行 `SELECT 1` 且（`LLM_CHAT_SERVE_WEB=true` 时）Web
+`/readyz` 是流量探针：启动完成、SQLite 可执行 `SELECT 1` 且（`serveWeb: true` 时）Web
 入口存在时返回 `200`；启动尚未完成、检查失败或关闭排空期间返回 `503`。两个响应都会包含
 `buildId`。关闭时先撤回 readiness，因此管理器必须按 `/readyz` 摘流量，并为
-`LLM_CHAT_SHUTDOWN_TIMEOUT_MS` 留出更长的停止宽限期。
+`shutdownTimeoutMs` 留出更长的停止宽限期。
 
 ## 密码登录
 
@@ -152,14 +156,14 @@ Agent 修改后，选择该 Agent 的会话会在下一次生成时读取新配�
 打开 Agent 的“工具”与“Skill”页管理启用状态、直接性、三态审批策略和后台资源额度。打开“设置”管理全局工具、Plugins、Skills、MCP 和搜索服务。全局 Skill 页不删除来源目录；删除或卸载应交给对应的外部包管理器。
 
 - 搜索工具使用 SearXNG JSON 接口。填写服务地址后工具才会注入模型。
-- 新会话可以不绑定工作目录，也可以从服务端目录浏览器选择任意现有可访问目录。旧会话迁移到 `LLM_CHAT_DATA_DIR/workspace`。
+- 新会话可以不绑定工作目录，也可以从服务端目录浏览器选择任意现有可访问目录。旧会话迁移到 `dataDir/workspace`。
 - 文件、Shell 和后台任务工具只访问生成快照中固定的会话工作目录。
 - `background_start`、`background_write` 和 `background_stop` 默认需要审批；读取和等待默认自动执行。
 - 写文件、编辑文件、隔离 JavaScript 和具有副作用的 MCP 工具默认需要批准。
 - Skills 由服务端托管并按 Agent 启用。服务启动和 `POST /api/skills/discover` 只扫描当前系统用户 `~/.agents/skills` 的直接子目录。发现的 Agent Skills 使用 `agents.<name>` 内部 ID，并保存内容寻址修订。
 - 模型通过 `use_skill` 按需加载固定 Skill 修订。标准 `allowed-tools` 只作为 Skill 内容保留，不会启用工具或绕过审批。
 - Agent 可把已启用工具设为直接或惰性。直接工具在第一步提供给模型；惰性工具由内部 `search_tools` 按需发现，并且仍受 Agent 启用状态、可用性和审批策略限制。
-- Plugin 源目录安装后会复制到 `LLM_CHAT_DATA_DIR/plugins`。Plugin 是可信本地代码；独立子进程只提供故障隔离，不限制主机权限。
+- Plugin 源目录安装后会复制到 `dataDir/plugins`。Plugin 是可信本地代码；独立子进程只提供故障隔离，不限制主机权限。
 - 任意 URL 读取会阻止回环、私网地址和重定向到私网的请求。
 
 MCP 名称只允许英文字母和数字。秘密请求头只保存在 SQLite 中，查询接口只返回请求头名称。远程 MCP 工具按 `mcp__服务名__工具名` 注册；只有明确声明 `readOnlyHint` 的工具会自动执行。
@@ -177,27 +181,29 @@ API Key 和秘密请求头不会通过查询接口返回。SQLite 文件仍包�
 
 ## 数据与恢复
 
-`LLM_CHAT_DATA_DIR` 是唯一的备份和恢复单元，不能只备份 `llm-chat.sqlite`。目录包含 SQLite
+`dataDir` 指向的目录是唯一的运行数据备份和恢复单元，不能只备份 `llm-chat.sqlite`。目录包含 SQLite
 文件及其可能存在的 `-wal`/`-shm` 旁车文件、Plugin 和 Skill 的内容寻址修订、后台任务日志、持久化
 的大型工具输出、内容寻址图片资产，以及工作目录和其他服务端状态。该目录的 SQLite 还包含 API Key、秘密请求头、密码
 哈希和会话相关材料；整个目录必须按密钥材料保护。
 
 简单且受支持的备份/恢复流程要求服务已停止，并且在备份或恢复期间没有其他进程使用该目录。停止后
-原样复制或归档整个 `LLM_CHAT_DATA_DIR`，恢复时将完整目录恢复到同一路径并保持权限；不要把新旧目录
+原样复制或归档整个 `dataDir`，恢复时将完整目录恢复到同一路径并保持权限；不要把新旧目录
 内容混合。生成任务只在单个服务进程内执行；服务异常退出后，正在请求模型或执行工具的任务会在下次
 启动时标记为中断，不会自动重放模型请求。
 
 ## 离线认证恢复
 
-服务停止后，在项目或发布目录执行以下命令。`--confirm-reset-password` 是唯一允许的参数；这里
-不要在它前面再写一个 `--`，因为 pnpm 会把额外分隔符转发给 CLI：
+服务停止后，在项目或发布目录执行以下命令。CLI 只接受 `--config <path>` 和
+`--confirm-reset-password`；不要添加额外的 `--`：
 
 ```bash
-LLM_CHAT_DATA_DIR=/srv/llm-chat/data \
-pnpm --filter @llm-chat/server auth:reset --confirm-reset-password
+pnpm --filter @llm-chat/server auth:reset \
+  --config /etc/llm-chat/config.json \
+  --confirm-reset-password
 ```
 
-该 CLI 先取得与服务相同的数据目录实例锁，因此服务运行时会拒绝执行。它会设置新的 8 位数字密码并
+密码重置不会生成缺失的配置文件。该 CLI 先读取配置中的 `dataDir`，再取得与服务相同的数据目录实例锁，
+因此服务运行时会拒绝执行。它会设置新的 8 位数字密码并
 撤销所有登录会话，同时保留聊天、Agent、连接和工具数据。成功输出包含新密码和撤销的会话数量。
 
 ## 检查与 CI

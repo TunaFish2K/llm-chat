@@ -57,15 +57,20 @@ async function runBuild() {
 }
 
 function startServer(name, port, authMode, dataDir) {
-  const child = spawn("node", ["apps/server/dist/index.js"], {
+  const configPath = join(runDir, `${name}.config.json`);
+  writeFileSync(configPath, `${JSON.stringify({
+    host: "127.0.0.1",
+    port: Number(port),
+    dataDir,
+    authMode,
+    trustProxy: false,
+    serveWeb: true,
+    shutdownTimeoutMs: 30_000,
+    buildId: `e2e-${name}`
+  }, null, 2)}\n`, { mode: 0o600 });
+  const child = spawn("node", ["apps/server/dist/index.js", "--config", configPath], {
     cwd: process.cwd(),
-    env: {
-      ...process.env,
-      LLM_CHAT_HOST: "127.0.0.1",
-      LLM_CHAT_PORT: port,
-      LLM_CHAT_DATA_DIR: dataDir,
-      LLM_CHAT_AUTH_MODE: authMode
-    },
+    env: process.env,
     stdio: ["ignore", "pipe", "pipe"]
   });
   children.add(child);
