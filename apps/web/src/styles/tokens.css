@@ -1,6 +1,6 @@
 /*
- * Design tokens for the llm-chat console.
- * Dark is the default surface; light is a warm paper variant. Both themes are
+ * Design tokens for the Chat console.
+ * Dark is the default surface; light is a cool neutral variant. Both themes are
  * resolved by lib/theme.ts onto <html data-theme>.
  */
 
@@ -37,35 +37,35 @@
   --dur-med: 220ms;
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
 
-  /* Dark palette: deep neutral slate with an amber signal colour. */
-  --bg: #0a0c10;
-  --bg-deep: #06070a;
-  --surface-1: #10131a;
-  --surface-2: #161a23;
-  --surface-3: #1d222d;
-  --surface-inset: #0c0e14;
+  /* Dark palette: neutral graphite with coral, jade and sky signals. */
+  --bg: #0d100e;
+  --bg-deep: #090b0a;
+  --surface-1: #141815;
+  --surface-2: #1b201c;
+  --surface-3: #242a25;
+  --surface-inset: #101310;
   --border: rgb(255 255 255 / 8%);
   --border-strong: rgb(255 255 255 / 15%);
-  --border-focus: #d99a55;
+  --border-focus: #ff8964;
 
-  --text: #e9ebf0;
-  --text-muted: #98a0b0;
-  --text-faint: #6a7280;
-  --text-invert: #16110a;
+  --text: #edf1ed;
+  --text-muted: #a1aaa3;
+  --text-faint: #747e76;
+  --text-invert: #24110b;
 
-  --accent: #d99a55;
-  --accent-soft: rgb(217 154 85 / 14%);
-  --accent-line: rgb(217 154 85 / 38%);
-  --link: #7fb6e8;
+  --accent: #ff8964;
+  --accent-soft: rgb(255 137 100 / 14%);
+  --accent-line: rgb(255 137 100 / 38%);
+  --link: #79b8e8;
 
-  --ok: #5cb98d;
-  --ok-soft: rgb(92 185 141 / 14%);
-  --warn: #d9a441;
-  --warn-soft: rgb(217 164 65 / 15%);
-  --err: #e2716b;
-  --err-soft: rgb(226 113 107 / 15%);
-  --info: #6fa8dc;
-  --info-soft: rgb(111 168 220 / 14%);
+  --ok: #55c493;
+  --ok-soft: rgb(85 196 147 / 14%);
+  --warn: #e2b45a;
+  --warn-soft: rgb(226 180 90 / 15%);
+  --err: #ef7771;
+  --err-soft: rgb(239 119 113 / 15%);
+  --info: #71aee1;
+  --info-soft: rgb(113 174 225 / 14%);
 
   /* Names still referenced by protocol-heavy views and inline error states. */
   --danger: var(--err);
@@ -76,43 +76,43 @@
   --shadow-2: 0 8px 24px -8px rgb(0 0 0 / 60%);
   --shadow-3: 0 24px 60px -20px rgb(0 0 0 / 75%);
 
-  --user-bubble: linear-gradient(180deg, #232936 0%, #1c212c 100%);
+  --user-bubble: #202621;
 }
 
 html[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #f6f4f0;
-  --bg-deep: #efece6;
+  --bg: #f5f7f5;
+  --bg-deep: #edf0ed;
   --surface-1: #ffffff;
-  --surface-2: #faf8f5;
-  --surface-3: #f1eee8;
-  --surface-inset: #f3f1ec;
-  --border: rgb(24 20 14 / 10%);
-  --border-strong: rgb(24 20 14 / 18%);
+  --surface-2: #fafbfa;
+  --surface-3: #e9edea;
+  --surface-inset: #f0f3f1;
+  --border: rgb(27 31 28 / 10%);
+  --border-strong: rgb(27 31 28 / 18%);
 
-  --text: #1e1c19;
-  --text-muted: #5f5b53;
-  --text-faint: #8b867c;
-  --text-invert: #fdfaf5;
+  --text: #1b1f1c;
+  --text-muted: #5d665f;
+  --text-faint: #7e8780;
+  --text-invert: #fff8f2;
 
-  --accent: #b4762c;
-  --accent-soft: rgb(180 118 44 / 12%);
-  --accent-line: rgb(180 118 44 / 34%);
-  --link: #245c95;
+  --accent: #c64b2f;
+  --accent-soft: rgb(198 75 47 / 10%);
+  --accent-line: rgb(198 75 47 / 30%);
+  --link: #246b9e;
 
-  --ok: #2f855a;
-  --ok-soft: rgb(47 133 90 / 12%);
-  --warn: #9a6b12;
-  --warn-soft: rgb(154 107 18 / 14%);
-  --err: #b93f3a;
-  --err-soft: rgb(185 63 58 / 12%);
-  --info: #2c6ea8;
-  --info-soft: rgb(44 110 168 / 12%);
+  --ok: #247a55;
+  --ok-soft: rgb(36 122 85 / 11%);
+  --warn: #93630f;
+  --warn-soft: rgb(147 99 15 / 12%);
+  --err: #b83e3c;
+  --err-soft: rgb(184 62 60 / 11%);
+  --info: #286da4;
+  --info-soft: rgb(40 109 164 / 11%);
 
-  --shadow-1: 0 1px 2px rgb(60 50 35 / 10%);
-  --shadow-2: 0 8px 22px -10px rgb(60 50 35 / 25%);
-  --shadow-3: 0 22px 55px -22px rgb(60 50 35 / 35%);
+  --shadow-1: 0 1px 2px rgb(30 40 33 / 10%);
+  --shadow-2: 0 8px 22px -10px rgb(30 40 33 / 24%);
+  --shadow-3: 0 22px 55px -22px rgb(30 40 33 / 34%);
 
-  --user-bubble: linear-gradient(180deg, #ffffff 0%, #f5f1ea 100%);
+  --user-bubble: #ffffff;
 }

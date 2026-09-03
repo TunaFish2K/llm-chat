@@ -6,13 +6,30 @@
   justify-content: center;
   height: 100dvh;
   padding: var(--space-5);
-  background:
-    radial-gradient(120% 90% at 50% -10%, var(--accent-soft) 0%, transparent 55%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .boot-screen > * {
   max-width: 460px;
+}
+
+.boot-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+}
+
+.boot-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-xl);
+  letter-spacing: 0;
+}
+
+.boot-brand img {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-strong);
 }
 
 .app-frame {
@@ -463,11 +480,13 @@
   min-width: 0;
   color: var(--text);
   font-weight: 680;
+  letter-spacing: 0;
   text-decoration: none;
 }
 
 .sidebar-brand img {
   border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-strong);
 }
 
 .sidebar-primary-actions {

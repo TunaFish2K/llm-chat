@@ -21,6 +21,7 @@ describe("WorkspaceSidebar", () => {
       />
     );
 
+    expect(screen.getByRole("link", { name: "Chat 首页" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "聊天" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Agent" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "设置" })).toBeInTheDocument();

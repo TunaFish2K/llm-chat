@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import type { AppSettings } from "@llm-chat/contracts";
 
+export const THEME_COLORS = { dark: "#0d100e", light: "#f5f7f5" } as const;
+
 /** Applies the theme from server settings to <html data-theme>. */
 export function useTheme(settings: AppSettings | null): void {
   const theme = settings?.theme ?? "system";
@@ -11,6 +13,8 @@ export function useTheme(settings: AppSettings | null): void {
       const resolved = theme === "system" ? (media.matches ? "light" : "dark") : theme;
       root.dataset.theme = resolved;
       root.style.colorScheme = resolved;
+      document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+        ?.setAttribute("content", THEME_COLORS[resolved]);
     };
     apply();
     media.addEventListener("change", apply);

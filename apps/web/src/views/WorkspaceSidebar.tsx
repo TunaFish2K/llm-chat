@@ -82,9 +82,9 @@ export function WorkspaceSidebar({
   return (
     <aside className="workspace-sidebar" data-compact={compact || undefined} aria-label="主导航与会话">
       <header className="sidebar-brand">
-        <a href="/" onClick={linkClick("/")} aria-label="llm-chat 首页">
+        <a href="/" onClick={linkClick("/")} aria-label="Chat 首页">
           <img src="/icons/icon-192.png" width={28} height={28} alt="" />
-          {!compact ? <span>llm-chat</span> : null}
+          {!compact ? <span>Chat</span> : null}
         </a>
         {onClose ? <button className="icon-button" onClick={onClose} aria-label="关闭导航"><X size={18} /></button> : null}
       </header>

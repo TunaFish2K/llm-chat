@@ -38,7 +38,24 @@ function png(size, draw) {
     const row = y * (size * 4 + 1);
     raw[row] = 0;
     for (let x = 0; x < size; x++) {
-      const [r, g, b, a] = draw(x / size, y / size);
+      let alpha = 0;
+      const premultiplied = [0, 0, 0];
+      for (let sampleY = 0; sampleY < 3; sampleY++) {
+        for (let sampleX = 0; sampleX < 3; sampleX++) {
+          const [r, g, b, a] = draw(
+            (x + (sampleX + 0.5) / 3) / size,
+            (y + (sampleY + 0.5) / 3) / size
+          );
+          alpha += a;
+          premultiplied[0] += r * a;
+          premultiplied[1] += g * a;
+          premultiplied[2] += b * a;
+        }
+      }
+      const a = Math.round(alpha / 9);
+      const r = alpha ? Math.round(premultiplied[0] / alpha) : 0;
+      const g = alpha ? Math.round(premultiplied[1] / alpha) : 0;
+      const b = alpha ? Math.round(premultiplied[2] / alpha) : 0;
       const p = row + 1 + x * 4;
       raw[p] = r; raw[p + 1] = g; raw[p + 2] = b; raw[p + 3] = a;
     }
@@ -55,31 +72,38 @@ function png(size, draw) {
   ]);
 }
 
-function icon(u, v) {
-  // Rounded-square aurora gradient with a speech-bubble dot motif.
-  const cx = u - 0.5, cy = v - 0.5;
-  const r = Math.max(Math.abs(cx), Math.abs(cy));
-  const radius = 0.5;
-  const corner = 0.16;
-  const qx = Math.abs(cx) - (radius - corner), qy = Math.abs(cy) - (radius - corner);
-  const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - corner;
-  if (d > 0) return [0, 0, 0, 0];
-  const mix = (a, b, t) => Math.round(a + (b - a) * t);
-  const top = [124, 108, 255], bottom = [54, 199, 216];
-  let color = [mix(top[0], bottom[0], v), mix(top[1], bottom[1], v), mix(top[2], bottom[2], v)];
-  // bubble
-  const bx = u - 0.5, by = v - 0.46;
-  const bubble = Math.hypot(bx / 0.26, by / 0.2) < 1 && !(u > 0.42 && u < 0.5 && v > 0.55 && v < 0.68 && u < 0.5 - (v - 0.55) * 0.6);
-  if (bubble) color = [255, 255, 255];
-  // three dots
-  for (const dx of [-0.11, 0, 0.11]) {
-    if (Math.hypot(u - (0.5 + dx), v - 0.46) < 0.035) color = [124, 108, 255];
-  }
-  return [...color, 255];
+function roundedSquareDistance(u, v, half, radius) {
+  const qx = Math.abs(u - 0.5) - (half - radius);
+  const qy = Math.abs(v - 0.5) - (half - radius);
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - radius;
 }
 
-for (const size of [192, 512]) {
-  writeFileSync(join(outDir, `icon-${size}.png`), png(size, icon));
+const CORAL = [241, 105, 76];
+const WARM_WHITE = [255, 248, 242];
+const DEEP_JADE = [21, 67, 56];
+
+function icon(maskable = false) {
+  return (u, v) => {
+    if (!maskable && roundedSquareDistance(u, v, 0.465, 0.15) > 0) return [0, 0, 0, 0];
+    let color = CORAL;
+
+    // An open conversation loop doubles as the letter C at small sizes.
+    const x = (u - 0.47) / 0.255;
+    const y = (v - 0.47) / 0.215;
+    const radius = Math.hypot(x, y);
+    const angle = Math.atan2(y, x);
+    const loop = Math.abs(radius - 1) < 0.115 && Math.abs(angle) > 0.58;
+    if (loop) color = WARM_WHITE;
+
+    const endpointX = 0.47 + 0.255 * Math.cos(0.58);
+    const endpointY = 0.47 + 0.215 * Math.sin(0.58);
+    if (Math.hypot(u - endpointX, v - endpointY) < 0.052) color = DEEP_JADE;
+    return [...color, 255];
+  };
 }
-writeFileSync(join(outDir, "icon-maskable-512.png"), png(512, icon));
+
+for (const size of [32, 192, 512]) {
+  writeFileSync(join(outDir, `icon-${size}.png`), png(size, icon()));
+}
+writeFileSync(join(outDir, "icon-maskable-512.png"), png(512, icon(true)));
 console.log("icons written to", outDir);

@@ -63,11 +63,17 @@ export function useMediaQuery(query: string): boolean {
 export function BootScreen({ error, onRetry }: { error: string | null; onRetry: () => void }) {
   return (
     <div className="boot-screen">
-      {error ? (
-        <ErrorState message={`无法连接服务：${error}`} onRetry={onRetry} />
-      ) : (
-        <LoadingState label="正在启动 llm-chat…" />
-      )}
+      <div className="boot-state">
+        <div className="boot-brand">
+          <img src="/icons/icon-192.png" width={36} height={36} alt="" />
+          <strong>Chat</strong>
+        </div>
+        {error ? (
+          <ErrorState message={`无法连接服务：${error}`} onRetry={onRetry} />
+        ) : (
+          <LoadingState label="正在启动 Chat…" />
+        )}
+      </div>
     </div>
   );
 }
