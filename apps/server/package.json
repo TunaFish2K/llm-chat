@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "LLM_CHAT_AUTH_MODE=disabled LLM_CHAT_SERVE_WEB=false tsx watch src/index.ts",
+    "dev": "tsx watch src/index.ts --config ../../config.development.json",
     "build": "tsup --config tsup.config.ts",
     "start": "node dist/index.js",
     "auth:reset": "node dist/auth-reset.js"

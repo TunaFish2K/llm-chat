@@ -6,4 +6,5 @@ apps/web/dist/
 apps/server/dist/
 *.log
 .env
+config.json
 .DS_Store
