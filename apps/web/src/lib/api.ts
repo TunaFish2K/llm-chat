@@ -17,6 +17,7 @@ import type {
   GenerationCreatedDto,
   GenerationDto,
   ForkConversationInput,
+  FileAssetDto,
   ImageAssetDto,
   McpServerDto,
   McpServerInput,
@@ -107,6 +108,27 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     );
   }
   return data as T;
+}
+
+async function uploadFile(file: File): Promise<FileAssetDto> {
+  const response = await fetch("/api/files", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-llm-chat-request": "1",
+      "x-file-name": encodeURIComponent(file.name || "file"),
+      "x-file-type": file.type || "application/octet-stream"
+    },
+    body: file
+  });
+  if (response.status === 401) emitAuthRequired();
+  const data = await response.json() as FileAssetDto | { error?: { code?: string; message?: string } };
+  if (!response.ok) {
+    const error = (data as { error?: { code?: string; message?: string } }).error;
+    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? "文件上传失败");
+  }
+  return data as FileAssetDto;
 }
 
 export const api = {
@@ -237,6 +259,7 @@ export const endpoints = {
     api.post<ConversationDto>("/api/conversations", input),
   startConversation: (input: {
     text: string;
+    assetIds?: string[];
     imageAssetIds?: string[];
     agentId: string;
     greetingIndex?: number;
@@ -254,10 +277,11 @@ export const endpoints = {
   messages: (conversationId: string) => api.get<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
-  sendMessage: (conversationId: string, text: string, imageAssetIds: string[] = []) =>
+  uploadFile,
+  sendMessage: (conversationId: string, text: string, assetIds: string[] = []) =>
     api.post<GenerationCreatedDto>(`/api/conversations/${conversationId}/messages`, {
       text,
-      ...(imageAssetIds.length ? { imageAssetIds } : {})
+      ...(assetIds.length ? { assetIds } : {})
     }),
   retryGeneration: (messageId: string) => api.post<GenerationCreatedDto>(`/api/messages/${messageId}/generations`, {}),
   selectGeneration: (messageId: string, generationId: string) =>

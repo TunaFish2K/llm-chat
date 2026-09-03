@@ -296,15 +296,25 @@ describe("ChatView", () => {
       "/api/conversations/conv-1/messages",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ text: "", imageAssetIds: [asset.id] })
+        body: JSON.stringify({ text: "", assetIds: [asset.id] })
       })
     ));
   });
 
   it("edits a user message by creating a branch and immediately generating", async () => {
     const user = userEvent.setup();
+    const attachments = Array.from({ length: 5 }, (_, index) => ({
+      id: `file-${index}`,
+      fileName: `document-${index}.txt`,
+      mimeType: "text/plain",
+      kind: "file" as const,
+      byteSize: 10,
+      sha256: `${index}`.repeat(64),
+      url: `/api/files/file-${index}?v=${`${index}`.repeat(64)}`,
+      createdAt: 1
+    }));
     const messages = [
-      makeMessage({ id: "user-1", role: "user", text: "原问题", createdAt: 1 }),
+      makeMessage({ id: "user-1", role: "user", text: "原问题", attachments, createdAt: 1 }),
       makeMessage({ id: "assistant-1", role: "assistant", activeGenerationId: "gen-1", generations: [makeGeneration()] })
     ];
     const branch = makeConversation({ id: "conv-branch", title: "测试会话 · 分支", forkedFrom: { conversationId: "conv-1", messageId: "user-1" } });
@@ -332,7 +342,12 @@ describe("ChatView", () => {
       "/api/conversations/conv-1/forks",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ mode: "edit", messageId: "user-1", text: "修改后的问题", imageAssetIds: [] })
+        body: JSON.stringify({
+          mode: "edit",
+          messageId: "user-1",
+          text: "修改后的问题",
+          assetIds: attachments.map((asset) => asset.id)
+        })
       })
     ));
     await waitFor(() => expect(window.location.pathname).toBe("/c/conv-branch"));

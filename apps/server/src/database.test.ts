@@ -78,6 +78,32 @@ describe("Store", () => {
     store.close();
   });
 
+  it("stores generic attachment metadata and enforces per-message quotas atomically", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const files = Array.from({ length: 9 }, (_, index) => store.createFileAsset({
+      sha256: index.toString(16).padStart(64, "0"),
+      fileName: `file-${index}.bin`,
+      mimeType: "application/octet-stream",
+      kind: "file",
+      byteSize: 1,
+      storageKey: `blob-${index}`
+    }));
+    expect(() => store.createMessageGeneration(conversation.id, "too many", files.map((file) => file.id)))
+      .toThrow("最多包含 8 个");
+    expect(store.listMessages(conversation.id)).toEqual([]);
+
+    const created = store.createMessageGeneration(conversation.id, "files", files.slice(0, 2).map((file) => file.id));
+    expect(store.listMessages(conversation.id)[0]?.attachments).toEqual([
+      expect.objectContaining({ id: files[0]!.id, kind: "file", url: expect.stringMatching(/^\/api\/files\//) }),
+      expect.objectContaining({ id: files[1]!.id, kind: "file" })
+    ]);
+    expect(() => store.attachFilesToMessage(created.userMessageId!, [files[0]!.id, files[0]!.id]))
+      .toThrow("不重复附件");
+    store.close();
+  });
+
   it("forks the visible path without mutating the source conversation", () => {
     const store = createStore();
     seedModel(store);
@@ -291,7 +317,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -350,7 +376,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -386,7 +412,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -788,7 +814,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(20);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

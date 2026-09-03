@@ -46,6 +46,7 @@ export interface ToolDependencies {
   taskManager?: TaskManager;
   imageService?: ImageService;
   workspacePath?: string | null;
+  attachmentWorkspacePath?: string;
 }
 
 export async function buildServerTools(
@@ -58,7 +59,18 @@ export async function buildServerTools(
     ? dependencies.workspacePath ?? null
     : resolve(store.dataDir, "workspace");
   const skills = resolve(store.dataDir, "skills");
-  await Promise.all([...(workspace ? [mkdir(workspace, { recursive: true, mode: 0o700 })] : []), mkdir(skills, { recursive: true, mode: 0o700 })]);
+  const attachments = dependencies.attachmentWorkspacePath ?? null;
+  await Promise.all([
+    ...(workspace ? [mkdir(workspace, { recursive: true, mode: 0o700 })] : []),
+    ...(attachments ? [mkdir(attachments, { recursive: true, mode: 0o700 })] : []),
+    mkdir(skills, { recursive: true, mode: 0o700 })
+  ]);
+  const rootFor = (input: JsonObject): string => {
+    const requested = input.workspace === "attachments" ? attachments : workspace;
+    if (!requested) throw new Error(input.workspace === "attachments" ? "Conversation attachment workspace is unavailable" : "Conversation has no project workspace");
+    return requested;
+  };
+  const workspaceProperty = { workspace: workspaceSelectorProperty() };
 
   const tools: ServerTool[] = [
     tool("get_time_info", "当前时间", "local", "Get the server's current local date, time, timezone, UTC offset, and Unix timestamp.", {}, false,
@@ -86,49 +98,65 @@ export async function buildServerTools(
       content: stringProperty("Memory text for create or edit")
     }, (input) => input.action === "delete", async (input) => memoryAction(store, input)),
     tool("workspace_list", "列出文件", "workspace", "List files and directories using paths relative to the conversation workspace root. Use . for the root; returned paths can be used directly by workspace file tools and shell commands.", {
+      ...workspaceProperty,
       path: workspacePathProperty("Directory to list"),
       recursive: booleanProperty("List recursively")
-    }, false, async (input) => listWorkspace(workspace!, optionalString(input, "path") ?? ".", Boolean(input.recursive)), Boolean(workspace)),
+    }, false, async (input) => listWorkspace(rootFor(input), optionalString(input, "path") ?? ".", Boolean(input.recursive)), Boolean(workspace || attachments)),
     tool("workspace_read_file", "读取文件", "workspace", "Read a UTF-8 text file using a path relative to the conversation workspace root (maximum 8 MiB). The returned path is also workspace-relative.", {
-      path: workspacePathProperty("File to read")
-    }, false, async (input) => readWorkspaceFile(workspace!, requiredString(input, "path")), Boolean(workspace)),
+      ...workspaceProperty, path: workspacePathProperty("File to read")
+    }, false, async (input) => readWorkspaceFile(rootFor(input), requiredString(input, "path")), Boolean(workspace || attachments)),
     tool("workspace_write_file", "写入文件", "workspace", "Write a UTF-8 text file using a path relative to the conversation workspace root. The returned path is also workspace-relative.", {
-      path: workspacePathProperty("File to write"),
+      ...workspaceProperty, path: workspacePathProperty("File to write"),
       text: stringProperty("Complete UTF-8 file content"),
       overwrite: booleanProperty("Whether an existing file may be replaced; defaults to true")
-    }, true, async (input) => writeWorkspaceFile(workspace!, requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false), Boolean(workspace)),
+    }, true, async (input) => writeWorkspaceFile(rootFor(input), requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false), Boolean(workspace || attachments)),
     tool("workspace_edit_file", "编辑文件", "workspace", "Replace exact text in a UTF-8 file using a path relative to the conversation workspace root. The returned path is also workspace-relative.", {
-      path: workspacePathProperty("File to edit"),
+      ...workspaceProperty, path: workspacePathProperty("File to edit"),
       old_text: stringProperty("Exact text to replace"),
       new_text: stringProperty("Replacement text"),
       replace_all: booleanProperty("Replace every occurrence; defaults to false")
-    }, true, async (input) => editWorkspaceFile(workspace!, input), Boolean(workspace)),
+    }, true, async (input) => editWorkspaceFile(rootFor(input), input), Boolean(workspace || attachments)),
     tool("workspace_glob", "查找文件", "workspace", "Find workspace-relative paths with a glob pattern such as **/*.ts. Returned paths can be used directly by workspace file tools and shell commands.", {
-      pattern: stringProperty("Glob pattern relative to the conversation workspace root; use . for the root. Legacy /workspace/... patterns are accepted.")
-    }, false, async (input) => globWorkspace(workspace!, requiredString(input, "pattern")), Boolean(workspace)),
+      ...workspaceProperty, pattern: stringProperty("Glob pattern relative to the selected workspace root; use . for the root. Legacy /workspace/... patterns are accepted.")
+    }, false, async (input) => globWorkspace(rootFor(input), requiredString(input, "pattern")), Boolean(workspace || attachments)),
     tool("workspace_grep", "搜索文件", "workspace", "Search UTF-8 workspace files for plain text or a regular expression. Match paths are relative to the conversation workspace root and can be used directly by file tools and shell commands.", {
-      query: stringProperty("Text or regular expression"),
+      ...workspaceProperty, query: stringProperty("Text or regular expression"),
       pattern: stringProperty("File glob relative to the conversation workspace root; defaults to **/* (all files). Legacy /workspace/... patterns are accepted."),
       regex: booleanProperty("Treat query as a JavaScript regular expression")
-    }, false, async (input) => grepWorkspace(workspace!, input), Boolean(workspace)),
+    }, false, async (input) => grepWorkspace(rootFor(input), input), Boolean(workspace || attachments)),
     tool("workspace_shell", "运行命令", "workspace", "Run a shell command with its working directory confined to the conversation workspace. Use workspace-relative paths in commands and . for the workspace root. Commands require explicit user approval.", {
-      command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
+      ...workspaceProperty, command: stringProperty("Shell command; use paths relative to the conversation workspace root selected by workspace"),
       cwd: workspacePathProperty("Working directory for the command"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
-    }, true, async (input, signal) => runShell(workspace!, input, signal), Boolean(workspace)),
+    }, true, async (input, signal) => runShell(rootFor(input), input, signal), Boolean(workspace || attachments)),
     tool("workspace_publish_image", "发布图片", "workspace", "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. Use this before showing a machine-local image to the user.", {
-      path: workspacePathProperty("Image file to publish"),
+      ...workspaceProperty, path: workspacePathProperty("Image file to publish"),
       alt: stringProperty("Short alternative text for the image")
     }, false, async (input, _signal, context) => {
       if (!dependencies.imageService || !context) throw new Error("Image service and tool context are required");
-      const asset = await dependencies.imageService.importWorkspaceImage(workspace!, requiredString(input, "path"));
+      const asset = await dependencies.imageService.importWorkspaceImage(rootFor(input), requiredString(input, "path"));
       store.attachImageToToolCall(context.toolCallId, asset.id);
       const alt = (optionalString(input, "alt") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "image";
       return JSON.stringify({ asset, markdown: `![${alt}](${asset.url})` });
-    }, Boolean(workspace && dependencies.imageService))
+    }, Boolean((workspace || attachments) && dependencies.imageService)),
+    tool("workspace_publish_file", "发布文件", "workspace", "Import a file from the selected workspace into immutable llm-chat storage and return a permanent Markdown link. Publishing requires approval because it exposes machine-local data to the user.", {
+      ...workspaceProperty,
+      path: workspacePathProperty("File to publish"),
+      label: stringProperty("Optional download label"),
+      mime_type: stringProperty("Optional MIME type; defaults to application/octet-stream")
+    }, true, async (input, _signal, context) => {
+      if (!dependencies.imageService || !context) throw new Error("File service and tool context are required");
+      const asset = await dependencies.imageService.importWorkspaceFile(
+        rootFor(input), requiredString(input, "path"), optionalString(input, "mime_type") ?? "application/octet-stream"
+      );
+      store.attachFileToToolCall(context.toolCallId, asset.id);
+      const label = (optionalString(input, "label") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "file";
+      const markdown = asset.kind === "image" ? `![${label}](${asset.url})` : `[${label}](${asset.url})`;
+      return JSON.stringify({ asset, markdown });
+    }, Boolean((workspace || attachments) && dependencies.imageService))
   ];
 
-  if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager));
+  if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager, rootFor));
 
   const skillList = await listSkills(skills);
   tools.push(tool("use_skill", "加载 Skill", "skill", skillList.length
@@ -176,13 +204,15 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_grep: "按文本或正则表达式搜索沙箱工作区文件。",
   workspace_shell: "在沙箱工作区目录中运行 Shell 命令，每次执行均需批准。",
   workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
+  workspace_publish_file: "把工作区文件导入为不可变应用资产，并返回永久下载链接。发布前需要批准。",
   use_skill: "按需加载服务端 Skills 目录中的专用说明。"
 };
 
-function backgroundTools(manager: TaskManager): ServerTool[] {
+function backgroundTools(manager: TaskManager, rootFor: (input: JsonObject) => string): ServerTool[] {
   return [
     tool("background_start", "启动后台任务", "background", "Start a long-running command in the frozen conversation workspace and return its task id immediately. Use paths relative to the workspace root in the command.", {
-      command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
+      workspace: workspaceSelectorProperty(),
+      command: stringProperty("Shell command; use paths relative to the selected workspace root"),
       mode: { type: "string", enum: ["pipe", "pty"], description: "Use pty for interactive terminal programs" },
       expected_duration_seconds: integerProperty("Optional expected duration in seconds"),
       hard_timeout_seconds: integerProperty("Optional hard timeout in seconds")
@@ -190,6 +220,7 @@ function backgroundTools(manager: TaskManager): ServerTool[] {
       if (!context) throw new Error("Tool execution context is required");
       const task = manager.create({
         conversationId: context.conversationId, generationId: context.generationId, snapshot: context.snapshot,
+        workspacePath: rootFor(input),
         command: requiredString(input, "command"), mode: input.mode === "pty" ? "pty" : "pipe",
         expectedDurationMs: optionalPositiveSeconds(input, "expected_duration_seconds"),
         hardTimeoutMs: optionalPositiveSeconds(input, "hard_timeout_seconds")
@@ -310,6 +341,9 @@ function inferRequired(name: string): string[] {
 function stringProperty(description: string): JsonObject { return { type: "string", description }; }
 function workspacePathProperty(subject: string): JsonObject {
   return stringProperty(`${subject}, relative to the conversation workspace root. Use . for the root. Legacy /workspace paths are accepted.`);
+}
+function workspaceSelectorProperty(): JsonObject {
+  return { type: "string", enum: ["project", "attachments"], default: "project", description: "Select project workspace or the isolated conversation attachment workspace" };
 }
 function integerProperty(description: string): JsonObject { return { type: "integer", description }; }
 function booleanProperty(description: string): JsonObject { return { type: "boolean", description }; }

@@ -68,6 +68,32 @@ describe("context builder", () => {
     store.close();
   });
 
+  it("exposes ordinary attachments as escaped sandbox metadata without sending their bytes", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const asset = store.createFileAsset({
+      sha256: "a".repeat(64),
+      fileName: "notes & instructions.txt",
+      mimeType: "text/plain",
+      kind: "file",
+      byteSize: 17,
+      storageKey: "not-read-by-context"
+    });
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+    const latest = store.createMessageGeneration(conversation.id, "请检查附件", [asset.id]);
+    const built = await buildContext(
+      store, store.getGenerationRecord(latest.generationId)!, seeded.model,
+      store.getConnection(seeded.connection.id)!, new AbortController().signal
+    );
+    const text = built.messages.at(-1)?.text ?? "";
+    expect(text).toContain('<attached_files trust="untrusted" workspace="attachments">');
+    expect(text).toContain('name="notes &amp; instructions.txt"');
+    expect(text).toContain(`path="incoming/${latest.userMessageId}/${asset.id}-notes &amp; instructions.txt"`);
+    expect(text).not.toContain("not-read-by-context");
+    expect(built.messages.at(-1)?.images).toBeUndefined();
+    store.close();
+  });
+
   it("returns unchanged trim context when it fits", async () => {
     const store = createStore();
     const seeded = seedModel(store);

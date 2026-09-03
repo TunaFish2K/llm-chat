@@ -43,6 +43,17 @@ const SECTIONS: Array<[string, string]> = [
 
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 
+function useResourceEvents(resources: string[], load: () => Promise<void>): void {
+  useEffect(() => {
+    const listener = (raw: Event) => {
+      const resource = (raw as CustomEvent<{ resource?: string }>).detail?.resource;
+      if (resource && resources.includes(resource)) void load();
+    };
+    window.addEventListener("llm-chat:resource-changed", listener);
+    return () => window.removeEventListener("llm-chat:resource-changed", listener);
+  }, [load, resources.join("\0")]);
+}
+
 export function SettingsView({ section }: { section: string }) {
   const active = SECTIONS.some(([key]) => key === section) ? section : "general";
   return (
@@ -390,7 +401,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   skill: "Skill",
   mcp: "MCP",
   background: "后台",
-  plugin: "Plugin"
+  plugin: "Plugin",
+  app: "网站管理"
 };
 
 function ToolsSection() {
@@ -418,6 +430,7 @@ function ToolsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["tools", "plugins", "skills", "mcp"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!settings) return <LoadingState />;
@@ -660,6 +673,7 @@ function SkillsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["skills"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!skills) return <LoadingState />;
@@ -838,6 +852,7 @@ function PluginsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["plugins"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!plugins) return <LoadingState />;
@@ -1068,6 +1083,7 @@ function McpSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["mcp"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!servers) return <LoadingState />;

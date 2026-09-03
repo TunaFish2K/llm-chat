@@ -5,7 +5,8 @@ import type {
   ConversationDto,
   GenerationDto,
   MessageDto,
-  ModelDto
+  ModelDto,
+  FileAssetDto
 } from "@llm-chat/contracts";
 import { api, endpoints, onAuthRequired } from "./api";
 import { cancelGenerationHaptic, scheduleGenerationHaptic } from "./haptics";
@@ -125,16 +126,31 @@ export async function loadMessages(conversationId: string): Promise<MessageDto[]
 function normalizeMessages(messages: MessageDto[]): MessageDto[] {
   return messages.map((message) => ({
     ...message,
-    attachments: Array.isArray(message.attachments) ? message.attachments : [],
-    generations: Array.isArray(message.generations) ? message.generations : []
+    attachments: Array.isArray(message.attachments) ? message.attachments.map(normalizeAsset) : [],
+    generations: Array.isArray(message.generations) ? message.generations.map((generation) => ({
+      ...generation,
+      toolCalls: Array.isArray(generation.toolCalls) ? generation.toolCalls.map((call) => ({
+        ...call,
+        artifacts: Array.isArray(call.artifacts) ? call.artifacts.map(normalizeAsset) : []
+      })) : []
+    })) : []
   }));
 }
 
+function normalizeAsset(asset: FileAssetDto): FileAssetDto {
+  if (asset.kind === "image" || asset.kind === "file") return asset;
+  return {
+    ...asset,
+    kind: asset.mimeType.startsWith("image/") ? "image" : "file"
+  } as FileAssetDto;
+}
+
 export function upsertMessage(conversationId: string, message: MessageDto): void {
+  const normalized = normalizeMessages([message])[0]!;
   appStore.set((state) => {
     const list = state.messages[conversationId] ?? [];
-    const index = list.findIndex((item) => item.id === message.id);
-    const next = index >= 0 ? list.map((item, i) => (i === index ? message : item)) : [...list, message];
+    const index = list.findIndex((item) => item.id === normalized.id);
+    const next = index >= 0 ? list.map((item, i) => (i === index ? normalized : item)) : [...list, normalized];
     return { messages: { ...state.messages, [conversationId]: next } };
   });
 }
@@ -269,6 +285,12 @@ export function startAppEvents(): void {
     (event) => {
       if (event.type === "task") {
         void refreshTaskCounts();
+      } else if (event.type === "resource-changed") {
+        if (event.resource === "agents") void refreshAgents();
+        if (event.resource === "conversations") void refreshConversations();
+        if (event.resource === "settings") void refreshSettings();
+        if (event.resource === "connections" || event.resource === "models") void refreshConnectionsAndModels();
+        window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: event }));
       }
     },
     (connected) => appStore.set({ eventsConnected: connected })

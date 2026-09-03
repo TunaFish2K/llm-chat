@@ -46,6 +46,31 @@ describe("Markdown component", () => {
       .toBe("font-size: 1.2em; text-align: center");
   });
 
+  it("rejects malformed and excessive values across the supported inline CSS types", () => {
+    expect(sanitizeInlineStyle([
+      "broken",
+      "color:",
+      `color: ${"x".repeat(121)}`,
+      "color: url(x)",
+      "color: red\\evil",
+      "text-align: sideways",
+      "font-style: blink",
+      "font-weight: heavy",
+      "list-style-type: emoji",
+      "font-size: huge",
+      "font-size: 9px",
+      "font-size: 100px",
+      "font-size: 50%",
+      "font-size: 1rem",
+      "padding: 65px",
+      "margin: 5em",
+      "border-width: 101%",
+      "font-style: italic",
+      "font-weight: 700",
+      "list-style-type: disc"
+    ].join("; "))).toBe("font-size: 1rem; font-style: italic; font-weight: 700; list-style-type: disc");
+  });
+
   it("opens safe links in a new tab and drops unsafe links", () => {
     const { rerender } = render(<Markdown text="[链接](https://example.com)" />);
     expect(screen.getByRole("link", { name: "链接" })).toHaveAttribute("rel", "noopener noreferrer");
@@ -53,11 +78,23 @@ describe("Markdown component", () => {
     expect(screen.queryByRole("link", { name: "危险" })).not.toBeInTheDocument();
   });
 
+  it("renders only content-addressed local file links as downloads", () => {
+    const id = "00000000-0000-4000-8000-000000000001";
+    const hash = "a".repeat(64);
+    const { rerender } = render(<Markdown text={`[报告](/api/files/${id}?v=${hash})`} />);
+    expect(screen.getByRole("link", { name: "报告" })).toHaveAttribute("download");
+    rerender(<Markdown text="[伪造文件](/api/files/not-an-id?v=bad)" />);
+    expect(screen.queryByRole("link", { name: "伪造文件" })).not.toBeInTheDocument();
+  });
+
   it("renders hashed app images directly and proxies public remote images", () => {
     const id = "00000000-0000-4000-8000-000000000001";
     const hash = "a".repeat(64);
     const { rerender } = render(<Markdown text={`![本机图片](/api/images/${id}?v=${hash})`} />);
     expect(screen.getByRole("img", { name: "本机图片" })).toHaveAttribute("src", `/api/images/${id}?v=${hash}`);
+
+    rerender(<Markdown text={`![本机文件图片](/api/files/${id}?v=${hash})`} />);
+    expect(screen.getByRole("img", { name: "本机文件图片" })).toHaveAttribute("src", `/api/files/${id}?v=${hash}`);
 
     rerender(<Markdown text="![远程图片](https://example.com/picture.png?x=1)" />);
     expect(screen.getByRole("img", { name: "远程图片" })).toHaveAttribute(
@@ -67,8 +104,15 @@ describe("Markdown component", () => {
   });
 
   it("does not load arbitrary local or data image sources", () => {
-    render(<Markdown text="![私有图片](file:///etc/passwd)" />);
+    const { rerender } = render(<Markdown text="![私有图片](file:///etc/passwd)" />);
     expect(screen.queryByRole("img", { name: "私有图片" })).not.toBeInTheDocument();
+    rerender(<Markdown text="![](::::)" />);
+    expect(document.querySelector(".markdown img")).toBeNull();
+  });
+
+  it("removes an inline style when no declaration survives", () => {
+    render(<Markdown text={'<div style="position: fixed">plain</div>'} />);
+    expect(screen.getByText("plain")).not.toHaveAttribute("style");
   });
 
   it("derives a useful link title from mixed formatted children", () => {

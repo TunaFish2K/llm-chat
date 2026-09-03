@@ -37,11 +37,12 @@ function textOf(node: ReactNode): string {
 }
 
 function SafeLink({ href, children, ...props }: ComponentProps<"a">) {
-  if (!href || (!href.startsWith("http://") && !href.startsWith("https://") && !href.startsWith("mailto:"))) {
+  const localFile = Boolean(href && /^\/api\/files\/[0-9a-f-]{36}\?v=[a-f0-9]{64}$/i.test(href));
+  if (!href || (!localFile && !href.startsWith("http://") && !href.startsWith("https://") && !href.startsWith("mailto:"))) {
     return <span>{children}</span>;
   }
   return (
-    <a {...props} href={href} target="_blank" rel="noopener noreferrer" title={textOf(children)}>
+    <a {...props} href={href} target="_blank" rel="noopener noreferrer" title={textOf(children)} download={localFile || undefined}>
       {children}
     </a>
   );
@@ -49,7 +50,7 @@ function SafeLink({ href, children, ...props }: ComponentProps<"a">) {
 
 function imageSource(src: string | undefined): string | null {
   if (!src) return null;
-  if (/^\/api\/images\/[0-9a-f-]{36}\?v=[a-f0-9]{64}$/i.test(src)) return src;
+  if (/^\/api\/(?:images|files)\/[0-9a-f-]{36}\?v=[a-f0-9]{64}$/i.test(src)) return src;
   try {
     const url = new URL(src);
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;

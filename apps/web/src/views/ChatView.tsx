@@ -262,7 +262,7 @@ export function ChatView({
                   mode: "edit",
                   messageId: editingMessage.id,
                   text,
-                  imageAssetIds: (editingMessage.attachments ?? []).map((asset) => asset.id)
+                  assetIds: (editingMessage.attachments ?? []).map((asset) => asset.id)
                 })
               ) {
                 setEditingMessage(null);
