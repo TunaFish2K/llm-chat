@@ -8,9 +8,7 @@
   justify-content: center;
   min-height: 100dvh;
   padding: var(--space-4);
-  background:
-    radial-gradient(140% 100% at 50% -20%, var(--accent-soft) 0%, transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 .login-card {
@@ -717,10 +715,12 @@
   margin-bottom: var(--space-4);
   font-size: var(--text-xl);
   font-weight: 680;
+  letter-spacing: 0;
 }
 
 .login-card .brand img {
   border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--border-strong);
 }
 
 .inspector-panel {

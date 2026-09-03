@@ -31,7 +31,7 @@ test.describe("应用外壳", () => {
   test("主导航与会话任务视图切换，深链接可直接打开", async ({ page, request }) => {
     await page.goto(APP_URL);
     await openDrawerIfNeeded(page);
-    await expect(page.locator(".sidebar-brand")).toHaveText(/llm-chat/);
+    await expect(page.locator(".sidebar-brand")).toHaveText(/Chat/);
     await expect(page.getByRole("link", { name: "后台任务" })).toHaveCount(0);
 
     await gotoPath(page, "/agents");
@@ -69,6 +69,10 @@ test.describe("应用外壳", () => {
         .poll(async () => (await api(request, APP_URL, "GET", "/api/settings")).theme)
         .toBe(next);
       await expect(page.locator("html")).toHaveAttribute("data-theme", next);
+      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+        "content",
+        next === "light" ? "#f5f7f5" : "#0d100e"
+      );
     } finally {
       await api(request, APP_URL, "PATCH", "/api/settings", { theme: before });
     }
@@ -91,7 +95,13 @@ test.describe("应用外壳", () => {
 
     const manifest = await page.request.get(`${APP_URL}/manifest.webmanifest`);
     expect(manifest.ok()).toBeTruthy();
-    expect((await manifest.json()).name).toBe("llm-chat");
+    expect(await manifest.json()).toMatchObject({
+      name: "Chat",
+      short_name: "Chat",
+      theme_color: "#0d100e",
+      background_color: "#0d100e"
+    });
+    await expect(page).toHaveTitle("Chat");
     const sw = await page.request.get(`${APP_URL}/sw.js`);
     expect(sw.ok()).toBeTruthy();
     expect(await sw.text()).toContain("/api/");
