@@ -90,6 +90,39 @@ describe("api client", () => {
     await expect(api.get("/api/item")).rejects.toMatchObject({ code: "network_error", message: "网络请求失败" });
   });
 
+  it("uploads a raw file with encoded metadata and maps upload errors", async () => {
+    const asset = {
+      id: "00000000-0000-4000-8000-000000000001",
+      fileName: "报告.txt",
+      mimeType: "text/plain",
+      kind: "file",
+      byteSize: 4,
+      sha256: "a".repeat(64),
+      url: `/api/files/00000000-0000-4000-8000-000000000001?v=${"a".repeat(64)}`,
+      createdAt: 1
+    };
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(201, asset));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["test"], "报告.txt", { type: "text/plain" });
+    await expect(endpoints.uploadFile(file)).resolves.toEqual(asset);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/files");
+    expect(init).toMatchObject({ method: "POST", body: file });
+    expect(init.headers).toMatchObject({
+      "content-type": "application/octet-stream",
+      "x-llm-chat-request": "1",
+      "x-file-name": encodeURIComponent("报告.txt"),
+      "x-file-type": "text/plain"
+    });
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(mockResponse(413, {
+      error: { code: "file_too_large", message: "文件过大" }
+    })));
+    await expect(endpoints.uploadFile(file)).rejects.toMatchObject({
+      status: 413, code: "file_too_large", message: "文件过大"
+    });
+  });
+
   it("keeps every endpoint wrapper wired to the request client", async () => {
     const fetchMock = vi.fn(async () => mockResponse(200, {}));
     vi.stubGlobal("fetch", fetchMock);

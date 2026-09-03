@@ -73,7 +73,12 @@ describe("Character Card V2 import and export", () => {
 
     const invalidExtension = card("Defaulted", { llm_chat: { version: 2, execution: portableExecution } });
     const defaulted = importCharacterCard(store, "defaulted.json", Buffer.from(JSON.stringify(invalidExtension)));
-    expect(defaulted.execution).toEqual(defaultAgent.execution);
+    expect(defaulted.execution).toMatchObject({
+      modelId: defaultAgent.execution.modelId,
+      contextPolicy: defaultAgent.execution.contextPolicy,
+      reasoningEffort: defaultAgent.execution.reasoningEffort,
+      tools: { overrides: expect.objectContaining({ app_agents: false, app_connections: false, app_conversations: false }) }
+    });
     expect(defaulted.userProfile).toEqual({});
   });
 

@@ -59,6 +59,41 @@ describe("server API", () => {
     expect(privateProxy.json()).toMatchObject({ error: { code: "image_proxy_private_address" } });
   });
 
+  it("uploads arbitrary files and serves immutable, ranged downloads without trusting their MIME type", async () => {
+    const app = await testApp();
+    const bytes = Buffer.from("0123456789", "utf8");
+    const uploaded = await app.inject({
+      method: "POST",
+      url: "/api/files",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-file-name": encodeURIComponent("report.html"),
+        "x-file-type": "text/html"
+      },
+      payload: bytes
+    });
+    expect(uploaded.statusCode).toBe(201);
+    const asset = uploaded.json();
+    expect(asset).toMatchObject({ fileName: "report.html", mimeType: "text/html", kind: "file", byteSize: 10 });
+    expect(asset.url).toBe(`/api/files/${asset.id}?v=${asset.sha256}`);
+
+    const complete = await app.inject({ method: "GET", url: asset.url });
+    expect(complete.statusCode).toBe(200);
+    expect(complete.headers["content-type"]).toContain("application/octet-stream");
+    expect(complete.headers["content-disposition"]).toBe("attachment; filename*=UTF-8''report.html");
+    expect(complete.headers["x-content-type-options"]).toBe("nosniff");
+    expect(complete.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(complete.rawPayload.equals(bytes)).toBe(true);
+
+    const range = await app.inject({ method: "GET", url: asset.url, headers: { range: "bytes=2-5" } });
+    expect(range.statusCode).toBe(206);
+    expect(range.headers["content-range"]).toBe("bytes 2-5/10");
+    expect(range.body).toBe("2345");
+    const invalid = await app.inject({ method: "GET", url: asset.url, headers: { range: "bytes=99-100" } });
+    expect(invalid.statusCode).toBe(416);
+    expect(invalid.headers["content-range"]).toBe("bytes */10");
+  });
+
   it("protects password APIs with request-source and session checks without a configured public origin", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-auth-api-"));
     dirs.push(dir);

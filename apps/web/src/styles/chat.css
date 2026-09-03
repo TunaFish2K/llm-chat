@@ -518,6 +518,31 @@
   object-fit: cover;
 }
 
+.message-files {
+  display: grid;
+  gap: 6px;
+  width: min(100%, 420px);
+}
+
+.message-file {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.message-file:hover { border-color: var(--accent-line); color: var(--text); }
+.message-file span { min-width: 0; display: grid; }
+.message-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.message-file small { color: var(--text-faint); }
+
 .stream-footer {
   display: flex;
   align-items: center;

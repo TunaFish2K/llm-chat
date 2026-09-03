@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, realpath, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { basename, isAbsolute, resolve, sep } from "node:path";
-import type { ImageAssetDto } from "@llm-chat/contracts";
-import type { ImageAssetRecord, Store } from "./database";
+import type { FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
+import type { FileAssetRecord, Store } from "./database";
 import { StoreError } from "./database";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const CACHE_MAX_BYTES = 256 * 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ORPHAN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -22,16 +23,20 @@ interface CachedImage {
 
 export class ImageService {
   private readonly root: string;
+  private readonly attachmentRoot: string;
   private readonly proxyCache = new Map<string, CachedImage>();
   private proxyCacheBytes = 0;
 
   constructor(private readonly store: Store) {
     this.root = resolve(store.dataDir, "image-assets");
+    this.attachmentRoot = resolve(store.dataDir, "attachment-workspaces");
   }
 
   async initialize(): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
+    await mkdir(this.attachmentRoot, { recursive: true, mode: 0o700 });
     await this.cleanupOrphans();
+    await this.resumeAttachmentWorkspaceCleanup();
   }
 
   async importBytes(fileName: string, bytes: Uint8Array): Promise<ImageAssetDto> {
@@ -41,21 +46,32 @@ export class ImageService {
     const mimeType = sniffImage(bytes);
     if (!mimeType) throw new StoreError("image_type_invalid", "仅支持 JPEG、PNG、WebP 和 GIF 图片");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const existing = this.store.findImageAssetBySha256(sha256);
-    if (existing) return toDto(existing);
     const storageKey = `${sha256}.${extensionFor(mimeType)}`;
-    const target = resolve(this.root, storageKey);
-    try {
-      await access(target, constants.F_OK);
-    } catch {
-      await writeFile(target, bytes, { mode: 0o600, flag: "wx" }).catch(async (error) => {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      });
-    }
-    return toDto(this.store.createImageAsset({
+    await this.storeBlob(storageKey, bytes);
+    return toDto(this.store.createFileAsset({
       sha256,
       fileName: cleanFileName(fileName, mimeType),
       mimeType,
+      kind: "image",
+      byteSize: bytes.byteLength,
+      storageKey
+    })) as ImageAssetDto;
+  }
+
+  async importFile(fileName: string, declaredMimeType: string, bytes: Uint8Array): Promise<FileAssetDto> {
+    if (!bytes.byteLength || bytes.byteLength > MAX_FILE_BYTES) {
+      throw new StoreError("file_too_large", "文件必须小于 64 MiB");
+    }
+    const imageType = sniffImage(bytes);
+    if (imageType) return this.importBytes(fileName, bytes);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const storageKey = sha256;
+    await this.storeBlob(storageKey, bytes);
+    return toDto(this.store.createFileAsset({
+      sha256,
+      fileName: cleanFileName(fileName),
+      mimeType: cleanMimeType(declaredMimeType),
+      kind: "file",
       byteSize: bytes.byteLength,
       storageKey
     }));
@@ -76,10 +92,55 @@ export class ImageService {
     return this.importBytes(basename(canonical), bytes);
   }
 
-  async readAsset(id: string): Promise<{ asset: ImageAssetDto; bytes: Uint8Array }> {
-    const record = this.store.getImageAssetRecord(id);
-    if (!record) throw new StoreError("image_asset_not_found", "图片资产不存在");
+  async importWorkspaceFile(workspaceRoot: string, inputPath: string, declaredMimeType = "application/octet-stream"): Promise<FileAssetDto> {
+    const canonical = await workspaceFile(workspaceRoot, inputPath);
+    const info = await import("node:fs/promises").then(({ stat }) => stat(canonical));
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new StoreError("file_too_large", "文件必须小于 64 MiB");
+    return this.importFile(basename(canonical), declaredMimeType, new Uint8Array(await readFile(canonical)));
+  }
+
+  async readFileAsset(id: string): Promise<{ asset: FileAssetDto; bytes: Uint8Array }> {
+    const record = this.store.getFileAssetRecord(id);
+    if (!record) throw new StoreError("file_asset_not_found", "文件资产不存在");
     return { asset: toDto(record), bytes: new Uint8Array(await readFile(resolve(this.root, record.storageKey))) };
+  }
+
+  async readAsset(id: string): Promise<{ asset: ImageAssetDto; bytes: Uint8Array }> {
+    const loaded = await this.readFileAsset(id);
+    if (loaded.asset.kind !== "image") throw new StoreError("image_asset_not_found", "图片资产不存在");
+    return loaded as { asset: ImageAssetDto; bytes: Uint8Array };
+  }
+
+  attachmentWorkspace(conversationId: string): string {
+    return resolve(this.attachmentRoot, conversationId);
+  }
+
+  async materializeMessageAttachments(conversationId: string, messageId: string): Promise<void> {
+    const targetRoot = resolve(this.attachmentWorkspace(conversationId), "incoming", messageId);
+    await mkdir(targetRoot, { recursive: true, mode: 0o700 });
+    for (const asset of this.store.messageFiles(messageId)) {
+      const record = this.store.getFileAssetRecord(asset.id)!;
+      await copyFile(resolve(this.root, record.storageKey), resolve(targetRoot, attachmentFileName(asset)));
+    }
+  }
+
+  async cloneAttachmentWorkspace(_sourceConversationId: string, targetConversationId: string): Promise<void> {
+    const target = this.attachmentWorkspace(targetConversationId);
+    await rm(target, { recursive: true, force: true });
+    // Forking creates new message IDs, so rebuild from immutable assets instead
+    // of copying directories whose names belong to the source conversation.
+    for (const message of this.store.listMessages(targetConversationId)) {
+      if (message.attachments.length) await this.materializeMessageAttachments(targetConversationId, message.id);
+    }
+  }
+
+  async scheduleAttachmentWorkspaceCleanup(conversationId: string): Promise<void> {
+    const root = this.attachmentWorkspace(conversationId);
+    const tombstone = `${root}.deleted-${Date.now()}`;
+    await rename(root, tombstone).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+    this.removeAttachmentWorkspaceLater(tombstone, ORPHAN_TTL_MS);
   }
 
   async proxy(rawUrl: string, signal?: AbortSignal): Promise<{ bytes: Uint8Array; mimeType: ImageAssetDto["mimeType"] }> {
@@ -119,12 +180,73 @@ export class ImageService {
     throw new StoreError("image_proxy_redirect_invalid", "图片重定向次数过多");
   }
 
+  async fetchPublicFile(rawUrl: string, maxBytes = 10 * 1024 * 1024, signal?: AbortSignal): Promise<{ bytes: Uint8Array; fileName: string; mimeType: string }> {
+    let current = new URL(rawUrl);
+    for (let redirects = 0; redirects <= 3; redirects += 1) {
+      await assertPublicUrl(current);
+      const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000);
+      const response = await fetch(current, { redirect: "manual", signal: combined, headers: { "user-agent": "llm-chat-file-fetch/1.0" } });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) throw new StoreError("file_redirect_invalid", "文件重定向缺少 Location");
+        current = new URL(location, current);
+        continue;
+      }
+      if (!response.ok) throw new StoreError("file_fetch_failed", `文件服务器返回 HTTP ${response.status}`);
+      const declared = Number(response.headers.get("content-length") ?? 0);
+      if (declared > maxBytes) throw new StoreError("file_too_large", "远程文件超过大小限制");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > maxBytes) throw new StoreError("file_too_large", "远程文件超过大小限制");
+      let remoteName = "file";
+      try {
+        remoteName = decodeURIComponent(current.pathname.split("/").at(-1) || "file");
+      } catch {
+        remoteName = current.pathname.split("/").at(-1) || "file";
+      }
+      return {
+        bytes,
+        fileName: cleanFileName(remoteName),
+        mimeType: cleanMimeType(response.headers.get("content-type") ?? "application/octet-stream")
+      };
+    }
+    throw new StoreError("file_redirect_invalid", "文件重定向次数过多");
+  }
+
   async cleanupOrphans(now = Date.now()): Promise<void> {
-    for (const asset of this.store.unreferencedImageAssets(now - ORPHAN_TTL_MS)) {
-      await unlink(resolve(this.root, asset.storageKey)).catch((error) => {
+    for (const asset of this.store.unreferencedFileAssets(now - ORPHAN_TTL_MS)) {
+      const result = this.store.deleteFileAsset(asset.id);
+      if (!result.storageKey) continue;
+      await unlink(resolve(this.root, result.storageKey)).catch((error) => {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       });
-      this.store.deleteImageAsset(asset.id);
+    }
+  }
+
+  private async resumeAttachmentWorkspaceCleanup(now = Date.now()): Promise<void> {
+    for (const entry of await readdir(this.attachmentRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const match = /\.deleted-(\d+)$/.exec(entry.name);
+      if (!match) continue;
+      const elapsed = Math.max(0, now - Number(match[1]));
+      const path = resolve(this.attachmentRoot, entry.name);
+      if (elapsed >= ORPHAN_TTL_MS) await rm(path, { recursive: true, force: true });
+      else this.removeAttachmentWorkspaceLater(path, ORPHAN_TTL_MS - elapsed);
+    }
+  }
+
+  private removeAttachmentWorkspaceLater(path: string, delay: number): void {
+    const timer = setTimeout(() => void rm(path, { recursive: true, force: true }), delay);
+    timer.unref();
+  }
+
+  private async storeBlob(storageKey: string, bytes: Uint8Array): Promise<void> {
+    const target = resolve(this.root, storageKey);
+    try {
+      await access(target, constants.F_OK);
+    } catch {
+      await writeFile(target, bytes, { mode: 0o600, flag: "wx" }).catch(async (error) => {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      });
     }
   }
 
@@ -153,18 +275,41 @@ export function sniffImage(bytes: Uint8Array): ImageAssetDto["mimeType"] | null 
   return null;
 }
 
-function cleanFileName(fileName: string, mimeType: ImageAssetDto["mimeType"]): string {
+function cleanFileName(fileName: string, mimeType?: ImageAssetDto["mimeType"]): string {
   const clean = basename(fileName).replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 255);
-  return clean || `image.${extensionFor(mimeType)}`;
+  return clean || (mimeType ? `image.${extensionFor(mimeType)}` : "file");
 }
 
 function extensionFor(mimeType: ImageAssetDto["mimeType"]): string {
   return mimeType === "image/jpeg" ? "jpg" : mimeType.slice("image/".length);
 }
 
-function toDto(record: ImageAssetRecord): ImageAssetDto {
+function toDto(record: FileAssetRecord): FileAssetDto {
   const { storageKey: _storageKey, ...dto } = record;
   return dto;
+}
+
+function cleanMimeType(value: string): string {
+  const clean = value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(clean) ? clean : "application/octet-stream";
+}
+
+async function workspaceFile(workspaceRoot: string, inputPath: string): Promise<string> {
+  if (!inputPath.trim() || isAbsolute(inputPath)) throw new StoreError("workspace_file_path_invalid", "文件路径必须相对工作区");
+  const canonicalRoot = await realpath(workspaceRoot);
+  const candidate = resolve(canonicalRoot, inputPath);
+  if (candidate !== canonicalRoot && !candidate.startsWith(`${canonicalRoot}${sep}`)) {
+    throw new StoreError("workspace_file_path_invalid", "文件路径必须相对工作区且不能越界");
+  }
+  const canonical = await realpath(candidate);
+  if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) {
+    throw new StoreError("workspace_file_path_invalid", "文件路径解析到了工作区之外");
+  }
+  return canonical;
+}
+
+export function attachmentFileName(asset: Pick<FileAssetDto, "id" | "fileName">): string {
+  return `${asset.id}-${cleanFileName(asset.fileName)}`;
 }
 
 async function assertPublicUrl(url: URL): Promise<void> {

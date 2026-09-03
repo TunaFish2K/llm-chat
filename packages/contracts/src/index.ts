@@ -435,17 +435,23 @@ export interface ToolCallDto {
   error: string | null;
   startedAt: number | null;
   completedAt: number | null;
-  artifacts: ImageAssetDto[];
+  artifacts: FileAssetDto[];
 }
 
-export interface ImageAssetDto {
+export interface FileAssetDto {
   id: string;
   fileName: string;
-  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  mimeType: string;
+  kind: "image" | "file";
   byteSize: number;
   sha256: string;
   url: string;
   createdAt: number;
+}
+
+export interface ImageAssetDto extends FileAssetDto {
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  kind: "image";
 }
 
 export interface VisionAnalysisDto {
@@ -494,7 +500,7 @@ export interface MessageDto {
   id: string;
   role: "user" | "assistant";
   text: string | null;
-  attachments: ImageAssetDto[];
+  attachments: FileAssetDto[];
   generatedModel: GeneratedModelDto | null;
   activeGenerationId: string | null;
   generations: GenerationDto[];
@@ -504,12 +510,14 @@ export interface MessageDto {
 
 const messageTextSchema = z.string().trim().max(1_000_000).default("");
 const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
+const fileAssetIdsSchema = z.array(z.string().uuid()).max(8);
 
 export const sendMessageSchema = z.object({
   text: messageTextSchema,
+  assetIds: fileAssetIdsSchema.optional(),
   imageAssetIds: imageAssetIdsSchema
-}).refine((value) => value.text.length > 0 || value.imageAssetIds.length > 0, {
-  message: "Message text or at least one image is required"
+}).refine((value) => value.text.length > 0 || (value.assetIds?.length ?? 0) > 0 || value.imageAssetIds.length > 0, {
+  message: "Message text or at least one attachment is required"
 });
 
 export const startConversationSchema = sendMessageSchema.extend({
@@ -526,9 +534,10 @@ export const forkConversationSchema = z.discriminatedUnion("mode", [
     mode: z.literal("edit"),
     messageId: z.string().uuid(),
     text: messageTextSchema,
+    assetIds: fileAssetIdsSchema.optional(),
     imageAssetIds: imageAssetIdsSchema
-  }).refine((value) => value.text.length > 0 || value.imageAssetIds.length > 0, {
-    message: "Message text or at least one image is required"
+  }).refine((value) => value.text.length > 0 || (value.assetIds?.length ?? 0) > 0 || value.imageAssetIds.length > 0, {
+    message: "Message text or at least one attachment is required"
   }),
   z.object({
     mode: z.literal("continue"),
@@ -540,7 +549,7 @@ export const forkConversationSchema = z.discriminatedUnion("mode", [
     greetingIndex: z.number().int().nonnegative().max(100)
   })
 ]);
-export type ForkConversationInput = z.infer<typeof forkConversationSchema>;
+export type ForkConversationInput = z.input<typeof forkConversationSchema>;
 
 export const patchConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
@@ -556,6 +565,12 @@ export const imageUploadSchema = z.object({
   dataBase64: z.string().min(1).max(7_500_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
 });
 export type ImageUploadInput = z.infer<typeof imageUploadSchema>;
+
+export const fileUploadMetadataSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().max(255).default("application/octet-stream")
+});
+export type FileUploadMetadata = z.infer<typeof fileUploadMetadataSchema>;
 
 export interface GenerationCreatedDto {
   userMessageId?: string;
@@ -629,7 +644,7 @@ export interface ToolCatalogItemDto {
   name: string;
   label: string;
   description: string;
-  category: "web" | "local" | "workspace" | "memory" | "conversation" | "skill" | "mcp" | "background" | "plugin";
+  category: "web" | "local" | "workspace" | "memory" | "conversation" | "skill" | "mcp" | "background" | "plugin" | "app";
   requiresApproval: boolean;
   available: boolean;
   approvalMode?: "always" | "never" | "dynamic";
@@ -751,7 +766,8 @@ export type AppEvent =
   | { id: number; type: "task"; taskId: string; task: BackgroundTaskDto }
   | { id: number; type: "task-output"; taskId: string; cursor: number }
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
-  | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string };
+  | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
+  | { id: number; type: "resource-changed"; resource: "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
 
 const mcpServerFields = {
   name: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9]+$/, "名称只能包含英文字母和数字"),

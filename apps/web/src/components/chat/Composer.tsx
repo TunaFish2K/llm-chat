@@ -3,8 +3,9 @@ import {
   Bot,
   ChevronDown,
   FolderOpen,
+  FilePlus2,
+  FileText,
   Gauge,
-  ImagePlus,
   LoaderCircle,
   Send,
   Settings2,
@@ -16,17 +17,17 @@ import type {
   ConversationDto,
   ConversationExecutionOverrides,
   GenerationDto,
-  ImageAssetDto,
+  FileAssetDto,
   MessageDto,
   ReasoningEffort,
   ToolCallDto
 } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, refreshConversations, toast, toastError, trackGeneration } from "../../lib/app-state";
-import { fileToBase64 } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
 import { navigate, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
+import { fileToBase64 } from "../../lib/format";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
@@ -35,8 +36,11 @@ import { ModelPicker } from "./ModelPicker";
 
 const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const MAX_IMAGES = 4;
+const MAX_ATTACHMENTS = 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_IMAGE_BYTES = 15 * 1024 * 1024;
+const MAX_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const DRAFT_DEBOUNCE_MS = 500;
 
 /**
@@ -75,9 +79,9 @@ export function Composer({
   const [editingOverrides, setEditingOverrides] = useState(false);
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [attachments, setAttachments] = useState<ImageAssetDto[]>([]);
+  const [attachments, setAttachments] = useState<FileAssetDto[]>([]);
   const [uploading, setUploading] = useState(false);
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedConversation = useRef<string | null>(null);
   const isNew = !conversation;
@@ -230,45 +234,59 @@ export function Composer({
   };
 
   /** Validate locally first: type, per-file size, total size, and slot count. */
-  const uploadImages = async (files: File[]) => {
+  const uploadFiles = async (files: File[]) => {
     if (!files.length || uploading) return;
-    const slots = Math.max(0, MAX_IMAGES - attachments.length);
+    const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
     if (!slots) {
-      toast("error", `每条消息最多附加 ${MAX_IMAGES} 张图片`);
+      toast("error", `每条消息最多附加 ${MAX_ATTACHMENTS} 个文件`);
       return;
     }
     const selected = files.slice(0, slots);
-    if (files.length > slots) toast("info", `只会添加前 ${slots} 张图片`);
+    if (files.length > slots) toast("info", `只会添加前 ${slots} 个文件`);
     let totalBytes = attachments.reduce((sum, asset) => sum + asset.byteSize, 0);
+    let imageBytes = attachments.filter((asset) => asset.kind === "image").reduce((sum, asset) => sum + asset.byteSize, 0);
+    let imageCount = attachments.filter((asset) => asset.kind === "image").length;
     const accepted: File[] = [];
     for (const file of selected) {
-      if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-        toast("error", `${file.name || "图片"} 不是支持的图片格式`);
-        continue;
-      }
-      if (file.size > MAX_IMAGE_BYTES) {
+      const image = ACCEPTED_IMAGE_TYPES.has(file.type);
+      if (image && file.size > MAX_IMAGE_BYTES) {
         toast("error", `${file.name || "图片"} 超过 5 MiB`);
         continue;
       }
-      if (totalBytes + file.size > MAX_TOTAL_IMAGE_BYTES) {
+      if (!image && file.size > MAX_FILE_BYTES) {
+        toast("error", `${file.name || "文件"} 超过 64 MiB`);
+        continue;
+      }
+      if (image && imageCount >= MAX_IMAGES) {
+        toast("error", `每条消息最多附加 ${MAX_IMAGES} 张图片`);
+        continue;
+      }
+      if (image && imageBytes + file.size > MAX_TOTAL_IMAGE_BYTES) {
         toast("error", "图片总大小不能超过 15 MiB");
-        break;
+        continue;
+      }
+      if (totalBytes + file.size > MAX_TOTAL_BYTES) {
+        toast("error", "附件总大小不能超过 128 MiB");
+        continue;
       }
       totalBytes += file.size;
+      if (image) { imageBytes += file.size; imageCount += 1; }
       accepted.push(file);
     }
     if (!accepted.length) return;
     setUploading(true);
     try {
-      const uploaded: ImageAssetDto[] = [];
-      for (const [index, file] of accepted.entries()) {
-        const fileName = file.name || `pasted-image-${Date.now()}-${index + 1}.png`;
-        uploaded.push(await endpoints.uploadImage(fileName, await fileToBase64(file)));
+      const uploaded: FileAssetDto[] = [];
+      for (const file of accepted) {
+        const asset = ACCEPTED_IMAGE_TYPES.has(file.type)
+          ? await endpoints.uploadImage(file.name || `pasted-image-${Date.now()}.png`, await fileToBase64(file))
+          : await endpoints.uploadFile(file);
+        uploaded.push({ ...asset, kind: asset.kind ?? (asset.mimeType.startsWith("image/") ? "image" : "file") });
       }
       setAttachments((current) => {
         const next = [...current];
         for (const asset of uploaded) if (!next.some((item) => item.id === asset.id)) next.push(asset);
-        return next.slice(0, MAX_IMAGES);
+        return next.slice(0, MAX_ATTACHMENTS);
       });
     } catch (error) {
       toastError(error);
@@ -288,7 +306,7 @@ export function Composer({
       toast("error", "请先选择一个可用模型");
       return;
     }
-    if (attachments.length && !imageConfigured) {
+    if (attachments.some((asset) => asset.kind === "image") && !imageConfigured) {
       toast("error", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
       return;
     }
@@ -298,7 +316,7 @@ export function Composer({
       if (!conversation) {
         const result = await endpoints.startConversation({
           text: content,
-          ...(attachments.length ? { imageAssetIds: attachments.map((asset) => asset.id) } : {}),
+          ...(attachments.length ? { assetIds: attachments.map((asset) => asset.id) } : {}),
           agentId: effectiveAgent.id,
           greetingIndex,
           executionOverrides: newOverrides,
@@ -340,7 +358,7 @@ export function Composer({
     (!text.trim() && !attachments.length) ||
     !effectiveAgent ||
     !modelAvailable ||
-    (attachments.length > 0 && !imageConfigured);
+    (attachments.some((asset) => asset.kind === "image") && !imageConfigured);
 
   return (
     <div className="composer">
@@ -354,7 +372,7 @@ export function Composer({
             const files = [...event.dataTransfer.files];
             if (files.length) {
               event.preventDefault();
-              void uploadImages(files);
+              void uploadFiles(files);
             }
           }}
         >
@@ -382,25 +400,25 @@ export function Composer({
                 }}
                 onKeyDown={onKeyDown}
                 onPaste={(event) => {
-                  const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
+                  const files = [...event.clipboardData.files];
                   if (files.length) {
                     event.preventDefault();
-                    void uploadImages(files);
+                    void uploadFiles(files);
                   }
                 }}
               />
 
               {attachments.length ? (
-                <div className="composer-attachments" aria-label="待发送图片">
+                <div className="composer-attachments" aria-label="待发送附件">
                   {attachments.map((asset) => (
                     <div key={asset.id} className="attachment-chip">
-                      <img src={asset.url} alt={asset.fileName} />
+                      {asset.kind === "image" ? <img src={asset.url} alt={asset.fileName} /> : <FileText size={20} aria-hidden="true" />}
                       <span>{asset.fileName}</span>
                       <button
                         type="button"
                         onClick={() => setAttachments((current) => current.filter((item) => item.id !== asset.id))}
                         aria-label={`移除 ${asset.fileName}`}
-                        title="移除图片"
+                        title="移除附件"
                       >
                         <X size={13} />
                       </button>
@@ -408,7 +426,7 @@ export function Composer({
                   ))}
                 </div>
               ) : null}
-              {attachments.length && !imageConfigured ? (
+              {attachments.some((asset) => asset.kind === "image") && !imageConfigured ? (
                 <p className="composer-warning">当前模型不支持图片，Agent 也未配置备用识图模型。</p>
               ) : null}
 
@@ -460,25 +478,24 @@ export function Composer({
                 </label>
 
                 <input
-                  ref={imageInputRef}
+                  ref={fileInputRef}
                   className="sr-only"
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
                   multiple
                   onChange={(event) => {
-                    void uploadImages(Array.from(event.target.files ?? []));
+                    void uploadFiles(Array.from(event.target.files ?? []));
                     event.target.value = "";
                   }}
                 />
                 <button
                   type="button"
                   className="chip"
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={controlsDisabled || uploading || attachments.length >= MAX_IMAGES}
-                  aria-label="添加图片"
-                  title="添加图片"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={controlsDisabled || uploading || attachments.length >= MAX_ATTACHMENTS}
+                  aria-label="添加附件"
+                  title="添加附件"
                 >
-                  {uploading ? <LoaderCircle className="spin" size={16} /> : <ImagePlus size={16} />}
+                  {uploading ? <LoaderCircle className="spin" size={16} /> : <FilePlus2 size={16} />}
                 </button>
                 <button
                   type="button"

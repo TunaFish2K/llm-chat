@@ -186,6 +186,10 @@ export class PluginManager {
     return this.list().find((item) => item.id === id)!;
   }
 
+  configurePublic(id: string, config: JsonObject): PluginDto {
+    return this.configure(id, config, this.secretValues(id));
+  }
+
   async reload(id: string): Promise<PluginDto> {
     const plugin = this.list().find((item) => item.id === id);
     if (!plugin) throw new Error("Plugin not found");

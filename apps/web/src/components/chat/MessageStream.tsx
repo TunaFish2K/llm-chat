@@ -21,7 +21,7 @@ import type { InspectionTarget } from "../../lib/inspection";
 import { Markdown } from "../../lib/markdown";
 import { useStore } from "../../lib/store";
 import { StatusTag } from "../ui";
-import { AgentAvatar, CodeField, copyText, ImageGallery, MessageAction } from "./atoms";
+import { AgentAvatar, AssetGallery, CodeField, copyText, MessageAction } from "./atoms";
 import { activeGeneration, answerText, buildTimeline, prettyJson } from "./model";
 
 export interface StreamCallbacks {
@@ -52,7 +52,7 @@ export function MessageItem({
   if (message.role === "user") {
     return (
       <article className="msg" data-role="user">
-        {attachments.length ? <ImageGallery assets={attachments} /> : null}
+        {attachments.length ? <AssetGallery assets={attachments} /> : null}
         {message.text ? <div className="msg-bubble">{message.text}</div> : null}
         <div className="msg-actions">
           <time>{formatTime(message.createdAt)}</time>
@@ -352,7 +352,7 @@ function ToolCallDisclosure({ call, onInspect }: { call: ToolCallDto; onInspect:
         <CodeField label="参数" value={prettyJson(call.arguments)} />
         {call.output ? <CodeField label="输出" value={prettyJson(call.output)} /> : null}
         {call.error ? <CodeField label="错误" value={call.error} danger /> : null}
-        {call.artifacts.length ? <ImageGallery assets={call.artifacts} /> : null}
+        {call.artifacts.length ? <AssetGallery assets={call.artifacts} /> : null}
       </div>
     </details>
   );

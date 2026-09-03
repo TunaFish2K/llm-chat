@@ -59,6 +59,17 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
     };
   }, [agentId]);
 
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const resource = (event as CustomEvent<{ resource?: string }>).detail?.resource;
+      if (resource === "agents" && !dirty) void endpoints.agent(agentId).then(setAgent).catch(toastError);
+      if (resource === "tools") void endpoints.toolCatalog().then(setCatalog).catch(toastError);
+      if (resource === "skills") void endpoints.skills().then(setSkills).catch(toastError);
+    };
+    window.addEventListener("llm-chat:resource-changed", refresh);
+    return () => window.removeEventListener("llm-chat:resource-changed", refresh);
+  }, [agentId, dirty]);
+
   const mutate = (fn: (draft: AgentDto) => void) => {
     setAgent((current) => {
       if (!current) return current;

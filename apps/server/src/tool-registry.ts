@@ -7,6 +7,7 @@ import { buildServerTools, type ServerTool } from "./tools";
 import { isAbsolute, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import type { ImageService } from "./images";
+import type { AppTools } from "./app-tools";
 
 export const SEARCH_TOOLS_NAME = "search_tools";
 
@@ -78,7 +79,8 @@ export class ToolRegistry {
     private readonly tasks: TaskManager,
     private readonly plugins: PluginManager,
     private readonly skills: SkillManager,
-    private readonly images?: ImageService
+    private readonly images?: ImageService,
+    private readonly appTools?: AppTools
   ) {}
 
   async tools(record?: GenerationRecord, includeUnavailable = false): Promise<ServerTool[]> {
@@ -91,9 +93,13 @@ export class ToolRegistry {
     const builtins = (await buildServerTools(this.store, true, {
       taskManager: this.tasks,
       ...(this.images ? { imageService: this.images } : {}),
-      ...(record ? { workspacePath: record.agentSnapshot.workspacePath } : {})
+      ...(record ? {
+        workspacePath: record.agentSnapshot.workspacePath,
+        attachmentWorkspacePath: resolve(this.store.dataDir, "attachment-workspaces", record.conversationId)
+      } : {})
     })).filter((tool) => tool.definition.name !== "use_skill");
-    const all = [...builtins, this.skills.tool(record), ...this.managementTools(), ...await this.plugins.tools(record)];
+    const management = this.appTools ? this.appTools.tools() : this.managementTools();
+    const all = [...builtins, this.skills.tool(record), ...management, ...await this.plugins.tools(record)];
     const policy = record?.agentSnapshot.execution.tools;
     return all.filter((tool) => (includeUnavailable || tool.available)
       && (!policy || (policy.overrides[tool.definition.name] ?? policy.defaultEnabled)));

@@ -12,6 +12,7 @@ import {
   connectionInputSchema,
   conversationInputSchema,
   encodedFileSchema,
+  fileUploadMetadataSchema,
   forkConversationSchema,
   imageUploadSchema,
   mcpServerInputSchema,
@@ -23,6 +24,7 @@ import {
   startConversationSchema,
   toolApprovalInputSchema,
   toolSettingsInputSchema,
+  type FileAssetDto,
   type GenerationEvent,
   type ModelDto
 } from "@llm-chat/contracts";
@@ -45,6 +47,7 @@ import { compactConversationContext, ContextError } from "./context";
 import { ImageService } from "./images";
 import { VisionService } from "./vision";
 import { ModelCatalogService } from "./model-catalog";
+import { AppTools } from "./app-tools";
 
 export type AuthMode = "password" | "disabled";
 
@@ -61,12 +64,16 @@ export interface AppOptions {
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: options.logger ?? true,
-    bodyLimit: 15 * 1024 * 1024,
+    bodyLimit: 65 * 1024 * 1024,
     trustProxy: options.trustProxy ?? false
   });
   await app.register(fastifyCookie);
   await app.register(fastifyRateLimit, { global: false });
   await app.register(fastifyCompress, { global: true });
+  app.addContentTypeParser("application/octet-stream", {
+    parseAs: "buffer",
+    bodyLimit: 64 * 1024 * 1024
+  }, (_request, body, done) => done(null, body));
   await app.register(fastifyHelmet, {
     contentSecurityPolicy: {
       directives: {
@@ -101,7 +108,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const skillManager = new SkillManager(store, eventHub,
     options.skillDiscoveryRoot === undefined ? {} : { discoveryRoot: options.skillDiscoveryRoot });
   await skillManager.initialize();
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService);
+  const appTools = new AppTools({
+    store, tasks: taskManager, plugins: pluginManager, skills: skillManager, files: imageService,
+    events: eventHub, balance: balanceService, catalog: modelCatalog
+  });
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools);
   const runner = new GenerationRunner(store, {
     buildTools: (_currentStore, record) => registry.tools(record),
     prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
@@ -153,8 +164,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.addHook("onSend", async (request, reply, payload) => {
-    const immutableImage = request.method === "GET" && request.url.startsWith("/api/images/");
-    if (request.url.startsWith("/api/") && !immutableImage) reply.header("cache-control", "no-store");
+    const immutableAsset = (request.method === "GET" || request.method === "HEAD")
+      && (request.url.startsWith("/api/images/") || request.url.startsWith("/api/files/"));
+    if (request.url.startsWith("/api/") && !immutableAsset) reply.header("cache-control", "no-store");
     return payload;
   });
 
@@ -163,17 +175,32 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const asset = await imageService.importBytes(value.fileName, Buffer.from(value.dataBase64, "base64"));
     return reply.code(201).send(asset);
   });
+  app.post("/api/files", async (request, reply) => {
+    const fileNameHeader = Array.isArray(request.headers["x-file-name"])
+      ? request.headers["x-file-name"][0]
+      : request.headers["x-file-name"];
+    const mimeHeader = Array.isArray(request.headers["x-file-type"])
+      ? request.headers["x-file-type"][0]
+      : request.headers["x-file-type"];
+    let fileName = "file";
+    try { fileName = decodeURIComponent(fileNameHeader ?? "file"); } catch {}
+    const metadata = fileUploadMetadataSchema.parse({ fileName, mimeType: mimeHeader ?? "application/octet-stream" });
+    if (!Buffer.isBuffer(request.body)) throw new StoreError("file_body_invalid", "文件请求体无效");
+    return reply.code(201).send(await imageService.importFile(metadata.fileName, metadata.mimeType, request.body));
+  });
+  app.get<{ Params: { id: string }; Querystring: { v?: string } }>("/api/files/:id", async (request, reply) => {
+    const { asset, bytes } = await imageService.readFileAsset(request.params.id);
+    if (request.query.v !== asset.sha256) {
+      return reply.header("cache-control", "no-store").redirect(asset.url, 307);
+    }
+    return sendFileAsset(request, reply, asset, bytes);
+  });
   app.get<{ Params: { id: string }; Querystring: { v?: string } }>("/api/images/:id", async (request, reply) => {
     const { asset, bytes } = await imageService.readAsset(request.params.id);
     if (request.query.v !== asset.sha256) {
       return reply.header("cache-control", "no-store").redirect(asset.url, 307);
     }
-    const etag = `"${asset.sha256}"`;
-    reply.header("etag", etag);
-    reply.header("cache-control", "private, max-age=31536000, immutable");
-    reply.header("x-content-type-options", "nosniff");
-    if (request.headers["if-none-match"] === etag) return reply.code(304).send();
-    return reply.type(asset.mimeType).send(Buffer.from(bytes));
+    return sendFileAsset(request, reply, asset, bytes);
   });
   app.get<{ Querystring: { url?: string } }>("/api/image-proxy", async (request, reply) => {
     const value = z.object({ url: z.string().url().max(4096) }).parse(request.query);
@@ -447,15 +474,19 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.post("/api/conversations/start", async (request, reply) => {
     const value = startConversationSchema.parse(request.body);
-    if (value.imageAssetIds.length) {
+    const imageAssetIds = attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image");
+    if (imageAssetIds.length) {
       const agent = store.getAgent(value.agentId);
       const modelId = Object.hasOwn(value.executionOverrides, "modelId")
         ? value.executionOverrides.modelId ?? null
         : agent?.execution.modelId ?? null;
-      assertImageConfiguration(store, agent?.id ?? null, modelId, value.imageAssetIds);
+      assertImageConfiguration(store, agent?.id ?? null, modelId, imageAssetIds);
     }
     const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
     const result = store.startConversation({ ...value, workspacePath });
+    if (result.generation.userMessageId) {
+      await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
+    }
     runner.start(result.generation.generationId);
     return reply.code(202).send(result);
   });
@@ -479,17 +510,25 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       throw new StoreError("conversation_tasks_active", "请先停止该会话的后台任务，再删除会话");
     }
     if (!store.deleteConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
+    await imageService.scheduleAttachmentWorkspaceCleanup(request.params.id);
     return reply.code(204).send();
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/forks", async (request, reply) => {
     const value = forkConversationSchema.parse(request.body);
-    if (value.mode === "edit" && value.imageAssetIds.length) {
+    const imageAssetIds = value.mode === "edit"
+      ? attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image")
+      : [];
+    if (value.mode === "edit" && imageAssetIds.length) {
       const source = store.getConversation(request.params.id);
       if (!source) throw new StoreError("conversation_not_found", "会话不存在");
       const resolved = store.resolveGeneration(source);
-      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, value.imageAssetIds);
+      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, imageAssetIds);
     }
     const result = store.forkConversation(request.params.id, value);
+    await imageService.cloneAttachmentWorkspace(request.params.id, result.conversation.id);
+    if (result.generation?.userMessageId) {
+      await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
+    }
     if (result.generation) runner.start(result.generation.generationId);
     return reply.code(result.generation ? 202 : 201).send(result);
   });
@@ -522,13 +561,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
     if (store.isConversationBusy(request.params.id)) throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
     const value = sendMessageSchema.parse(request.body);
-    if (value.imageAssetIds.length) {
+    const ids = attachmentIds(value);
+    const imageAssetIds = ids.filter((id) => store.getFileAsset(id)?.kind === "image");
+    if (imageAssetIds.length) {
       const conversation = store.getConversation(request.params.id);
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
       const resolved = store.resolveGeneration(conversation);
-      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, value.imageAssetIds);
+      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, imageAssetIds);
     }
-    const result = store.createMessageGeneration(request.params.id, value.text, value.imageAssetIds);
+    const result = store.createMessageGeneration(request.params.id, value.text, ids);
+    if (result.userMessageId) {
+      await imageService.materializeMessageAttachments(request.params.id, result.userMessageId);
+    }
     runner.start(result.generationId);
     return reply.code(202).send(result);
   });
@@ -683,6 +727,47 @@ async function userOperation<T>(code: string, operation: () => T | Promise<T>): 
     if (error instanceof StoreError) throw error;
     throw new StoreError(code, error instanceof Error ? error.message : "操作失败");
   }
+}
+
+function attachmentIds(value: { assetIds?: string[] | undefined; imageAssetIds?: string[] | undefined }): string[] {
+  return [...new Set([...(value.assetIds ?? []), ...(value.imageAssetIds ?? [])])];
+}
+
+function sendFileAsset(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  asset: FileAssetDto,
+  bytes: Uint8Array
+) {
+  const etag = `"${asset.sha256}"`;
+  reply.header("etag", etag);
+  reply.header("cache-control", "private, max-age=31536000, immutable");
+  reply.header("x-content-type-options", "nosniff");
+  reply.header("accept-ranges", "bytes");
+  if (asset.kind === "file") {
+    reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(asset.fileName)}`);
+    reply.type("application/octet-stream");
+  } else {
+    reply.header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(asset.fileName)}`);
+    reply.type(asset.mimeType);
+  }
+  if (request.headers["if-none-match"] === etag) return reply.code(304).send();
+  const range = request.headers.range;
+  if (!range) return reply.header("content-length", bytes.byteLength).send(Buffer.from(bytes));
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match) return reply.code(416).header("content-range", `bytes */${bytes.byteLength}`).send();
+  const requestedStart = match[1] ? Number(match[1]) : null;
+  const requestedEnd = match[2] ? Number(match[2]) : null;
+  const start = requestedStart ?? Math.max(0, bytes.byteLength - (requestedEnd ?? 0));
+  const end = requestedStart === null ? bytes.byteLength - 1 : Math.min(bytes.byteLength - 1, requestedEnd ?? bytes.byteLength - 1);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= bytes.byteLength) {
+    return reply.code(416).header("content-range", `bytes */${bytes.byteLength}`).send();
+  }
+  const body = bytes.subarray(start, end + 1);
+  return reply.code(206)
+    .header("content-range", `bytes ${start}-${end}/${bytes.byteLength}`)
+    .header("content-length", body.byteLength)
+    .send(Buffer.from(body));
 }
 
 function isStreamEnd(status: string): boolean {

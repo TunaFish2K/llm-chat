@@ -3,6 +3,7 @@ import type { ContextPolicy, ContextSummaryDto, GenerationDto, GenerationSetting
 import { adapterFor, type ProviderConnection, type ProviderMessage } from "@llm-chat/providers";
 import { compileAgentPrompt } from "./agent-prompt";
 import type { ContextMessageRecord, GenerationRecord, Store } from "./database";
+import { attachmentFileName } from "./images";
 import type { PreparedImages } from "./vision";
 
 export interface BuiltContext {
@@ -311,7 +312,7 @@ async function generateSummary(
   preparedImages: PreparedImages = new Map()
 ): Promise<{ text: string; usage: UsageDto }> {
   const transcript = messages
-    .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.text}${imageDescriptionText(message, preparedImages)}`)
+    .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.text}${imageDescriptionText(message, preparedImages)}${fileAttachmentText(message)}`)
     .join("\n\n");
   const prompt = [
     previousSummary ? `现有摘要：\n${previousSummary}` : "",
@@ -376,7 +377,7 @@ function toProviderMessages(message: ContextMessageRecord, preparedImages: Prepa
   });
   const primary: ProviderMessage = {
     role: message.role,
-    text: `${message.text}${imageDescriptionText(message, preparedImages)}`,
+    text: `${message.text}${imageDescriptionText(message, preparedImages)}${fileAttachmentText(message)}`,
     ...(providerImages.length ? { images: providerImages } : {}),
     ...(message.toolCalls?.length ? { toolCalls: message.toolCalls } : {}),
     ...(message.providerPayload !== undefined ? { providerPayload: message.providerPayload } : {}),
@@ -384,6 +385,14 @@ function toProviderMessages(message: ContextMessageRecord, preparedImages: Prepa
   };
   if (!message.toolResults?.length) return [primary];
   return [primary, { role: "tool", text: "", toolResults: message.toolResults }];
+}
+
+function fileAttachmentText(message: ContextMessageRecord): string {
+  const files = message.files ?? [];
+  if (!files.length) return "";
+  return `\n\n<attached_files trust="untrusted" workspace="attachments">\n${files.map((asset) =>
+    `<file asset_id="${escapeAttribute(asset.id)}" name="${escapeAttribute(asset.fileName)}" mime_type="${escapeAttribute(asset.mimeType)}" size_bytes="${asset.byteSize}" path="${escapeAttribute(`incoming/${message.messageId}/${attachmentFileName(asset)}`)}" />`
+  ).join("\n")}\n</attached_files>`;
 }
 
 function imageDescriptionText(message: ContextMessageRecord, preparedImages: PreparedImages): string {
@@ -404,7 +413,7 @@ function escapeAttribute(value: string): string {
 
 function fingerprint(messages: ContextMessageRecord[]): string {
   return createHash("sha256")
-    .update(messages.map((message) => `${message.messageId}:${message.text}:${JSON.stringify((message.images ?? []).map((image) => image.sha256))}:${JSON.stringify(message.toolCalls ?? [])}:${JSON.stringify(message.toolResults ?? [])}:${message.providerConnectionId ?? ""}`).join("\u0000"))
+    .update(messages.map((message) => `${message.messageId}:${message.text}:${JSON.stringify((message.images ?? []).map((image) => image.sha256))}:${JSON.stringify((message.files ?? []).map((file) => file.sha256))}:${JSON.stringify(message.toolCalls ?? [])}:${JSON.stringify(message.toolResults ?? [])}:${message.providerConnectionId ?? ""}`).join("\u0000"))
     .digest("hex");
 }
 

@@ -1,6 +1,7 @@
 /** Small shared pieces of the conversation surface. */
 import type { ReactNode } from "react";
-import type { AgentSummaryDto, ImageAssetDto } from "@llm-chat/contracts";
+import { Download, FileText } from "lucide-react";
+import type { AgentSummaryDto, FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
 import { toast } from "../../lib/app-state";
 import { formatBytes } from "../../lib/format";
 
@@ -44,6 +45,27 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
         </a>
       ))}
     </div>
+  );
+}
+
+export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
+  const images = assets.filter((asset): asset is ImageAssetDto => asset.kind === "image");
+  const files = assets.filter((asset) => asset.kind === "file");
+  return (
+    <>
+      {images.length ? <ImageGallery assets={images} /> : null}
+      {files.length ? (
+        <div className="message-files">
+          {files.map((asset) => (
+            <a key={asset.id} className="message-file" href={asset.url} download={asset.fileName}>
+              <FileText size={18} aria-hidden="true" />
+              <span><strong>{asset.fileName}</strong><small>{formatBytes(asset.byteSize)}</small></span>
+              <Download size={16} aria-hidden="true" />
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
