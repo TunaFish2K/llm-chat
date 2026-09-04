@@ -308,16 +308,27 @@
   from { opacity: 0; }
 }
 
-.mobile-drawer .workspace-sidebar,
-.mobile-drawer .inspector {
+.mobile-drawer .drawer-panel {
   position: relative;
   z-index: 1;
+  display: flex;
   width: min(320px, 86vw);
+  height: 100%;
   box-shadow: var(--shadow-3);
   animation: drawer-in var(--dur-med) var(--ease);
+  transition: transform var(--dur-fast) var(--ease);
+  touch-action: pan-y;
 }
 
-.mobile-drawer[data-side="right"] .inspector {
+.mobile-drawer .drawer-panel[data-dragging="true"] {
+  transition: none;
+}
+
+.mobile-drawer .drawer-panel > * {
+  width: 100%;
+}
+
+.mobile-drawer[data-side="right"] .drawer-panel {
   width: min(380px, 92vw);
 }
 
@@ -325,7 +336,7 @@
   from { transform: translateX(-8%); opacity: 0.4; }
 }
 
-.mobile-drawer[data-side="right"] .inspector {
+.mobile-drawer[data-side="right"] .drawer-panel {
   animation-name: drawer-in-right;
 }
 
@@ -657,10 +668,10 @@
   justify-content: center;
 }
 
-.mobile-drawer .inspector-panel {
+.mobile-drawer .drawer-panel .inspector-panel {
   position: relative;
   z-index: 1;
-  width: min(380px, 92vw);
+  width: 100%;
   height: 100%;
   box-shadow: var(--shadow-3);
   animation: drawer-in-right var(--dur-med) var(--ease);

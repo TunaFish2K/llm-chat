@@ -124,14 +124,17 @@ export function App() {
       ) : null}
 
       <main className="workspace-main">
-        <MobileAppBar
-          title={routeTitle(route, state.conversations, state.agents)}
-          onOpenNav={() => setNavDrawer(true)}
-          onOpenInspector={conversation ? () => setInspectorOpen(true) : null}
-        />
+        {route.name !== "chat" ? (
+          <MobileAppBar
+            title={routeTitle(route, state.conversations, state.agents)}
+            onOpenNav={() => setNavDrawer(true)}
+            onOpenInspector={null}
+          />
+        ) : null}
         <Suspense fallback={<LoadingState label="正在加载界面…" />}>
           <RouteView
             route={route}
+            mobile={mobile}
             sidebarCollapsed={sidebarCollapsed}
             inspectorOpen={showInspector}
             onToggleSidebar={() => (mobile ? setNavDrawer(true) : setSidebarCollapsed((value) => !value))}
@@ -163,7 +166,6 @@ export function App() {
           <WorkspaceSidebar
             route={route}
             compact={false}
-            onClose={() => setNavDrawer(false)}
             pwa={pwa}
             onInstall={() => void promptInstall()}
           />
@@ -182,6 +184,7 @@ export function App() {
 
 function RouteView({
   route,
+  mobile,
   sidebarCollapsed,
   inspectorOpen,
   onToggleSidebar,
@@ -189,6 +192,7 @@ function RouteView({
   onInspect
 }: {
   route: Route;
+  mobile: boolean;
   sidebarCollapsed: boolean;
   inspectorOpen: boolean;
   onToggleSidebar: () => void;
@@ -215,6 +219,7 @@ function RouteView({
       conversationId={route.conversationId}
       view={route.view}
       taskId={route.taskId}
+      mobile={mobile}
       sidebarCollapsed={sidebarCollapsed}
       inspectorOpen={inspectorOpen}
       onToggleSidebar={onToggleSidebar}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Popover } from "radix-ui";
 import {
   Bot,
   ChevronDown,
@@ -7,6 +8,8 @@ import {
   FileText,
   Gauge,
   LoaderCircle,
+  Minimize2,
+  MoreHorizontal,
   Send,
   Settings2,
   Square,
@@ -54,7 +57,10 @@ export function Composer({
   onBeforeSend,
   greetingIndex,
   onGreetingIndexChange,
-  onPreviewAgentChange
+  onPreviewAgentChange,
+  compacting,
+  canCompact,
+  onCompact
 }: {
   conversation: ConversationDto | null;
   onInspect: (target: InspectionTarget) => void;
@@ -62,6 +68,9 @@ export function Composer({
   greetingIndex: number;
   onGreetingIndexChange: (index: number) => void;
   onPreviewAgentChange: (agentId: string | null) => void;
+  compacting: boolean;
+  canCompact: boolean;
+  onCompact: () => void;
 }) {
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
@@ -77,6 +86,7 @@ export function Composer({
   const [newWorkspace, setNewWorkspace] = useState<string | null>(null);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const [editingOverrides, setEditingOverrides] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [attachments, setAttachments] = useState<FileAssetDto[]>([]);
@@ -432,94 +442,138 @@ export function Composer({
 
               <div className="composer-tools">
                 <div className="composer-tool-scroll">
-                  <label className="chip chip-select">
-                  <Bot size={15} aria-hidden="true" />
-                  <select
-                    aria-label="选择 Agent"
-                    value={effectiveAgentId}
-                    disabled={controlsDisabled}
-                    onChange={(event) => chooseAgent(event.target.value)}
-                  >
-                    {agents.map((agent) => (
-                      <option key={agent.id} value={agent.id}>
-                        {agent.name}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={13} aria-hidden="true" />
+                  <label className="chip chip-select composer-agent-select">
+                    <Bot size={15} aria-hidden="true" />
+                    <select
+                      aria-label="选择 Agent"
+                      value={effectiveAgentId}
+                      disabled={controlsDisabled}
+                      onChange={(event) => chooseAgent(event.target.value)}
+                    >
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={13} aria-hidden="true" />
                   </label>
 
-                <ModelPicker
-                  effectiveModelId={effectiveModelId}
-                  explicitValue={explicitModel === undefined ? INHERIT : explicitModel ?? NO_MODEL}
-                  agentModelId={effectiveAgent?.execution.modelId ?? null}
-                  models={models}
-                  connections={connections}
-                  disabled={controlsDisabled}
-                  onChange={chooseModel}
-                />
-
-                <label className="chip chip-select">
-                  <Gauge size={15} aria-hidden="true" />
-                  <select
-                    aria-label="推理档位"
-                    value={overrides.reasoningEffort ?? INHERIT}
+                  <ModelPicker
+                    effectiveModelId={effectiveModelId}
+                    explicitValue={explicitModel === undefined ? INHERIT : explicitModel ?? NO_MODEL}
+                    agentModelId={effectiveAgent?.execution.modelId ?? null}
+                    models={models}
+                    connections={connections}
                     disabled={controlsDisabled}
-                    onChange={(event) => chooseReasoning(event.target.value)}
+                    onChange={chooseModel}
+                  />
+
+                  <label className="chip chip-select composer-inline-tool">
+                    <Gauge size={15} aria-hidden="true" />
+                    <select
+                      aria-label="推理档位"
+                      value={overrides.reasoningEffort ?? INHERIT}
+                      disabled={controlsDisabled}
+                      onChange={(event) => chooseReasoning(event.target.value)}
+                    >
+                      <option value={INHERIT}>跟随 Agent · {reasoning}</option>
+                      {reasoningLevels.map((level) => (
+                        <option key={level} value={level}>
+                          {level}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={13} aria-hidden="true" />
+                  </label>
+
+                  <input
+                    ref={fileInputRef}
+                    className="sr-only"
+                    type="file"
+                    multiple
+                    onChange={(event) => {
+                      void uploadFiles(Array.from(event.target.files ?? []));
+                      event.target.value = "";
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="chip composer-attachment-button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={controlsDisabled || uploading || attachments.length >= MAX_ATTACHMENTS}
+                    aria-label="添加附件"
+                    title="添加附件"
                   >
-                    <option value={INHERIT}>跟随 Agent · {reasoning}</option>
-                    {reasoningLevels.map((level) => (
-                      <option key={level} value={level}>
-                        {level}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={13} aria-hidden="true" />
-                </label>
+                    {uploading ? <LoaderCircle className="spin" size={16} /> : <FilePlus2 size={16} />}
+                  </button>
+                  <button
+                    type="button"
+                    className="chip composer-inline-tool"
+                    onClick={() => setPickingWorkspace(true)}
+                    disabled={controlsDisabled}
+                    aria-label="选择工作目录"
+                    title={workspace ?? "选择工作目录"}
+                  >
+                    <FolderOpen size={16} aria-hidden="true" />
+                    <span>{workspace ? shortPath(workspace) : "目录"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="chip composer-inline-tool"
+                    onClick={() => setEditingOverrides(true)}
+                    disabled={controlsDisabled}
+                    aria-label="高级执行设置"
+                    title="高级执行设置"
+                  >
+                    <Settings2 size={16} aria-hidden="true" />
+                    {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
+                  </button>
 
-                <input
-                  ref={fileInputRef}
-                  className="sr-only"
-                  type="file"
-                  multiple
-                  onChange={(event) => {
-                    void uploadFiles(Array.from(event.target.files ?? []));
-                    event.target.value = "";
-                  }}
-                />
-                <button
-                  type="button"
-                  className="chip"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={controlsDisabled || uploading || attachments.length >= MAX_ATTACHMENTS}
-                  aria-label="添加附件"
-                  title="添加附件"
-                >
-                  {uploading ? <LoaderCircle className="spin" size={16} /> : <FilePlus2 size={16} />}
-                </button>
-                <button
-                  type="button"
-                  className="chip"
-                  onClick={() => setPickingWorkspace(true)}
-                  disabled={controlsDisabled}
-                  aria-label="选择工作目录"
-                  title={workspace ?? "选择工作目录"}
-                >
-                  <FolderOpen size={16} aria-hidden="true" />
-                  <span>{workspace ? shortPath(workspace) : "目录"}</span>
-                </button>
-                <button
-                  type="button"
-                  className="chip"
-                  onClick={() => setEditingOverrides(true)}
-                  disabled={controlsDisabled}
-                  aria-label="高级执行设置"
-                  title="高级执行设置"
-                >
-                  <Settings2 size={16} aria-hidden="true" />
-                  {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
-                </button>
-
+                  <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
+                    <Popover.Trigger asChild>
+                      <button type="button" className="chip composer-more-trigger" aria-label="更多会话设置" title="更多">
+                        <MoreHorizontal size={17} aria-hidden="true" />
+                      </button>
+                    </Popover.Trigger>
+                    <Popover.Portal>
+                      <Popover.Content className="composer-more-popover" side="top" align="end" sideOffset={10}>
+                        <div className="composer-more-mobile">
+                          <label className="composer-menu-field">
+                            <span><Gauge size={15} aria-hidden="true" />推理档位</span>
+                            <select
+                              className="select"
+                              aria-label="更多菜单中的推理档位"
+                              value={overrides.reasoningEffort ?? INHERIT}
+                              disabled={controlsDisabled}
+                              onChange={(event) => chooseReasoning(event.target.value)}
+                            >
+                              <option value={INHERIT}>跟随 Agent · {reasoning}</option>
+                              {reasoningLevels.map((level) => <option key={level} value={level}>{level}</option>)}
+                            </select>
+                          </label>
+                          <button type="button" aria-label="选择工作目录" onClick={() => { setMoreOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
+                            <FolderOpen size={16} aria-hidden="true" />
+                            <span><strong>工作目录</strong><small>{workspace ? shortPath(workspace) : "未选择"}</small></span>
+                          </button>
+                          <button type="button" aria-label="高级执行设置" onClick={() => { setMoreOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
+                            <Settings2 size={16} aria-hidden="true" />
+                            <span><strong>执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label="立即压缩上下文"
+                          onClick={() => { setMoreOpen(false); onCompact(); }}
+                          disabled={controlsDisabled || compacting || !canCompact}
+                          title={canCompact ? "立即压缩上下文" : "智能或摘要策略下，至少三轮对话后可压缩"}
+                        >
+                          {compacting ? <LoaderCircle className="spin" size={16} /> : <Minimize2 size={16} />}
+                          <span><strong>压缩上下文</strong><small>{canCompact ? "立即生成会话摘要" : "当前不可用"}</small></span>
+                        </button>
+                      </Popover.Content>
+                    </Popover.Portal>
+                  </Popover.Root>
                 </div>
 
                 {generating && active ? (
@@ -546,9 +600,7 @@ export function Composer({
             </>
           )}
         </div>
-        <p className="composer-hint">
-          Enter 发送 · Shift+Enter 换行{explicitModel !== undefined ? " · 当前会话已覆盖 Agent 模型" : ""}
-        </p>
+        <p className="composer-hint">Enter 发送 · Shift+Enter 换行</p>
       </div>
 
       {pickingWorkspace ? (
