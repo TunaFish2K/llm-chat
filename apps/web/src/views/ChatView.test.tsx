@@ -29,7 +29,7 @@ function seedStore(messages: MessageDto[] = [], options: { draft?: string; model
     conversations: [options.conversation ?? makeConversation({ draft: options.draft ?? "" })],
     messages: { "conv-1": messages },
     toasts: [],
-    eventsConnected: true,
+    eventsConnectionState: "connected",
     runningTasksByConversation: {}
   });
 }

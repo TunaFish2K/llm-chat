@@ -32,6 +32,7 @@ test.describe("应用外壳", () => {
     await page.goto(APP_URL);
     await openDrawerIfNeeded(page);
     await expect(page.locator(".sidebar-brand")).toHaveText(/Chat/);
+    await expect(page.getByTitle("事件流已连接")).toBeVisible({ timeout: 2_000 });
     await expect(page.getByRole("link", { name: "后台任务" })).toHaveCount(0);
 
     await gotoPath(page, "/agents");

@@ -67,6 +67,7 @@ try {
   const readiness = await fetchJson(`${baseUrl}/readyz`);
   assert(readiness.response.status === 200 && readiness.body.ok === true, "readyz did not report readiness");
   assert(readiness.body.buildId === "deployment-smoke", "readyz did not surface buildId");
+  await assertImmediateEventStream(baseUrl);
 
   const index = await fetch(`${baseUrl}/`);
   const indexBody = await index.text();
@@ -239,6 +240,29 @@ async function startProvider(childPidFile) {
 
 async function writeConfig(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+}
+
+async function assertImmediateEventStream(baseUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1_500);
+  try {
+    const response = await fetch(`${baseUrl}/api/events`, { signal: controller.signal });
+    assert(response.status === 200, `event stream returned ${response.status}`);
+    assert((response.headers.get("content-type") ?? "").includes("text/event-stream"), "event stream has the wrong MIME type");
+    const reader = response.body?.getReader();
+    assert(reader, "event stream has no response body");
+    const { value, done } = await reader.read();
+    assert(!done && new TextDecoder().decode(value).includes(": connected"), "event stream did not send its initial frame");
+    await reader.cancel();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("event stream did not open within 1500 ms");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+  }
 }
 
 function launchNode(args, env) {

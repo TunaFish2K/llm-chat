@@ -23,7 +23,7 @@ import type {
   ToolCallDto
 } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
-import { appStore, isGenerationActive, loadMessages, refreshConversations, toast, toastError, trackGeneration } from "../../lib/app-state";
+import { appStore, isGenerationActive, loadMessages, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
 import { navigate, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
@@ -603,7 +603,7 @@ function ApprovalCard({
     try {
       const result = await endpoints.resolveToolCall(item.call.id, approved, approved ? undefined : reason.trim() || undefined);
       await loadMessages(conversationId);
-      trackGeneration(conversationId, item.message.id, result.generationId);
+      if (result.resumed) restartGenerationTracking(conversationId, item.message.id, result.generationId);
       setDenying(false);
       setReason("");
     } catch (cause) {

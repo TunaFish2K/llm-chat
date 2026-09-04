@@ -35,7 +35,7 @@ export function WorkspaceSidebar({
   onInstall: () => void;
 }) {
   const conversations = useStore(appStore, (state) => state.conversations);
-  const connected = useStore(appStore, (state) => state.eventsConnected);
+  const connectionState = useStore(appStore, (state) => state.eventsConnectionState);
   const [query, setQuery] = useState("");
   const [renaming, setRenaming] = useState<ConversationDto | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -165,9 +165,9 @@ export function WorkspaceSidebar({
       </nav>
 
       <footer className="sidebar-status">
-        <span title={connected ? "事件流已连接" : "事件流断开，正在重连"}>
-          {connected ? <CheckCircle2 size={15} /> : <CircleEllipsis size={15} />}
-          {!compact ? (connected ? "已连接" : "重连中") : null}
+        <span data-state={connectionState} title={connectionStateTitle(connectionState)}>
+          {connectionState === "connected" ? <CheckCircle2 size={15} /> : <CircleEllipsis size={15} />}
+          {!compact ? connectionStateLabel(connectionState) : null}
         </span>
         {pwa.installAvailable ? (
           <button className="icon-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={15} /></button>
@@ -188,6 +188,16 @@ export function WorkspaceSidebar({
       ) : null}
     </aside>
   );
+}
+
+function connectionStateTitle(state: "connecting" | "connected" | "reconnecting"): string {
+  if (state === "connected") return "事件流已连接";
+  return state === "reconnecting" ? "事件流断开，正在重连" : "正在连接事件流";
+}
+
+function connectionStateLabel(state: "connecting" | "connected" | "reconnecting"): string {
+  if (state === "connected") return "已连接";
+  return state === "reconnecting" ? "重连中" : "连接中";
 }
 
 function SidebarLink({ active, href, icon, label, compact }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean }) {
