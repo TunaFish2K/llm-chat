@@ -56,7 +56,7 @@ describe("ChatView", () => {
     await waitFor(() => expect(appStore.get().messages["conv-1"]?.[0]?.attachments).toEqual([]));
   });
 
-  it("shows the current conversation task count in the conversation view switch", async () => {
+  it("shows the current conversation task count in the top bar", async () => {
     seedStore([]);
     appStore.set({ runningTasksByConversation: { "conv-1": 2, "conv-2": 7 } });
     vi.stubGlobal("fetch", messageFetch([]));
@@ -64,9 +64,22 @@ describe("ChatView", () => {
 
     render(<ChatView conversationId="conv-1" onViewChange={onViewChange} />);
 
-    const tasksTab = screen.getByRole("tab", { name: "任务2" });
-    fireEvent.click(tasksTab);
+    const tasksButton = screen.getByRole("button", { name: "打开后台任务，2 个运行中" });
+    fireEvent.click(tasksButton);
     expect(onViewChange).toHaveBeenCalledWith("tasks");
+    expect(screen.queryByRole("tab", { name: /对话/ })).not.toBeInTheDocument();
+  });
+
+  it("closes an active trajectory overlay from the same top-bar control", async () => {
+    seedStore([]);
+    vi.stubGlobal("fetch", messageFetch([]));
+    const onViewChange = vi.fn();
+
+    render(<ChatView conversationId="conv-1" view="trajectory" onViewChange={onViewChange} />);
+
+    expect(await screen.findByRole("region", { name: "运行轨迹" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "关闭运行轨迹" }));
+    expect(onViewChange).toHaveBeenCalledWith("chat");
   });
 
   it("renders reasoning, answer, model snapshot and token usage", async () => {
@@ -417,34 +430,6 @@ describe("ChatView", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/c/conv-greeting"));
   });
 
-  it("undoes the last turn by branching from the prior assistant", async () => {
-    const user = userEvent.setup();
-    const messages = [
-      makeMessage({ id: "user-1", role: "user", text: "第一问", createdAt: 1 }),
-      makeMessage({ id: "assistant-1", role: "assistant", activeGenerationId: "gen-1", generations: [makeGeneration()] }),
-      makeMessage({ id: "user-2", role: "user", text: "第二问", createdAt: 3 }),
-      makeMessage({ id: "assistant-2", role: "assistant", activeGenerationId: "gen-2", generations: [makeGeneration({ id: "gen-2" })] })
-    ];
-    const branch = makeConversation({ id: "conv-undo", forkedFrom: { conversationId: "conv-1", messageId: "assistant-1" } });
-    seedStore(messages);
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url === "/api/conversations/conv-1/forks" && init?.method === "POST") return Promise.resolve(json({ conversation: branch, generation: null }, 201));
-      if (url === "/api/conversations") return Promise.resolve(json([makeConversation(), branch]));
-      if (url === "/api/conversations/conv-undo/messages") return Promise.resolve(json(messages.slice(0, 2)));
-      if (url === "/api/conversations/conv-1/messages") return Promise.resolve(json(messages));
-      return Promise.resolve(json({}));
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<ChatView conversationId="conv-1" />);
-
-    await user.click(await screen.findByRole("button", { name: "撤销上一轮" }));
-    await user.click(screen.getByRole("button", { name: "创建回退分支" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/conversations/conv-1/forks",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ mode: "continue", throughMessageId: "assistant-1" }) })
-    ));
-  });
-
   it("manually creates a context summary checkpoint", async () => {
     const user = userEvent.setup();
     const messages = [1, 2, 3].flatMap((ordinal) => [
@@ -463,6 +448,7 @@ describe("ChatView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatView conversationId="conv-1" />);
 
+    await user.click(screen.getByRole("button", { name: "更多会话设置" }));
     await user.click(await screen.findByRole("button", { name: "立即压缩上下文" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1/context/compact",

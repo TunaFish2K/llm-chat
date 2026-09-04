@@ -24,13 +24,11 @@ import type { PwaState } from "../lib/pwa";
 export function WorkspaceSidebar({
   route,
   compact,
-  onClose,
   pwa,
   onInstall
 }: {
   route: Route;
   compact: boolean;
-  onClose?: () => void;
   pwa: PwaState;
   onInstall: () => void;
 }) {
@@ -86,7 +84,6 @@ export function WorkspaceSidebar({
           <img src="/icons/icon-192.png" width={28} height={28} alt="" />
           {!compact ? <span>Chat</span> : null}
         </a>
-        {onClose ? <button className="icon-button" onClick={onClose} aria-label="关闭导航"><X size={18} /></button> : null}
       </header>
 
       <div className="sidebar-primary-actions">

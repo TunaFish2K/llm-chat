@@ -33,6 +33,7 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
+  const touchLayout = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   const effective = models.find((model) => model.id === effectiveModelId);
   const eligible = models.filter(
     (model) => model.enabled && connections.some((connection) => connection.id === model.connectionId)
@@ -80,7 +81,15 @@ export function ModelPicker({
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content className="picker-popover" side="top" align="start" sideOffset={10}>
+        <Popover.Content
+          className="picker-popover"
+          side="top"
+          align="start"
+          sideOffset={10}
+          onOpenAutoFocus={(event) => {
+            if (touchLayout) event.preventDefault();
+          }}
+        >
           <header>
             <div>
               <strong>模型</strong>
@@ -93,7 +102,7 @@ export function ModelPicker({
           <label className="search-field">
             <Search size={15} aria-hidden="true" />
             <input
-              autoFocus
+              autoFocus={!touchLayout}
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}

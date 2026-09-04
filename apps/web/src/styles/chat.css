@@ -1,6 +1,7 @@
 /* Conversation surface: header, message stream, generation timeline, composer. */
 
 .chat-workspace {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -23,16 +24,13 @@
 
 .conversation-heading {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .conversation-title {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  display: block;
   padding: 0;
   border: 0;
   background: none;
@@ -50,14 +48,6 @@
   white-space: nowrap;
 }
 
-.conversation-title span {
-  font-size: var(--text-xs);
-  color: var(--text-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .title-input {
   width: 100%;
   padding: 4px 8px;
@@ -69,83 +59,69 @@
 }
 
 .fork-source {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  align-self: flex-start;
-  padding: 0;
-  border: 0;
-  background: none;
   color: var(--accent);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.view-switch {
+.conversation-projections {
   display: flex;
   gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
   flex: 0 0 auto;
 }
 
-.view-switch button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  white-space: nowrap;
-  cursor: pointer;
+.conversation-projections .icon-button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
-.view-switch button:hover {
-  color: var(--text);
+.task-projection-button {
+  position: relative;
 }
 
-.view-switch button[aria-selected="true"] {
-  background: var(--surface-3);
-  color: var(--text);
-  box-shadow: var(--shadow-1);
-}
-
-.view-switch button b {
-  min-width: 16px;
-  padding: 0 4px;
+.task-projection-button b {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  min-width: 15px;
+  padding: 0 3px;
   border-radius: var(--radius-pill);
   background: var(--accent);
   color: var(--text-invert);
   font-size: 10px;
   font-weight: 700;
-  line-height: 15px;
+  line-height: 14px;
   text-align: center;
 }
 
-.header-actions {
-  display: flex;
-  gap: 2px;
-  flex: 0 0 auto;
+@media (max-width: 767px) {
+  .conversation-header {
+    padding-inline: var(--space-2);
+  }
+
+  .conversation-heading {
+    justify-content: center;
+  }
+
+  .conversation-title {
+    text-align: center;
+  }
 }
 
-@media (max-width: 767px) {
-  .conversation-header .shell-control {
-    display: none;
-  }
+.conversation-overlay {
+  position: absolute;
+  inset: 51px 0 0;
+  z-index: 12;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+  animation: fade-in var(--dur-fast) var(--ease);
+}
 
-  .view-switch button span.view-label {
-    display: none;
-  }
+.conversation-overlay > :not(.sr-only) {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Message stream -------------------------------------------------------- */
@@ -690,6 +666,111 @@
   gap: 6px;
   flex: 1 1 auto;
   min-width: 0;
+  overflow: visible;
+}
+
+.composer-agent-select {
+  flex: 0 1 170px;
+}
+
+.composer-agent-select select {
+  width: 100%;
+  min-width: 0;
+}
+
+.composer-tool-scroll > .model-trigger {
+  flex: 0 1 220px;
+}
+
+.composer-attachment-button,
+.composer-more-trigger {
+  width: var(--control-h-sm);
+  justify-content: center;
+  padding-inline: 0;
+  flex: 0 0 auto;
+}
+
+.composer-more-popover {
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: min(320px, calc(100vw - 24px));
+  padding: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-3);
+}
+
+.composer-more-popover button,
+.composer-menu-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.composer-more-popover button:not(:disabled) {
+  cursor: pointer;
+}
+
+.composer-more-popover button:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.composer-more-popover button:disabled {
+  opacity: 0.45;
+}
+
+.composer-more-popover button > span {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.composer-more-popover strong,
+.composer-more-popover small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-more-popover strong {
+  font-size: var(--text-sm);
+}
+
+.composer-more-popover small {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+.composer-more-mobile {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.composer-menu-field {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.composer-menu-field > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 
 .chip {
@@ -1138,18 +1219,31 @@
   }
 
   .composer-tool-scroll {
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    touch-action: pan-x;
+    gap: 5px;
   }
 
-  .composer-tool-scroll::-webkit-scrollbar {
+  .composer-tool-scroll > .composer-inline-tool {
     display: none;
   }
 
-  .composer-tool-scroll > * {
-    flex: 0 0 auto;
+  .composer-agent-select {
+    flex: 0 1 34%;
+    max-width: 112px;
+    padding-left: 7px;
+  }
+
+  .composer-agent-select select {
+    max-width: none;
+  }
+
+  .composer-tool-scroll > .model-trigger {
+    flex: 1 1 0;
+    max-width: none;
+    padding-inline: 7px;
+  }
+
+  .composer-more-mobile {
+    display: flex;
   }
 
   .composer-hint {

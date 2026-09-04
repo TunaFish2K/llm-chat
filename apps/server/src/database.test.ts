@@ -20,6 +20,26 @@ describe("Store", () => {
     expect(resolveManualThinkingBudget("xhigh", 10_000, 2_000)).toBe(4_400);
   });
 
+  it("enables the bundled llm-chat operator for the protected default Agent", () => {
+    const store = createStore();
+    const defaultAgentId = store.getSettings().defaultAgentId!;
+    expect(store.getAgent(defaultAgentId)?.execution.enabledSkillIds).toEqual(
+      expect.arrayContaining(["command-execution-guide", "llm-chat-operator"])
+    );
+
+    const row = store.sqlite.prepare("SELECT execution_json FROM agents WHERE id = ?").get(defaultAgentId) as { execution_json: string };
+    const execution = JSON.parse(row.execution_json);
+    execution.enabledSkillIds = execution.enabledSkillIds.filter((id: string) => id !== "llm-chat-operator");
+    store.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?").run(JSON.stringify(execution), defaultAgentId);
+    store.sqlite.exec("PRAGMA user_version = 21");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+
+    const upgraded = new Store(path);
+    expect(upgraded.getAgent(defaultAgentId)?.execution.enabledSkillIds).toContain("llm-chat-operator");
+    upgraded.close();
+  });
+
   it("keeps provider secrets server-only and persists UI state", () => {
     const store = createStore();
     const connection = store.createConnection({
@@ -317,7 +337,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -376,7 +396,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -412,7 +432,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -814,7 +834,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(21);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

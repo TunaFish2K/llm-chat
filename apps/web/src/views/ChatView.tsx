@@ -20,7 +20,7 @@ import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
 import { MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
 import { greetingOptions } from "../components/chat/model";
-import { EditForkDialog, UndoDialog } from "../components/chat/dialogs";
+import { EditForkDialog } from "../components/chat/dialogs";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
 import { Markdown } from "../lib/markdown";
 
@@ -33,6 +33,7 @@ interface ChatViewProps {
   conversationId: string | null;
   view?: ConversationView;
   taskId?: string | null;
+  mobile?: boolean;
   sidebarCollapsed?: boolean;
   inspectorOpen?: boolean;
   onToggleSidebar?: () => void;
@@ -51,6 +52,7 @@ export function ChatView({
   conversationId,
   view = "chat",
   taskId = null,
+  mobile = false,
   sidebarCollapsed = false,
   inspectorOpen = false,
   onToggleSidebar = () => undefined,
@@ -68,7 +70,6 @@ export function ChatView({
   );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState<MessageDto | null>(null);
-  const [undoOpen, setUndoOpen] = useState(false);
   const [branching, setBranching] = useState(false);
   const [compacting, setCompacting] = useState(false);
   const [newGreetingIndex, setNewGreetingIndex] = useState(0);
@@ -122,15 +123,6 @@ export function ChatView({
     }
   };
 
-  /** "Undo" is a branch from before the last user turn, never a deletion. */
-  const undoLastTurn = async () => {
-    if (!messages?.length) return;
-    const lastUserIndex = messages.findLastIndex((message) => message.role === "user");
-    if (lastUserIndex < 0) return;
-    const priorAssistant = messages.slice(0, lastUserIndex).findLast((message) => message.role === "assistant");
-    if (await forkConversation({ mode: "continue", throughMessageId: priorAssistant?.id ?? null })) setUndoOpen(false);
-  };
-
   const compactContext = async () => {
     if (!conversation || compacting || busy) return;
     setCompacting(true);
@@ -152,39 +144,16 @@ export function ChatView({
       <ConversationHeader
         conversation={conversation}
         view={view}
+        mobile={mobile}
         sidebarCollapsed={sidebarCollapsed}
         inspectorOpen={inspectorOpen}
         onToggleSidebar={onToggleSidebar}
         onToggleInspector={onToggleInspector}
         onViewChange={onViewChange}
         runningTasks={runningTasks}
-        busy={busy || branching}
-        compacting={compacting}
-        canUndo={userMessageCount > 0}
-        canCompact={
-          userMessageCount >= 3 &&
-          (conversation?.contextPolicy === "auto" || conversation?.contextPolicy === "summarize")
-        }
-        onUndo={() => setUndoOpen(true)}
-        onCompact={() => void compactContext()}
       />
 
-      {view === "tasks" && conversation ? (
-        <Suspense fallback={<LoadingState label="正在加载后台任务…" />}>
-          <ConversationTasksView conversationId={conversation.id} taskId={taskId} />
-        </Suspense>
-      ) : view === "trajectory" && conversation ? (
-        <Suspense fallback={<LoadingState label="正在生成轨迹…" />}>
-          <TrajectoryView
-            conversation={conversation}
-            onInspect={onInspect}
-            onContinue={continueFrom}
-            branching={branching || busy}
-          />
-        </Suspense>
-      ) : (
-        <>
-          <div className="chat-scroll-shell">
+      <div className="chat-scroll-shell">
             <div
               className="chat-scroll"
               ref={scroller.ref}
@@ -238,17 +207,41 @@ export function ChatView({
                 <ArrowDown size={17} />
               </button>
             ) : null}
-          </div>
-          <Composer
-            conversation={conversation}
-            onInspect={onInspect}
-            onBeforeSend={() => scroller.toBottom()}
-            greetingIndex={newGreetingIndex}
-            onGreetingIndexChange={setNewGreetingIndex}
-            onPreviewAgentChange={setPreviewAgentId}
-          />
-        </>
-      )}
+      </div>
+      <Composer
+        conversation={conversation}
+        onInspect={onInspect}
+        onBeforeSend={() => scroller.toBottom()}
+        greetingIndex={newGreetingIndex}
+        onGreetingIndexChange={setNewGreetingIndex}
+        onPreviewAgentChange={setPreviewAgentId}
+        compacting={compacting}
+        canCompact={
+          userMessageCount >= 3 &&
+          (conversation?.contextPolicy === "auto" || conversation?.contextPolicy === "summarize")
+        }
+        onCompact={() => void compactContext()}
+      />
+
+      {view !== "chat" && conversation ? (
+        <section className="conversation-overlay" aria-label={view === "tasks" ? "后台任务" : "运行轨迹"}>
+          <h2 className="sr-only">{view === "tasks" ? "后台任务" : "运行轨迹"}</h2>
+          {view === "tasks" ? (
+            <Suspense fallback={<LoadingState label="正在加载后台任务…" />}>
+              <ConversationTasksView conversationId={conversation.id} taskId={taskId} />
+            </Suspense>
+          ) : (
+            <Suspense fallback={<LoadingState label="正在生成轨迹…" />}>
+              <TrajectoryView
+                conversation={conversation}
+                onInspect={onInspect}
+                onContinue={continueFrom}
+                branching={branching || busy}
+              />
+            </Suspense>
+          )}
+        </section>
+      ) : null}
 
       {editingMessage ? (
         <EditForkDialog
@@ -270,9 +263,6 @@ export function ChatView({
             })();
           }}
         />
-      ) : null}
-      {undoOpen ? (
-        <UndoDialog busy={branching} onClose={() => setUndoOpen(false)} onConfirm={() => void undoLastTurn()} />
       ) : null}
     </div>
   );

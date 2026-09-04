@@ -1,8 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 const unique = () => Math.random().toString(36).slice(2, 8);
+
+async function openExecutionSettings(page: Page): Promise<void> {
+  const visibleButton = page.locator('button[aria-label="高级执行设置"]:visible');
+  if (await visibleButton.count() === 0) {
+    await page.getByRole("button", { name: "更多会话设置" }).click();
+  }
+  await page.locator('button[aria-label="高级执行设置"]:visible').click();
+}
 
 test.describe("认证", () => {
   test("登录、浏览并退出", async ({ page }) => {
@@ -45,7 +53,7 @@ test.describe("应用外壳", () => {
     });
     try {
       await gotoPath(page, `/c/${conversation.id}`);
-      await page.getByRole("tab", { name: "任务" }).click();
+      await page.getByRole("button", { name: /打开后台任务/ }).click();
       await expect(page).toHaveURL(new RegExp(`/c/${conversation.id}/tasks$`));
       await expect(page.getByText("没有后台任务")).toBeVisible();
     } finally {
@@ -187,6 +195,32 @@ test.describe("会话与流式生成", () => {
       // The conversation lives at a real path; opening it directly works.
       await expect(page).toHaveURL(/\/c\/[0-9a-f-]+/);
       const conversationUrl = page.url();
+      if (test.info().project.name === "mobile-chromium") {
+        await expect(page.locator(".mobile-appbar")).toHaveCount(0);
+        await expect(page.locator(".conversation-header")).toHaveCount(1);
+        expect(await page.locator(".composer-tool-scroll").evaluate((element) => ({
+          fits: element.scrollWidth <= element.clientWidth,
+          overflow: getComputedStyle(element).overflowX
+        }))).toEqual({ fits: true, overflow: "visible" });
+        await page.getByRole("button", { name: "选择模型" }).click();
+        const modelSearch = page.getByRole("searchbox", { name: "搜索模型" });
+        await expect(modelSearch).toBeVisible();
+        expect(await modelSearch.evaluate((element) => element === document.activeElement)).toBe(false);
+        await page.getByRole("button", { name: "关闭模型选择" }).click();
+        await page.getByRole("button", { name: "打开导航" }).click();
+        await expect(page.getByRole("button", { name: "关闭导航" })).toHaveCount(1);
+        await expect(page.locator(".workspace-sidebar").getByRole("button", { name: "关闭导航" })).toHaveCount(0);
+        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+        await page.getByRole("button", { name: "打开导航" }).click();
+        const drawer = page.locator(".drawer-panel");
+        const box = await drawer.boundingBox();
+        if (!box) throw new Error("导航抽屉没有尺寸");
+        await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.55);
+        await page.mouse.down();
+        await page.mouse.move(box.x + 8, box.y + box.height * 0.55, { steps: 5 });
+        await page.mouse.up();
+        await expect(drawer).toHaveCount(0);
+      }
       await page.goto(`${APP_URL}/`);
       await page.goto(conversationUrl);
       await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
@@ -199,7 +233,7 @@ test.describe("会话与流式生成", () => {
 
       // The Harness-style trajectory and inspector are projections of the
       // persisted generation, not a second execution runtime.
-      await page.getByRole("tab", { name: "轨迹" }).click();
+      await page.getByRole("button", { name: "打开运行轨迹" }).click();
       await expect(page).toHaveURL(/\/trajectory$/);
       await expect(page.getByText("第 1 轮")).toBeVisible();
       await page.getByRole("button", { name: /生成 v1/ }).click();
@@ -209,7 +243,7 @@ test.describe("会话与流式生成", () => {
       if (await inspector.getByRole("button", { name: "关闭检查器" }).isVisible()) {
         await inspector.getByRole("button", { name: "关闭检查器" }).click();
       }
-      await page.getByRole("tab", { name: "对话" }).click();
+      await page.getByRole("button", { name: "关闭运行轨迹" }).click();
 
       // Rename and then delete the conversation through the sidebar.
       await openDrawerIfNeeded(page);
@@ -244,7 +278,7 @@ test.describe("会话与流式生成", () => {
         title: `覆盖会话-${unique()}`
       });
       await gotoPath(page, `/c/${conversation.id}`);
-      await page.getByRole("button", { name: "高级执行设置" }).click();
+      await openExecutionSettings(page);
       const modal = page.locator(".modal");
       await expect(modal).toBeVisible();
 
@@ -281,7 +315,7 @@ test.describe("会话与流式生成", () => {
 
       // Explicitly selecting no model and an empty stop list must remain
       // distinct from inheriting the Agent values.
-      await page.getByRole("button", { name: "高级执行设置" }).click();
+      await openExecutionSettings(page);
       const explicitModal = page.locator(".modal");
       await explicitModal.getByLabel("会话模型覆盖").selectOption("__none__");
       await explicitModal.getByLabel("停止序列（每行一个）").fill("");
@@ -291,7 +325,7 @@ test.describe("会话与流式生成", () => {
       expect(explicit.generation?.common?.stopSequences).toEqual([]);
 
       // Clearing removes every override field.
-      await page.getByRole("button", { name: "高级执行设置" }).click();
+      await openExecutionSettings(page);
       await page.getByRole("button", { name: "清除覆盖" }).click();
       await page.locator(".modal").getByRole("button", { name: "保存", exact: true }).click();
       await expect
@@ -438,6 +472,12 @@ test.describe("设置分区", () => {
       await gotoPath(page, "/settings/connections");
       await expect(page.locator(".management-card-header .list-row-actions").first()).toBeVisible();
       await assertActionLayout(".management-card-header .list-row-actions", true);
+      if (project === "mobile-chromium") {
+        const modelTable = page.locator(".connection-model-table").first();
+        await expect(modelTable).toBeVisible();
+        expect(await modelTable.evaluate((element) => element.getBoundingClientRect().right)).toBeLessThanOrEqual(390);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+      }
     } finally {
       await api(request, APP_URL, "DELETE", `/api/connections/${connection.id}`).catch(() => {});
     }

@@ -1047,6 +1047,127 @@
   }
 }
 
+@media (max-width: 767px) {
+  .connection-model-table,
+  .connection-model-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .connection-model-table thead {
+    display: none;
+  }
+
+  .connection-model-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .connection-model-table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .connection-model-table tbody tr:hover td {
+    background: transparent;
+  }
+
+  .connection-model-table td {
+    min-width: 0;
+    padding: 5px var(--space-2);
+    border-bottom: 0;
+  }
+
+  .connection-model-table .connection-model-summary,
+  .connection-model-table .connection-model-context,
+  .connection-model-table .connection-model-actions {
+    grid-column: 1 / -1;
+  }
+
+  .connection-model-table .connection-model-summary .mono {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .connection-model-table .connection-model-meta {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .connection-model-table .connection-model-meta::before {
+    content: attr(data-label);
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .connection-model-table .connection-model-actions {
+    display: flex;
+    gap: 6px;
+    padding-bottom: 0;
+  }
+
+  .conversation-task-table,
+  .conversation-task-table tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .conversation-task-table thead {
+    display: none;
+  }
+
+  .conversation-task-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .conversation-task-table td {
+    min-width: 0;
+    padding: 5px var(--space-2);
+    border-bottom: 0;
+  }
+
+  .conversation-task-table .conversation-task-command,
+  .conversation-task-table .conversation-task-actions {
+    grid-column: 1 / -1;
+  }
+
+  .conversation-task-table .conversation-task-command .btn {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .conversation-task-table .conversation-task-meta {
+    display: grid;
+    justify-items: start;
+    gap: 3px;
+  }
+
+  .conversation-task-table .conversation-task-meta::before {
+    content: attr(data-label);
+    color: var(--text-faint);
+    font-size: var(--text-xs);
+    font-weight: 500;
+  }
+
+  .conversation-task-table .conversation-task-actions {
+    display: flex;
+  }
+}
+
 /* Popovers -------------------------------------------------------------- */
 
 .picker-popover {

@@ -3,7 +3,7 @@
  * mobile drawers, and the toast stack. Nothing here knows about conversations
  * or Agents — it only arranges regions and reports geometry back to `App`.
  */
-import { useCallback, useEffect, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Menu, PanelRightOpen, RefreshCw } from "lucide-react";
 import type { Toast } from "../../lib/app-state";
 import type { Route } from "../../lib/router";
@@ -203,6 +203,11 @@ export function MobileDrawer({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const gesture = useRef<{ x: number; y: number; at: number; dragging: boolean } | null>(null);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [dragging, setDragging] = useState(false);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -214,7 +219,51 @@ export function MobileDrawer({
   return (
     <div className="mobile-drawer" data-side={side}>
       <button type="button" className="drawer-scrim" onClick={onClose} aria-label={closeLabel} />
-      {children}
+      <div
+        ref={panelRef}
+        className="drawer-panel"
+        data-dragging={dragging || undefined}
+        style={{ transform: dragOffset ? `translateX(${dragOffset}px)` : undefined }}
+        onPointerDown={(event) => {
+          if (event.pointerType === "mouse" && event.button !== 0) return;
+          gesture.current = { x: event.clientX, y: event.clientY, at: performance.now(), dragging: false };
+        }}
+        onPointerMove={(event) => {
+          const start = gesture.current;
+          if (!start) return;
+          const dx = event.clientX - start.x;
+          const dy = event.clientY - start.y;
+          if (!start.dragging) {
+            if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
+            start.dragging = true;
+            setDragging(true);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }
+          const closingOffset = side === "left" ? Math.min(0, dx) : Math.max(0, dx);
+          setDragOffset(closingOffset);
+        }}
+        onPointerUp={(event) => {
+          const start = gesture.current;
+          if (!start) return;
+          const elapsed = Math.max(1, performance.now() - start.at);
+          const dx = event.clientX - start.x;
+          const distance = Math.abs(side === "left" ? Math.min(0, dx) : Math.max(0, dx));
+          const width = panelRef.current?.offsetWidth ?? 320;
+          const velocity = distance / elapsed;
+          gesture.current = null;
+          setDragging(false);
+          if (start.dragging && (distance >= Math.max(56, width * 0.22) || velocity >= 0.55)) onClose();
+          else setDragOffset(0);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onPointerCancel={() => {
+          gesture.current = null;
+          setDragging(false);
+          setDragOffset(0);
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

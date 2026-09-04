@@ -171,7 +171,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                   {connectionModels.length === 0 ? (
                     <p className="small muted">该连接下没有模型。</p>
                   ) : (
-                    <table className="table">
+                    <table className="table connection-model-table">
                       <thead>
                         <tr>
                           <th>模型</th>
@@ -184,21 +184,21 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       <tbody>
                         {connectionModels.map((model) => (
                           <tr key={model.id}>
-                            <td>
+                            <td className="connection-model-summary" data-label="模型">
                               <div className="list-row-title">
                                 <span>{model.displayName}</span>
                                 {model.catalogManaged ? <span className="tag ok">自动维护</span> : null}
                               </div>
                               <div className="small muted mono">{model.modelKey}</div>
                             </td>
-                            <td>
+                            <td className="connection-model-context" data-label="上下文">
                               <div>{formatTokens(model.contextWindow ?? undefined)}</div>
                               <div className="small muted">
                                 输入 {formatTokens(model.maxInputTokens ?? undefined)} · 输出 {formatTokens(model.maxOutputTokens)}
                               </div>
                             </td>
-                            <td>{model.source === "discovered" ? "发现" : "手动"}</td>
-                            <td>
+                            <td className="connection-model-meta" data-label="来源">{model.source === "discovered" ? "发现" : "手动"}</td>
+                            <td className="connection-model-meta connection-model-enabled" data-label="启用">
                               <Switch
                                 label={`启用 ${model.displayName}`}
                                 hideLabel
@@ -211,7 +211,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                                 }}
                               />
                             </td>
-                            <td>
+                            <td className="connection-model-actions" data-label="操作">
                               <button className="btn small" onClick={() => setEditingModel(model)}>
                                 编辑
                               </button>{" "}
