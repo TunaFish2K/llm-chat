@@ -20,7 +20,7 @@ function seed() {
     conversations: [conversation],
     messages: { "conv-1": [makeMessage({ id: "assistant-1", activeGenerationId: generation.id, generations: [generation] })] },
     toasts: [],
-    eventsConnected: true,
+    eventsConnectionState: "connected",
     runningTasksByConversation: {}
   });
   return { conversation, generation };

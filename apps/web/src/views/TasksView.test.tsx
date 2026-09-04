@@ -10,7 +10,7 @@ function json(body: unknown): Response {
 
 beforeEach(() => {
   window.history.pushState(null, "", "/c/conv-1/tasks");
-  appStore.set({ eventsConnected: true, runningTasksByConversation: {} });
+  appStore.set({ eventsConnectionState: "connected", runningTasksByConversation: {} });
 });
 
 describe("ConversationTasksView", () => {

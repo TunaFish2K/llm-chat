@@ -622,12 +622,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       connection: "keep-alive",
       "x-accel-buffering": "no"
     });
+    // Flush an initial body frame so EventSource reaches `open` immediately
+    // even when the event hub has nothing to replay yet.
+    reply.raw.write(": connected\n\n");
     const lastId = Number(request.headers["last-event-id"] ?? 0);
     const send = (event: { id: number; type: string }) => {
       reply.raw.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = eventHub.subscribe(Number.isFinite(lastId) ? lastId : 0, send);
-    const heartbeat = setInterval(() => reply.raw.write(": heartbeat\n\n"), 15_000);
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.write(": heartbeat\n\n");
+    }, 15_000);
     request.raw.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
   });
   app.patch<{ Params: { id: string } }>("/api/messages/:id/active-generation", async (request) => {

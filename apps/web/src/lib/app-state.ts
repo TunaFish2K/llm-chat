@@ -19,6 +19,8 @@ export interface Toast {
   text: string;
 }
 
+export type EventsConnectionState = "connecting" | "connected" | "reconnecting";
+
 export interface AppState {
   auth: "loading" | "required" | "ready";
   bootError: string | null;
@@ -29,7 +31,7 @@ export interface AppState {
   conversations: ConversationDto[];
   messages: Record<string, MessageDto[]>;
   toasts: Toast[];
-  eventsConnected: boolean;
+  eventsConnectionState: EventsConnectionState;
   runningTasksByConversation: Record<string, number>;
 }
 
@@ -43,7 +45,7 @@ export const appStore = createStore<AppState>({
   conversations: [],
   messages: {},
   toasts: [],
-  eventsConnected: false,
+  eventsConnectionState: "connecting",
   runningTasksByConversation: {}
 });
 
@@ -167,6 +169,11 @@ export function trackGeneration(conversationId: string, messageId: string, gener
   ensureGenerationStream(generationId);
 }
 
+export function restartGenerationTracking(conversationId: string, messageId: string, generationId: string): void {
+  closeGenerationStream(generationId);
+  trackGeneration(conversationId, messageId, generationId);
+}
+
 export function ensureGenerationStream(generationId: string): void {
   if (generationStreams.has(generationId)) return;
   const subscription = subscribeGeneration(
@@ -194,7 +201,7 @@ async function handleGenerationEvent(
   }
   if (event.type === "snapshot") {
     applyGeneration(owner.conversationId, owner.messageId, event.generation);
-    if (!isGenerationActive(event.generation.status)) closeGenerationStream(generationId);
+    if (generationStreamEnded(event.generation.status)) closeGenerationStream(generationId);
     return;
   }
   const message = findMessage(owner.conversationId, owner.messageId);
@@ -234,18 +241,24 @@ async function handleGenerationEvent(
     cancelGenerationHaptic();
   }
   applyGeneration(owner.conversationId, owner.messageId, next);
-  if (event.type === "status" && !isGenerationActive(event.status)) {
+  if (event.type === "status" && generationStreamEnded(event.status)) {
     closeGenerationStream(generationId);
-    // Final status may update message-level fields; re-sync from the server.
-    try {
-      await loadMessages(owner.conversationId);
-    } catch {
-      /* ignore */
+    if (!isGenerationActive(event.status)) {
+      // Final status may update message-level fields; re-sync from the server.
+      try {
+        await loadMessages(owner.conversationId);
+      } catch {
+        /* ignore */
+      }
     }
   }
   if (event.type === "error") {
     closeGenerationStream(generationId);
   }
+}
+
+function generationStreamEnded(status: string): boolean {
+  return status === "waiting-approval" || !isGenerationActive(status);
 }
 
 function closeGenerationStream(generationId: string): void {
@@ -281,6 +294,7 @@ let appEventsSubscription: Subscription | null = null;
 
 export function startAppEvents(): void {
   if (appEventsSubscription) return;
+  let hasConnected = false;
   appEventsSubscription = subscribeAppEvents(
     (event) => {
       if (event.type === "task") {
@@ -293,7 +307,12 @@ export function startAppEvents(): void {
         window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: event }));
       }
     },
-    (connected) => appStore.set({ eventsConnected: connected })
+    (connected) => {
+      if (connected) hasConnected = true;
+      appStore.set({
+        eventsConnectionState: connected ? "connected" : hasConnected ? "reconnecting" : "connecting"
+      });
+    }
   );
 }
 

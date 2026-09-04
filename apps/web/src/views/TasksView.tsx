@@ -9,7 +9,7 @@ import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, ErrorState, LoadingState, StatusTag } from "../lib/ui";
 
 export function ConversationTasksView({ conversationId, taskId }: { conversationId: string; taskId: string | null }) {
-  const eventsConnected = useStore(appStore, (s) => s.eventsConnected);
+  const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
   const runningTasks = useStore(appStore, (s) => s.runningTasksByConversation[conversationId] ?? 0);
   const [tasks, setTasks] = useState<BackgroundTaskDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -158,7 +158,7 @@ function StopTaskModal({
 }
 
 function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId: string }) {
-  const eventsConnected = useStore(appStore, (s) => s.eventsConnected);
+  const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
   const [detail, setDetail] = useState<{ task: BackgroundTaskDto; events: BackgroundTaskEventDto[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [output, setOutput] = useState("");

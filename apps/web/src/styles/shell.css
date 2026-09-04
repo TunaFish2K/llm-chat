@@ -618,8 +618,12 @@
   gap: 6px;
 }
 
-.sidebar-status > span svg {
+.sidebar-status > span[data-state="connected"] svg {
   color: var(--ok);
+}
+
+.sidebar-status > span[data-state="reconnecting"] svg {
+  color: var(--warn);
 }
 
 .workspace-sidebar[data-compact] .sidebar-brand,
