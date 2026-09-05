@@ -108,6 +108,31 @@ describe("context builder", () => {
     store.close();
   });
 
+  it("applies Agent-owned prompt regex without changing stored message text", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    store.updateAgent(agent.id, {
+      roleplay: {
+        ...agent.roleplay,
+        enabled: true,
+        regexScripts: [{
+          id: "redact", name: "Redact", enabled: true, pattern: "token-[0-9]+", replacement: "token-[hidden]",
+          flags: "gu", scopes: ["user_prompt"], runOnEdit: false, importWarning: null
+        }]
+      }
+    });
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+    const latest = store.createMessageGeneration(conversation.id, "use token-1234");
+    const built = await buildContext(
+      store, store.getGenerationRecord(latest.generationId)!, seeded.model,
+      store.getConnection(seeded.connection.id)!, new AbortController().signal
+    );
+    expect(built.messages.at(-1)?.text).toBe("use token-[hidden]");
+    expect(store.listMessages(conversation.id)[0]?.text).toBe("use token-1234");
+    store.close();
+  });
+
   it("trims complete old turns, including tool results, while preserving the latest user message", async () => {
     const store = createStore();
     const seeded = seedModel(store);

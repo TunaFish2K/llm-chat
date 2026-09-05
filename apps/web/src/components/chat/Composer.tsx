@@ -373,6 +373,10 @@ export function Composer({
         onRoleplayStateChange(automated.state);
         content = (automated.sendText ?? automated.draft ?? content).trim();
       }
+      if (!content && !attachments.length) {
+        toast("error", "发送前脚本清空了消息");
+        return;
+      }
       if (!conversation) {
         const result = await endpoints.startConversation({
           text: content,
