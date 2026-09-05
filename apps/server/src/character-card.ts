@@ -7,13 +7,18 @@ import type {
   CharacterCardV2,
   ProviderProtocol
 } from "@llm-chat/contracts";
+import { randomUUID } from "node:crypto";
 import { characterCardV2Schema } from "@llm-chat/contracts";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import type { Store } from "./database";
 import { StoreError } from "./database";
+import type { ImageService } from "./images";
 import { defaultRoleplayConfig } from "./roleplay";
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_CARD_BYTES = 10 * 1024 * 1024;
+const MAX_ARCHIVE_ENTRIES = 512;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 64 * 1024 * 1024;
 
 interface PortableExtension {
   version: 1;
@@ -28,7 +33,8 @@ interface PortableExtension {
 export function importCharacterCard(store: Store, fileName: string, bytes: Uint8Array): AgentDto {
   if (bytes.byteLength > MAX_CARD_BYTES) throw new StoreError("card_too_large", "角色卡不能超过 10 MiB");
   const png = isPng(bytes);
-  const raw = png ? extractPngCard(bytes) : decodeJson(bytes);
+  const archive = !png && isZip(bytes) ? decodeCharx(bytes) : undefined;
+  const raw = png ? extractPngCard(bytes) : archive?.raw ?? decodeJson(bytes);
   const card = normalizeCard(raw);
   const extension = readPortableExtension(card.data.extensions.llm_chat);
   const defaultAgent = store.getAgent(store.getSettings().defaultAgentId)!;
@@ -43,9 +49,37 @@ export function importCharacterCard(store: Store, fileName: string, bytes: Uint8
     card,
     execution,
     userProfile: extension?.userProfile ?? {},
-    roleplay: extension?.roleplay ?? defaultRoleplayConfig(true)
+    roleplay: extension?.roleplay ?? importedRoleplayConfig(card)
   };
-  return store.createAgentCopy(input, png ? bytes : undefined);
+  return store.createAgentCopy(input, png ? bytes : archive?.avatar);
+}
+
+export async function importCharacterCardWithAssets(
+  store: Store,
+  files: ImageService,
+  fileName: string,
+  bytes: Uint8Array
+): Promise<AgentDto> {
+  const agent = importCharacterCard(store, fileName, bytes);
+  if (!isZip(bytes)) return agent;
+  const archive = decodeCharx(bytes);
+  const imported = [];
+  for (const source of archive.assets) {
+    const asset = await files.importFile(source.name, source.mimeType, source.bytes);
+    store.attachFileToAgent(agent.id, asset.id);
+    imported.push({
+      id: asset.id,
+      type: source.type,
+      name: source.name,
+      ext: source.ext,
+      uri: asset.url,
+      mimeType: asset.mimeType,
+      hash: asset.sha256
+    });
+  }
+  return store.updateAgent(agent.id, {
+    roleplay: { ...agent.roleplay, assets: [...agent.roleplay.assets, ...imported] }
+  })!;
 }
 
 export function exportCharacterCard(
@@ -68,6 +102,40 @@ export function exportCharacterCard(
     fileName: `${safeName}.png`,
     contentType: "image/png",
     bytes: embedPngCard(avatar, card)
+  };
+}
+
+export async function exportCharacterCardWithAssets(
+  store: Store,
+  files: ImageService,
+  agent: AgentDto,
+  format: "json" | "png" | "charx"
+): Promise<{ fileName: string; contentType: string; bytes: Uint8Array }> {
+  if (format !== "charx") return exportCharacterCard(store, agent, format);
+  const safeName = agent.name.replace(/[\\/:*?"<>|]/g, "_") || "character";
+  const archive: Record<string, Uint8Array> = {};
+  const assets = [];
+  for (const item of agent.roleplay.assets) {
+    try {
+      const loaded = await files.readFileAsset(item.id);
+      const path = `assets/${item.id}.${cleanExtension(item.ext)}`;
+      archive[path] = loaded.bytes;
+      assets.push({ type: item.type, name: item.name, ext: item.ext, uri: `embeded://${path}` });
+    } catch {
+      assets.push({ type: item.type, name: item.name, ext: item.ext, uri: item.uri });
+    }
+  }
+  const portable = portableCard(store, agent);
+  const ccv3 = {
+    spec: "chara_card_v3",
+    spec_version: "3.0",
+    data: { ...portable.data, assets }
+  };
+  archive["card.json"] = strToU8(JSON.stringify(ccv3, null, 2));
+  return {
+    fileName: `${safeName}.charx`,
+    contentType: "application/vnd.character-card+zip",
+    bytes: zipSync(archive, { level: 6 })
   };
 }
 
@@ -117,6 +185,51 @@ function readPortableExtension(value: unknown): PortableExtension | undefined {
   return extension as PortableExtension;
 }
 
+function importedRoleplayConfig(card: CharacterCardV2): AgentRoleplayConfig {
+  const config = defaultRoleplayConfig(true);
+  const extensions = card.data.extensions;
+  const regexSource = Array.isArray(extensions.regex_scripts) ? extensions.regex_scripts : [];
+  config.regexScripts = regexSource.flatMap((value, index) => {
+    if (!value || typeof value !== "object") return [];
+    const row = value as Record<string, unknown>;
+    const raw = String(row.findRegex ?? row.pattern ?? "");
+    const literal = /^\/(.*)\/([gimsuy]*)$/.exec(raw);
+    const scopes = Array.isArray(row.placement) && row.placement.includes(1)
+      ? ["user_prompt" as const]
+      : ["display" as const];
+    return [{
+      id: randomUUID(),
+      name: String(row.scriptName ?? row.name ?? `导入正则 ${index + 1}`).slice(0, 200),
+      enabled: false,
+      pattern: (literal?.[1] ?? raw).slice(0, 20_000),
+      replacement: String(row.replaceString ?? row.replacement ?? "").slice(0, 200_000),
+      flags: (literal?.[2] ?? String(row.flags ?? "gu")).slice(0, 10),
+      scopes,
+      runOnEdit: Boolean(row.runOnEdit),
+      importWarning: "导入的正则尚未执行；检查 RE2 兼容性后再启用"
+    }];
+  });
+  const quickSource = Array.isArray(extensions.quick_replies) ? extensions.quick_replies : [];
+  if (quickSource.length) {
+    config.quickReplySets = [{
+      id: randomUUID(), name: "角色卡快捷回复", enabled: true,
+      replies: quickSource.flatMap((value, index) => {
+        if (!value || typeof value !== "object") return [];
+        const row = value as Record<string, unknown>;
+        const content = String(row.message ?? row.content ?? "").slice(0, 500_000);
+        const scripted = content.trimStart().startsWith("/");
+        return [{
+          id: randomUUID(), label: String(row.label ?? row.name ?? `快捷回复 ${index + 1}`).slice(0, 100),
+          tooltip: String(row.title ?? row.tooltip ?? "").slice(0, 500),
+          mode: scripted ? "script" as const : "insert" as const,
+          content, enabled: !scripted && row.disabled !== true, pinned: false, autoTriggers: []
+        }];
+      })
+    }];
+  }
+  return config;
+}
+
 function resolvePortableModel(
   store: Store,
   portable: PortableExtension["execution"]["model"]
@@ -133,6 +246,25 @@ function resolvePortableModel(
 }
 
 function normalizeCard(raw: unknown): CharacterCardV2 {
+  if (raw && typeof raw === "object" && (raw as Record<string, unknown>).spec === "chara_card_v3") {
+    const record = raw as Record<string, unknown>;
+    const data = record.data && typeof record.data === "object" ? record.data as Record<string, unknown> : {};
+    const extensions = data.extensions && typeof data.extensions === "object"
+      ? data.extensions as Record<string, unknown>
+      : {};
+    return characterCardV2Schema.parse({
+      ...record,
+      spec: "chara_card_v2",
+      spec_version: "2.0",
+      data: {
+        ...data,
+        extensions: {
+          ...extensions,
+          llm_chat_ccv3_source: raw
+        }
+      }
+    });
+  }
   if (raw && typeof raw === "object" && (raw as Record<string, unknown>).spec === "chara_card_v2") {
     return characterCardV2Schema.parse(raw);
   }
@@ -155,6 +287,77 @@ function decodeJson(bytes: Uint8Array): unknown {
 function isPng(bytes: Uint8Array): boolean {
   return bytes.byteLength >= PNG_SIGNATURE.length
     && Buffer.from(bytes.subarray(0, PNG_SIGNATURE.length)).equals(PNG_SIGNATURE);
+}
+
+function isZip(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b
+    && ((bytes[2] === 0x03 && bytes[3] === 0x04) || (bytes[2] === 0x05 && bytes[3] === 0x06));
+}
+
+function decodeCharx(bytes: Uint8Array): {
+  raw: unknown;
+  avatar?: Uint8Array;
+  assets: Array<{ type: string; name: string; ext: string; mimeType: string; bytes: Uint8Array }>;
+} {
+  let count = 0;
+  let expanded = 0;
+  let entries: Record<string, Uint8Array>;
+  try {
+    entries = unzipSync(bytes, {
+      filter(file) {
+        count += 1;
+        expanded += file.originalSize;
+        if (count > MAX_ARCHIVE_ENTRIES || expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+          throw new StoreError("card_archive_too_large", "CHARX 解包后超过安全限制");
+        }
+        return file.originalSize <= MAX_CARD_BYTES && !unsafeArchivePath(file.name);
+      }
+    });
+  } catch (error) {
+    if (error instanceof StoreError) throw error;
+    throw new StoreError("card_invalid_archive", "CHARX 文件无法安全解包");
+  }
+  const cardPath = Object.keys(entries).find((name) => /(^|\/)card\.json$/i.test(name));
+  if (!cardPath) throw new StoreError("card_missing_archive_metadata", "CHARX 中没有 card.json");
+  const raw = decodeJson(entries[cardPath]!);
+  const data = raw && typeof raw === "object" && (raw as Record<string, unknown>).data;
+  const manifest = data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).assets)
+    ? (data as Record<string, unknown>).assets as unknown[]
+    : [];
+  const assets = manifest.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+    const item = value as Record<string, unknown>;
+    const uri = String(item.uri ?? "");
+    const path = uri.replace(/^embed(?:ded|ed):\/\//i, "").replace(/^\.\//, "");
+    const content = entries[path];
+    if (!content || unsafeArchivePath(path)) return [];
+    const ext = cleanExtension(String(item.ext ?? path.split(".").at(-1) ?? "bin"));
+    return [{
+      type: String(item.type ?? "asset").slice(0, 100),
+      name: String(item.name ?? path.split("/").at(-1) ?? "asset").slice(0, 200),
+      ext,
+      mimeType: mimeForExtension(ext),
+      bytes: content
+    }];
+  });
+  const avatar = assets.find((asset) => asset.type === "icon" && asset.mimeType === "image/png")?.bytes;
+  return { raw, assets, ...(avatar ? { avatar } : {}) };
+}
+
+function unsafeArchivePath(path: string): boolean {
+  return !path || path.startsWith("/") || path.includes("\\") || path.split("/").some((part) => part === ".." || part === "");
+}
+
+function cleanExtension(value: string): string {
+  return /^[A-Za-z0-9]{1,20}$/.test(value) ? value.toLocaleLowerCase() : "bin";
+}
+
+function mimeForExtension(ext: string): string {
+  const known: Record<string, string> = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+    json: "application/json", txt: "text/plain", mp3: "audio/mpeg", ogg: "audio/ogg", mp4: "video/mp4"
+  };
+  return known[ext.toLocaleLowerCase()] ?? "application/octet-stream";
 }
 
 function extractPngCard(bytes: Uint8Array): unknown {

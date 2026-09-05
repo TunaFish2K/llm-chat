@@ -18,6 +18,22 @@ const ONE_PIXEL_PNG = Buffer.from(
 afterEach(cleanupStores);
 
 describe("application management tools", () => {
+  it("manages Agent-scoped roleplay through a restricted audited tool", async () => {
+    const { store, tools } = await setup();
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    store.updateAgent(agent.id, { roleplay: { ...agent.roleplay, enabled: true } });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const tool = tools.tools().find((item) => item.definition.name === "app_roleplay")!;
+    expect(await tool.requiresApproval({ action: "get_state" })).toBe(false);
+    expect(await tool.requiresApproval({ action: "run_script" })).toBe(true);
+    const result = JSON.parse(await tool.execute({
+      action: "run_script", id: conversation.id, script: "/setvar mood calm | /input hello", draft: ""
+    }, new AbortController().signal));
+    expect(result).toMatchObject({ draft: "hello", state: { variables: { mood: "calm" } } });
+    const audit = JSON.parse(await tool.execute({ action: "audit", id: conversation.id }, new AbortController().signal));
+    expect(audit[0]).toMatchObject({ sourceKind: "app_tool", success: true });
+  });
+
   it("requires approval for persistent changes and never exposes or accepts connection secrets", async () => {
     const { store, tools } = await setup();
     const connection = store.createConnection({

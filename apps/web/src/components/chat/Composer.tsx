@@ -6,6 +6,7 @@ import {
   FolderOpen,
   FilePlus2,
   FileText,
+  Drama,
   Gauge,
   LoaderCircle,
   Minimize2,
@@ -13,12 +14,15 @@ import {
   Send,
   Settings2,
   Square,
+  Zap,
   Wrench,
   X
 } from "lucide-react";
 import type {
   ConversationDto,
   ConversationExecutionOverrides,
+  ConversationRoleplayState,
+  AgentDto,
   GenerationDto,
   FileAssetDto,
   MessageDto,
@@ -60,7 +64,12 @@ export function Composer({
   onPreviewAgentChange,
   compacting,
   canCompact,
-  onCompact
+  onCompact,
+  roleplayAvailable = false,
+  roleplayAgent = null,
+  roleplayState = null,
+  onRoleplayStateChange = () => undefined,
+  onOpenRoleplay = () => undefined
 }: {
   conversation: ConversationDto | null;
   onInspect: (target: InspectionTarget) => void;
@@ -71,6 +80,11 @@ export function Composer({
   compacting: boolean;
   canCompact: boolean;
   onCompact: () => void;
+  roleplayAvailable?: boolean;
+  roleplayAgent?: AgentDto | null;
+  roleplayState?: ConversationRoleplayState | null;
+  onRoleplayStateChange?: (state: ConversationRoleplayState) => void;
+  onOpenRoleplay?: () => void;
 }) {
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
@@ -94,6 +108,8 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedConversation = useRef<string | null>(null);
+  const wasGenerating = useRef(false);
+  const currentDraft = useRef("");
   const isNew = !conversation;
 
   useEffect(() => {
@@ -141,6 +157,12 @@ export function Composer({
     : REASONING_LEVELS;
   const workspace = conversation?.workspacePath ?? newWorkspace;
   const greetings = effectiveAgent && settings ? greetingOptions(effectiveAgent, settings) : [];
+  const quickReplies = roleplayAgent && roleplayState
+    ? roleplayAgent.roleplay.quickReplySets
+        .filter((set) => set.enabled && roleplayState.enabledQuickReplySetIds.includes(set.id))
+        .flatMap((set) => set.replies)
+        .filter((reply) => reply.enabled)
+    : [];
 
   useEffect(() => {
     if (!isNew) return;
@@ -163,6 +185,27 @@ export function Composer({
       )
     )
     .sort((left, right) => left.call.index - right.call.index);
+
+  currentDraft.current = text;
+  useEffect(() => {
+    if (active) {
+      wasGenerating.current = true;
+      return;
+    }
+    if (!wasGenerating.current) return;
+    wasGenerating.current = false;
+    if (!conversation || !quickReplies.some((reply) =>
+      reply.mode === "script" && reply.autoTriggers.includes("after_reply")
+    )) return;
+    const draft = currentDraft.current;
+    void endpoints.executeRoleplayScript(conversation.id, { trigger: "after_reply", draft })
+      .then((result) => {
+        onRoleplayStateChange(result.state);
+        if (result.draft !== draft) { setText(result.draft); persistDraft(result.draft); }
+        for (const line of result.output.slice(-3)) toast("info", line);
+      })
+      .catch(toastError);
+  }, [active?.generation.id, conversation?.id]);
 
   /** Drafts are stored server-side, but only after the reader pauses typing. */
   const persistDraft = (value: string) => {
@@ -305,8 +348,8 @@ export function Composer({
     }
   };
 
-  const sendMessage = async () => {
-    const content = text.trim();
+  const sendMessage = async (overrideText?: string) => {
+    let content = (overrideText ?? text).trim();
     if ((!content && !attachments.length) || sending || uploading || generating || pendingApprovals.length) return;
     if (!effectiveAgent) {
       toast("error", "请先选择一个 Agent");
@@ -323,6 +366,13 @@ export function Composer({
     onBeforeSend();
     setSending(true);
     try {
+      if (conversation && roleplayAgent && roleplayState && quickReplies.some((reply) =>
+        reply.mode === "script" && reply.autoTriggers.includes("before_send")
+      )) {
+        const automated = await endpoints.executeRoleplayScript(conversation.id, { trigger: "before_send", draft: content });
+        onRoleplayStateChange(automated.state);
+        content = (automated.sendText ?? automated.draft ?? content).trim();
+      }
       if (!conversation) {
         const result = await endpoints.startConversation({
           text: content,
@@ -332,6 +382,10 @@ export function Composer({
           executionOverrides: newOverrides,
           workspacePath: newWorkspace
         });
+        if (effectiveAgent.roleplayEnabled) {
+          await endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "" })
+            .catch(() => undefined);
+        }
         setText("");
         setAttachments([]);
         await refreshConversations();
@@ -352,6 +406,26 @@ export function Composer({
     } finally {
       setSending(false);
     }
+  };
+
+  const useQuickReply = async (reply: (typeof quickReplies)[number]) => {
+    if (controlsDisabled) return;
+    if (reply.mode === "insert") {
+      const next = text ? `${text}${text.endsWith("\n") ? "" : "\n"}${reply.content}` : reply.content;
+      setText(next); persistDraft(next); return;
+    }
+    if (reply.mode === "send") {
+      void sendMessage(reply.content); return;
+    }
+    if (!conversation) {
+      toast("info", "受限脚本需要先创建会话"); return;
+    }
+    try {
+      const result = await endpoints.executeRoleplayScript(conversation.id, { quickReplyId: reply.id, draft: text });
+      setText(result.draft); persistDraft(result.draft); onRoleplayStateChange(result.state);
+      for (const line of result.output.slice(-3)) toast("info", line);
+      if (result.sendText) void sendMessage(result.sendText);
+    } catch (error) { toastError(error); }
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -438,6 +512,15 @@ export function Composer({
               ) : null}
               {attachments.some((asset) => asset.kind === "image") && !imageConfigured ? (
                 <p className="composer-warning">当前模型不支持图片，Agent 也未配置备用识图模型。</p>
+              ) : null}
+              {quickReplies.some((reply) => reply.pinned) ? (
+                <div className="quick-reply-row" aria-label="快捷回复">
+                  {quickReplies.filter((reply) => reply.pinned).map((reply) => (
+                    <button type="button" className="quick-reply" key={reply.id} title={reply.tooltip || reply.label} onClick={() => void useQuickReply(reply)} disabled={controlsDisabled}>
+                      {reply.mode === "script" ? <Zap size={13} aria-hidden="true" /> : null}{reply.label}
+                    </button>
+                  ))}
+                </div>
               ) : null}
 
               <div className="composer-tools">
@@ -561,6 +644,18 @@ export function Composer({
                             <span><strong>执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
                           </button>
                         </div>
+                        {roleplayAvailable ? (
+                          <button type="button" aria-label="角色会话设置" onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
+                            <Drama size={16} aria-hidden="true" />
+                            <span><strong>角色会话</strong><small>预设、人物、世界书与场景</small></span>
+                          </button>
+                        ) : null}
+                        {quickReplies.filter((reply) => !reply.pinned).map((reply) => (
+                          <button type="button" key={reply.id} title={reply.tooltip || reply.label} onClick={() => { setMoreOpen(false); void useQuickReply(reply); }} disabled={controlsDisabled}>
+                            <Zap size={16} aria-hidden="true" />
+                            <span><strong>{reply.label}</strong><small>{reply.mode === "insert" ? "插入草稿" : reply.mode === "send" ? "立即发送" : "受限脚本"}</small></span>
+                          </button>
+                        ))}
                         <button
                           type="button"
                           aria-label="立即压缩上下文"

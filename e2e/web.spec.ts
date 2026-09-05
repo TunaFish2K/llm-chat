@@ -402,15 +402,65 @@ test.describe("Agent 管理", () => {
       await expect(dialog).toBeVisible();
       await dialog.getByRole("textbox").fill("{{original}}\n保持角色一致。");
       await dialog.getByRole("textbox").press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+
+      const personas = page.getByRole("heading", { name: "人物身份" }).locator("xpath=ancestor::section[1]");
+      await personas.getByRole("button", { name: "新增", exact: true }).click();
+      await personas.locator("details").first().locator("summary").click();
+      await personas.getByRole("textbox", { name: /人物名称/ }).fill("旅行者");
+
+      const lorebooks = page.getByRole("heading", { name: "附加世界书" }).locator("xpath=ancestor::section[1]");
+      await lorebooks.getByRole("button", { name: "新增", exact: true }).click();
+      await lorebooks.locator("details").first().locator("summary").click();
+      await lorebooks.getByRole("button", { name: "新增条目" }).click();
+
+      const quick = page.getByRole("heading", { name: "快捷回复与受限脚本" }).locator("xpath=ancestor::section[1]");
+      await quick.getByRole("button", { name: "新增组" }).click();
+      await quick.locator("details.roleplay-resource").first().locator("summary").click();
+      await quick.getByRole("button", { name: "新增快捷回复" }).click();
       await page.getByRole("button", { name: "保存修改" }).click();
       await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
       const stored = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
       expect(stored.roleplay.enabled).toBe(true);
       expect(stored.roleplay.presets[0].blocks.find((block: { kind: string }) => block.kind === "main").content)
         .toContain("保持角色一致");
+      expect(stored.roleplay.personas[0].name).toBe("旅行者");
+      expect(stored.roleplay.lorebooks).toHaveLength(1);
+      expect(stored.roleplay.quickReplySets[0].replies).toHaveLength(1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     } finally {
       await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`).catch(() => {});
+    }
+  });
+
+  test("角色会话设置只在启用角色扮演的 Agent 中出现", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖会话设置断点");
+    const created = await api(request, APP_URL, "POST", "/api/agents", agentInput(`角色会话-${unique()}`));
+    const full = await api(request, APP_URL, "GET", `/api/agents/${created.id}`);
+    const personaId = crypto.randomUUID();
+    await api(request, APP_URL, "PATCH", `/api/agents/${created.id}`, {
+      roleplay: {
+        ...full.roleplay,
+        enabled: true,
+        personas: [{ id: personaId, name: "旅人", description: "来自远方", avatarAssetId: null }],
+        defaultPersonaId: personaId
+      }
+    });
+    const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: created.id });
+    try {
+      await gotoPath(page, `/c/${conversation.id}`);
+      await page.getByRole("button", { name: "更多会话设置" }).click();
+      await page.getByRole("button", { name: "角色会话设置" }).click();
+      const dialog = page.getByRole("dialog", { name: "角色会话设置" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByLabel("人物身份").selectOption(personaId);
+      await dialog.getByRole("button", { name: "保存" }).click();
+      await expect(dialog).toHaveCount(0);
+      expect((await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}/roleplay-state`)).personaId).toBe(personaId);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/conversations/${conversation.id}`).catch(() => {});
+      await api(request, APP_URL, "DELETE", `/api/agents/${created.id}`).catch(() => {});
     }
   });
 

@@ -80,12 +80,18 @@ importers:
       fastify:
         specifier: ^5.6.0
         version: 5.12.1
+      fflate:
+        specifier: ^0.8.3
+        version: 0.8.3
       node-pty:
         specifier: 1.1.0
         version: 1.1.0
       proper-lockfile:
         specifier: ^4.1.2
         version: 4.1.2
+      re2-wasm:
+        specifier: ^1.0.2
+        version: 1.0.2
       yaml:
         specifier: ^2.8.1
         version: 2.9.0
@@ -2778,6 +2784,9 @@ packages:
       picomatch:
         optional: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   filelist@1.0.6:
     resolution: {integrity: sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==}
 
@@ -3705,6 +3714,10 @@ packages:
         optional: true
       '@types/react-dom':
         optional: true
+
+  re2-wasm@1.0.2:
+    resolution: {integrity: sha512-VXUdgSiUrE/WZXn6gUIVVIsg0+Hp6VPZPOaHCay+OuFKy6u/8ktmeNEf+U5qSA8jzGGFsg8jrDNu1BeHpz2pJA==}
+    engines: {node: '>=10'}
 
   react-dom@19.2.8:
     resolution: {integrity: sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ==}
@@ -7352,6 +7365,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
+  fflate@0.8.3: {}
+
   filelist@1.0.6:
     dependencies:
       minimatch: 5.1.9
@@ -8635,6 +8650,8 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.18
       '@types/react-dom': 19.2.5(@types/react@19.2.18)
+
+  re2-wasm@1.0.2: {}
 
   react-dom@19.2.8(react@19.2.8):
     dependencies:

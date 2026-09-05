@@ -105,7 +105,9 @@ export function resolveRoleplayState(
     enabledLorebookIds: explicit
       ? state.enabledLorebookIds.filter((id) => lorebookIds.has(id))
       : config.lorebooks.filter((book) => book.enabled).map((book) => book.id),
-    enabledRegexScriptIds: state.enabledRegexScriptIds.filter((id) => regexIds.has(id)),
+    enabledRegexScriptIds: explicit
+      ? state.enabledRegexScriptIds.filter((id) => regexIds.has(id))
+      : config.regexScripts.filter((script) => script.enabled).map((script) => script.id),
     enabledQuickReplySetIds: explicit
       ? state.enabledQuickReplySetIds.filter((id) => quickReplySetIds.has(id))
       : config.quickReplySets.filter((set) => set.enabled).map((set) => set.id),

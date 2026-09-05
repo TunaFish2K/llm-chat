@@ -2,9 +2,11 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
   agentInputSchema,
+  agentRoleplayConfigSchema,
   appSettingsSchema,
   connectionInputSchema,
   conversationExecutionOverridesSchema,
+  conversationRoleplayStatePatchSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
   modelInputSchema,
@@ -16,7 +18,7 @@ import {
 import { adapterFor } from "@llm-chat/providers";
 import type { TaskManager } from "./background-tasks";
 import { BalanceService } from "./balance";
-import { exportCharacterCard, importCharacterCard } from "./character-card";
+import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
 import type { Store } from "./database";
 import { StoreError } from "./database";
 import type { EventHub } from "./events";
@@ -26,11 +28,12 @@ import { ModelCatalogService } from "./model-catalog";
 import type { PluginManager } from "./plugins";
 import type { SkillManager } from "./skills";
 import type { ServerTool, ToolExecutionContext } from "./tools";
+import { executeRestrictedStscript } from "./stscript";
 
 type JsonObject = Record<string, unknown>;
 type Resource = "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools";
 
-const READ_ACTIONS = new Set(["list", "get", "test", "balance"]);
+const READ_ACTIONS = new Set(["list", "get", "test", "balance", "get_agent", "get_state", "audit"]);
 
 export interface AppToolDependencies {
   store: Store;
@@ -66,7 +69,9 @@ export class AppTools {
       this.tool("app_plugins", "Plugin 管理", "List, install, configure non-secret fields, reload, unload, or remove managed plugins.",
         ["list", "install", "configure", "reload", "unload", "delete"], (input, _signal, context) => this.plugins(input, context)),
       this.tool("app_tool_settings", "工具设置", "Read or update global tool enablement, search URL, and workspace Shell state. Search API keys are never available.",
-        ["get", "update"], (input) => this.toolSettings(input))
+        ["get", "update"], (input) => this.toolSettings(input)),
+      this.tool("app_roleplay", "角色工作流", "Inspect or update Agent-owned roleplay configuration and conversation roleplay state, run restricted STscript, or inspect its audit log. No arbitrary JavaScript, shell, or network execution is available.",
+        ["get_agent", "update_agent", "get_state", "update_state", "run_script", "audit"], (input, _signal, context) => this.roleplay(input, context))
     ];
   }
 
@@ -86,11 +91,13 @@ export class AppTools {
             url: { type: "string" },
             path: { type: "string" },
             workspace: { type: "string", enum: ["project", "attachments"], default: "attachments" },
-            format: { type: "string", enum: ["json", "png"] },
+            format: { type: "string", enum: ["json", "png", "charx"] },
             through_message_id: { type: ["string", "null"] },
             message_id: { type: "string" },
             generation_id: { type: "string" },
-            refresh: { type: "boolean" }
+            refresh: { type: "boolean" },
+            script: { type: "string", maxLength: 500000 },
+            draft: { type: "string", maxLength: 1000000 }
           },
           required: ["action"],
           additionalProperties: false
@@ -121,12 +128,15 @@ export class AppTools {
     }
     if (action === "import") {
       const source = await this.cardSource(input, signal, context);
-      return this.changed("agents", importCharacterCard(this.deps.store, source.fileName, source.bytes));
+      return this.changed("agents", await importCharacterCardWithAssets(
+        this.deps.store, this.deps.files, source.fileName, source.bytes
+      ));
     }
     if (action === "export") {
       requireContext(context);
       const agent = requiredResource(this.deps.store.getAgent(id(input)), "agent_not_found", "Agent 不存在");
-      const exported = exportCharacterCard(this.deps.store, agent, input.format === "png" ? "png" : "json");
+      const format = input.format === "png" || input.format === "charx" ? input.format : "json";
+      const exported = await exportCharacterCardWithAssets(this.deps.store, this.deps.files, agent, format);
       const asset = await this.deps.files.importFile(exported.fileName, exported.contentType, exported.bytes);
       this.deps.store.attachFileToToolCall(context!.toolCallId, asset.id);
       return this.changed("agents", { asset, markdown: fileMarkdown(asset) }, agent.id);
@@ -346,6 +356,51 @@ export class AppTools {
       }
       const parsed = toolSettingsInputSchema.parse(value);
       return this.changed("tools", this.deps.store.updateToolSettings(parsed));
+    }
+    throw invalidAction(action);
+  }
+
+  private async roleplay(input: JsonObject, context?: ToolExecutionContext): Promise<string> {
+    const action = string(input, "action");
+    if (action === "get_agent") {
+      return json(requiredResource(this.deps.store.getAgent(id(input)), "agent_not_found", "Agent 不存在").roleplay);
+    }
+    if (action === "update_agent") {
+      const agent = requiredResource(this.deps.store.getAgent(id(input)), "agent_not_found", "Agent 不存在");
+      const roleplay = agentRoleplayConfigSchema.parse({ ...agent.roleplay, ...object(input) });
+      return this.changed("agents", this.deps.store.updateAgent(agent.id, { roleplay }), agent.id);
+    }
+    const conversationId = typeof input.id === "string" && input.id.trim()
+      ? input.id.trim()
+      : context?.conversationId;
+    if (!conversationId) throw new StoreError("app_tool_input_invalid", "id is required outside a conversation");
+    if (action === "get_state") return json(this.deps.store.getConversationRoleplayState(conversationId));
+    if (action === "update_state") {
+      const state = this.deps.store.updateConversationRoleplayState(
+        conversationId, conversationRoleplayStatePatchSchema.parse(object(input))
+      );
+      return this.changed("conversations", state, conversationId);
+    }
+    if (action === "audit") return json(this.deps.store.listRoleplayScriptAudit(conversationId));
+    if (action === "run_script") {
+      const conversation = requiredResource(this.deps.store.getConversation(conversationId), "conversation_not_found", "会话不存在");
+      const agent = conversation.agentId ? this.deps.store.getAgent(conversation.agentId) : undefined;
+      if (!agent?.roleplay.enabled) throw new StoreError("roleplay_disabled", "当前 Agent 未启用角色扮演");
+      const state = this.deps.store.getConversationRoleplayState(conversationId);
+      try {
+        const result = executeRestrictedStscript(string(input, "script"), typeof input.draft === "string" ? input.draft : "", state, agent.roleplay);
+        const updated = this.deps.store.updateConversationRoleplayState(conversationId, result.patch);
+        this.deps.store.recordRoleplayScriptAudit({
+          conversationId, agentId: agent.id, sourceKind: "app_tool", commandCount: result.commands, success: true
+        });
+        return this.changed("conversations", { ...result, state: updated }, conversationId);
+      } catch (error) {
+        this.deps.store.recordRoleplayScriptAudit({
+          conversationId, agentId: agent.id, sourceKind: "app_tool", commandCount: 0, success: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
     }
     throw invalidAction(action);
   }

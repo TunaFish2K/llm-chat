@@ -108,7 +108,7 @@ export function AgentsView() {
           <input
             ref={fileInput}
             type="file"
-            accept=".json,.png,application/json,image/png"
+            accept=".json,.png,.charx,application/json,image/png,application/zip"
             className="sr-only"
             aria-label="选择角色卡文件"
             onChange={(event) => {
@@ -173,6 +173,11 @@ export function AgentsView() {
                   <a className="btn small" href={`/api/agents/${agent.id}/export?format=png`} download>
                     导出 PNG
                   </a>
+                  {agent.roleplayEnabled ? (
+                    <a className="btn small" href={`/api/agents/${agent.id}/export?format=charx`} download>
+                      导出 CHARX
+                    </a>
+                  ) : null}
                   {!agent.protected ? (
                     <button className="btn small danger" onClick={() => setDeleting(agent.id)}>
                       删除

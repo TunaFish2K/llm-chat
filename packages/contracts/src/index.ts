@@ -403,6 +403,24 @@ export const roleplayPresetImportSchema = z.object({
 });
 export type RoleplayPresetImport = z.infer<typeof roleplayPresetImportSchema>;
 
+export const roleplayScriptExecutionSchema = z.object({
+  script: z.string().max(500_000).optional(),
+  quickReplyId: roleplayIdSchema.optional(),
+  trigger: z.enum(["new_chat", "before_send", "after_reply", "lore_activated"]).optional(),
+  draft: z.string().max(1_000_000).default("")
+}).refine((value) => Boolean(value.script || value.quickReplyId || value.trigger), {
+  message: "script, quickReplyId, or trigger is required"
+});
+export type RoleplayScriptExecutionInput = z.infer<typeof roleplayScriptExecutionSchema>;
+
+export interface RoleplayScriptExecutionDto {
+  draft: string;
+  sendText: string | null;
+  output: string[];
+  state: ConversationRoleplayState;
+  commands: number;
+}
+
 const toolPolicyObjectSchema = z.object({
   defaultEnabled: z.boolean().default(true),
   overrides: z.record(z.string(), z.boolean()).default({}),

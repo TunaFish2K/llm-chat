@@ -21,6 +21,7 @@ import {
   modelInputSchema,
   patchConversationSchema,
   retryGenerationSchema,
+  roleplayScriptExecutionSchema,
   roleplayPresetImportSchema,
   sendMessageSchema,
   startConversationSchema,
@@ -34,7 +35,7 @@ import { adapterFor, ProviderError } from "@llm-chat/providers";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { Store, StoreError } from "./database";
-import { exportCharacterCard, importCharacterCard } from "./character-card";
+import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
 import { GenerationRunner } from "./generations";
 import { TaskManager } from "./background-tasks";
 import { EventHub } from "./events";
@@ -51,6 +52,7 @@ import { VisionService } from "./vision";
 import { ModelCatalogService } from "./model-catalog";
 import { AppTools } from "./app-tools";
 import { importSillyTavernPreset } from "./roleplay";
+import { executeRestrictedStscript } from "./stscript";
 
 export type AuthMode = "password" | "disabled";
 
@@ -266,7 +268,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.post("/api/agents/import", async (request, reply) => {
     const value = encodedFileSchema.parse(request.body);
-    return reply.code(201).send(importCharacterCard(store, value.fileName, Buffer.from(value.dataBase64, "base64")));
+    return reply.code(201).send(await importCharacterCardWithAssets(
+      store, imageService, value.fileName, Buffer.from(value.dataBase64, "base64")
+    ));
   });
   app.get<{ Params: { id: string } }>("/api/agents/:id", async (request) => {
     const agent = store.getAgent(request.params.id);
@@ -305,6 +309,47 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     });
     return reply.code(201).send(updated);
   });
+  app.post<{ Params: { id: string } }>("/api/agents/:id/roleplay/assets", async (request, reply) => {
+    const metadata = z.object({
+      fileName: z.string().trim().min(1).max(255),
+      mimeType: z.string().trim().max(255).default("application/octet-stream"),
+      type: z.string().trim().min(1).max(100).default("asset"),
+      dataBase64: z.string().min(1).max(14_000_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
+    }).parse(request.body);
+    const agent = store.getAgent(request.params.id);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    const asset = await imageService.importFile(
+      metadata.fileName, metadata.mimeType, Buffer.from(metadata.dataBase64, "base64")
+    );
+    store.attachFileToAgent(agent.id, asset.id);
+    const ext = metadata.fileName.split(".").at(-1)?.replace(/[^A-Za-z0-9]/g, "").slice(0, 20) || "bin";
+    const roleplayAsset = {
+      id: asset.id, type: metadata.type, name: asset.fileName, ext,
+      uri: asset.url, mimeType: asset.mimeType, hash: asset.sha256
+    };
+    const updated = store.updateAgent(agent.id, {
+      roleplay: { ...agent.roleplay, assets: [...agent.roleplay.assets, roleplayAsset] }
+    });
+    return reply.code(201).send(updated);
+  });
+  app.delete<{ Params: { id: string; assetId: string } }>("/api/agents/:id/roleplay/assets/:assetId", async (request, reply) => {
+    const agent = store.getAgent(request.params.id);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    if (!agent.roleplay.assets.some((asset) => asset.id === request.params.assetId)) {
+      throw new StoreError("roleplay_asset_not_found", "角色素材不存在");
+    }
+    store.detachFileFromAgent(agent.id, request.params.assetId);
+    store.updateAgent(agent.id, {
+      roleplay: {
+        ...agent.roleplay,
+        assets: agent.roleplay.assets.filter((asset) => asset.id !== request.params.assetId),
+        personas: agent.roleplay.personas.map((persona) => persona.avatarAssetId === request.params.assetId
+          ? { ...persona, avatarAssetId: null }
+          : persona)
+      }
+    });
+    return reply.code(204).send();
+  });
   app.delete<{ Params: { id: string } }>("/api/agents/:id", async (request, reply) => {
     if (taskManager.hasNonterminalForAgent(request.params.id)) {
       throw new StoreError("agent_busy", "该 Agent 仍有排队或运行中的后台任务");
@@ -333,10 +378,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
     return reply.code(204).send();
   });
-  app.get<{ Params: { id: string }; Querystring: { format?: "json" | "png" } }>("/api/agents/:id/export", async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { format?: "json" | "png" | "charx" } }>("/api/agents/:id/export", async (request, reply) => {
     const agent = store.getAgent(request.params.id);
     if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
-    const exported = exportCharacterCard(store, agent, request.query.format ?? "json");
+    const exported = await exportCharacterCardWithAssets(store, imageService, agent, request.query.format ?? "json");
     reply.header("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(exported.fileName)}`);
     return reply.type(exported.contentType).send(Buffer.from(exported.bytes));
   });
@@ -536,6 +581,57 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.patch<{ Params: { id: string } }>("/api/conversations/:id/roleplay-state", async (request) => {
     const patch = conversationRoleplayStatePatchSchema.parse(request.body);
     return store.updateConversationRoleplayState(request.params.id, patch);
+  });
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/roleplay-scripts/execute", async (request) => {
+    const input = roleplayScriptExecutionSchema.parse(request.body);
+    const conversation = store.getConversation(request.params.id);
+    if (!conversation?.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
+    const agent = store.getAgent(conversation.agentId);
+    if (!agent?.roleplay.enabled) throw new StoreError("roleplay_disabled", "当前 Agent 未启用角色扮演");
+    let state = store.getConversationRoleplayState(conversation.id);
+    const activeSets = agent.roleplay.quickReplySets.filter((set) =>
+      set.enabled && state.enabledQuickReplySetIds.includes(set.id)
+    );
+    const selected = input.script
+      ? [{ id: undefined, source: input.script, kind: "inline" as const }]
+      : input.quickReplyId
+      ? activeSets.flatMap((set) => set.replies).filter((reply) =>
+          reply.enabled && reply.mode === "script" && reply.id === input.quickReplyId
+        ).map((reply) => ({ id: reply.id, source: reply.content, kind: "quick_reply" as const }))
+      : activeSets.flatMap((set) => set.replies).filter((reply) =>
+          reply.enabled && reply.mode === "script" && input.trigger && reply.autoTriggers.includes(input.trigger)
+        ).map((reply) => ({ id: reply.id, source: reply.content, kind: "trigger" as const }));
+    if (!selected.length) throw new StoreError("roleplay_script_not_found", "没有可执行的受限脚本");
+    let draft = input.draft;
+    let sendText: string | null = null;
+    const output: string[] = [];
+    let commandCount = 0;
+    for (const script of selected) {
+      try {
+        const result = executeRestrictedStscript(script.source, draft, state, agent.roleplay);
+        state = store.updateConversationRoleplayState(conversation.id, result.patch);
+        draft = result.draft;
+        sendText = result.sendText ?? sendText;
+        output.push(...result.output);
+        commandCount += result.commands;
+        store.recordRoleplayScriptAudit({
+          conversationId: conversation.id, agentId: agent.id, sourceKind: script.kind,
+          ...(script.id ? { sourceId: script.id } : {}), commandCount: result.commands, success: true
+        });
+      } catch (error) {
+        store.recordRoleplayScriptAudit({
+          conversationId: conversation.id, agentId: agent.id, sourceKind: script.kind,
+          ...(script.id ? { sourceId: script.id } : {}), commandCount: 0, success: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        throw error;
+      }
+    }
+    return { draft, sendText, output, state, commands: commandCount };
+  });
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/roleplay-scripts/audit", async (request) => {
+    if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
+    return store.listRoleplayScriptAudit(request.params.id);
   });
   app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (request, reply) => {
     if (store.isConversationBusy(request.params.id)) {

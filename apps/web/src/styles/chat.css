@@ -9,6 +9,40 @@
   min-width: 0;
 }
 
+.chat-workspace[data-roleplay-background] .chat-scroll-shell::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: linear-gradient(color-mix(in srgb, var(--bg) 78%, transparent), color-mix(in srgb, var(--bg) 90%, transparent)), var(--roleplay-background);
+  background-position: center;
+  background-size: cover;
+  content: "";
+}
+
+.chat-workspace[data-roleplay-background] .chat-scroll-shell {
+  z-index: 0;
+}
+
+.roleplay-expression {
+  position: absolute;
+  right: clamp(10px, 2vw, 28px);
+  bottom: 126px;
+  z-index: 1;
+  width: min(24vw, 260px);
+  max-height: 52vh;
+  object-fit: contain;
+  object-position: bottom right;
+  pointer-events: none;
+  filter: drop-shadow(0 8px 20px rgb(0 0 0 / 35%));
+}
+
+@media (max-width: 767px) {
+  .roleplay-expression {
+    width: min(38vw, 180px);
+    opacity: 0.72;
+  }
+}
+
 /* Header ---------------------------------------------------------------- */
 
 .conversation-header {
@@ -962,6 +996,33 @@
 .composer-warning {
   font-size: var(--text-xs);
   color: var(--warn);
+}
+
+.quick-reply-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
+  padding-bottom: 2px;
+}
+
+.quick-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 9px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.quick-reply:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  color: var(--text);
 }
 
 .composer-hint {

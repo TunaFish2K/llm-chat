@@ -5,6 +5,7 @@ import { compileAgentPrompt, type CompiledAgentPrompt } from "./agent-prompt";
 import type { ContextMessageRecord, GenerationRecord, Store } from "./database";
 import { attachmentFileName } from "./images";
 import type { PreparedImages } from "./vision";
+import { applySafeRegex } from "./safe-regex";
 
 export interface BuiltContext {
   systemPrompt: string;
@@ -21,7 +22,17 @@ export async function buildContext(
   signal: AbortSignal,
   preparedImages: PreparedImages = new Map()
 ): Promise<BuiltContext> {
-  const rawMessages = store.contextMessages(record.conversationId, record.assistantMessageId);
+  const rawMessages = store.contextMessages(record.conversationId, record.assistantMessageId).map((message) => ({
+    ...message,
+    text: record.agentSnapshot.roleplay.enabled
+      ? applySafeRegex(
+          message.text,
+          record.agentSnapshot.roleplay.regexScripts,
+          record.agentSnapshot.roleplayState.enabledRegexScriptIds,
+          message.role === "user" ? "user_prompt" : "assistant_prompt"
+        )
+      : message.text
+  }));
   const policy = record.agentSnapshot.execution.contextPolicy;
   const preliminaryBudget = model.contextWindow
     ? Math.max(256, availableInputBudget(model, record.settings.common.maxOutputTokens))
