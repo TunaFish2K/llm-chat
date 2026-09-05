@@ -10,7 +10,7 @@ export function makeSettings(patch: Partial<AppSettings> = {}): AppSettings {
     defaultAgentId: "agent-1",
     lastAgentId: "agent-1",
     userProfile: { displayName: "主人", description: "" },
-    uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" },
+    uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
     lastWorkspacePath: null,
     ...patch
   };
@@ -40,6 +40,7 @@ export function makeAgent(patch: Partial<AgentSummaryDto> = {}): AgentSummaryDto
     userProfile: {},
     firstMessage: "你好！",
     alternateGreetings: [],
+    roleplayEnabled: false,
     createdAt: 1,
     updatedAt: 1,
     ...patch
@@ -111,6 +112,7 @@ export function makeGeneration(patch: Partial<GenerationDto> = {}): GenerationDt
   return {
     id: "gen-1",
     version: 1,
+    generationKind: "normal",
     status: "completed",
     connectionName: "test-conn",
     protocol: "openai-chat",

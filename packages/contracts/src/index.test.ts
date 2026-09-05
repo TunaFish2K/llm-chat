@@ -157,7 +157,7 @@ describe("contract schemas", () => {
       defaultModelId: null, defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
       reasoningEffort: "none", defaultAgentId: uuid, lastAgentId: uuid,
       userProfile: { displayName: "User", description: "" },
-      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" },
+      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
       lastWorkspacePath: null
     };
     expect(appSettingsSchema.parse(app)).toEqual(app);

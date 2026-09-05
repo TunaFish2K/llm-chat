@@ -9,7 +9,7 @@ import type {
   FileAssetDto
 } from "@llm-chat/contracts";
 import { api, endpoints, onAuthRequired } from "./api";
-import { cancelGenerationHaptic, scheduleGenerationHaptic } from "./haptics";
+import { cancelGenerationHaptic, scheduleGenerationHaptic, setGenerationHapticsEnabled } from "./haptics";
 import { createStore } from "./store";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
 
@@ -67,6 +67,7 @@ export async function bootstrap(conversationId?: string): Promise<void> {
   appStore.set({ auth: "loading", bootError: null });
   try {
     const data = await endpoints.bootstrap(conversationId);
+    setGenerationHapticsEnabled(data.settings.uiPreferences.generationHaptics);
     const normalizedMessages = data.messages ? normalizeMessages(data.messages) : undefined;
     const bootMessages = conversationId && normalizedMessages ? { [conversationId]: normalizedMessages } : {};
     appStore.set({
@@ -111,6 +112,7 @@ export async function refreshConnectionsAndModels(): Promise<void> {
 
 export async function refreshSettings(): Promise<void> {
   const settings = await endpoints.settings();
+  setGenerationHapticsEnabled(settings.uiPreferences.generationHaptics);
   appStore.set({ settings });
 }
 
@@ -132,6 +134,7 @@ function normalizeMessages(messages: MessageDto[]): MessageDto[] {
     attachments: Array.isArray(message.attachments) ? message.attachments.map(normalizeAsset) : [],
     generations: Array.isArray(message.generations) ? message.generations.map((generation) => ({
       ...generation,
+      generationKind: generation.generationKind ?? "normal",
       toolCalls: Array.isArray(generation.toolCalls) ? generation.toolCalls.map((call) => ({
         ...call,
         artifacts: Array.isArray(call.artifacts) ? call.artifacts.map(normalizeAsset) : []

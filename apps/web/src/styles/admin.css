@@ -11,6 +11,68 @@
   background: var(--bg);
 }
 
+.roleplay-mode-heading,
+.roleplay-preset-heading,
+.roleplay-block-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.roleplay-mode-heading h3,
+.roleplay-preset-heading h3 {
+  margin-bottom: 4px;
+}
+
+.roleplay-generation-grid {
+  margin-top: 12px;
+}
+
+.roleplay-block-list {
+  display: grid;
+  gap: 0;
+  margin: 8px 0 16px;
+  border-top: 1px solid var(--border);
+}
+
+.roleplay-block {
+  display: grid;
+  gap: 10px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.roleplay-block-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(120px, 0.8fr));
+  gap: 8px;
+}
+
+.roleplay-trigger-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+@media (max-width: 800px) {
+  .roleplay-mode-heading,
+  .roleplay-preset-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .roleplay-block-controls {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .roleplay-block-controls {
+    grid-template-columns: 1fr;
+  }
+}
+
 .login-card {
   display: flex;
   flex-direction: column;

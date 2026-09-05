@@ -11,6 +11,8 @@ import type {
   ContextSummaryDto,
   ConversationDto,
   ConversationExecutionOverrides,
+  ConversationRoleplayState,
+  ConversationRoleplayStatePatch,
   ConversationForkDto,
   ConversationStartedDto,
   DirectoryListingDto,
@@ -197,6 +199,8 @@ export const endpoints = {
   setAgentAvatar: (id: string, fileName: string, dataBase64: string) =>
     api.put<AgentDto>(`/api/agents/${id}/avatar`, { fileName, dataBase64 }),
   deleteAgentAvatar: (id: string) => api.delete<undefined>(`/api/agents/${id}/avatar`),
+  importRoleplayPreset: (id: string, fileName: string, dataBase64: string) =>
+    api.post<AgentDto>(`/api/agents/${id}/roleplay/presets/import`, { fileName, dataBase64 }),
 
   toolSettings: () => api.get<ToolSettingsDto>("/api/tools/settings"),
   updateToolSettings: (patch: ToolSettingsInput) => api.patch<ToolSettingsDto>("/api/tools/settings", patch),
@@ -269,6 +273,10 @@ export const endpoints = {
   conversation: (id: string) => api.get<ConversationDto>(`/api/conversations/${id}`),
   updateConversation: (id: string, patch: Record<string, unknown>) =>
     api.patch<ConversationDto>(`/api/conversations/${id}`, patch),
+  conversationRoleplayState: (id: string) =>
+    api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`),
+  updateConversationRoleplayState: (id: string, patch: ConversationRoleplayStatePatch) =>
+    api.patch<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, patch),
   deleteConversation: (id: string) => api.delete<undefined>(`/api/conversations/${id}`),
   forkConversation: (id: string, input: ForkConversationInput) =>
     api.post<ConversationForkDto>(`/api/conversations/${id}/forks`, input),

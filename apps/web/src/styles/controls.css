@@ -171,6 +171,71 @@
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
+.expandable-textarea-preview {
+  width: 100%;
+  min-height: 84px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+  color: var(--text);
+  text-align: left;
+  cursor: text;
+}
+
+.expandable-textarea-preview > span {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  line-height: 1.55;
+}
+
+.expandable-textarea-preview > svg {
+  color: var(--text-faint);
+}
+
+.modal.fullscreen {
+  width: calc(100vw - 32px);
+  height: calc(100dvh - 32px);
+  max-width: none;
+  max-height: none;
+}
+
+.modal.fullscreen .modal-body {
+  display: flex;
+  min-height: 0;
+}
+
+.fullscreen-textarea {
+  flex: 1;
+  min-height: 100%;
+  resize: none;
+}
+
+.fullscreen-editor-hint {
+  margin-right: auto;
+}
+
+@media (max-width: 640px) {
+  .modal.fullscreen {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+  }
+
+  .fullscreen-editor-hint {
+    display: none;
+  }
+}
+
 .input,
 .select {
   height: var(--control-h);
@@ -238,6 +303,7 @@
 }
 
 .switch-control {
+  position: relative;
   display: inline-flex;
   align-items: center;
   min-height: 44px;
@@ -250,10 +316,16 @@
 
 .switch-control input {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
+}
+
+.switch-control input:disabled {
+  cursor: not-allowed;
 }
 
 .switch-track {

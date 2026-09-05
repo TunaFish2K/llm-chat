@@ -19,9 +19,7 @@ import {
 } from "../lib/app-state";
 import { formatTime } from "../lib/format";
 import {
-  generationHapticsEnabled,
-  generationHapticsSupported,
-  setGenerationHapticsEnabled
+  generationHapticsSupported
 } from "../lib/haptics";
 import { linkClick, routes } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -29,6 +27,7 @@ import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Modal, Switc
 import { ConnectionsView } from "./ConnectionsView";
 import { DirectoryPicker } from "../components/DirectoryPicker";
 import { OverflowText } from "../components/OverflowText";
+import { ExpandableTextarea } from "../components/ExpandableTextarea";
 
 const SECTIONS: Array<[string, string]> = [
   ["general", "通用"],
@@ -102,7 +101,6 @@ function GeneralSection() {
   const models = useStore(appStore, (s) => s.models);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const hapticsSupported = generationHapticsSupported();
-  const [hapticsEnabled, setHapticsEnabled] = useState(() => generationHapticsEnabled());
 
   if (!settings) return <LoadingState />;
 
@@ -143,16 +141,14 @@ function GeneralSection() {
         <label className="checkbox-row">
           <input
             type="checkbox"
-            checked={hapticsEnabled}
-            disabled={!hapticsSupported}
-            onChange={(event) => {
-              setGenerationHapticsEnabled(event.target.checked);
-              setHapticsEnabled(event.target.checked);
-            }}
+            checked={settings.uiPreferences.generationHaptics}
+            onChange={(event) => patch({
+              uiPreferences: { ...settings.uiPreferences, generationHaptics: event.target.checked }
+            })}
           />
           <span className="checkbox-copy">
-            <span>生成时触感反馈</span>
-            <small>{hapticsSupported ? "仅保存在当前设备" : "当前浏览器不支持振动"}</small>
+            <span>生成时振动</span>
+            {!hapticsSupported ? <small>当前浏览器不支持振动</small> : null}
           </span>
         </label>
         <Field label="推理块折叠策略">
@@ -240,15 +236,10 @@ function GeneralSection() {
           </select>
         </Field>
         <Field label="默认系统提示">
-          <textarea
-            className="textarea"
-            aria-label="默认系统提示"
-            defaultValue={settings.defaultSystemPrompt}
-            onBlur={(event) => {
-              if (event.target.value !== settings.defaultSystemPrompt) {
-                patch({ defaultSystemPrompt: event.target.value });
-              }
-            }}
+          <ExpandableTextarea
+            label="默认系统提示"
+            value={settings.defaultSystemPrompt}
+            onChange={(value) => patch({ defaultSystemPrompt: value })}
           />
         </Field>
       </div>
@@ -268,15 +259,10 @@ function GeneralSection() {
           />
         </Field>
         <Field label="描述">
-          <textarea
-            className="textarea"
-            aria-label="用户描述"
-            defaultValue={settings.userProfile.description}
-            onBlur={(event) => {
-              if (event.target.value !== settings.userProfile.description) {
-                patch({ userProfile: { ...settings.userProfile, description: event.target.value } });
-              }
-            }}
+          <ExpandableTextarea
+            label="用户描述"
+            value={settings.userProfile.description}
+            onChange={(value) => patch({ userProfile: { ...settings.userProfile, description: value } })}
           />
         </Field>
       </div>

@@ -2,6 +2,7 @@ import type {
   AgentDto,
   AgentExecutionConfig,
   AgentInput,
+  AgentRoleplayConfig,
   AgentUserProfileOverride,
   CharacterCardV2,
   ProviderProtocol
@@ -9,6 +10,7 @@ import type {
 import { characterCardV2Schema } from "@llm-chat/contracts";
 import type { Store } from "./database";
 import { StoreError } from "./database";
+import { defaultRoleplayConfig } from "./roleplay";
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_CARD_BYTES = 10 * 1024 * 1024;
@@ -20,6 +22,7 @@ interface PortableExtension {
     visionModel?: { protocol: ProviderProtocol; modelKey: string; connectionName: string } | null;
   };
   userProfile: AgentUserProfileOverride;
+  roleplay?: AgentRoleplayConfig;
 }
 
 export function importCharacterCard(store: Store, fileName: string, bytes: Uint8Array): AgentDto {
@@ -39,7 +42,8 @@ export function importCharacterCard(store: Store, fileName: string, bytes: Uint8
   const input: AgentInput = {
     card,
     execution,
-    userProfile: extension?.userProfile ?? {}
+    userProfile: extension?.userProfile ?? {},
+    roleplay: extension?.roleplay ?? defaultRoleplayConfig(true)
   };
   return store.createAgentCopy(input, png ? bytes : undefined);
 }
@@ -94,7 +98,8 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
       maxBackgroundTasks: agent.execution.maxBackgroundTasks,
       taskLogLimitBytes: agent.execution.taskLogLimitBytes
     },
-    userProfile: agent.userProfile
+    userProfile: agent.userProfile,
+    roleplay: agent.roleplay
   };
   return {
     ...agent.card,

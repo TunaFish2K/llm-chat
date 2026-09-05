@@ -1,6 +1,7 @@
 import type { AgentSnapshot, ContextMessageRecord } from "./database";
 import { describe, expect, it } from "vitest";
 import { compileAgentPrompt } from "./agent-prompt";
+import { defaultRoleplayConfig } from "./roleplay";
 
 describe("Agent prompt compiler", () => {
   it("compiles V2 prompts, placeholders, examples, post instructions, and positioned lore", () => {
@@ -31,12 +32,94 @@ describe("Agent prompt compiler", () => {
     expect(result.systemPrompt).toContain("An example without role markers");
     expect(result.exampleMessages).toEqual([]);
   });
+
+  it("uses an Agent preset only when roleplay is enabled", () => {
+    const snapshot = fixture();
+    const roleplay = defaultRoleplayConfig(true);
+    const preset = roleplay.presets[0]!;
+    preset.blocks = [
+      { ...preset.blocks.find((block) => block.kind === "main")!, order: 0, content: "Preset {{original}}" },
+      { ...preset.blocks.find((block) => block.kind === "history")!, order: 1 },
+      { ...preset.blocks.find((block) => block.kind === "author_note")!, order: 2, position: "in_chat", depth: 0 }
+    ];
+    snapshot.roleplay = roleplay;
+    snapshot.roleplayState = {
+      ...snapshot.roleplayState,
+      presetId: preset.id,
+      authorNote: "Remember the lantern"
+    };
+    const result = compileAgentPrompt(snapshot, []);
+    expect(result.systemPrompt).toContain("Preset Rules for Mira: BASE");
+    expect(result.inChatMessages).toEqual([{
+      depth: 0,
+      message: { role: "user", text: "[作者注释]\nRemember the lantern" }
+    }]);
+  });
+
+  it("composes ordered roleplay sections, personas, lore, and non-system messages", () => {
+    const snapshot = fixture();
+    const roleplay = defaultRoleplayConfig(true);
+    roleplay.personas = [{ id: "hero", name: "Ari", description: "Brave", avatarAssetId: null }];
+    roleplay.defaultPersonaId = "hero";
+    roleplay.lorebooks = [{
+      id: "extra", name: "Extra", enabled: true,
+      book: { entries: [{
+        id: "lore", keys: ["moon"], content: "Moon lore", extensions: {}, enabled: true,
+        insertion_order: 1, position: "after_examples"
+      }], extensions: {} }
+    }];
+    const preset = roleplay.presets[0]!;
+    preset.blocks.push(
+      {
+        id: "before-user", name: "Before user", kind: "custom", enabled: true, role: "user",
+        position: "relative", depth: 0, order: 5, triggers: ["normal"], content: "Before history"
+      },
+      {
+        id: "after-assistant", name: "After assistant", kind: "custom", enabled: true, role: "assistant",
+        position: "relative", depth: 0, order: 20, triggers: ["normal"], content: "After history"
+      },
+      {
+        id: "ignored", name: "Ignored", kind: "custom", enabled: false, role: "system",
+        position: "relative", depth: 0, order: 21, triggers: ["normal"], content: "Never"
+      }
+    );
+    snapshot.roleplay = roleplay;
+    snapshot.roleplayState = {
+      ...snapshot.roleplayState,
+      presetId: preset.id,
+      personaId: "hero",
+      scenarioOverride: "Moon base",
+      enabledLorebookIds: ["extra"]
+    };
+    const result = compileAgentPrompt(snapshot, [{
+      messageId: "moon", ordinal: 1, role: "user", text: "Look at the moon"
+    }]);
+
+    expect(result.systemPrompt).toContain("Moon base");
+    expect(result.systemPrompt).toContain("名称：Ari");
+    expect(result.systemPrompt).toContain("Moon lore");
+    expect(result.exampleMessages).toHaveLength(2);
+    expect(result.beforeHistoryMessages).toEqual([{ role: "user", text: "Before history" }]);
+    expect(result.afterHistoryMessages).toEqual([{ role: "assistant", text: "After history" }]);
+    expect(result.postHistoryInstructions).toContain("Stay in character as Mira");
+    expect(result.postHistoryInstructions).not.toContain("Never");
+  });
 });
 
 function fixture(): AgentSnapshot {
   return {
     agentId: "agent", name: "Mira", revision: 3, baseSystemPrompt: "BASE",
     workspacePath: null, extensionsPinned: false, skillRevisions: {}, toolRevisions: {},
+    generationKind: "normal",
+    roleplay: {
+      enabled: false, presets: [], defaultPresetId: null, personas: [], defaultPersonaId: null,
+      lorebooks: [], regexScripts: [], quickReplySets: [], assets: []
+    },
+    roleplayState: {
+      presetId: null, personaId: null, authorNote: "", scenarioOverride: "", variables: {},
+      enabledLorebookIds: [], enabledRegexScriptIds: [], enabledQuickReplySetIds: [],
+      backgroundAssetId: null, expressionAssetId: null
+    },
     userProfile: { displayName: "Lin", description: "A careful tester" },
     execution: {
       modelId: "model", visionModelId: null, contextPolicy: "trim", reasoningEffort: "none",

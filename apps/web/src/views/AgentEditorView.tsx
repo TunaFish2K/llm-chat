@@ -17,11 +17,14 @@ import { fileToBase64 } from "../lib/format";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Switch } from "../lib/ui";
+import { ExpandableTextarea } from "../components/ExpandableTextarea";
+import { RoleplayTab } from "../components/agent/RoleplayTab";
 
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
 const TABS = [
   ["card", "角色卡"],
+  ["roleplay", "角色扮演"],
   ["avatar", "头像"],
   ["execution", "执行配置"],
   ["tools", "工具"],
@@ -87,7 +90,8 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
       const updated = await endpoints.updateAgent(agent.id, {
         card: agent.card,
         execution: agent.execution,
-        userProfile: agent.userProfile
+        userProfile: agent.userProfile,
+        roleplay: agent.roleplay
       });
       setAgent(updated);
       setDirty(false);
@@ -149,6 +153,16 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
       <div className="panel-scroll">
         <div className="panel-inner">
           {tab === "card" ? <CardTab agent={agent} mutate={mutate} /> : null}
+          {tab === "roleplay" ? (
+            <RoleplayTab
+              agent={agent}
+              mutate={mutate}
+              onReplace={(next) => {
+                setAgent(next);
+                setDirty(false);
+              }}
+            />
+          ) : null}
           {tab === "avatar" ? <AvatarTab agent={agent} onChanged={(next) => setAgent(next)} /> : null}
           {tab === "execution" ? <ExecutionTab agent={agent} mutate={mutate} /> : null}
           {tab === "tools" ? <ToolsTab agent={agent} mutate={mutate} catalog={catalog} /> : null}
@@ -179,38 +193,34 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           onChange={(event) => setField("name", event.target.value)}
         />
       </Field>
-      <Field label="描述" htmlFor="agent-description">
-        <textarea
-          id="agent-description"
-          className="textarea"
+      <Field label="描述">
+        <ExpandableTextarea
+          label="角色描述"
           value={data.description}
-          onChange={(event) => setField("description", event.target.value)}
+          onChange={(value) => setField("description", value)}
         />
       </Field>
       <div className="grid-2">
-        <Field label="性格" htmlFor="agent-personality">
-          <textarea
-            id="agent-personality"
-            className="textarea"
+        <Field label="性格">
+          <ExpandableTextarea
+            label="角色性格"
             value={data.personality}
-            onChange={(event) => setField("personality", event.target.value)}
+            onChange={(value) => setField("personality", value)}
           />
         </Field>
-        <Field label="场景" htmlFor="agent-scenario">
-          <textarea
-            id="agent-scenario"
-            className="textarea"
+        <Field label="场景">
+          <ExpandableTextarea
+            label="角色场景"
             value={data.scenario}
-            onChange={(event) => setField("scenario", event.target.value)}
+            onChange={(value) => setField("scenario", value)}
           />
         </Field>
       </div>
-      <Field label="开场白" htmlFor="agent-first-mes">
-        <textarea
-          id="agent-first-mes"
-          className="textarea"
+      <Field label="开场白">
+        <ExpandableTextarea
+          label="开场白"
           value={data.first_mes}
-          onChange={(event) => setField("first_mes", event.target.value)}
+          onChange={(value) => setField("first_mes", value)}
         />
       </Field>
       <div className="field greeting-editor">
@@ -265,12 +275,11 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
                     ><Trash2 size={15} /></button>
                   </div>
                 </div>
-                <textarea
-                  className="textarea"
-                  aria-label={`备选开场白 ${index + 1}`}
+                <ExpandableTextarea
+                  label={`备选开场白 ${index + 1}`}
                   value={greeting}
-                  onChange={(event) => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
-                    itemIndex === index ? event.target.value : item
+                  onChange={(value) => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                    itemIndex === index ? value : item
                   ))}
                 />
               </div>
@@ -278,36 +287,32 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           </div>
         )}
       </div>
-      <Field label="对话示例" htmlFor="agent-mes-example">
-        <textarea
-          id="agent-mes-example"
-          className="textarea"
+      <Field label="对话示例">
+        <ExpandableTextarea
+          label="对话示例"
           value={data.mes_example}
-          onChange={(event) => setField("mes_example", event.target.value)}
+          onChange={(value) => setField("mes_example", value)}
         />
       </Field>
-      <Field label="系统提示" htmlFor="agent-system-prompt">
-        <textarea
-          id="agent-system-prompt"
-          className="textarea"
+      <Field label="系统提示">
+        <ExpandableTextarea
+          label="系统提示"
           value={data.system_prompt}
-          onChange={(event) => setField("system_prompt", event.target.value)}
+          onChange={(value) => setField("system_prompt", value)}
         />
       </Field>
-      <Field label="历史后指令" htmlFor="agent-post-history">
-        <textarea
-          id="agent-post-history"
-          className="textarea"
+      <Field label="历史后指令">
+        <ExpandableTextarea
+          label="历史后指令"
           value={data.post_history_instructions}
-          onChange={(event) => setField("post_history_instructions", event.target.value)}
+          onChange={(value) => setField("post_history_instructions", value)}
         />
       </Field>
-      <Field label="创作者备注" htmlFor="agent-creator-notes">
-        <textarea
-          id="agent-creator-notes"
-          className="textarea"
+      <Field label="创作者备注">
+        <ExpandableTextarea
+          label="创作者备注"
           value={data.creator_notes}
-          onChange={(event) => setField("creator_notes", event.target.value)}
+          onChange={(value) => setField("creator_notes", value)}
         />
       </Field>
       <div className="grid-2">
@@ -345,15 +350,14 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
         />
       </Field>
       <Field label="世界书（Character Book，JSON）" hint="保持 null 表示不使用。">
-        <textarea
-          className="textarea mono"
-          aria-label="世界书 JSON"
-          rows={6}
+        <ExpandableTextarea
+          label="世界书 JSON"
+          mono
           value={bookJson}
-          onChange={(event) => {
-            setBookJson(event.target.value);
+          onChange={(value) => {
+            setBookJson(value);
             try {
-              const parsed = JSON.parse(event.target.value) as CharacterBook | null;
+              const parsed = JSON.parse(value) as CharacterBook | null;
               setBookError(null);
               setField("character_book", parsed ?? undefined);
             } catch {
@@ -844,15 +848,14 @@ function UserProfileTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draf
         />
       </Field>
       <Field label="用户描述">
-        <textarea
-          className="textarea"
-          aria-label="用户描述"
+        <ExpandableTextarea
+          label="用户描述"
           value={agent.userProfile.description ?? ""}
-          onChange={(event) =>
+          onChange={(value) =>
             mutate((draft) => {
               draft.userProfile = {
                 ...draft.userProfile,
-                description: event.target.value === "" ? undefined : event.target.value
+                description: value === "" ? undefined : value
               };
             })
           }
