@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowDown } from "lucide-react";
 import type { ForkConversationInput, MessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
@@ -18,7 +18,8 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { AgentAvatar } from "../components/chat/atoms";
 import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
-import { MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
+import { BranchSwitchers, MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
+import { conversationBranchGroups, greetingBranchContext } from "../lib/conversation-tree";
 import { greetingOptions } from "../components/chat/model";
 import { EditForkDialog } from "../components/chat/dialogs";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
@@ -64,6 +65,7 @@ export function ChatView({
     appStore,
     (state) => state.conversations.find((item) => item.id === conversationId) ?? null
   );
+  const conversations = useStore(appStore, (state) => state.conversations);
   const messages = useStore(appStore, (state) => (conversationId ? state.messages[conversationId] ?? null : null));
   const runningTasks = useStore(appStore, (state) =>
     conversationId ? state.runningTasksByConversation[conversationId] ?? 0 : 0
@@ -80,6 +82,10 @@ export function ChatView({
     messages?.some((message) => message.generations.some((generation) => isGenerationActive(generation.status)))
   );
   const userMessageCount = messages?.filter((message) => message.role === "user").length ?? 0;
+  const branchGroups = useMemo(
+    () => conversation ? conversationBranchGroups(conversation, conversations) : [],
+    [conversation, conversations]
+  );
 
   const readMessages = (id: string) => {
     setLoadError(null);
@@ -102,11 +108,12 @@ export function ChatView({
   }, [conversationId]);
 
   /** Forking always lands the reader on the new branch; the source is untouched. */
-  const forkConversation = async (input: ForkConversationInput): Promise<boolean> => {
-    if (!conversation || branching || busy) return false;
+  const forkConversationFrom = async (sourceConversationId: string, input: ForkConversationInput): Promise<boolean> => {
+    const source = conversations.find((item) => item.id === sourceConversationId);
+    if (!source || branching || busy) return false;
     setBranching(true);
     try {
-      const result = await endpoints.forkConversation(conversation.id, input);
+      const result = await endpoints.forkConversation(source.id, input);
       await refreshConversations();
       await loadMessages(result.conversation.id);
       if (result.generation) {
@@ -121,6 +128,24 @@ export function ChatView({
     } finally {
       setBranching(false);
     }
+  };
+
+  const forkConversation = (input: ForkConversationInput): Promise<boolean> =>
+    conversation ? forkConversationFrom(conversation.id, input) : Promise.resolve(false);
+
+  const switchGreeting = (message: MessageDto, greetingIndex: number) => {
+    if (!conversation) return;
+    const context = greetingBranchContext(conversation, message, conversations);
+    const existing = context?.routesByGreetingIndex.get(greetingIndex);
+    if (existing) {
+      navigate(routes.chat(existing));
+      return;
+    }
+    void forkConversationFrom(context?.sourceConversationId ?? conversation.id, {
+      mode: "greeting",
+      messageId: context?.sourceMessageId ?? message.id,
+      greetingIndex
+    });
   };
 
   const compactContext = async () => {
@@ -162,6 +187,12 @@ export function ChatView({
               aria-label="消息列表"
             >
               <div className="chat-thread">
+                <div className="root-branch-controls">
+                  <BranchSwitchers
+                    groups={branchGroups.filter((group) => group.messageOrdinal === null)}
+                    onChange={(id) => navigate(routes.chat(id))}
+                  />
+                </div>
                 {!conversationId ? (
                   <NewConversationWelcome
                     agentId={previewAgentId}
@@ -180,15 +211,13 @@ export function ChatView({
                       key={message.id}
                       conversationId={conversationId}
                       message={message}
+                      branchGroups={branchGroups.filter((group) => group.messageOrdinal === message.ordinal)}
                       callbacks={{
                         onInspect,
                         onEdit: setEditingMessage,
                         onContinue: continueFrom,
-                        onGreetingFork: (message, greetingIndex) => void forkConversation({
-                          mode: "greeting",
-                          messageId: message.id,
-                          greetingIndex
-                        }),
+                        onGreetingFork: switchGreeting,
+                        onBranchChange: (id) => navigate(routes.chat(id)),
                         branching: branching || busy
                       }}
                     />

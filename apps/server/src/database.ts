@@ -325,7 +325,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 22) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 23) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -927,6 +927,60 @@ function migrate(sqlite: DatabaseSyncType): void {
     }
     if (current < 22) {
       sqlite.exec("PRAGMA user_version = 22;");
+    }
+    if (current < 23) {
+      if (!hasColumn(sqlite, "conversations", "fork_mode")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN fork_mode TEXT CHECK (fork_mode IS NULL OR fork_mode IN ('edit','continue','greeting'))");
+      }
+      if (!hasColumn(sqlite, "conversations", "fork_point_ordinal")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN fork_point_ordinal INTEGER");
+      }
+      if (!hasColumn(sqlite, "conversations", "fork_greeting_index")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN fork_greeting_index INTEGER");
+      }
+      if (!hasColumn(sqlite, "conversations", "fork_source_greeting_index")) {
+        sqlite.exec("ALTER TABLE conversations ADD COLUMN fork_source_greeting_index INTEGER");
+      }
+      sqlite.exec(`
+        UPDATE conversations
+        SET fork_point_ordinal = (
+          SELECT ordinal FROM messages WHERE messages.id = conversations.forked_from_message_id
+        )
+        WHERE parent_conversation_id IS NOT NULL AND forked_from_message_id IS NOT NULL;
+
+        UPDATE conversations
+        SET fork_source_greeting_index = (
+          SELECT CAST(json_extract(messages.greeting_json, '$.activeIndex') AS INTEGER)
+          FROM messages
+          WHERE messages.id = conversations.forked_from_message_id
+            AND messages.greeting_json IS NOT NULL
+            AND json_valid(messages.greeting_json)
+        )
+        WHERE parent_conversation_id IS NOT NULL;
+
+        UPDATE conversations
+        SET fork_greeting_index = (
+          SELECT CAST(json_extract(messages.greeting_json, '$.activeIndex') AS INTEGER)
+          FROM messages
+          WHERE messages.conversation_id = conversations.id
+            AND messages.ordinal = 1
+            AND messages.greeting_json IS NOT NULL
+            AND json_valid(messages.greeting_json)
+        )
+        WHERE parent_conversation_id IS NOT NULL;
+
+        UPDATE conversations
+        SET fork_mode = CASE
+          WHEN forked_from_message_id IS NULL THEN 'continue'
+          WHEN fork_source_greeting_index IS NOT NULL
+            AND fork_greeting_index IS NOT NULL
+            AND fork_source_greeting_index != fork_greeting_index THEN 'greeting'
+          WHEN (SELECT role FROM messages WHERE messages.id = conversations.forked_from_message_id) = 'user' THEN 'edit'
+          ELSE 'continue'
+        END
+        WHERE parent_conversation_id IS NOT NULL;
+        PRAGMA user_version = 23;
+      `);
     }
     sqlite.exec("COMMIT");
   } catch (error) {
@@ -1936,7 +1990,21 @@ export class Store {
   }
 
   deleteConversation(id: string): boolean {
-    return Number(this.sqlite.prepare("DELETE FROM conversations WHERE id = ?").run(id).changes) > 0;
+    return this.transaction(() => {
+      const descendants = this.sqlite.prepare(`
+        WITH RECURSIVE subtree(id, depth) AS (
+          SELECT id, 0 FROM conversations WHERE id = ?
+          UNION ALL
+          SELECT child.id, subtree.depth + 1
+          FROM conversations child JOIN subtree ON child.parent_conversation_id = subtree.id
+        )
+        SELECT id FROM subtree ORDER BY depth DESC
+      `).all(id) as Row[];
+      for (const row of descendants) {
+        this.sqlite.prepare("DELETE FROM conversations WHERE id = ?").run(String(row.id));
+      }
+      return descendants.length > 0;
+    });
   }
 
   forkConversation(sourceConversationId: string, input: ForkConversationInput): ConversationForkDto {
@@ -1964,15 +2032,24 @@ export class Store {
           throw new StoreError("conversation_busy", "会话仍有生成或工具审批未完成");
         }
         const fork = this.createConversation({
-          title: branchTitle(source.title),
+          title: this.rootConversationTitle(source.id),
           agentId: source.agentId,
           executionOverrides: source.executionOverrides,
           workspacePath: source.workspacePath
         });
         this.sqlite.prepare(`
-          UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?
+          UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?,
+            fork_mode = 'greeting', fork_point_ordinal = ?, fork_greeting_index = ?, fork_source_greeting_index = ?
           WHERE id = ?
-        `).run(source.systemPrompt, source.id, String(message.id), fork.id);
+        `).run(
+          source.systemPrompt,
+          source.id,
+          String(message.id),
+          Number(message.ordinal),
+          input.greetingIndex,
+          parsed.data.activeIndex,
+          fork.id
+        );
         const greeting = { ...parsed.data, activeIndex: input.greetingIndex };
         this.sqlite.prepare(`
           INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
@@ -1983,6 +2060,7 @@ export class Store {
 
       let throughOrdinal = 0;
       let sourceMessageId: string | null = null;
+      let sourceMessageOrdinal: number | null = null;
       if (input.mode === "edit") {
         const message = this.sqlite.prepare(
           "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ?"
@@ -1992,6 +2070,7 @@ export class Store {
         }
         throughOrdinal = Number(message.ordinal) - 1;
         sourceMessageId = String(message.id);
+        sourceMessageOrdinal = Number(message.ordinal);
       } else if (input.throughMessageId) {
         const message = this.sqlite.prepare(
           "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ?"
@@ -2001,6 +2080,7 @@ export class Store {
         }
         throughOrdinal = Number(message.ordinal);
         sourceMessageId = String(message.id);
+        sourceMessageOrdinal = Number(message.ordinal);
       }
 
       const active = this.sqlite.prepare(`
@@ -2011,15 +2091,16 @@ export class Store {
       if (active) throw new StoreError("conversation_busy", "分叉范围内仍有生成或工具审批未完成");
 
       const fork = this.createConversation({
-        title: branchTitle(source.title),
+        title: this.rootConversationTitle(source.id),
         agentId: source.agentId,
         executionOverrides: source.executionOverrides,
         workspacePath: source.workspacePath
       });
       this.sqlite.prepare(`
-        UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?
+        UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?,
+          fork_mode = ?, fork_point_ordinal = ?
         WHERE id = ?
-      `).run(source.systemPrompt, source.id, sourceMessageId, fork.id);
+      `).run(source.systemPrompt, source.id, sourceMessageId, input.mode, sourceMessageOrdinal, fork.id);
       this.cloneVisibleHistory(source.id, fork.id, throughOrdinal);
 
       let generation: GenerationCreatedDto | null = null;
@@ -2034,6 +2115,20 @@ export class Store {
       }
       return { conversation: this.getConversation(fork.id)!, generation };
     });
+  }
+
+  private rootConversationTitle(conversationId: string): string {
+    const row = this.sqlite.prepare(`
+      WITH RECURSIVE lineage(id, title, parent_id, depth) AS (
+        SELECT id, title, parent_conversation_id, 0 FROM conversations WHERE id = ?
+        UNION ALL
+        SELECT parent.id, parent.title, parent.parent_conversation_id, lineage.depth + 1
+        FROM conversations parent JOIN lineage ON parent.id = lineage.parent_id
+        WHERE lineage.depth < 100
+      )
+      SELECT title FROM lineage ORDER BY depth DESC LIMIT 1
+    `).get(conversationId) as Row | undefined;
+    return row ? String(row.title) : "新对话";
   }
 
   private cloneVisibleHistory(sourceConversationId: string, targetConversationId: string, throughOrdinal: number): void {
@@ -2283,6 +2378,7 @@ export class Store {
       const activeGenerationId = textOrNull(message.active_generation_id);
       return {
         id: String(message.id),
+        ordinal: Number(message.ordinal),
         role: message.role as "user" | "assistant",
         text: textOrNull(message.text),
         attachments: this.messageFiles(String(message.id)),
@@ -2818,7 +2914,17 @@ function conversationDto(row: Row): ConversationDto {
     workspacePath: textOrNull(row.workspace_path),
     forkedFrom: row.parent_conversation_id ? {
       conversationId: String(row.parent_conversation_id),
-      messageId: textOrNull(row.forked_from_message_id)
+      messageId: textOrNull(row.forked_from_message_id),
+      messageOrdinal: row.fork_point_ordinal === null || row.fork_point_ordinal === undefined
+        ? null
+        : Number(row.fork_point_ordinal),
+      mode: row.fork_mode === "edit" || row.fork_mode === "greeting" ? row.fork_mode : "continue",
+      greetingIndex: row.fork_greeting_index === null || row.fork_greeting_index === undefined
+        ? null
+        : Number(row.fork_greeting_index),
+      sourceGreetingIndex: row.fork_source_greeting_index === null || row.fork_source_greeting_index === undefined
+        ? null
+        : Number(row.fork_source_greeting_index)
     } : null,
     draft: String(row.draft),
     createdAt: Number(row.created_at),
@@ -2978,9 +3084,4 @@ function parse<T>(value: unknown, fallback: T): T {
 
 function titleFrom(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 60) || "新对话";
-}
-
-function branchTitle(title: string): string {
-  const suffix = " · 分支";
-  return `${title.slice(0, 200 - suffix.length)}${suffix}`;
 }

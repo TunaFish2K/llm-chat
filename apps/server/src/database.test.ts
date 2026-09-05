@@ -148,7 +148,15 @@ describe("Store", () => {
     });
     const forkMessages = store.listMessages(fork.conversation.id);
 
-    expect(fork.conversation.forkedFrom).toEqual({ conversationId: conversation.id, messageId: second.userMessageId });
+    expect(fork.conversation).toMatchObject({ title: store.getConversation(conversation.id)?.title });
+    expect(fork.conversation.forkedFrom).toEqual({
+      conversationId: conversation.id,
+      messageId: second.userMessageId,
+      messageOrdinal: 3,
+      mode: "edit",
+      greetingIndex: null,
+      sourceGreetingIndex: null
+    });
     expect(fork.generation).not.toBeNull();
     expect(forkMessages.map((message) => [message.role, message.text])).toEqual([
       ["user", "第一问"], ["assistant", null], ["user", "修改后的第二问"], ["assistant", null]
@@ -164,7 +172,17 @@ describe("Store", () => {
 
     const root = store.forkConversation(conversation.id, { mode: "continue", throughMessageId: null });
     expect(root.generation).toBeNull();
+    expect(root.conversation.forkedFrom).toEqual({
+      conversationId: conversation.id,
+      messageId: null,
+      messageOrdinal: null,
+      mode: "continue",
+      greetingIndex: null,
+      sourceGreetingIndex: null
+    });
     expect(store.listMessages(root.conversation.id)).toEqual([]);
+    expect(store.deleteConversation(conversation.id)).toBe(true);
+    expect(store.listConversations()).toEqual([]);
     store.close();
   });
 
@@ -251,13 +269,73 @@ describe("Store", () => {
     expect(fork.generation).toBeNull();
     expect(fork.conversation.forkedFrom).toEqual({
       conversationId: started.conversation.id,
-      messageId: sourceGreeting.id
+      messageId: sourceGreeting.id,
+      messageOrdinal: 1,
+      mode: "greeting",
+      greetingIndex: 0,
+      sourceGreetingIndex: 1
     });
     expect(store.listMessages(fork.conversation.id)).toEqual([
       expect.objectContaining({ text: "你好，旅行者。", greeting: expect.objectContaining({ activeIndex: 0 }) })
     ]);
     expect(store.listMessages(started.conversation.id)).toHaveLength(3);
     store.close();
+  });
+
+  it("backfills stable branch metadata when migrating a v22 database", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const first = store.createMessageGeneration(conversation.id, "原问题");
+    store.finishGeneration(first.generationId, "completed", { stopReason: "stop" });
+    const fork = store.forkConversation(conversation.id, {
+      mode: "edit",
+      messageId: first.userMessageId!,
+      text: "修改后的问题",
+      imageAssetIds: []
+    });
+    const greetingConversation = store.createConversation({ systemPrompt: "" });
+    const greetingMessageId = "legacy-greeting";
+    store.sqlite.prepare(`
+      INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
+      VALUES (?, ?, 1, 'assistant', '开场白', NULL, ?, ?)
+    `).run(greetingMessageId, greetingConversation.id, Date.now(), JSON.stringify({
+      variants: ["开场白", "另一个开场白"],
+      activeIndex: 0,
+      agent: { agentId: "legacy-agent", name: "旧 Agent", revision: 1 }
+    }));
+    const continued = store.forkConversation(greetingConversation.id, {
+      mode: "continue",
+      throughMessageId: greetingMessageId
+    });
+    store.sqlite.prepare(`
+      UPDATE conversations SET fork_mode = NULL, fork_point_ordinal = NULL,
+        fork_greeting_index = NULL, fork_source_greeting_index = NULL
+      WHERE id IN (?, ?)
+    `).run(fork.conversation.id, continued.conversation.id);
+    store.sqlite.exec("PRAGMA user_version = 22");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+
+    const migrated = new Store(path);
+    expect(migrated.getConversation(fork.conversation.id)?.forkedFrom).toEqual({
+      conversationId: conversation.id,
+      messageId: first.userMessageId,
+      messageOrdinal: 1,
+      mode: "edit",
+      greetingIndex: null,
+      sourceGreetingIndex: null
+    });
+    expect(migrated.getConversation(continued.conversation.id)?.forkedFrom).toEqual({
+      conversationId: greetingConversation.id,
+      messageId: greetingMessageId,
+      messageOrdinal: 1,
+      mode: "continue",
+      greetingIndex: 0,
+      sourceGreetingIndex: 0
+    });
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
+    migrated.close();
   });
 
   it("keeps catalog-managed models current until a manual metadata edit locks them", () => {
@@ -337,7 +415,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -396,7 +474,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -432,7 +510,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -834,7 +912,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(22);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

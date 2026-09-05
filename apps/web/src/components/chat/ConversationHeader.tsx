@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import {
-  GitFork,
   ListTree,
   Menu,
   PanelLeftClose,
@@ -12,7 +11,7 @@ import {
 import type { ConversationDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { appStore, refreshConversations, toastError } from "../../lib/app-state";
-import { navigate, routes } from "../../lib/router";
+import { resolveConversationRoot } from "../../lib/conversation-tree";
 import { useStore } from "../../lib/store";
 
 export type ConversationView = "chat" | "trajectory" | "tasks";
@@ -40,21 +39,19 @@ export function ConversationHeader({
   onViewChange: (view: ConversationView) => void;
 }) {
   const conversations = useStore(appStore, (state) => state.conversations);
+  const displayedConversation = conversation ? resolveConversationRoot(conversation, conversations) : null;
   const [editing, setEditing] = useState(false);
-  const [title, setTitle] = useState(conversation?.title ?? "");
-  const parent = conversation?.forkedFrom
-    ? conversations.find((item) => item.id === conversation.forkedFrom?.conversationId)
-    : undefined;
+  const [title, setTitle] = useState(displayedConversation?.title ?? "");
 
   useEffect(() => {
-    setTitle(conversation?.title ?? "");
+    setTitle(displayedConversation?.title ?? "");
     setEditing(false);
-  }, [conversation?.id, conversation?.title]);
+  }, [displayedConversation?.id, displayedConversation?.title]);
 
   const saveTitle = async () => {
-    if (!conversation || !title.trim()) return;
+    if (!displayedConversation || !title.trim()) return;
     try {
-      await endpoints.updateConversation(conversation.id, { title: title.trim() });
+      await endpoints.updateConversation(displayedConversation.id, { title: title.trim() });
       await refreshConversations();
       setEditing(false);
     } catch (error) {
@@ -90,7 +87,7 @@ export function ConversationHeader({
             onKeyDown={(event) => {
               if (event.key === "Enter") void saveTitle();
               if (event.key === "Escape") {
-                setTitle(conversation?.title ?? "");
+                setTitle(displayedConversation?.title ?? "");
                 setEditing(false);
               }
             }}
@@ -99,25 +96,14 @@ export function ConversationHeader({
           <button
             type="button"
             className="conversation-title"
-            onDoubleClick={() => conversation && setEditing(true)}
-            title={conversation ? "双击重命名" : undefined}
+            onDoubleClick={() => displayedConversation && setEditing(true)}
+            aria-label={displayedConversation ? `会话标题：${displayedConversation.title}` : "新会话"}
+            title={displayedConversation?.title}
           >
-            <strong>{conversation?.title || "新会话"}</strong>
+            <strong>{displayedConversation?.title || "新会话"}</strong>
           </button>
         )}
       </div>
-
-      {parent ? (
-        <button
-          type="button"
-          className="icon-button fork-source"
-          onClick={() => navigate(routes.chat(parent.id))}
-          aria-label={`分叉自 ${parent.title}`}
-          title={`返回来源会话：${parent.title}`}
-        >
-          <GitFork size={16} />
-        </button>
-      ) : null}
 
       {conversation ? (
         <div className="conversation-projections" aria-label="会话覆盖层">

@@ -5,7 +5,9 @@
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { Menu, PanelRightOpen, RefreshCw } from "lucide-react";
+import type { ConversationDto } from "@llm-chat/contracts";
 import type { Toast } from "../../lib/app-state";
+import { resolveConversationRoot } from "../../lib/conversation-tree";
 import type { Route } from "../../lib/router";
 import { Button, ErrorState, IconButton, LoadingState } from "../ui";
 
@@ -307,12 +309,14 @@ export function ToastStack({
 
 export function routeTitle(
   route: Route,
-  conversations: ReadonlyArray<{ id: string; title: string }>,
+  conversations: ReadonlyArray<ConversationDto>,
   agents: ReadonlyArray<{ id: string; name: string }>
 ): string {
   if (route.name === "chat") {
     if (!route.conversationId) return "新会话";
-    return conversations.find((item) => item.id === route.conversationId)?.title ?? "会话";
+    const conversation = conversations.find((item) => item.id === route.conversationId);
+    if (!conversation) return "会话";
+    return resolveConversationRoot(conversation, conversations).title;
   }
   if (route.name === "agents") {
     if (!route.agentId) return "Agent";

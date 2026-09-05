@@ -245,17 +245,53 @@ test.describe("会话与流式生成", () => {
       }
       await page.getByRole("button", { name: "关闭运行轨迹" }).click();
 
-      // Rename and then delete the conversation through the sidebar.
+      // Long titles remain inside the single conversation bar.
       await openDrawerIfNeeded(page);
       const item = page.locator(".conversation-row").first();
       await item.hover();
       await item.getByRole("button", { name: /重命名/ }).click();
-      const title = `重命名-${unique()}`;
-      await page.getByLabel("会话标题").fill(title);
+      const title = `长标题-${"标题".repeat(88)}-${unique()}`;
+      await page.getByRole("textbox", { name: "会话标题" }).fill(title);
       await page.getByRole("button", { name: "保存" }).click();
       await openDrawerIfNeeded(page);
       await expect(page.locator(".conversation-row").first()).toContainText(title);
+      if (test.info().project.name === "mobile-chromium") {
+        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+      }
+      await expect(page.locator(".conversation-title")).toHaveAttribute("title", title);
+      expect(await page.locator(".conversation-header").evaluate((header) => {
+        const titleButton = header.querySelector<HTMLElement>(".conversation-title")!;
+        const titleText = titleButton.querySelector<HTMLElement>("strong")!;
+        const headerBox = header.getBoundingClientRect();
+        const titleBox = titleButton.getBoundingClientRect();
+        return {
+          inside: titleBox.left >= headerBox.left && titleBox.right <= headerBox.right,
+          truncated: titleText.scrollWidth > titleText.clientWidth,
+          overflow: getComputedStyle(titleText).textOverflow
+        };
+      })).toEqual({ inside: true, truncated: true, overflow: "ellipsis" });
 
+      // A fork stays inside the conversation family and is switched at its source message.
+      const originalUrl = page.url();
+      const userMessage = page.locator('.msg[data-role="user"]', { hasText: "你好，测试一下" });
+      await userMessage.hover();
+      await userMessage.getByRole("button", { name: "编辑并分叉" }).click();
+      await page.getByLabel("修改后的消息").fill("你好，这是分支");
+      await page.getByRole("button", { name: "创建分支并生成" }).click();
+      await expect(page).not.toHaveURL(originalUrl);
+      await expect(page.getByLabel("对话分支切换")).toContainText("2 / 2");
+
+      await openDrawerIfNeeded(page);
+      await expect(page.locator(".conversation-row", { hasText: title })).toHaveCount(1);
+      await expect(page.locator(".conversation-row", { hasText: "· 分支" })).toHaveCount(0);
+      if (test.info().project.name === "mobile-chromium") {
+        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+      }
+      await page.getByRole("button", { name: "上一分支" }).click();
+      await expect(page).toHaveURL(originalUrl);
+      await expect(page.getByLabel("对话分支切换")).toContainText("1 / 2");
+
+      // Deleting the visible family root also deletes its hidden branches.
       await openDrawerIfNeeded(page);
       const renamed = page.locator(".conversation-row", { hasText: title });
       await renamed.hover();

@@ -327,10 +327,13 @@ describe("ChatView", () => {
       createdAt: 1
     }));
     const messages = [
-      makeMessage({ id: "user-1", role: "user", text: "原问题", attachments, createdAt: 1 }),
-      makeMessage({ id: "assistant-1", role: "assistant", activeGenerationId: "gen-1", generations: [makeGeneration()] })
+      makeMessage({ id: "user-1", ordinal: 1, role: "user", text: "原问题", attachments, createdAt: 1 }),
+      makeMessage({ id: "assistant-1", ordinal: 2, role: "assistant", activeGenerationId: "gen-1", generations: [makeGeneration()] })
     ];
-    const branch = makeConversation({ id: "conv-branch", title: "测试会话 · 分支", forkedFrom: { conversationId: "conv-1", messageId: "user-1" } });
+    const branch = makeConversation({ id: "conv-branch", forkedFrom: {
+      conversationId: "conv-1", messageId: "user-1", messageOrdinal: 1, mode: "edit",
+      greetingIndex: null, sourceGreetingIndex: null
+    } });
     seedStore(messages);
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url === "/api/conversations/conv-1/forks" && init?.method === "POST") return Promise.resolve(json({
@@ -369,10 +372,13 @@ describe("ChatView", () => {
   it("continues from an assistant message in a new branch", async () => {
     const user = userEvent.setup();
     const messages = [
-      makeMessage({ id: "user-1", role: "user", text: "问题", createdAt: 1 }),
-      makeMessage({ id: "assistant-1", role: "assistant", activeGenerationId: "gen-1", generations: [makeGeneration()] })
+      makeMessage({ id: "user-1", ordinal: 1, role: "user", text: "问题", createdAt: 1 }),
+      makeMessage({ id: "assistant-1", ordinal: 2, role: "assistant", activeGenerationId: "gen-1", generations: [makeGeneration()] })
     ];
-    const branch = makeConversation({ id: "conv-branch", forkedFrom: { conversationId: "conv-1", messageId: "assistant-1" } });
+    const branch = makeConversation({ id: "conv-branch", forkedFrom: {
+      conversationId: "conv-1", messageId: "assistant-1", messageOrdinal: 2, mode: "continue",
+      greetingIndex: null, sourceGreetingIndex: null
+    } });
     seedStore(messages);
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url === "/api/conversations/conv-1/forks" && init?.method === "POST") return Promise.resolve(json({ conversation: branch, generation: null }, 201));
@@ -391,6 +397,38 @@ describe("ChatView", () => {
     ));
   });
 
+  it("switches persisted branches from the source message", async () => {
+    const user = userEvent.setup();
+    const root = makeConversation({ id: "conv-1", title: "根会话" });
+    const first = makeConversation({ id: "branch-1", createdAt: 2, forkedFrom: {
+      conversationId: root.id, messageId: "assistant-1", messageOrdinal: 2, mode: "continue",
+      greetingIndex: null, sourceGreetingIndex: null
+    } });
+    const second = makeConversation({ id: "branch-2", createdAt: 3, forkedFrom: {
+      conversationId: root.id, messageId: "assistant-1", messageOrdinal: 2, mode: "continue",
+      greetingIndex: null, sourceGreetingIndex: null
+    } });
+    const messages = [
+      makeMessage({ id: "user-1", ordinal: 1, role: "user", text: "问题", createdAt: 1 }),
+      makeMessage({
+        id: "assistant-1",
+        ordinal: 2,
+        role: "assistant",
+        activeGenerationId: "gen-1",
+        generations: [makeGeneration()]
+      })
+    ];
+    seedStore(messages, { conversation: root });
+    appStore.set({ conversations: [root, second, first] });
+    vi.stubGlobal("fetch", messageFetch(messages));
+    render(<ChatView conversationId="conv-1" />);
+
+    expect(await screen.findByLabelText("对话分支切换")).toHaveTextContent("1 / 3");
+    expect(screen.queryByRole("button", { name: /分叉自/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "下一分支" }));
+    expect(window.location.pathname).toBe("/c/branch-1");
+  });
+
   it("switches a persisted greeting by creating a root branch", async () => {
     const user = userEvent.setup();
     const greeting = makeMessage({
@@ -404,7 +442,10 @@ describe("ChatView", () => {
     });
     const branch = makeConversation({
       id: "conv-greeting",
-      forkedFrom: { conversationId: "conv-1", messageId: greeting.id }
+      forkedFrom: {
+        conversationId: "conv-1", messageId: greeting.id, messageOrdinal: 1, mode: "greeting",
+        greetingIndex: 1, sourceGreetingIndex: 0
+      }
     });
     seedStore([greeting]);
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
@@ -428,6 +469,43 @@ describe("ChatView", () => {
       })
     ));
     await waitFor(() => expect(window.location.pathname).toBe("/c/conv-greeting"));
+  });
+
+  it("reuses an existing greeting branch instead of creating a duplicate", async () => {
+    const user = userEvent.setup();
+    const greeting = makeMessage({
+      id: "greeting-1",
+      ordinal: 1,
+      text: "第一条开场白",
+      greeting: {
+        variants: ["第一条开场白", "第二条开场白"],
+        activeIndex: 0,
+        agent: { agentId: "agent-1", name: "测试助手", revision: 1 }
+      }
+    });
+    const root = makeConversation({ id: "conv-1" });
+    const branch = makeConversation({
+      id: "conv-greeting",
+      forkedFrom: {
+        conversationId: root.id,
+        messageId: greeting.id,
+        messageOrdinal: 1,
+        mode: "greeting",
+        greetingIndex: 1,
+        sourceGreetingIndex: 0
+      }
+    });
+    seedStore([greeting], { conversation: root });
+    appStore.set({ conversations: [root, branch] });
+    const fetchMock = messageFetch([greeting]);
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatView conversationId="conv-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "下一条开场白" }));
+    expect(window.location.pathname).toBe("/c/conv-greeting");
+    expect(fetchMock.mock.calls.some(([url, init]) =>
+      url === "/api/conversations/conv-1/forks" && (init as RequestInit | undefined)?.method === "POST"
+    )).toBe(false);
   });
 
   it("manually creates a context summary checkpoint", async () => {

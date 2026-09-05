@@ -424,7 +424,11 @@ describe("server API", () => {
     const edited = editedResponse.json();
     expect(edited.conversation.forkedFrom).toEqual({
       conversationId: started.conversation.id,
-      messageId: sourceUser.id
+      messageId: sourceUser.id,
+      messageOrdinal: sourceUser.ordinal,
+      mode: "edit",
+      greetingIndex: null,
+      sourceGreetingIndex: null
     });
     expect(edited.generation).toMatchObject({ generationId: expect.any(String) });
     await waitForGeneration(app, edited.generation.generationId);

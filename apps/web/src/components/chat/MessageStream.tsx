@@ -16,6 +16,7 @@ import {
 import type { GenerationDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, toastError, trackGeneration } from "../../lib/app-state";
+import type { ConversationBranchGroup } from "../../lib/conversation-tree";
 import { formatCachedTokens, formatTime, formatTokens } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
 import { Markdown } from "../../lib/markdown";
@@ -29,6 +30,7 @@ export interface StreamCallbacks {
   onEdit: (message: MessageDto) => void;
   onContinue: (messageId: string) => void;
   onGreetingFork: (message: MessageDto, greetingIndex: number) => void;
+  onBranchChange: (conversationId: string) => void;
   /** True while a fork or a generation is in flight; blocks branching actions. */
   branching: boolean;
 }
@@ -37,10 +39,12 @@ export interface StreamCallbacks {
 export function MessageItem({
   conversationId,
   message,
+  branchGroups = [],
   callbacks
 }: {
   conversationId: string;
   message: MessageDto;
+  branchGroups?: ConversationBranchGroup[];
   callbacks: StreamCallbacks;
 }) {
   const agents = useStore(appStore, (state) => state.agents);
@@ -62,6 +66,7 @@ export function MessageItem({
           <MessageAction label="编辑并分叉" disabled={callbacks.branching} onClick={() => callbacks.onEdit(message)}>
             <Pencil size={14} />
           </MessageAction>
+          <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
         </div>
       </article>
     );
@@ -89,20 +94,26 @@ export function MessageItem({
           conversationId={conversationId}
           message={message}
           generation={generation}
+          branchGroups={branchGroups}
           callbacks={callbacks}
         />
       ) : message.text ? (
         <>
           <Markdown text={message.text} />
-          {message.greeting && message.greeting.variants.length > 1 ? (
+          {(message.greeting && message.greeting.variants.length > 1) || branchGroups.length ? (
             <footer className="stream-footer greeting-footer">
-              <VersionSwitcher
-                label="开场白切换"
-                index={message.greeting.activeIndex}
-                total={message.greeting.variants.length}
-                disabled={callbacks.branching}
-                onChange={(index) => callbacks.onGreetingFork(message, index)}
-              />
+              <div className="stream-actions">
+                {message.greeting && message.greeting.variants.length > 1 ? (
+                  <VersionSwitcher
+                    label="开场白切换"
+                    index={message.greeting.activeIndex}
+                    total={message.greeting.variants.length}
+                    disabled={callbacks.branching}
+                    onChange={(index) => callbacks.onGreetingFork(message, index)}
+                  />
+                ) : null}
+                <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
+              </div>
             </footer>
           ) : null}
         </>
@@ -121,11 +132,13 @@ function GenerationTimeline({
   conversationId,
   message,
   generation,
+  branchGroups,
   callbacks
 }: {
   conversationId: string;
   message: MessageDto;
   generation: GenerationDto;
+  branchGroups: ConversationBranchGroup[];
   callbacks: StreamCallbacks;
 }) {
   const settings = useStore(appStore, (state) => state.settings);
@@ -272,6 +285,7 @@ function GenerationTimeline({
               }}
             />
           ) : null}
+          <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
         </div>
 
         <button type="button" className="usage-summary" onClick={inspectGeneration}>
@@ -301,11 +315,12 @@ export function VersionSwitcher({
   disabled?: boolean;
   onChange: (index: number) => void;
 }) {
+  const itemName = label.includes("开场白") ? "条开场白" : label.includes("分支") ? "分支" : "版本";
   return (
     <span className="version-switch" aria-label={label}>
       <button
         type="button"
-        aria-label={`上一${label.includes("开场白") ? "条开场白" : "版本"}`}
+        aria-label={`上一${itemName}`}
         disabled={disabled || index <= 0}
         onClick={() => onChange(index - 1)}
       >
@@ -314,7 +329,7 @@ export function VersionSwitcher({
       <span>{index + 1} / {total}</span>
       <button
         type="button"
-        aria-label={`下一${label.includes("开场白") ? "条开场白" : "版本"}`}
+        aria-label={`下一${itemName}`}
         disabled={disabled || index >= total - 1}
         onClick={() => onChange(index + 1)}
       >
@@ -322,6 +337,27 @@ export function VersionSwitcher({
       </button>
     </span>
   );
+}
+
+export function BranchSwitchers({
+  groups,
+  onChange
+}: {
+  groups: ConversationBranchGroup[];
+  onChange: (conversationId: string) => void;
+}) {
+  return groups.length ? groups.map((group) => (
+    <VersionSwitcher
+      key={group.id}
+      label="对话分支切换"
+      index={group.activeIndex}
+      total={group.conversationIds.length}
+      onChange={(index) => {
+        const conversationId = group.conversationIds[index];
+        if (conversationId) onChange(conversationId);
+      }}
+    />
+  )) : null;
 }
 
 /** Collapsed by default: arguments and output are inspection material, not prose. */
