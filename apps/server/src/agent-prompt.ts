@@ -3,6 +3,8 @@ import type { ProviderMessage } from "@llm-chat/providers";
 import type { AgentSnapshot, ContextMessageRecord } from "./database";
 import { substituteCardPlaceholders } from "./database";
 import { selectedRoleplayPreset } from "./roleplay";
+import { renderRoleplayMacros } from "./roleplay-macros";
+import { applySafeRegex } from "./safe-regex";
 
 export interface CompiledAgentPrompt {
   systemPrompt: string;
@@ -82,7 +84,13 @@ function compileRoleplayPrompt(
   if (!preset) return compileLegacyPrompt(snapshot, history, availableInputTokens);
   const persona = snapshot.roleplay.personas.find((item) => item.id === state.personaId);
   const userName = persona?.name || snapshot.userProfile.displayName;
-  const render = (value: string) => substituteCardPlaceholders(value, card.name, userName);
+  const macroSeed = history.map((message) => `${message.messageId}:${message.text}`).join("\u0000") || snapshot.agentId || card.name;
+  const render = (value: string) => renderRoleplayMacros(value, {
+    character: card.name,
+    user: userName,
+    variables: state.variables,
+    seed: macroSeed
+  });
   const rawSystem = render(card.system_prompt);
   const systemBase = rawSystem.trim()
     ? rawSystem.replace(/\{\{original\}\}/gi, snapshot.baseSystemPrompt)
@@ -119,8 +127,12 @@ function compileRoleplayPrompt(
         card.personality ? `性格：${render(card.personality)}` : "",
         (state.scenarioOverride || card.scenario) ? `场景：${render(state.scenarioOverride || card.scenario)}` : ""
       ].filter(Boolean).join("\n")),
-      loreBefore: loreBefore.map((entry) => render(entry.content)).join("\n\n"),
-      loreAfter: loreAfter.map((entry) => render(entry.content)).join("\n\n"),
+      loreBefore: loreBefore.map((entry) => applySafeRegex(
+        render(entry.content), snapshot.roleplay.regexScripts, state.enabledRegexScriptIds, "world_info"
+      )).join("\n\n"),
+      loreAfter: loreAfter.map((entry) => applySafeRegex(
+        render(entry.content), snapshot.roleplay.regexScripts, state.enabledRegexScriptIds, "world_info"
+      )).join("\n\n"),
       persona: section("用户", [
         `名称：${userName}`,
         (persona?.description || snapshot.userProfile.description)

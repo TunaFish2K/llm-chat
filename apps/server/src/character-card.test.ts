@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { exportCharacterCard, importCharacterCard } from "./character-card";
+import { strToU8, zipSync } from "fflate";
+import {
+  exportCharacterCard,
+  exportCharacterCardWithAssets,
+  importCharacterCard,
+  importCharacterCardWithAssets
+} from "./character-card";
+import { ImageService } from "./images";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 
 const ONE_PIXEL_PNG = Buffer.from(
@@ -93,6 +100,38 @@ describe("Character Card V2 import and export", () => {
     const json = exportCharacterCard(store, detached, "json");
     expect(json.fileName).toBe("character.json");
     expect(JSON.parse(Buffer.from(json.bytes).toString("utf8")).data.extensions.llm_chat.execution.model).toBeNull();
+  });
+
+  it("imports CCv3 CHARX assets and exports a portable archive", async () => {
+    const store = createStore();
+    const files = new ImageService(store);
+    await files.initialize();
+    const source = {
+      spec: "chara_card_v3", spec_version: "3.0", data: {
+        ...cardData("Archive"),
+        assets: [{ type: "background", name: "sky", ext: "png", uri: "embeded://assets/sky.png" }],
+        future_field: { preserved: true }
+      }
+    };
+    const archive = zipSync({
+      "card.json": strToU8(JSON.stringify(source)),
+      "assets/sky.png": ONE_PIXEL_PNG
+    });
+    const agent = await importCharacterCardWithAssets(store, files, "archive.charx", archive);
+    expect(agent.card.data.extensions.llm_chat_ccv3_source).toMatchObject({ spec: "chara_card_v3" });
+    expect(agent.roleplay.assets).toHaveLength(1);
+    expect(store.unreferencedFileAssets(Date.now() + 1)).toHaveLength(0);
+
+    const exported = await exportCharacterCardWithAssets(store, files, agent, "charx");
+    expect(exported.fileName).toBe("Archive.charx");
+    const roundTrip = await importCharacterCardWithAssets(store, files, "roundtrip.charx", exported.bytes);
+    expect(roundTrip.roleplay.assets[0]).toMatchObject({ type: "background", name: "sky" });
+  });
+
+  it("rejects unsafe CHARX archives", () => {
+    const store = createStore();
+    const missing = zipSync({ "other.json": strToU8("{}") });
+    expect(() => importCharacterCard(store, "missing.charx", missing)).toThrow("CHARX 中没有 card.json");
   });
 
   it("rejects truncated, corrupt, metadata-free, and invalid-metadata PNG cards", () => {

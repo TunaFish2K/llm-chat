@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ArrowDown } from "lucide-react";
-import type { ForkConversationInput, MessageDto } from "@llm-chat/contracts";
+import type { AgentDto, ConversationRoleplayState, ForkConversationInput, MessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import {
   appStore,
@@ -22,6 +22,7 @@ import { BranchSwitchers, MessageItem, VersionSwitcher } from "../components/cha
 import { conversationBranchGroups, greetingBranchContext } from "../lib/conversation-tree";
 import { greetingOptions } from "../components/chat/model";
 import { EditForkDialog } from "../components/chat/dialogs";
+import { RoleplayConversationDialog } from "../components/chat/RoleplayConversationDialog";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
 import { Markdown } from "../lib/markdown";
 
@@ -76,6 +77,8 @@ export function ChatView({
   const [compacting, setCompacting] = useState(false);
   const [newGreetingIndex, setNewGreetingIndex] = useState(0);
   const [previewAgentId, setPreviewAgentId] = useState<string | null>(null);
+  const [roleplayOpen, setRoleplayOpen] = useState(false);
+  const [roleplaySession, setRoleplaySession] = useState<{ agent: AgentDto; state: ConversationRoleplayState } | null>(null);
   const scroller = useStickToBottom([messages], view === "chat");
 
   const busy = Boolean(
@@ -106,6 +109,22 @@ export function ChatView({
       active = false;
     };
   }, [conversationId]);
+
+  useEffect(() => {
+    setRoleplayOpen(false);
+    const summary = conversations.length && conversation?.agentId
+      ? appStore.get().agents.find((agent) => agent.id === conversation.agentId)
+      : undefined;
+    if (!conversation || !summary?.roleplayEnabled) {
+      setRoleplaySession(null);
+      return;
+    }
+    let active = true;
+    void Promise.all([endpoints.agent(summary.id), endpoints.conversationRoleplayState(conversation.id)])
+      .then(([agent, state]) => { if (active) setRoleplaySession({ agent, state }); })
+      .catch(() => { if (active) setRoleplaySession(null); });
+    return () => { active = false; };
+  }, [conversation?.id, conversation?.agentId, conversations]);
 
   /** Forking always lands the reader on the new branch; the source is untouched. */
   const forkConversationFrom = async (sourceConversationId: string, input: ForkConversationInput): Promise<boolean> => {
@@ -164,8 +183,18 @@ export function ChatView({
 
   const continueFrom = (messageId: string) => void forkConversation({ mode: "continue", throughMessageId: messageId });
 
+  const background = roleplaySession?.agent.roleplay.assets.find((asset) =>
+    asset.id === roleplaySession.state.backgroundAssetId && asset.mimeType?.startsWith("image/")
+  );
+  const expression = roleplaySession?.agent.roleplay.assets.find((asset) =>
+    asset.id === roleplaySession.state.expressionAssetId && asset.mimeType?.startsWith("image/")
+  );
+  const roleplayStyle = background
+    ? ({ "--roleplay-background": `url(${JSON.stringify(background.uri)})` } as CSSProperties)
+    : undefined;
+
   return (
-    <div className="chat-workspace">
+    <div className="chat-workspace" data-roleplay-background={background ? true : undefined} style={roleplayStyle}>
       <ConversationHeader
         conversation={conversation}
         view={view}
@@ -250,7 +279,14 @@ export function ChatView({
           (conversation?.contextPolicy === "auto" || conversation?.contextPolicy === "summarize")
         }
         onCompact={() => void compactContext()}
+        roleplayAvailable={Boolean(conversation && roleplaySession)}
+        roleplayAgent={roleplaySession?.agent ?? null}
+        roleplayState={roleplaySession?.state ?? null}
+        onRoleplayStateChange={(state) => setRoleplaySession((current) => current ? { ...current, state } : current)}
+        onOpenRoleplay={() => setRoleplayOpen(true)}
       />
+
+      {expression ? <img className="roleplay-expression" src={expression.uri} alt="" aria-hidden="true" /> : null}
 
       {view !== "chat" && conversation ? (
         <section className="conversation-overlay" aria-label={view === "tasks" ? "后台任务" : "运行轨迹"}>
@@ -291,6 +327,15 @@ export function ChatView({
               }
             })();
           }}
+        />
+      ) : null}
+      {roleplayOpen && conversation && roleplaySession ? (
+        <RoleplayConversationDialog
+          conversationId={conversation.id}
+          agent={roleplaySession.agent}
+          initial={roleplaySession.state}
+          onClose={() => setRoleplayOpen(false)}
+          onSaved={(state) => setRoleplaySession((current) => current ? { ...current, state } : current)}
         />
       ) : null}
     </div>

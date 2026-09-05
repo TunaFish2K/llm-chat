@@ -756,8 +756,25 @@ describe("server API", () => {
       authorNote: "Use a quiet tone",
       variables: { chapter: 3 }
     }));
-
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const configured = app.store.getAgent(created.id)!;
+    app.store.updateAgent(created.id, { roleplay: { ...configured.roleplay, enabled: true } });
+    const script = await app.inject({
+      method: "POST", url: `/api/conversations/${conversation.id}/roleplay-scripts/execute`,
+      payload: { script: "/setvar chapter 4 | /input \"continue\"", draft: "" }
+    });
+    expect(script.statusCode).toBe(200);
+    expect(script.json()).toMatchObject({ draft: "continue", state: { variables: { chapter: 4 } }, commands: 2 });
+    const audit = await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/roleplay-scripts/audit` });
+    expect(audit.json()[0]).toMatchObject({ sourceKind: "inline", success: true, commandCount: 2 });
+
+    const roleplayAsset = await app.inject({
+      method: "POST", url: `/api/agents/${created.id}/roleplay/assets`,
+      payload: { fileName: "scene.png", mimeType: "image/png", type: "background", dataBase64: png }
+    });
+    expect(roleplayAsset.statusCode).toBe(201);
+    expect(roleplayAsset.json().roleplay.assets[0]).toMatchObject({ type: "background", name: "scene.png" });
+
     expect((await app.inject({ method: "PUT", url: `/api/agents/${created.id}/avatar`, payload: {
       fileName: "avatar.png", dataBase64: png
     } })).statusCode).toBe(200);
@@ -765,6 +782,9 @@ describe("server API", () => {
     const exported = await app.inject({ method: "GET", url: `/api/agents/${created.id}/export?format=json` });
     expect(exported.headers["content-disposition"]).toContain("attachment");
     expect(JSON.parse(exported.body).data.extensions.llm_chat).toMatchObject({ version: 1 });
+    const charx = await app.inject({ method: "GET", url: `/api/agents/${created.id}/export?format=charx` });
+    expect(charx.statusCode).toBe(200);
+    expect(charx.headers["content-type"]).toContain("application/vnd.character-card+zip");
 
     const imported = await app.inject({ method: "POST", url: "/api/agents/import", payload: {
       fileName: "mira.json", dataBase64: Buffer.from(exported.body).toString("base64")

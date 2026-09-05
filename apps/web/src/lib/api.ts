@@ -13,6 +13,7 @@ import type {
   ConversationExecutionOverrides,
   ConversationRoleplayState,
   ConversationRoleplayStatePatch,
+  RoleplayScriptExecutionDto,
   ConversationForkDto,
   ConversationStartedDto,
   DirectoryListingDto,
@@ -201,6 +202,12 @@ export const endpoints = {
   deleteAgentAvatar: (id: string) => api.delete<undefined>(`/api/agents/${id}/avatar`),
   importRoleplayPreset: (id: string, fileName: string, dataBase64: string) =>
     api.post<AgentDto>(`/api/agents/${id}/roleplay/presets/import`, { fileName, dataBase64 }),
+  uploadRoleplayAsset: (id: string, file: File, dataBase64: string, type: string) =>
+    api.post<AgentDto>(`/api/agents/${id}/roleplay/assets`, {
+      fileName: file.name, mimeType: file.type || "application/octet-stream", type, dataBase64
+    }),
+  deleteRoleplayAsset: (id: string, assetId: string) =>
+    api.delete<undefined>(`/api/agents/${id}/roleplay/assets/${assetId}`),
 
   toolSettings: () => api.get<ToolSettingsDto>("/api/tools/settings"),
   updateToolSettings: (patch: ToolSettingsInput) => api.patch<ToolSettingsDto>("/api/tools/settings", patch),
@@ -277,6 +284,10 @@ export const endpoints = {
     api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`),
   updateConversationRoleplayState: (id: string, patch: ConversationRoleplayStatePatch) =>
     api.patch<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, patch),
+  executeRoleplayScript: (id: string, input: { script?: string; quickReplyId?: string; trigger?: "new_chat" | "before_send" | "after_reply" | "lore_activated"; draft?: string }) =>
+    api.post<RoleplayScriptExecutionDto>(`/api/conversations/${id}/roleplay-scripts/execute`, input),
+  roleplayScriptAudit: (id: string) =>
+    api.get<Array<Record<string, unknown>>>(`/api/conversations/${id}/roleplay-scripts/audit`),
   deleteConversation: (id: string) => api.delete<undefined>(`/api/conversations/${id}`),
   forkConversation: (id: string, input: ForkConversationInput) =>
     api.post<ConversationForkDto>(`/api/conversations/${id}/forks`, input),

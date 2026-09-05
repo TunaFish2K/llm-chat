@@ -70,6 +70,7 @@ import {
   resolveRoleplayState,
   selectedRoleplayPreset
 } from "./roleplay";
+import { applySafeRegex, validateSafeRegex } from "./safe-regex";
 
 export interface ConnectionRecord extends ConnectionDto {
   apiKey: string;
@@ -149,7 +150,7 @@ const DEFAULT_COMMAND_SKILL_ID = "command-execution-guide";
 const DEFAULT_APP_OPERATOR_SKILL_ID = "llm-chat-operator";
 const APP_TOOL_NAMES = [
   "app_agents", "app_conversations", "app_settings", "app_connections", "app_models",
-  "app_mcp_servers", "app_skills", "app_plugins", "app_tool_settings"
+  "app_mcp_servers", "app_skills", "app_plugins", "app_tool_settings", "app_roleplay"
 ] as const;
 
 type OptionalInput<T> = { [K in keyof T]?: T[K] | undefined };
@@ -341,7 +342,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 24) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 26) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1022,6 +1023,36 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 24;
       `);
     }
+    if (current < 25) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS agent_file_assets (
+          agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+          asset_id TEXT NOT NULL REFERENCES file_assets(id) ON DELETE CASCADE,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY (agent_id, asset_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_file_assets_asset ON agent_file_assets(asset_id);
+        PRAGMA user_version = 25;
+      `);
+    }
+    if (current < 26) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS roleplay_script_audit (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+          source_kind TEXT NOT NULL,
+          source_id TEXT,
+          command_count INTEGER NOT NULL,
+          success INTEGER NOT NULL,
+          error TEXT,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_roleplay_script_audit_conversation
+          ON roleplay_script_audit(conversation_id, created_at DESC);
+        PRAGMA user_version = 26;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1111,6 +1142,7 @@ export class Store {
     this.migrateLegacyToolPolicy();
     this.ensureDefaultAgent(priorVersion < 19, priorVersion < 22);
     if (priorVersion < 21) this.migrateAppToolPolicy();
+    if (priorVersion < 26) this.migrateRoleplayToolPolicy();
     if (priorVersion < 20) {
       this.backfillLegacyCatalogManagement();
       this.backfillLegacyGreetings();
@@ -1235,6 +1267,17 @@ export class Store {
     }
   }
 
+  private migrateRoleplayToolPolicy(): void {
+    for (const row of this.sqlite.prepare("SELECT id, protected, execution_json FROM agents").all() as Row[]) {
+      const execution = agentExecutionConfigSchema.parse(parse(row.execution_json, {}));
+      execution.tools.overrides.app_roleplay = Boolean(row.protected);
+      if (row.protected) {
+        execution.tools.directOverrides = { ...(execution.tools.directOverrides ?? {}), app_roleplay: false };
+      }
+      this.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?").run(json(execution), String(row.id));
+    }
+  }
+
   private backfillLegacyGreetings(): void {
     const rows = this.sqlite.prepare(`
       SELECT m.id, m.text, c.agent_id
@@ -1354,6 +1397,7 @@ export class Store {
     };
     for (const name of APP_TOOL_NAMES) delete parsed.execution.tools.directOverrides?.[name];
     this.validateAgentModels(parsed.execution);
+    this.validateRoleplayScripts(parsed.roleplay);
     const id = randomUUID();
     const now = Date.now();
     this.sqlite.prepare(`
@@ -1379,6 +1423,7 @@ export class Store {
     const userProfile = agentUserProfileOverrideSchema.parse(patch.userProfile ?? current.userProfile);
     const roleplay = ensureRoleplayDefaults(agentRoleplayConfigSchema.parse(patch.roleplay ?? current.roleplay));
     this.validateAgentModels(execution);
+    this.validateRoleplayScripts(roleplay);
     this.sqlite.prepare(`
       UPDATE agents SET card_json = ?, execution_json = ?, user_profile_json = ?, roleplay_json = ?,
         revision = revision + 1, updated_at = ? WHERE id = ?
@@ -1415,6 +1460,18 @@ export class Store {
     return Number(result.changes) > 0;
   }
 
+  attachFileToAgent(agentId: string, assetId: string): void {
+    if (!this.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
+    if (!this.getFileAsset(assetId)) throw new StoreError("file_asset_not_found", "文件资产不存在");
+    this.sqlite.prepare(`
+      INSERT OR IGNORE INTO agent_file_assets (agent_id, asset_id, created_at) VALUES (?, ?, ?)
+    `).run(agentId, assetId, Date.now());
+  }
+
+  detachFileFromAgent(agentId: string, assetId: string): void {
+    this.sqlite.prepare("DELETE FROM agent_file_assets WHERE agent_id = ? AND asset_id = ?").run(agentId, assetId);
+  }
+
   getConversationRoleplayState(conversationId: string): ConversationRoleplayState {
     const conversation = this.getConversation(conversationId);
     if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
@@ -1448,6 +1505,40 @@ export class Store {
     return next;
   }
 
+  recordRoleplayScriptAudit(input: {
+    conversationId: string;
+    agentId: string;
+    sourceKind: "inline" | "quick_reply" | "trigger" | "app_tool";
+    sourceId?: string;
+    commandCount: number;
+    success: boolean;
+    error?: string;
+  }): void {
+    this.sqlite.prepare(`
+      INSERT INTO roleplay_script_audit
+        (id, conversation_id, agent_id, source_kind, source_id, command_count, success, error, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(randomUUID(), input.conversationId, input.agentId, input.sourceKind, input.sourceId ?? null,
+      input.commandCount, input.success ? 1 : 0, input.error ?? null, Date.now());
+  }
+
+  listRoleplayScriptAudit(conversationId: string): Array<Record<string, unknown>> {
+    return (this.sqlite.prepare(`
+      SELECT id, conversation_id, agent_id, source_kind, source_id, command_count, success, error, created_at
+      FROM roleplay_script_audit WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 200
+    `).all(conversationId) as Row[]).map((row) => ({
+      id: String(row.id),
+      conversationId: String(row.conversation_id),
+      agentId: String(row.agent_id),
+      sourceKind: String(row.source_kind),
+      sourceId: textOrNull(row.source_id),
+      commandCount: Number(row.command_count),
+      success: Boolean(row.success),
+      error: textOrNull(row.error),
+      createdAt: Number(row.created_at)
+    }));
+  }
+
   private cloneRoleplayStates(sourceConversationId: string, targetConversationId: string): void {
     this.sqlite.prepare(`
       INSERT INTO conversation_agent_roleplay_states (conversation_id, agent_id, state_json, updated_at)
@@ -1469,6 +1560,14 @@ export class Store {
     const visionModel = this.getModel(execution.visionModelId);
     if (!visionModel?.capabilities.imageInput) {
       throw new StoreError("vision_model_capability_required", "备用识图模型必须启用图片输入能力");
+    }
+  }
+
+  private validateRoleplayScripts(roleplay: AgentRoleplayConfig): void {
+    for (const script of roleplay.regexScripts) {
+      if (!script.enabled) continue;
+      const error = validateSafeRegex(script.pattern, script.flags);
+      if (error) throw new StoreError("roleplay_regex_unsafe", `${script.name}: ${error}`);
     }
   }
 
@@ -1829,6 +1928,7 @@ export class Store {
       WHERE a.created_at < ?
         AND NOT EXISTS (SELECT 1 FROM message_file_assets m WHERE m.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM tool_call_file_assets t WHERE t.asset_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM agent_file_assets r WHERE r.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM vision_analyses v WHERE v.asset_id = a.id)
     `).all(before) as Row[]).map(fileAssetRecord);
   }
@@ -2929,6 +3029,12 @@ export class Store {
 
   private generationDto(row: Row): GenerationDto {
     const blocks = this.sqlite.prepare("SELECT * FROM generation_blocks WHERE generation_id = ? ORDER BY block_index").all(String(row.id)) as Row[];
+    const snapshot = row.agent_snapshot_json ? parse<Partial<AgentSnapshot>>(row.agent_snapshot_json, {}) : {};
+    const roleplay = parseRoleplayConfig(snapshot.roleplay, false);
+    const roleplayState = resolveRoleplayState(roleplay, snapshot.roleplayState);
+    const display = (content: string) => roleplay.enabled
+      ? applySafeRegex(content, roleplay.regexScripts, roleplayState.enabledRegexScriptIds, "display")
+      : content;
     return {
       id: String(row.id),
       version: Number(row.version),
@@ -2948,7 +3054,7 @@ export class Store {
         index: Number(block.block_index),
         stepIndex: Number(block.step_index ?? Math.floor(Number(block.block_index) / 1000)),
         type: block.type as GenerationDto["blocks"][number]["type"],
-        content: String(block.content),
+        content: display(String(block.content)),
         complete: Boolean(block.complete)
       })),
       toolCalls: this.listToolCalls(String(row.id)),
