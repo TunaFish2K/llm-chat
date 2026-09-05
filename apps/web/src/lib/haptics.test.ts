@@ -15,6 +15,7 @@ describe("generation haptics", () => {
     window.localStorage.clear();
     Object.defineProperty(window.navigator, "vibrate", { configurable: true, value: vibrate });
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    setGenerationHapticsEnabled(true);
   });
 
   afterEach(() => {
@@ -23,12 +24,12 @@ describe("generation haptics", () => {
     vibrate.mockReset();
   });
 
-  it("defaults to enabled on supported devices and persists the device preference", () => {
+  it("uses the server-provided preference without writing device storage", () => {
     expect(generationHapticsSupported()).toBe(true);
     expect(generationHapticsEnabled()).toBe(true);
     setGenerationHapticsEnabled(false);
     expect(generationHapticsEnabled()).toBe(false);
-    expect(window.localStorage.getItem("llm-chat.generation-haptics")).toBe("off");
+    expect(window.localStorage.getItem("llm-chat.generation-haptics")).toBeNull();
   });
 
   it("debounces streaming updates into a short pulse", () => {

@@ -93,13 +93,15 @@ export function Modal({
   onClose,
   children,
   footer,
-  wide
+  wide,
+  fullscreen
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  fullscreen?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -157,7 +159,7 @@ export function Modal({
       }}
     >
       <div
-        className={wide ? "modal wide" : "modal"}
+        className={`modal${wide ? " wide" : ""}${fullscreen ? " fullscreen" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

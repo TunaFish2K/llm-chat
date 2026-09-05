@@ -391,6 +391,29 @@ test.describe("会话与流式生成", () => {
 });
 
 test.describe("Agent 管理", () => {
+  test("角色扮演预设和全屏长文本编辑在宽窄视口可用", async ({ page, request }) => {
+    const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`角色预设-${unique()}`));
+    try {
+      await gotoPath(page, `/agents/${agent.id}`);
+      await page.getByRole("tab", { name: "角色扮演" }).click();
+      await page.getByRole("switch", { name: "启用角色扮演" }).check();
+      await page.getByRole("button", { name: "展开编辑主提示 内容" }).click();
+      const dialog = page.getByRole("dialog", { name: "主提示 内容" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("textbox").fill("{{original}}\n保持角色一致。");
+      await dialog.getByRole("textbox").press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+      await page.getByRole("button", { name: "保存修改" }).click();
+      await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
+      const stored = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
+      expect(stored.roleplay.enabled).toBe(true);
+      expect(stored.roleplay.presets[0].blocks.find((block: { kind: string }) => block.kind === "main").content)
+        .toContain("保持角色一致");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`).catch(() => {});
+    }
+  });
+
   test("创建、编辑并删除 Agent", async ({ page }) => {
     const name = `小猫助手-${unique()}`;
     await gotoPath(page, "/agents");

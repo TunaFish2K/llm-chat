@@ -18,17 +18,28 @@ describe("SettingsView", () => {
     expect(screen.getByLabelText("默认推理档位")).toHaveValue("medium");
   });
 
-  it("stores generation haptics as a device-local preference", async () => {
+  it("stores generation haptics in application settings", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window.navigator, "vibrate", { configurable: true, value: vi.fn() });
+    const fetchMock = vi.fn().mockResolvedValue(json(makeSettings({
+      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: false }
+    })));
+    vi.stubGlobal("fetch", fetchMock);
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
 
-    const toggle = screen.getByRole("checkbox", { name: /生成时触感反馈/ });
+    const toggle = screen.getByRole("checkbox", { name: /生成时振动/ });
     expect(toggle).toBeChecked();
     await user.click(toggle);
-    expect(toggle).not.toBeChecked();
-    expect(window.localStorage.getItem("llm-chat.generation-haptics")).toBe("off");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: false }
+        })
+      })
+    ));
   });
 
   it("validates password confirmation before allowing change", async () => {

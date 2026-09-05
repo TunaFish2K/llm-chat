@@ -195,12 +195,30 @@ export const characterBookEntrySchema = z.object({
   case_sensitive: z.boolean().optional(),
   name: z.string().optional(),
   priority: z.number().int().optional(),
-  id: z.number().int().optional(),
+  id: z.union([z.number().int(), z.string().max(200)]).optional(),
   comment: z.string().optional(),
   selective: z.boolean().optional(),
   secondary_keys: z.array(z.string()).optional(),
   constant: z.boolean().optional(),
-  position: z.enum(["before_char", "after_char"]).optional()
+  position: z.enum([
+    "before_char",
+    "after_char",
+    "before_examples",
+    "after_examples",
+    "top_author_note",
+    "bottom_author_note",
+    "at_depth"
+  ]).optional(),
+  use_regex: z.boolean().optional(),
+  match_whole_words: z.boolean().optional(),
+  secondary_logic: z.enum(["and_any", "and_all", "not_any", "not_all"]).optional(),
+  scan_depth: z.number().int().nonnegative().max(10_000).optional(),
+  probability: z.number().min(0).max(100).optional(),
+  depth: z.number().int().nonnegative().max(10_000).optional(),
+  role: z.enum(["system", "user", "assistant"]).optional(),
+  sticky: z.number().int().nonnegative().max(10_000).optional(),
+  cooldown: z.number().int().nonnegative().max(10_000).optional(),
+  delay: z.number().int().nonnegative().max(10_000).optional()
 }).passthrough();
 export type CharacterBookEntry = z.infer<typeof characterBookEntrySchema>;
 
@@ -247,6 +265,144 @@ export const generationOverridesSchema = z.object({
 });
 export type GenerationOverrides = z.infer<typeof generationOverridesSchema>;
 
+const roleplayIdSchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/);
+export const roleplayGenerationTriggerSchema = z.enum(["normal", "continue", "regenerate", "script"]);
+export type RoleplayGenerationTrigger = z.infer<typeof roleplayGenerationTriggerSchema>;
+
+export const roleplayPromptBlockSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  kind: z.enum([
+    "main",
+    "lore_before",
+    "character",
+    "lore_after",
+    "persona",
+    "examples",
+    "history",
+    "author_note",
+    "post_history",
+    "custom"
+  ]),
+  enabled: z.boolean().default(true),
+  role: z.enum(["system", "user", "assistant"]).default("system"),
+  position: z.enum(["relative", "in_chat"]).default("relative"),
+  depth: z.number().int().nonnegative().max(10_000).default(0),
+  order: z.number().int().min(-1_000_000).max(1_000_000).default(0),
+  triggers: z.array(roleplayGenerationTriggerSchema).max(4)
+    .default(["normal", "continue", "regenerate", "script"]),
+  content: z.string().max(500_000).default("")
+});
+export type RoleplayPromptBlock = z.infer<typeof roleplayPromptBlockSchema>;
+
+export const roleplayPresetSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  blocks: z.array(roleplayPromptBlockSchema).min(1).max(100),
+  generation: generationOverridesSchema.default({}),
+  importedFrom: z.enum(["native", "sillytavern"]).default("native"),
+  importWarnings: z.array(z.string().max(500)).max(200).default([]),
+  source: z.record(z.string(), z.unknown()).optional()
+});
+export type RoleplayPreset = z.infer<typeof roleplayPresetSchema>;
+
+export const agentPersonaSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(100_000).default(""),
+  avatarAssetId: roleplayIdSchema.nullable().default(null)
+});
+export type AgentPersona = z.infer<typeof agentPersonaSchema>;
+
+export const agentLorebookSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  enabled: z.boolean().default(true),
+  book: characterBookSchema
+});
+export type AgentLorebook = z.infer<typeof agentLorebookSchema>;
+
+export const agentRegexScriptSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  enabled: z.boolean().default(false),
+  pattern: z.string().max(20_000),
+  replacement: z.string().max(200_000).default(""),
+  flags: z.string().max(10).default("gu"),
+  scopes: z.array(z.enum(["user_prompt", "assistant_prompt", "world_info", "display"])).min(1).max(4),
+  runOnEdit: z.boolean().default(false),
+  importWarning: z.string().max(500).nullable().default(null)
+});
+export type AgentRegexScript = z.infer<typeof agentRegexScriptSchema>;
+
+export const quickReplySchema = z.object({
+  id: roleplayIdSchema,
+  label: z.string().trim().min(1).max(100),
+  tooltip: z.string().max(500).default(""),
+  mode: z.enum(["insert", "send", "script"]),
+  content: z.string().max(500_000),
+  enabled: z.boolean().default(true),
+  pinned: z.boolean().default(false),
+  autoTriggers: z.array(z.enum(["new_chat", "before_send", "after_reply", "lore_activated"]))
+    .max(4).default([])
+});
+export type QuickReply = z.infer<typeof quickReplySchema>;
+
+export const agentQuickReplySetSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  enabled: z.boolean().default(true),
+  replies: z.array(quickReplySchema).max(100)
+});
+export type AgentQuickReplySet = z.infer<typeof agentQuickReplySetSchema>;
+
+export const roleplayAssetSchema = z.object({
+  id: roleplayIdSchema,
+  type: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(200),
+  ext: z.string().trim().min(1).max(20),
+  uri: z.string().max(10_000),
+  mimeType: z.string().max(200).nullable().default(null),
+  hash: z.string().max(128).nullable().default(null)
+});
+export type RoleplayAsset = z.infer<typeof roleplayAssetSchema>;
+
+export const agentRoleplayConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  presets: z.array(roleplayPresetSchema).max(100).default([]),
+  defaultPresetId: roleplayIdSchema.nullable().default(null),
+  personas: z.array(agentPersonaSchema).max(100).default([]),
+  defaultPersonaId: roleplayIdSchema.nullable().default(null),
+  lorebooks: z.array(agentLorebookSchema).max(100).default([]),
+  regexScripts: z.array(agentRegexScriptSchema).max(200).default([]),
+  quickReplySets: z.array(agentQuickReplySetSchema).max(100).default([]),
+  assets: z.array(roleplayAssetSchema).max(2_000).default([])
+});
+export type AgentRoleplayConfig = z.infer<typeof agentRoleplayConfigSchema>;
+
+export const conversationRoleplayStateSchema = z.object({
+  presetId: roleplayIdSchema.nullable().default(null),
+  personaId: roleplayIdSchema.nullable().default(null),
+  authorNote: z.string().max(200_000).default(""),
+  scenarioOverride: z.string().max(200_000).default(""),
+  variables: z.record(z.string().max(200), z.union([z.string(), z.number(), z.boolean()])).default({}),
+  enabledLorebookIds: z.array(roleplayIdSchema).max(100).default([]),
+  enabledRegexScriptIds: z.array(roleplayIdSchema).max(200).default([]),
+  enabledQuickReplySetIds: z.array(roleplayIdSchema).max(100).default([]),
+  backgroundAssetId: roleplayIdSchema.nullable().default(null),
+  expressionAssetId: roleplayIdSchema.nullable().default(null)
+});
+export type ConversationRoleplayState = z.infer<typeof conversationRoleplayStateSchema>;
+
+export const conversationRoleplayStatePatchSchema = conversationRoleplayStateSchema.partial();
+export type ConversationRoleplayStatePatch = z.infer<typeof conversationRoleplayStatePatchSchema>;
+
+export const roleplayPresetImportSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  dataBase64: z.string().min(1).max(16 * 1024 * 1024)
+});
+export type RoleplayPresetImport = z.infer<typeof roleplayPresetImportSchema>;
+
 const toolPolicyObjectSchema = z.object({
   defaultEnabled: z.boolean().default(true),
   overrides: z.record(z.string(), z.boolean()).default({}),
@@ -287,7 +443,8 @@ export type AgentUserProfileOverride = z.infer<typeof agentUserProfileOverrideSc
 export const agentInputSchema = z.object({
   card: characterCardV2Schema,
   execution: agentExecutionConfigSchema,
-  userProfile: agentUserProfileOverrideSchema.default({})
+  userProfile: agentUserProfileOverrideSchema.default({}),
+  roleplay: agentRoleplayConfigSchema.optional()
 });
 export type AgentInput = z.infer<typeof agentInputSchema>;
 
@@ -303,11 +460,15 @@ export interface AgentSummaryDto {
   userProfile: AgentUserProfileOverride;
   firstMessage: string;
   alternateGreetings: string[];
+  roleplayEnabled: boolean;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface AgentDto extends AgentSummaryDto, AgentInput {}
+export interface AgentDto extends AgentSummaryDto {
+  card: CharacterCardV2;
+  roleplay: AgentRoleplayConfig;
+}
 
 export const encodedFileSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -338,7 +499,8 @@ export const appSettingsSchema = z.object({
   }),
   uiPreferences: z.object({
     sidebarCollapsed: z.boolean(),
-    reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"])
+    reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"]),
+    generationHaptics: z.boolean().default(true)
   }),
   lastWorkspacePath: z.string().max(4096).nullable().default(null)
 });
@@ -477,6 +639,7 @@ export interface VisionAnalysisDto {
 export interface GenerationDto {
   id: string;
   version: number;
+  generationKind: RoleplayGenerationTrigger;
   status: GenerationStatus;
   connectionName: string;
   protocol: ProviderProtocol;

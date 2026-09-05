@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MIGRATION_V1, resolveManualThinkingBudget, Store } from "./database";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
+import { defaultRoleplayConfig } from "./roleplay";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -13,6 +14,26 @@ afterEach(() => {
 });
 
 describe("Store", () => {
+  it("stores Agent-scoped roleplay state and clones it with a conversation branch", () => {
+    const store = createStore();
+    const agentId = store.getSettings().defaultAgentId;
+    const agent = store.getAgent(agentId)!;
+    const roleplay = defaultRoleplayConfig(true);
+    roleplay.personas = [{ id: "traveler", name: "Traveler", description: "", avatarAssetId: null }];
+    roleplay.defaultPersonaId = "traveler";
+    store.updateAgent(agent.id, { roleplay });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const state = store.updateConversationRoleplayState(conversation.id, {
+      authorNote: "Keep this branch note",
+      variables: { chapter: 2 },
+      personaId: "traveler"
+    });
+    const fork = store.forkConversation(conversation.id, { mode: "continue", throughMessageId: null });
+
+    expect(state).toMatchObject({ authorNote: "Keep this branch note", variables: { chapter: 2 } });
+    expect(store.getConversationRoleplayState(fork.conversation.id)).toEqual(state);
+  });
+
   it("inserts xhigh between the existing manual Thinking budget tiers", () => {
     expect(resolveManualThinkingBudget("high", 10_000)).toBe(5_500);
     expect(resolveManualThinkingBudget("xhigh", 10_000)).toBe(6_750);
@@ -334,7 +355,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(24);
     migrated.close();
   });
 
@@ -415,7 +436,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(24);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
@@ -474,7 +495,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(24);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -510,7 +531,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(24);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -912,7 +933,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(23);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(24);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

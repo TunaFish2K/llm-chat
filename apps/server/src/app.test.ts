@@ -718,10 +718,44 @@ describe("server API", () => {
     } });
     expect(createdResponse.statusCode).toBe(201);
     const created = createdResponse.json();
+    expect(created).toMatchObject({ roleplay: { enabled: false }, roleplayEnabled: false });
     const updated = (await app.inject({ method: "PATCH", url: `/api/agents/${created.id}`, payload: {
       userProfile: { displayName: "Lee" }
     } })).json();
     expect(updated).toMatchObject({ revision: 2, userProfile: { displayName: "Lee" } });
+
+    const presetImport = await app.inject({
+      method: "POST",
+      url: `/api/agents/${created.id}/roleplay/presets/import`,
+      payload: {
+        fileName: "story.json",
+        dataBase64: Buffer.from(JSON.stringify({
+          name: "Story preset",
+          prompts: [{ identifier: "chatHistory", name: "History", role: "system", content: "" }]
+        })).toString("base64")
+      }
+    });
+    expect(presetImport.statusCode).toBe(201);
+    expect(presetImport.json().roleplay.presets.at(-1)).toMatchObject({
+      name: "Story preset",
+      importedFrom: "sillytavern"
+    });
+    const conversation = (await app.inject({
+      method: "POST", url: "/api/conversations", payload: { agentId: created.id }
+    })).json();
+    const initialRoleplay = (await app.inject({
+      method: "GET", url: `/api/conversations/${conversation.id}/roleplay-state`
+    })).json();
+    const changedRoleplay = await app.inject({
+      method: "PATCH",
+      url: `/api/conversations/${conversation.id}/roleplay-state`,
+      payload: { authorNote: "Use a quiet tone", variables: { chapter: 3 } }
+    });
+    expect(changedRoleplay.json()).toEqual(expect.objectContaining({
+      ...initialRoleplay,
+      authorNote: "Use a quiet tone",
+      variables: { chapter: 3 }
+    }));
 
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     expect((await app.inject({ method: "PUT", url: `/api/agents/${created.id}/avatar`, payload: {

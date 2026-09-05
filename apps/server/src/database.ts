@@ -7,6 +7,7 @@ import type {
   AgentDto,
   AgentExecutionConfig,
   AgentInput,
+  AgentRoleplayConfig,
   AgentSummaryDto,
   AppSettings,
   BalanceConfig,
@@ -20,6 +21,7 @@ import type {
   ConversationStartedDto,
   ConversationDto,
   ConversationExecutionOverrides,
+  ConversationRoleplayState,
   GenerationCreatedDto,
   GenerationDto,
   GenerationSettings,
@@ -36,6 +38,7 @@ import type {
   McpServerInput,
   ProviderProtocol,
   ReasoningEffort,
+  RoleplayGenerationTrigger,
   ToolCallDto,
   ToolSettingsDto,
   ToolSettingsInput,
@@ -45,10 +48,12 @@ import type {
 } from "@llm-chat/contracts";
 import {
   agentExecutionConfigSchema,
+  agentRoleplayConfigSchema,
   agentUserProfileOverrideSchema,
   balanceConfigSchema,
   characterCardV2Schema,
   conversationExecutionOverridesSchema,
+  conversationRoleplayStateSchema,
   generationSettingsSchema,
   greetingMessageSchema,
   modelCatalogMetadataSchema,
@@ -58,6 +63,13 @@ import {
 } from "@llm-chat/contracts";
 import { processStartIdentity } from "./background-tasks";
 import { fallbackModel } from "./model-catalog";
+import {
+  defaultRoleplayConfig,
+  ensureRoleplayDefaults,
+  parseRoleplayConfig,
+  resolveRoleplayState,
+  selectedRoleplayPreset
+} from "./roleplay";
 
 export interface ConnectionRecord extends ConnectionDto {
   apiKey: string;
@@ -86,6 +98,7 @@ export interface GenerationRecord {
   modelKey: string;
   protocol: ProviderProtocol;
   settings: GenerationSettings;
+  generationKind: RoleplayGenerationTrigger;
   agentSnapshot: AgentSnapshot;
   status: GenerationDto["status"];
 }
@@ -97,6 +110,9 @@ export interface AgentSnapshot {
   card: CharacterCardV2;
   userProfile: { displayName: string; description: string };
   baseSystemPrompt: string;
+  roleplay: AgentRoleplayConfig;
+  roleplayState: ConversationRoleplayState;
+  generationKind: RoleplayGenerationTrigger;
   workspacePath: string | null;
   extensionsPinned: boolean;
   skillRevisions: Record<string, string>;
@@ -325,7 +341,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 23) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 24) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -982,6 +998,30 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 23;
       `);
     }
+    if (current < 24) {
+      if (!hasColumn(sqlite, "agents", "roleplay_json")) {
+        sqlite.exec("ALTER TABLE agents ADD COLUMN roleplay_json TEXT NOT NULL DEFAULT '{}'");
+      }
+      if (!hasColumn(sqlite, "app_settings", "generation_haptics")) {
+        sqlite.exec("ALTER TABLE app_settings ADD COLUMN generation_haptics INTEGER NOT NULL DEFAULT 1");
+      }
+      if (!hasColumn(sqlite, "generations", "generation_kind")) {
+        sqlite.exec(`ALTER TABLE generations ADD COLUMN generation_kind TEXT NOT NULL DEFAULT 'normal'
+          CHECK (generation_kind IN ('normal','continue','regenerate','script'))`);
+      }
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_agent_roleplay_states (
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+          state_json TEXT NOT NULL DEFAULT '{}',
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (conversation_id, agent_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_roleplay_states_agent
+          ON conversation_agent_roleplay_states(agent_id, updated_at DESC);
+        PRAGMA user_version = 24;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1253,7 +1293,8 @@ export class Store {
       },
       uiPreferences: {
         sidebarCollapsed: Boolean(row.sidebar_collapsed),
-        reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"]
+        reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"],
+        generationHaptics: Boolean(row.generation_haptics)
       },
       lastWorkspacePath: textOrNull(row.last_workspace_path)
     };
@@ -1276,11 +1317,12 @@ export class Store {
     this.sqlite.prepare(`
       UPDATE app_settings SET default_model_id = ?, default_context_policy = ?, theme = ?, default_system_prompt = ?, reasoning_effort = ?,
         default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
-        sidebar_collapsed = ?, reasoning_collapse_policy = ?, last_workspace_path = ?
+        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?
       WHERE id = 1
     `).run(next.defaultModelId, next.defaultContextPolicy, next.theme, next.defaultSystemPrompt, next.reasoningEffort,
       next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
-      next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy, next.lastWorkspacePath);
+      next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy,
+      next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath);
     if (patch.defaultSystemPrompt !== undefined || patch.userProfile !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries").run();
     }
@@ -1301,7 +1343,10 @@ export class Store {
     const parsed = {
       card: characterCardV2Schema.parse(input.card),
       execution: agentExecutionConfigSchema.parse(input.execution),
-      userProfile: agentUserProfileOverrideSchema.parse(input.userProfile)
+      userProfile: agentUserProfileOverrideSchema.parse(input.userProfile),
+      roleplay: input.roleplay
+        ? ensureRoleplayDefaults(agentRoleplayConfigSchema.parse(input.roleplay))
+        : defaultRoleplayConfig(false)
     };
     parsed.execution.tools.overrides = {
       ...parsed.execution.tools.overrides,
@@ -1312,9 +1357,9 @@ export class Store {
     const id = randomUUID();
     const now = Date.now();
     this.sqlite.prepare(`
-      INSERT INTO agents (id, card_json, execution_json, user_profile_json, avatar_png, protected, revision, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?)
-    `).run(id, json(parsed.card), json(parsed.execution), json(parsed.userProfile), avatarPng ?? null, now, now);
+      INSERT INTO agents (id, card_json, execution_json, user_profile_json, roleplay_json, avatar_png, protected, revision, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 0, 1, ?, ?)
+    `).run(id, json(parsed.card), json(parsed.execution), json(parsed.userProfile), json(parsed.roleplay), avatarPng ?? null, now, now);
     return this.getAgent(id)!;
   }
 
@@ -1332,11 +1377,12 @@ export class Store {
     const card = characterCardV2Schema.parse(patch.card ?? current.card);
     const execution = agentExecutionConfigSchema.parse(patch.execution ?? current.execution);
     const userProfile = agentUserProfileOverrideSchema.parse(patch.userProfile ?? current.userProfile);
+    const roleplay = ensureRoleplayDefaults(agentRoleplayConfigSchema.parse(patch.roleplay ?? current.roleplay));
     this.validateAgentModels(execution);
     this.sqlite.prepare(`
-      UPDATE agents SET card_json = ?, execution_json = ?, user_profile_json = ?,
+      UPDATE agents SET card_json = ?, execution_json = ?, user_profile_json = ?, roleplay_json = ?,
         revision = revision + 1, updated_at = ? WHERE id = ?
-    `).run(json(card), json(execution), json(userProfile), Date.now(), id);
+    `).run(json(card), json(execution), json(userProfile), json(roleplay), Date.now(), id);
     this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_id = ?)")
       .run(id);
     return this.getAgent(id);
@@ -1367,6 +1413,46 @@ export class Store {
         .run(defaultAgentId, lastAgentId);
     }
     return Number(result.changes) > 0;
+  }
+
+  getConversationRoleplayState(conversationId: string): ConversationRoleplayState {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!conversation.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
+    const agent = this.getAgent(conversation.agentId);
+    if (!agent) throw new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择");
+    const row = this.sqlite.prepare(`
+      SELECT state_json FROM conversation_agent_roleplay_states
+      WHERE conversation_id = ? AND agent_id = ?
+    `).get(conversationId, agent.id) as Row | undefined;
+    return resolveRoleplayState(agent.roleplay, row ? parse(row.state_json, {}) : undefined);
+  }
+
+  updateConversationRoleplayState(
+    conversationId: string,
+    patch: OptionalInput<ConversationRoleplayState>
+  ): ConversationRoleplayState {
+    const conversation = this.getConversation(conversationId);
+    if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!conversation.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
+    const agent = this.getAgent(conversation.agentId);
+    if (!agent) throw new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择");
+    const current = this.getConversationRoleplayState(conversationId);
+    const next = resolveRoleplayState(agent.roleplay, conversationRoleplayStateSchema.parse({ ...current, ...patch }));
+    this.sqlite.prepare(`
+      INSERT INTO conversation_agent_roleplay_states (conversation_id, agent_id, state_json, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(conversation_id, agent_id) DO UPDATE SET state_json = excluded.state_json, updated_at = excluded.updated_at
+    `).run(conversationId, agent.id, json(next), Date.now());
+    this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(conversationId);
+    return next;
+  }
+
+  private cloneRoleplayStates(sourceConversationId: string, targetConversationId: string): void {
+    this.sqlite.prepare(`
+      INSERT INTO conversation_agent_roleplay_states (conversation_id, agent_id, state_json, updated_at)
+      SELECT ?, agent_id, state_json, ? FROM conversation_agent_roleplay_states WHERE conversation_id = ?
+    `).run(targetConversationId, Date.now(), sourceConversationId);
   }
 
   private validateAgentModel(modelId: string | null): void {
@@ -2037,6 +2123,7 @@ export class Store {
           executionOverrides: source.executionOverrides,
           workspacePath: source.workspacePath
         });
+        this.cloneRoleplayStates(source.id, fork.id);
         this.sqlite.prepare(`
           UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?,
             fork_mode = 'greeting', fork_point_ordinal = ?, fork_greeting_index = ?, fork_source_greeting_index = ?
@@ -2096,6 +2183,7 @@ export class Store {
         executionOverrides: source.executionOverrides,
         workspacePath: source.workspacePath
       });
+      this.cloneRoleplayStates(source.id, fork.id);
       this.sqlite.prepare(`
         UPDATE conversations SET system_prompt = ?, parent_conversation_id = ?, forked_from_message_id = ?,
           fork_mode = ?, fork_point_ordinal = ?
@@ -2221,7 +2309,10 @@ export class Store {
     };
   }
 
-  resolveGeneration(conversation: ConversationDto): {
+  resolveGeneration(
+    conversation: ConversationDto,
+    generationKind: RoleplayGenerationTrigger = "normal"
+  ): {
     agent: AgentDto;
     model: ModelDto;
     connection: ConnectionRecord;
@@ -2236,7 +2327,13 @@ export class Store {
     const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
     if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
     const effort = conversation.executionOverrides.reasoningEffort ?? agent.execution.reasoningEffort;
-    const generation = mergeGenerationOverrides(agent.execution.generation, conversation.executionOverrides.generation);
+    const roleplayState = this.getConversationRoleplayState(conversation.id);
+    const preset = selectedRoleplayPreset(agent.roleplay, roleplayState);
+    const generation = mergeGenerationOverrides(
+      preset?.generation ?? {},
+      agent.execution.generation,
+      conversation.executionOverrides.generation
+    );
     const settings = buildEffectiveSettings(model, connection.protocol, effort, generation);
     const appSettings = this.getSettings();
     const snapshot: AgentSnapshot = {
@@ -2246,6 +2343,9 @@ export class Store {
       card: agent.card,
       userProfile: this.resolvedUserProfile(agent),
       baseSystemPrompt: appSettings.defaultSystemPrompt,
+      roleplay: agent.roleplay,
+      roleplayState,
+      generationKind,
       workspacePath: conversation.workspacePath,
       extensionsPinned: false,
       skillRevisions: {},
@@ -2275,7 +2375,11 @@ export class Store {
     return this.transaction(() => {
       const conversation = this.getConversation(conversationId);
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
-      const resolved = this.resolveGeneration(conversation);
+      const generationKind = conversation.forkedFrom?.mode === "continue"
+        && !this.sqlite.prepare("SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1").get(conversation.id)
+        ? "continue"
+        : "normal";
+      const resolved = this.resolveGeneration(conversation, generationKind);
       return this.insertMessageGeneration(conversation, text, resolved.snapshot, assetIds);
     });
   }
@@ -2286,7 +2390,7 @@ export class Store {
       if (!message) throw new StoreError("message_not_found", "助手消息不存在");
       const conversation = this.getConversation(String(message.conversation_id));
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
-      const { model, connection, snapshot } = this.resolveGeneration(conversation);
+      const { model, connection, snapshot } = this.resolveGeneration(conversation, "regenerate");
       const max = this.sqlite.prepare("SELECT COALESCE(MAX(version), 0) AS value FROM generations WHERE assistant_message_id = ?").get(assistantMessageId) as Row;
       const generationId = randomUUID();
       this.insertGeneration(generationId, assistantMessageId, Number(max.value) + 1, connection, model, snapshot, Date.now());
@@ -2319,10 +2423,11 @@ export class Store {
     this.sqlite.prepare(`
       INSERT INTO generations (id, assistant_message_id, version, status, connection_id, model_id,
         connection_name, protocol, model_key, model_display_name, settings_json,
-        agent_id, agent_name, agent_revision, agent_snapshot_json, created_at)
-      VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        agent_id, agent_name, agent_revision, agent_snapshot_json, generation_kind, created_at)
+      VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, assistantMessageId, version, connection.id, model.id, connection.name, connection.protocol, model.modelKey,
-      model.displayName, json(snapshot.execution.settings), snapshot.agentId, snapshot.name, snapshot.revision, json(snapshot), now);
+      model.displayName, json(snapshot.execution.settings), snapshot.agentId, snapshot.name, snapshot.revision,
+      json(snapshot), snapshot.generationKind, now);
   }
 
   private insertMessageGeneration(
@@ -2430,6 +2535,11 @@ export class Store {
       card: currentAgent?.card ?? defaultAgentCard(),
       userProfile: currentAgent ? this.resolvedUserProfile(currentAgent) : this.getSettings().userProfile,
       baseSystemPrompt: this.getSettings().defaultSystemPrompt,
+      roleplay: currentAgent?.roleplay ?? defaultRoleplayConfig(false),
+      roleplayState: currentAgent && conversation
+        ? this.getConversationRoleplayState(conversation.id)
+        : conversationRoleplayStateSchema.parse({}),
+      generationKind: (row.generation_kind ?? "normal") as RoleplayGenerationTrigger,
       workspacePath: conversation?.workspacePath ?? null,
       extensionsPinned: false,
       skillRevisions: {},
@@ -2447,6 +2557,20 @@ export class Store {
         taskLogLimitBytes: 64 * 1024 * 1024
       }
     };
+    const savedSnapshot = row.agent_snapshot_json
+      ? parse<Partial<AgentSnapshot>>(row.agent_snapshot_json, {})
+      : {};
+    const agentSnapshot: AgentSnapshot = {
+      ...legacySnapshot,
+      ...savedSnapshot,
+      roleplay: parseRoleplayConfig(savedSnapshot.roleplay, false),
+      roleplayState: resolveRoleplayState(
+        parseRoleplayConfig(savedSnapshot.roleplay, false),
+        savedSnapshot.roleplayState
+      ),
+      generationKind: savedSnapshot.generationKind ?? legacySnapshot.generationKind,
+      execution: { ...legacySnapshot.execution, ...(savedSnapshot.execution ?? {}) }
+    };
     return {
       id: String(row.id),
       assistantMessageId: String(row.assistant_message_id),
@@ -2456,7 +2580,8 @@ export class Store {
       modelKey: String(row.model_key),
       protocol: row.protocol as ProviderProtocol,
       settings: parseGenerationSettings(row.settings_json),
-      agentSnapshot: row.agent_snapshot_json ? parse(row.agent_snapshot_json, legacySnapshot) : legacySnapshot,
+      generationKind: (row.generation_kind ?? "normal") as RoleplayGenerationTrigger,
+      agentSnapshot,
       status: row.status as GenerationDto["status"]
     };
   }
@@ -2807,6 +2932,7 @@ export class Store {
     return {
       id: String(row.id),
       version: Number(row.version),
+      generationKind: (row.generation_kind ?? "normal") as RoleplayGenerationTrigger,
       status: row.status as GenerationDto["status"],
       connectionName: String(row.connection_name),
       protocol: row.protocol as ProviderProtocol,
@@ -2937,12 +3063,14 @@ function agentDto(row: Row): AgentDto {
   return {
     ...agentSummaryDto(row),
     card,
+    roleplay: parseRoleplayConfig(row.roleplay_json, false)
   };
 }
 
 function agentSummaryDto(row: Row): AgentSummaryDto {
   const card = characterCardV2Schema.parse(parse(row.card_json, {}));
   const execution = agentExecutionConfigSchema.parse(parse(row.execution_json, {}));
+  const roleplay = parseRoleplayConfig(row.roleplay_json, false);
   return {
     id: String(row.id), name: card.data.name, description: card.data.description,
     protected: Boolean(row.protected), revision: Number(row.revision),
@@ -2950,6 +3078,7 @@ function agentSummaryDto(row: Row): AgentSummaryDto {
     modelId: execution.modelId, execution,
     userProfile: agentUserProfileOverrideSchema.parse(parse(row.user_profile_json, {})),
     firstMessage: card.data.first_mes, alternateGreetings: card.data.alternate_greetings,
+    roleplayEnabled: roleplay.enabled,
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at)
   };
 }
@@ -2984,12 +3113,13 @@ function effectiveModelId(
 }
 
 function mergeGenerationOverrides(
+  preset: GenerationOverrides,
   agent: GenerationOverrides,
   conversation: GenerationOverrides | undefined
 ): GenerationOverrides {
   return {
-    common: { ...(agent.common ?? {}), ...(conversation?.common ?? {}) },
-    protocol: { ...(agent.protocol ?? {}), ...(conversation?.protocol ?? {}) }
+    common: { ...(preset.common ?? {}), ...(agent.common ?? {}), ...(conversation?.common ?? {}) },
+    protocol: { ...(preset.protocol ?? {}), ...(agent.protocol ?? {}), ...(conversation?.protocol ?? {}) }
   };
 }
 

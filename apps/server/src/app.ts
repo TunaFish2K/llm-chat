@@ -11,6 +11,7 @@ import {
   agentInputSchema,
   connectionInputSchema,
   conversationInputSchema,
+  conversationRoleplayStatePatchSchema,
   encodedFileSchema,
   fileUploadMetadataSchema,
   forkConversationSchema,
@@ -20,6 +21,7 @@ import {
   modelInputSchema,
   patchConversationSchema,
   retryGenerationSchema,
+  roleplayPresetImportSchema,
   sendMessageSchema,
   startConversationSchema,
   toolApprovalInputSchema,
@@ -48,6 +50,7 @@ import { ImageService } from "./images";
 import { VisionService } from "./vision";
 import { ModelCatalogService } from "./model-catalog";
 import { AppTools } from "./app-tools";
+import { importSillyTavernPreset } from "./roleplay";
 
 export type AuthMode = "password" | "disabled";
 
@@ -277,6 +280,31 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     taskManager.notifyAgentPolicyChanged(request.params.id);
     return agent;
   });
+  app.post<{ Params: { id: string } }>("/api/agents/:id/roleplay/presets/import", async (request, reply) => {
+    const value = roleplayPresetImportSchema.parse(request.body);
+    const agent = store.getAgent(request.params.id);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    let raw: unknown;
+    try {
+      raw = JSON.parse(Buffer.from(value.dataBase64, "base64").toString("utf8"));
+    } catch {
+      throw new StoreError("roleplay_preset_invalid", "预设文件不是有效的 JSON");
+    }
+    let preset;
+    try {
+      preset = importSillyTavernPreset(raw, value.fileName);
+    } catch (error) {
+      throw new StoreError("roleplay_preset_invalid", error instanceof Error ? error.message : "无法导入预设");
+    }
+    const updated = store.updateAgent(agent.id, {
+      roleplay: {
+        ...agent.roleplay,
+        presets: [...agent.roleplay.presets, preset],
+        defaultPresetId: agent.roleplay.defaultPresetId ?? preset.id
+      }
+    });
+    return reply.code(201).send(updated);
+  });
   app.delete<{ Params: { id: string } }>("/api/agents/:id", async (request, reply) => {
     if (taskManager.hasNonterminalForAgent(request.params.id)) {
       throw new StoreError("agent_busy", "该 Agent 仍有排队或运行中的后台任务");
@@ -501,6 +529,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const result = store.updateConversation(request.params.id, { ...value, ...(value.workspacePath !== undefined ? { workspacePath } : {}) });
     if (!result) throw new StoreError("conversation_not_found", "会话不存在");
     return result;
+  });
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/roleplay-state", async (request) => {
+    return store.getConversationRoleplayState(request.params.id);
+  });
+  app.patch<{ Params: { id: string } }>("/api/conversations/:id/roleplay-state", async (request) => {
+    const patch = conversationRoleplayStatePatchSchema.parse(request.body);
+    return store.updateConversationRoleplayState(request.params.id, patch);
   });
   app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (request, reply) => {
     if (store.isConversationBusy(request.params.id)) {
