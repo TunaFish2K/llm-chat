@@ -10,4 +10,18 @@ describe("roleplay macros", () => {
     expect(first).toContain("{{unknown}}");
     expect(renderRoleplayMacros(source, context)).toBe(first);
   });
+
+  it("renders clock macros and preserves invalid or unresolved expressions", () => {
+    const context = { character: "C", user: "U", variables: {}, seed: "fixed", now: 0 };
+    const result = renderRoleplayMacros(
+      "{{date}} {{time}} {{weekday}} {{isodate}} {{var::missing}} {{random:}} {{roll:1}} {{roll:nope}}",
+      context
+    );
+    expect(result).toContain("1970");
+    expect(result).toContain("1970-01-01T00:00:00.000Z");
+    expect(result).toContain("{{var::missing}}");
+    expect(result).toContain("{{random:}}");
+    expect(result).toContain("{{roll:1}}");
+    expect(result).toContain("{{roll:nope}}");
+  });
 });

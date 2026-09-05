@@ -104,6 +104,36 @@ describe("Agent prompt compiler", () => {
     expect(result.postHistoryInstructions).toContain("Stay in character as Mira");
     expect(result.postHistoryInstructions).not.toContain("Never");
   });
+
+  it("renders deterministic macros and applies safe world-info regex only when explicitly enabled", () => {
+    const snapshot = fixture();
+    const roleplay = defaultRoleplayConfig(true);
+    roleplay.lorebooks = [{
+      id: "macro-book", name: "Macro book", enabled: true,
+      book: { extensions: {}, entries: [{
+        keys: [], constant: true, enabled: true, insertion_order: 0, extensions: {},
+        content: "PRIVATE {{var::place}} {{random:north::south}}", position: "before_char"
+      }] }
+    }];
+    roleplay.regexScripts = [{
+      id: "hide-private", name: "Hide private", enabled: true, pattern: "PRIVATE\\s+", replacement: "",
+      flags: "gu", scopes: ["world_info"], runOnEdit: false, importWarning: null
+    }];
+    snapshot.roleplay = roleplay;
+    snapshot.roleplayState = {
+      ...snapshot.roleplayState,
+      presetId: roleplay.defaultPresetId,
+      variables: { place: "archive" },
+      enabledLorebookIds: ["macro-book"],
+      enabledRegexScriptIds: ["hide-private"]
+    };
+    const history = [{ messageId: "turn", ordinal: 1, role: "user" as const, text: "begin" }];
+    const first = compileAgentPrompt(snapshot, history);
+    const second = compileAgentPrompt(snapshot, history);
+    expect(first.systemPrompt).toContain("archive");
+    expect(first.systemPrompt).not.toContain("PRIVATE");
+    expect(second.systemPrompt).toBe(first.systemPrompt);
+  });
 });
 
 function fixture(): AgentSnapshot {

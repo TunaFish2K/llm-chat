@@ -119,6 +119,37 @@ describe("Store", () => {
     store.close();
   });
 
+  it("applies display regex without changing the stored generation block", () => {
+    const store = createStore();
+    seedModel(store);
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    store.updateAgent(agent.id, {
+      roleplay: {
+        ...agent.roleplay,
+        enabled: true,
+        regexScripts: [{
+          id: "hide-status", name: "Hide status", enabled: true,
+          pattern: "<status>[\\s\\S]*?</status>", replacement: "", flags: "gu",
+          scopes: ["display"], runOnEdit: false, importWarning: null
+        }]
+      }
+    });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "continue");
+    store.setGenerationRunning(created.generationId);
+    store.updateGenerationBlock(created.generationId, 1, "text", "Visible<status>private</status>", true);
+    store.finishGeneration(created.generationId, "completed", { stopReason: "stop" });
+
+    const assistant = store.listMessages(conversation.id)[1]!;
+    const active = assistant.generations.find((generation) => generation.id === assistant.activeGenerationId);
+    expect(active?.blocks[0]?.content).toBe("Visible");
+    const raw = store.sqlite.prepare(
+      "SELECT content FROM generation_blocks WHERE generation_id = ? AND block_index = 1"
+    ).get(created.generationId) as { content: string };
+    expect(raw.content).toBe("Visible<status>private</status>");
+    store.close();
+  });
+
   it("stores generic attachment metadata and enforces per-message quotas atomically", () => {
     const store = createStore();
     seedModel(store);
