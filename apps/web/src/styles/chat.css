@@ -27,6 +27,7 @@
   align-items: center;
   flex: 1 1 auto;
   min-width: 0;
+  overflow: hidden;
 }
 
 .conversation-title {
@@ -37,10 +38,16 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 
 .conversation-title strong {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   font-size: var(--text-md);
   font-weight: 600;
   overflow: hidden;
@@ -58,14 +65,24 @@
   font-weight: 600;
 }
 
-.fork-source {
-  color: var(--accent);
-}
-
 .conversation-projections {
   display: flex;
   gap: 2px;
   flex: 0 0 auto;
+}
+
+.conversation-header > .icon-button,
+.conversation-projections {
+  flex: 0 0 auto;
+}
+
+.root-branch-controls:empty {
+  display: none;
+}
+
+.root-branch-controls {
+  display: flex;
+  justify-content: center;
 }
 
 .conversation-projections .icon-button[aria-pressed="true"] {

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { endpoints } from "../lib/api";
 import { appStore, refreshConversations, toast, toastError } from "../lib/app-state";
+import { listConversationFamilies, resolveConversationRoot } from "../lib/conversation-tree";
 import { formatTime } from "../lib/format";
 import { linkClick, navigate, routes, type Route } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -39,11 +40,15 @@ export function WorkspaceSidebar({
   const [renameValue, setRenameValue] = useState("");
   const [deleting, setDeleting] = useState<ConversationDto | null>(null);
   const [busy, setBusy] = useState(false);
-  const activeId = route.name === "chat" ? route.conversationId : null;
+  const activeConversation = route.name === "chat"
+    ? conversations.find((item) => item.id === route.conversationId)
+    : undefined;
+  const activeId = activeConversation ? resolveConversationRoot(activeConversation, conversations).id : null;
   const normalized = query.trim().toLocaleLowerCase();
-  const visible = useMemo(() => normalized
-    ? conversations.filter((item) => item.title.toLocaleLowerCase().includes(normalized))
-    : conversations, [conversations, normalized]);
+  const families = useMemo(() => listConversationFamilies(conversations), [conversations]);
+  const visible = useMemo(() => families
+    .filter((family) => !normalized || family.root.title.toLocaleLowerCase().includes(normalized))
+    .map((family) => ({ ...family.root, updatedAt: family.latestUpdatedAt })), [families, normalized]);
   const groups = useMemo(() => groupConversations(visible), [visible]);
 
   const rename = async () => {
@@ -181,7 +186,7 @@ export function WorkspaceSidebar({
         </Modal>
       ) : null}
       {deleting ? (
-        <ConfirmModal title="删除会话" message={`删除“${deleting.title}”及其全部消息？此操作无法恢复。`} confirmLabel="删除" danger busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void remove()} />
+        <ConfirmModal title="删除会话" message={`删除“${deleting.title}”及其所有分支和消息？此操作无法恢复。`} confirmLabel="删除" danger busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void remove()} />
       ) : null}
     </aside>
   );

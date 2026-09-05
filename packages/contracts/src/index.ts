@@ -360,7 +360,14 @@ export interface ConversationDto {
   agentId: string | null;
   executionOverrides: ConversationExecutionOverrides;
   workspacePath: string | null;
-  forkedFrom?: { conversationId: string; messageId: string | null } | null;
+  forkedFrom?: {
+    conversationId: string;
+    messageId: string | null;
+    messageOrdinal: number | null;
+    mode: "edit" | "continue" | "greeting";
+    greetingIndex: number | null;
+    sourceGreetingIndex: number | null;
+  } | null;
   draft: string;
   createdAt: number;
   updatedAt: number;
@@ -498,6 +505,7 @@ export interface GenerationDto {
 
 export interface MessageDto {
   id: string;
+  ordinal: number;
   role: "user" | "assistant";
   text: string | null;
   attachments: FileAssetDto[];

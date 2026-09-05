@@ -126,8 +126,9 @@ export async function loadMessages(conversationId: string): Promise<MessageDto[]
 }
 
 function normalizeMessages(messages: MessageDto[]): MessageDto[] {
-  return messages.map((message) => ({
+  return messages.map((message, index) => ({
     ...message,
+    ordinal: Number.isInteger(message.ordinal) ? message.ordinal : index + 1,
     attachments: Array.isArray(message.attachments) ? message.attachments.map(normalizeAsset) : [],
     generations: Array.isArray(message.generations) ? message.generations.map((generation) => ({
       ...generation,

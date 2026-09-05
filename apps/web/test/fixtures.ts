@@ -137,6 +137,7 @@ export function makeGeneration(patch: Partial<GenerationDto> = {}): GenerationDt
 export function makeMessage(patch: Partial<MessageDto> = {}): MessageDto {
   return {
     id: "msg-1",
+    ordinal: 1,
     role: "assistant",
     text: null,
     generatedModel: null,
