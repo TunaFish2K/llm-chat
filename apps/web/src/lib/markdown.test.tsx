@@ -18,6 +18,7 @@ describe("Markdown component", () => {
     render(<Markdown text={"# 标题\n\n- 甲\n- 乙\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```js\nconsole.log(1)\n```"} />);
     expect(screen.getByRole("heading", { name: "标题" })).toBeInTheDocument();
     expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(document.querySelector('[data-streamdown="table-wrapper"]')).toContainElement(screen.getByRole("table"));
     expect(document.querySelector(".markdown pre code")).toHaveTextContent("console.log(1)");
     expect(screen.getByRole("button", { name: /复制代码|Copy code/i })).toBeInTheDocument();
   });

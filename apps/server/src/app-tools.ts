@@ -5,6 +5,7 @@ import {
   agentRoleplayConfigSchema,
   appSettingsSchema,
   connectionInputSchema,
+  connectionInputPatchSchema,
   conversationExecutionOverridesSchema,
   conversationRoleplayStatePatchSchema,
   mcpServerInputSchema,
@@ -29,6 +30,7 @@ import type { PluginManager } from "./plugins";
 import type { SkillManager } from "./skills";
 import type { ServerTool, ToolExecutionContext } from "./tools";
 import { executeRestrictedStscript } from "./stscript";
+import { providerRequestContextForConversation } from "./provider-context";
 
 type JsonObject = Record<string, unknown>;
 type Resource = "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools";
@@ -68,7 +70,7 @@ export class AppTools {
         ["list", "discover", "install", "reload"], (input, _signal, context) => this.skills(input, context)),
       this.tool("app_plugins", "Plugin 管理", "List, install, configure non-secret fields, reload, unload, or remove managed plugins.",
         ["list", "install", "configure", "reload", "unload", "delete"], (input, _signal, context) => this.plugins(input, context)),
-      this.tool("app_tool_settings", "工具设置", "Read or update global tool enablement, search URL, and workspace Shell state. Search API keys are never available.",
+      this.tool("app_tool_settings", "工具设置", "Read or update global tool enablement and workspace Shell state. Search settings belong to each Agent.",
         ["get", "update"], (input) => this.toolSettings(input)),
       this.tool("app_roleplay", "角色工作流", "Inspect or update Agent-owned roleplay configuration and conversation roleplay state, run restricted STscript, or inspect its audit log. No arbitrary JavaScript, shell, or network execution is available.",
         ["get_agent", "update_agent", "get_state", "update_state", "run_script", "audit"], (input, _signal, context) => this.roleplay(input, context))
@@ -245,19 +247,27 @@ export class AppTools {
       return this.changed("connections", this.deps.store.createConnection(value));
     }
     if (action === "update") {
-      const value = connectionInputSchema.partial().parse(object(input));
+      const value = connectionInputPatchSchema.parse(object(input));
       const connection = this.deps.store.updateConnection(id(input), value);
       if (!connection) throw new StoreError("connection_not_found", "连接不存在");
       return this.changed("connections", connection, connection.id);
     }
     const connection = requiredResource(this.deps.store.getConnection(id(input)), "connection_not_found", "连接不存在");
     if (action === "test") {
-      const models = await adapterFor(connection.protocol).listModels(connection, signal);
+      const models = await adapterFor(connection.protocol).listModels(
+        connection,
+        signal,
+        providerRequestContextForConversation(connection.id, "models")
+      );
       return json({ ok: true, modelsFound: models.length });
     }
     if (action === "balance") return json(await this.deps.balance.get(connection, input.refresh === true));
     if (action === "discover_models") {
-      const discovered = await adapterFor(connection.protocol).listModels(connection, signal);
+      const discovered = await adapterFor(connection.protocol).listModels(
+        connection,
+        signal,
+        providerRequestContextForConversation(connection.id, "models")
+      );
       const enrichment = await this.deps.catalog.enrich(connection, discovered);
       const changed: ModelDto[] = [];
       for (const item of enrichment.models) changed.push(this.deps.store.upsertDiscoveredModel(item.input, item.catalogMetadata).model);
@@ -352,7 +362,7 @@ export class AppTools {
     if (action === "update") {
       const value = object(input);
       if (value.search && typeof value.search === "object" && Object.hasOwn(value.search, "apiKey")) {
-        throw new StoreError("secret_field_forbidden", "网站管理工具不能修改搜索 API Key");
+        throw new StoreError("secret_field_forbidden", "搜索 API Key 必须在 Agent 设置中修改");
       }
       const parsed = toolSettingsInputSchema.parse(value);
       return this.changed("tools", this.deps.store.updateToolSettings(parsed));

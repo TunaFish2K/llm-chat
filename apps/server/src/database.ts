@@ -6,6 +6,9 @@ import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type {
   AgentDto,
   AgentExecutionConfig,
+  AgentSearchConfig,
+  AgentSearchProvider,
+  AgentSearchSecretDto,
   AgentInput,
   AgentRoleplayConfig,
   AgentSummaryDto,
@@ -29,6 +32,9 @@ import type {
   GeneratedModelDto,
   FileAssetDto,
   ImageAssetDto,
+  ImageGenerationInput,
+  ImageGenerationJobDto,
+  ImageGenerationJobStatus,
   MessageDto,
   ModelCatalogMetadata,
   ModelDto,
@@ -48,6 +54,7 @@ import type {
 } from "@llm-chat/contracts";
 import {
   agentExecutionConfigSchema,
+  agentSearchConfigSchema,
   agentRoleplayConfigSchema,
   agentUserProfileOverrideSchema,
   balanceConfigSchema,
@@ -59,6 +66,11 @@ import {
   modelCatalogMetadataSchema,
   modelCapabilitiesSchema,
   modelSettingsSchema,
+  imageGenerationInputSchema,
+  imageGenerationJobStatusSchema,
+  imageGenerationOperationSchema,
+  imageProviderProtocolSchema,
+  providerPresetIdSchema,
   reasoningEffortSchema
 } from "@llm-chat/contracts";
 import { processStartIdentity } from "./background-tasks";
@@ -121,6 +133,7 @@ export interface AgentSnapshot {
   execution: {
     modelId: string;
     visionModelId: string | null;
+    search: AgentSearchConfig;
     contextPolicy: ContextPolicy;
     reasoningEffort: ReasoningEffort;
     settings: GenerationSettings;
@@ -239,6 +252,7 @@ INSERT OR IGNORE INTO app_settings (id) VALUES (1);
 CREATE TABLE IF NOT EXISTS connections (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
+  provider_id TEXT NOT NULL DEFAULT 'custom',
   protocol TEXT NOT NULL,
   base_url TEXT NOT NULL,
   api_key TEXT NOT NULL DEFAULT '',
@@ -342,7 +356,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 26) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 29) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1053,6 +1067,57 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 26;
       `);
     }
+    if (current < 27) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS agent_search_secrets (
+          agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+          provider TEXT NOT NULL CHECK (provider IN ('searxng', 'tavily')),
+          api_key TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY (agent_id, provider)
+        );
+        PRAGMA user_version = 27;
+      `);
+    }
+    if (current < 28) {
+      if (!hasColumn(sqlite, "connections", "provider_id")) {
+        sqlite.exec("ALTER TABLE connections ADD COLUMN provider_id TEXT NOT NULL DEFAULT 'custom'");
+      }
+      sqlite.exec("PRAGMA user_version = 28");
+    }
+    if (current < 29) {
+      if (!hasColumn(sqlite, "models", "image_protocol")) {
+        sqlite.exec("ALTER TABLE models ADD COLUMN image_protocol TEXT");
+      }
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS image_generation_jobs (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          assistant_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          tool_call_id TEXT,
+          model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+          connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+          model_key TEXT NOT NULL,
+          connection_name TEXT NOT NULL,
+          image_protocol TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          request_json TEXT NOT NULL,
+          status TEXT NOT NULL,
+          progress REAL,
+          provider_job_id TEXT,
+          output_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+          revised_prompt TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          created_at INTEGER NOT NULL,
+          started_at INTEGER,
+          completed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_conversation ON image_generation_jobs(conversation_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_status ON image_generation_jobs(status, created_at);
+        PRAGMA user_version = 29;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1141,6 +1206,7 @@ export class Store {
     }
     this.migrateLegacyToolPolicy();
     this.ensureDefaultAgent(priorVersion < 19, priorVersion < 22);
+    if (priorVersion < 27) this.migrateLegacySearchSettings();
     if (priorVersion < 21) this.migrateAppToolPolicy();
     if (priorVersion < 26) this.migrateRoleplayToolPolicy();
     if (priorVersion < 20) {
@@ -1194,6 +1260,7 @@ export class Store {
         visionModelId: null,
         contextPolicy: settings.default_context_policy as ContextPolicy,
         reasoningEffort: reasoningEffortSchema.parse(settings.reasoning_effort),
+        search: agentSearchConfigSchema.parse({}),
         generation: {},
         tools: { defaultEnabled: true, overrides: {}, directOverrides: {}, approvalOverrides: {} },
         enabledSkillIds: [DEFAULT_COMMAND_SKILL_ID, DEFAULT_APP_OPERATOR_SKILL_ID],
@@ -1320,6 +1387,24 @@ export class Store {
     this.sqlite.prepare("UPDATE tool_settings SET enabled_json = '{}', workspace_shell_enabled = 1 WHERE id = 1").run();
   }
 
+  private migrateLegacySearchSettings(): void {
+    const row = this.sqlite.prepare("SELECT search_base_url, search_api_key FROM tool_settings WHERE id = 1").get() as Row;
+    const baseUrl = String(row.search_base_url ?? "");
+    const apiKey = String(row.search_api_key ?? "");
+    const insertSecret = this.sqlite.prepare(`
+      INSERT INTO agent_search_secrets (agent_id, provider, api_key) VALUES (?, 'searxng', ?)
+      ON CONFLICT(agent_id, provider) DO NOTHING
+    `);
+    const updateAgent = this.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?");
+    for (const agent of this.sqlite.prepare("SELECT id, execution_json FROM agents").all() as Row[]) {
+      const raw = parse<Record<string, unknown>>(agent.execution_json, {});
+      const search = agentSearchConfigSchema.parse(raw.search ?? { provider: "searxng", baseUrl });
+      updateAgent.run(json({ ...raw, search }), String(agent.id));
+      if (apiKey) insertSecret.run(String(agent.id), apiKey);
+    }
+    this.sqlite.prepare("UPDATE tool_settings SET search_base_url = '', search_api_key = '' WHERE id = 1").run();
+  }
+
   getSettings(): AppSettings {
     const row = this.sqlite.prepare("SELECT * FROM app_settings WHERE id = 1").get() as Row;
     return {
@@ -1374,12 +1459,17 @@ export class Store {
 
   listAgents(): AgentSummaryDto[] {
     return (this.sqlite.prepare("SELECT * FROM agents ORDER BY protected DESC, updated_at DESC").all() as Row[])
-      .map((row) => agentSummaryDto(row));
+      .map((row) => {
+        const summary = agentSummaryDto(row);
+        return { ...summary, searchApiKeyConfigured: this.hasAgentSearchApiKey(summary.id, summary.execution.search.provider) };
+      });
   }
 
   getAgent(id: string): AgentDto | undefined {
     const row = this.sqlite.prepare("SELECT * FROM agents WHERE id = ?").get(id) as Row | undefined;
-    return row ? agentDto(row) : undefined;
+    if (!row) return undefined;
+    const summary = agentSummaryDto(row);
+    return agentDto(row, this.hasAgentSearchApiKey(summary.id, summary.execution.search.provider));
   }
 
   createAgent(input: AgentInput, avatarPng?: Uint8Array): AgentDto {
@@ -1431,6 +1521,26 @@ export class Store {
     this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id IN (SELECT id FROM conversations WHERE agent_id = ?)")
       .run(id);
     return this.getAgent(id);
+  }
+
+  getAgentSearchSecret(agentId: string, provider: AgentSearchProvider): string {
+    const row = this.sqlite.prepare(
+      "SELECT api_key FROM agent_search_secrets WHERE agent_id = ? AND provider = ?"
+    ).get(agentId, provider) as Row | undefined;
+    return String(row?.api_key ?? "");
+  }
+
+  hasAgentSearchApiKey(agentId: string, provider: AgentSearchProvider): boolean {
+    return this.getAgentSearchSecret(agentId, provider).length > 0;
+  }
+
+  updateAgentSearchSecret(agentId: string, provider: AgentSearchProvider, apiKey: string): AgentSearchSecretDto {
+    if (!this.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
+    this.sqlite.prepare(`
+      INSERT INTO agent_search_secrets (agent_id, provider, api_key) VALUES (?, ?, ?)
+      ON CONFLICT(agent_id, provider) DO UPDATE SET api_key = excluded.api_key
+    `).run(agentId, provider, apiKey);
+    return { provider, hasApiKey: apiKey.length > 0 };
   }
 
   setAgentAvatar(id: string, avatarPng: Uint8Array | null): AgentDto | undefined {
@@ -1575,28 +1685,19 @@ export class Store {
     const row = this.sqlite.prepare("SELECT * FROM tool_settings WHERE id = 1").get() as Row;
     return {
       enabled: parse(row.enabled_json, {}),
-      search: { baseUrl: String(row.search_base_url), hasApiKey: Boolean(row.search_api_key) },
       workspaceShellEnabled: Boolean(row.workspace_shell_enabled),
       workspacePath: `${this.dataDir}/workspace`,
       skillsPath: `${this.dataDir}/skills`
     };
   }
 
-  getToolSecrets(): { searchApiKey: string } {
-    const row = this.sqlite.prepare("SELECT search_api_key FROM tool_settings WHERE id = 1").get() as Row;
-    return { searchApiKey: String(row.search_api_key) };
-  }
-
   updateToolSettings(patch: ToolSettingsInput): ToolSettingsDto {
     const current = this.getToolSettings();
-    const secret = this.getToolSecrets();
     this.sqlite.prepare(`
-      UPDATE tool_settings SET enabled_json = ?, search_base_url = ?, search_api_key = ?, workspace_shell_enabled = ?
+      UPDATE tool_settings SET enabled_json = ?, workspace_shell_enabled = ?
       WHERE id = 1
     `).run(
       json(patch.enabled ?? current.enabled),
-      patch.search?.baseUrl ?? current.search.baseUrl,
-      patch.search?.apiKey === undefined ? secret.searchApiKey : patch.search.apiKey,
       (patch.workspaceShellEnabled ?? current.workspaceShellEnabled) ? 1 : 0
     );
     return this.getToolSettings();
@@ -1653,10 +1754,10 @@ export class Store {
     const id = randomUUID();
     this.sqlite.prepare(`
       INSERT INTO connections (
-        id, name, protocol, base_url, api_key, secret_headers_json, balance_config_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, provider_id, protocol, base_url, api_key, secret_headers_json, balance_config_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, input.name, input.protocol, input.baseUrl, input.apiKey ?? "", json(input.secretHeaders),
+      id, input.name, input.providerId ?? "custom", input.protocol, input.baseUrl, input.apiKey ?? "", json(input.secretHeaders ?? {}),
       json(input.balanceConfig ?? {}), now, now
     );
     return this.listConnections().find((item) => item.id === id)!;
@@ -1667,11 +1768,12 @@ export class Store {
     if (!current) return undefined;
     const now = Date.now();
     this.sqlite.prepare(`
-      UPDATE connections SET name = ?, protocol = ?, base_url = ?, api_key = ?, secret_headers_json = ?,
+      UPDATE connections SET name = ?, provider_id = ?, protocol = ?, base_url = ?, api_key = ?, secret_headers_json = ?,
         balance_config_json = ?, updated_at = ?
       WHERE id = ?
     `).run(
       input.name ?? current.name,
+      input.providerId ?? current.providerId,
       input.protocol ?? current.protocol,
       input.baseUrl ?? current.baseUrl,
       input.apiKey === undefined ? current.apiKey : input.apiKey,
@@ -1712,16 +1814,16 @@ export class Store {
     const now = Date.now();
     const id = randomUUID();
     this.sqlite.prepare(`
-      INSERT INTO models (id, connection_id, model_key, display_name, context_window, max_output_tokens,
+      INSERT INTO models (id, connection_id, model_key, display_name, context_window, max_output_tokens, image_protocol,
         capabilities_json, default_settings_json, source, enabled, created_at, updated_at,
         max_input_tokens, catalog_managed, catalog_metadata_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(connection_id, model_key) DO UPDATE SET
         display_name = excluded.display_name,
         catalog_managed = CASE WHEN excluded.source = 'manual' THEN 0 ELSE models.catalog_managed END,
         updated_at = excluded.updated_at
     `).run(
-      id, input.connectionId, input.modelKey, input.displayName, input.contextWindow, input.maxOutputTokens,
+      id, input.connectionId, input.modelKey, input.displayName, input.contextWindow, input.maxOutputTokens, input.imageProtocol ?? null,
       json(input.capabilities), json(input.defaultSettings), source, input.enabled ? 1 : 0, now, now,
       input.maxInputTokens ?? null, catalogManaged ? 1 : 0, catalogMetadata ? json(catalogMetadata) : null
     );
@@ -1753,11 +1855,11 @@ export class Store {
 
   private writeCatalogModel(id: string, input: ModelInput, catalogMetadata: ModelCatalogMetadata | null): void {
     this.sqlite.prepare(`
-      UPDATE models SET display_name = ?, context_window = ?, max_input_tokens = ?, max_output_tokens = ?,
+      UPDATE models SET display_name = ?, context_window = ?, max_input_tokens = ?, max_output_tokens = ?, image_protocol = ?,
         capabilities_json = ?, default_settings_json = ?, source = 'discovered', catalog_managed = 1,
         catalog_metadata_json = ?, updated_at = ? WHERE id = ?
     `).run(
-      input.displayName, input.contextWindow, input.maxInputTokens ?? null, input.maxOutputTokens,
+      input.displayName, input.contextWindow, input.maxInputTokens ?? null, input.maxOutputTokens, input.imageProtocol ?? null,
       json(input.capabilities), json(input.defaultSettings), catalogMetadata ? json(catalogMetadata) : null,
       Date.now(), id
     );
@@ -1773,18 +1875,19 @@ export class Store {
       contextWindow: input.contextWindow === undefined ? current.contextWindow : input.contextWindow,
       maxInputTokens: input.maxInputTokens === undefined ? current.maxInputTokens : input.maxInputTokens,
       maxOutputTokens: input.maxOutputTokens ?? current.maxOutputTokens,
+      imageProtocol: input.imageProtocol === undefined ? current.imageProtocol : input.imageProtocol,
       capabilities: input.capabilities ?? current.capabilities,
       defaultSettings: input.defaultSettings ?? current.defaultSettings,
       enabled: input.enabled ?? current.enabled
     };
     const metadataChanged = ["connectionId", "modelKey", "displayName", "contextWindow", "maxInputTokens",
-      "maxOutputTokens", "capabilities", "defaultSettings"].some((key) => Object.hasOwn(input, key));
+      "maxOutputTokens", "imageProtocol", "capabilities", "defaultSettings"].some((key) => Object.hasOwn(input, key));
     this.sqlite.prepare(`
-      UPDATE models SET connection_id = ?, model_key = ?, display_name = ?, context_window = ?, max_output_tokens = ?,
+      UPDATE models SET connection_id = ?, model_key = ?, display_name = ?, context_window = ?, max_output_tokens = ?, image_protocol = ?,
         capabilities_json = ?, default_settings_json = ?, enabled = ?, max_input_tokens = ?, catalog_managed = ?,
         updated_at = ? WHERE id = ?
     `).run(
-      next.connectionId, next.modelKey, next.displayName, next.contextWindow, next.maxOutputTokens,
+      next.connectionId, next.modelKey, next.displayName, next.contextWindow, next.maxOutputTokens, next.imageProtocol ?? null,
       json(next.capabilities), json(next.defaultSettings), next.enabled ? 1 : 0, next.maxInputTokens ?? null,
       metadataChanged ? 0 : current.catalogManaged ? 1 : 0, Date.now(), id
     );
@@ -1839,6 +1942,22 @@ export class Store {
     return asset?.kind === "image" ? asset as ImageAssetDto : undefined;
   }
 
+  imageAssetBelongsToConversation(conversationId: string, assetId: string): boolean {
+    const row = this.sqlite.prepare(`
+      SELECT 1 FROM message_file_assets mfa
+      JOIN messages m ON m.id = mfa.message_id
+      WHERE m.conversation_id = ? AND mfa.asset_id = ?
+      UNION ALL
+      SELECT 1 FROM tool_call_file_assets tcfa
+      JOIN generation_tool_calls tc ON tc.id = tcfa.tool_call_id
+      JOIN generations g ON g.id = tc.generation_id
+      JOIN messages m ON m.id = g.assistant_message_id
+      WHERE m.conversation_id = ? AND tcfa.asset_id = ?
+      LIMIT 1
+    `).get(conversationId, assetId, conversationId, assetId) as Row | undefined;
+    return Boolean(row);
+  }
+
   getFileAssetRecord(id: string): FileAssetRecord | undefined {
     const row = this.sqlite.prepare(`
       SELECT a.*, b.byte_size, b.storage_key FROM file_assets a
@@ -1884,7 +2003,7 @@ export class Store {
     return this.toolCallFiles(toolCallId).filter((asset): asset is ImageAssetDto => asset.kind === "image");
   }
 
-  attachFilesToMessage(messageId: string, assetIds: string[]): void {
+  attachFilesToMessage(messageId: string, assetIds: string[], imageBytesLimit = 15 * 1024 * 1024): void {
     const unique = [...new Set(assetIds)];
     if (unique.length !== assetIds.length || unique.length > 8) {
       throw new StoreError("file_attachment_invalid", "每条消息最多包含 8 个不重复附件");
@@ -1895,7 +2014,7 @@ export class Store {
     if (total > 128 * 1024 * 1024) throw new StoreError("file_attachments_too_large", "每条消息的附件总大小不能超过 128 MiB");
     const images = assets.filter((asset): asset is ImageAssetDto => asset?.kind === "image");
     if (images.length > 4) throw new StoreError("image_attachment_invalid", "每条消息最多包含 4 张图片");
-    if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > 15 * 1024 * 1024) {
+    if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > imageBytesLimit) {
       throw new StoreError("image_attachments_too_large", "每条消息的图片总大小不能超过 15 MiB");
     }
     const insert = this.sqlite.prepare(`
@@ -1920,6 +2039,105 @@ export class Store {
 
   attachImageToToolCall(toolCallId: string, assetId: string): void {
     this.attachFileToToolCall(toolCallId, assetId);
+  }
+
+  createImageAssistantMessage(conversationId: string): string {
+    return this.transaction(() => {
+      if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+      const row = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?")
+        .get(conversationId) as Row;
+      const id = randomUUID();
+      this.sqlite.prepare(`
+        INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at)
+        VALUES (?, ?, ?, 'assistant', NULL, NULL, ?)
+      `).run(id, conversationId, Number(row.value) + 1, Date.now());
+      return id;
+    });
+  }
+
+  createImageGenerationJob(input: {
+    conversationId: string;
+    assistantMessageId: string;
+    toolCallId?: string;
+    model: ModelDto;
+    connection: ConnectionRecord;
+    request: ImageGenerationInput;
+  }): ImageGenerationJobDto {
+    const protocol = input.model.imageProtocol;
+    if (!protocol) throw new StoreError("image_protocol_required", "图片模型缺少图片协议");
+    const now = Date.now();
+    const id = randomUUID();
+    this.sqlite.prepare(`
+      INSERT INTO image_generation_jobs (
+        id, conversation_id, assistant_message_id, tool_call_id, model_id, connection_id,
+        model_key, connection_name, image_protocol, operation, prompt, request_json, status,
+        progress, provider_job_id, output_asset_ids_json, revised_prompt, error_code, error_message,
+        created_at, started_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, '[]', NULL, NULL, NULL, ?, NULL, NULL)
+    `).run(
+      id, input.conversationId, input.assistantMessageId, input.toolCallId ?? null, input.model.id,
+      input.connection.id, input.model.modelKey, input.connection.name, protocol, input.request.operation,
+      input.request.prompt, json(input.request), now
+    );
+    return this.getImageGenerationJob(id)!;
+  }
+
+  getImageGenerationInput(id: string): ImageGenerationInput | undefined {
+    const row = this.sqlite.prepare("SELECT request_json FROM image_generation_jobs WHERE id = ?").get(id) as Row | undefined;
+    if (!row) return undefined;
+    const parsed = imageGenerationInputSchema.safeParse(parse(row.request_json, {}));
+    return parsed.success ? parsed.data : undefined;
+  }
+
+  getImageGenerationJob(id: string): ImageGenerationJobDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM image_generation_jobs WHERE id = ?").get(id) as Row | undefined;
+    return row ? imageGenerationJobDto(row, this) : undefined;
+  }
+
+  listImageGenerationJobs(conversationId?: string): ImageGenerationJobDto[] {
+    const rows = conversationId
+      ? this.sqlite.prepare("SELECT * FROM image_generation_jobs WHERE conversation_id = ? ORDER BY created_at DESC").all(conversationId)
+      : this.sqlite.prepare("SELECT * FROM image_generation_jobs ORDER BY created_at DESC").all();
+    return (rows as Row[]).map((row) => imageGenerationJobDto(row, this));
+  }
+
+  updateImageGenerationJob(id: string, patch: {
+    status?: ImageGenerationJobStatus;
+    progress?: number | null;
+    providerJobId?: string | null;
+    outputAssetIds?: string[];
+    revisedPrompt?: string | null;
+    error?: { code: string; message: string } | null;
+    startedAt?: number | null;
+    completedAt?: number | null;
+  }): ImageGenerationJobDto | undefined {
+    const current = this.getImageGenerationJob(id);
+    if (!current) return undefined;
+    const status = patch.status ?? current.status;
+    const error = patch.error === undefined ? current.error : patch.error;
+    this.sqlite.prepare(`
+      UPDATE image_generation_jobs SET status = ?, progress = ?, provider_job_id = ?, output_asset_ids_json = ?,
+        revised_prompt = ?, error_code = ?, error_message = ?, started_at = ?, completed_at = ? WHERE id = ?
+    `).run(
+      status,
+      patch.progress === undefined ? current.progress : patch.progress,
+      patch.providerJobId === undefined ? current.providerJobId : patch.providerJobId,
+      JSON.stringify(patch.outputAssetIds ?? current.outputAssets.map((asset) => asset.id)),
+      patch.revisedPrompt === undefined ? current.revisedPrompt : patch.revisedPrompt,
+      error?.code ?? null,
+      error?.message ?? null,
+      patch.startedAt === undefined ? current.startedAt : patch.startedAt,
+      patch.completedAt === undefined ? current.completedAt : patch.completedAt,
+      id
+    );
+    return this.getImageGenerationJob(id);
+  }
+
+  attachImageJobOutputs(id: string, assetIds: string[]): ImageGenerationJobDto | undefined {
+    const job = this.getImageGenerationJob(id);
+    if (!job) return undefined;
+    this.attachFilesToMessage(job.assistantMessageId, assetIds, 128 * 1024 * 1024);
+    return this.updateImageGenerationJob(id, { outputAssetIds: assetIds });
   }
 
   unreferencedFileAssets(before: number): FileAssetRecord[] {
@@ -2453,6 +2671,7 @@ export class Store {
       execution: {
         modelId,
         visionModelId: agent.execution.visionModelId,
+        search: agent.execution.search,
         contextPolicy: conversation.executionOverrides.contextPolicy ?? agent.execution.contextPolicy,
         reasoningEffort: effort,
         settings,
@@ -2593,6 +2812,7 @@ export class Store {
         greeting: message.greeting_json
           ? greetingMessageSchema.safeParse(parse(message.greeting_json, null)).data ?? null
           : null,
+        imageGenerationJob: assistant ? this.imageGenerationJobForMessage(String(message.id)) : null,
         createdAt: Number(message.created_at)
       };
     });
@@ -2609,6 +2829,13 @@ export class Store {
       connectionName: String(row.connection_name),
       protocol: row.protocol as ProviderProtocol
     } : null;
+  }
+
+  private imageGenerationJobForMessage(messageId: string): ImageGenerationJobDto | null {
+    const row = this.sqlite.prepare(
+      "SELECT * FROM image_generation_jobs WHERE assistant_message_id = ? ORDER BY created_at DESC LIMIT 1"
+    ).get(messageId) as Row | undefined;
+    return row ? imageGenerationJobDto(row, this) : null;
   }
 
   private listGenerations(messageId: string): GenerationDto[] {
@@ -2645,6 +2872,7 @@ export class Store {
       skillRevisions: {},
       toolRevisions: {},
       execution: {
+        search: agentSearchConfigSchema.parse({}),
         modelId: String(row.model_id),
         visionModelId: null,
         contextPolicy: conversation?.contextPolicy ?? "trim",
@@ -2669,7 +2897,11 @@ export class Store {
         savedSnapshot.roleplayState
       ),
       generationKind: savedSnapshot.generationKind ?? legacySnapshot.generationKind,
-      execution: { ...legacySnapshot.execution, ...(savedSnapshot.execution ?? {}) }
+      execution: {
+        ...legacySnapshot.execution,
+        ...(savedSnapshot.execution ?? {}),
+        search: agentSearchConfigSchema.parse(savedSnapshot.execution?.search ?? legacySnapshot.execution.search)
+      }
     };
     return {
       id: String(row.id),
@@ -3080,9 +3312,11 @@ type Row = Record<string, unknown>;
 function connectionDto(row: Row): ConnectionDto {
   const secretHeaders = parse<Record<string, string>>(row.secret_headers_json, {});
   const balanceConfig = parseBalanceConfig(row.balance_config_json);
+  const providerId = providerPresetIdSchema.safeParse(row.provider_id ?? "custom");
   return {
     id: String(row.id),
     name: String(row.name),
+    providerId: providerId.success ? providerId.data : "custom",
     protocol: row.protocol as ProviderProtocol,
     baseUrl: String(row.base_url),
     hasApiKey: Boolean(row.api_key),
@@ -3115,6 +3349,7 @@ function modelDto(row: Row): ModelDto {
     contextWindow: row.context_window === null ? null : Number(row.context_window),
     maxInputTokens: row.max_input_tokens === null || row.max_input_tokens === undefined ? null : Number(row.max_input_tokens),
     maxOutputTokens: Number(row.max_output_tokens),
+    imageProtocol: row.image_protocol ? row.image_protocol as ModelDto["imageProtocol"] : null,
     capabilities: modelCapabilitiesSchema.parse(parse(row.capabilities_json, {})),
     defaultSettings: parseModelSettings(row.default_settings_json),
     source: row.source as ModelDto["source"],
@@ -3125,6 +3360,39 @@ function modelDto(row: Row): ModelDto {
     enabled: Boolean(row.enabled),
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at)
+  };
+}
+
+function imageGenerationJobDto(row: Row, store: Store): ImageGenerationJobDto {
+  const outputIds = parse<unknown>(row.output_asset_ids_json, []);
+  const outputAssets = Array.isArray(outputIds)
+    ? outputIds.flatMap((id) => typeof id === "string" ? [store.getImageAsset(id)].filter(Boolean) as ImageAssetDto[] : [])
+    : [];
+  const status = imageGenerationJobStatusSchema.parse(String(row.status));
+  const operation = imageGenerationOperationSchema.parse(String(row.operation));
+  const imageProtocol = imageProviderProtocolSchema.parse(String(row.image_protocol));
+  const errorCode = textOrNull(row.error_code);
+  const errorMessage = textOrNull(row.error_message);
+  return {
+    id: String(row.id),
+    conversationId: String(row.conversation_id),
+    assistantMessageId: String(row.assistant_message_id),
+    toolCallId: textOrNull(row.tool_call_id),
+    modelId: String(row.model_id),
+    modelKey: String(row.model_key),
+    connectionName: String(row.connection_name),
+    imageProtocol,
+    operation,
+    prompt: String(row.prompt),
+    status,
+    progress: row.progress === null || row.progress === undefined ? null : Number(row.progress),
+    providerJobId: textOrNull(row.provider_job_id),
+    outputAssets,
+    revisedPrompt: textOrNull(row.revised_prompt),
+    error: errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null,
+    createdAt: Number(row.created_at),
+    startedAt: row.started_at === null || row.started_at === undefined ? null : Number(row.started_at),
+    completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at)
   };
 }
 
@@ -3164,16 +3432,16 @@ function conversationDto(row: Row): ConversationDto {
   };
 }
 
-function agentDto(row: Row): AgentDto {
+function agentDto(row: Row, searchApiKeyConfigured = false): AgentDto {
   const card = characterCardV2Schema.parse(parse(row.card_json, {}));
   return {
-    ...agentSummaryDto(row),
+    ...agentSummaryDto(row, searchApiKeyConfigured),
     card,
     roleplay: parseRoleplayConfig(row.roleplay_json, false)
   };
 }
 
-function agentSummaryDto(row: Row): AgentSummaryDto {
+function agentSummaryDto(row: Row, searchApiKeyConfigured = false): AgentSummaryDto {
   const card = characterCardV2Schema.parse(parse(row.card_json, {}));
   const execution = agentExecutionConfigSchema.parse(parse(row.execution_json, {}));
   const roleplay = parseRoleplayConfig(row.roleplay_json, false);
@@ -3182,6 +3450,7 @@ function agentSummaryDto(row: Row): AgentSummaryDto {
     protected: Boolean(row.protected), revision: Number(row.revision),
     hasAvatar: row.avatar_png !== null && row.avatar_png !== undefined,
     modelId: execution.modelId, execution,
+    searchApiKeyConfigured,
     userProfile: agentUserProfileOverrideSchema.parse(parse(row.user_profile_json, {})),
     firstMessage: card.data.first_mes, alternateGreetings: card.data.alternate_greetings,
     roleplayEnabled: roleplay.enabled,

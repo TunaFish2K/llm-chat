@@ -40,6 +40,30 @@ describe("provider HTTP helpers", () => {
     expect(endpoint("https://example.test/v1/models", "/models")).toBe("https://example.test/v1/models");
   });
 
+  it("adds OpenCode Go request identity headers and reserves their values", () => {
+    const connection = {
+      ...request("openai-chat").connection,
+      providerId: "opencode-go" as const,
+      secretHeaders: {
+        "x-opencode-session": "spoofed",
+        "x-opencode-request": "spoofed",
+        "x-opencode-client": "spoofed",
+        "User-Agent": "spoofed"
+      }
+    };
+    expect(headers(connection, {
+      sessionId: "ses_conversation",
+      requestId: "generation:step-0",
+      clientId: "llm-chat",
+      userAgent: "llm-chat/0.1.0"
+    })).toMatchObject({
+      "x-opencode-session": "ses_conversation",
+      "x-opencode-request": "generation:step-0",
+      "x-opencode-client": "llm-chat",
+      "User-Agent": "llm-chat/0.1.0"
+    });
+  });
+
   it.each([
     [401, { error: { message: "bad key" } }, "provider_auth_error"],
     [403, { error: "forbidden" }, "provider_auth_error"],
@@ -601,7 +625,7 @@ describe("unified reasoningEffort mapping", () => {
 
 function request(protocol: ProviderConnection["protocol"]): GenerateRequest {
   return {
-    connection: { id: "connection", protocol, baseUrl: "https://example.test/v1", apiKey: "key", secretHeaders: {} },
+    connection: { id: "connection", providerId: "custom", protocol, baseUrl: "https://example.test/v1", apiKey: "key", secretHeaders: {} },
     modelKey: "model",
     systemPrompt: "system",
     messages: [{ role: "user", text: "hello" }],
@@ -615,6 +639,12 @@ function request(protocol: ProviderConnection["protocol"]): GenerateRequest {
       reasoningSummary: protocol === "openai-responses",
       adaptiveThinking: protocol === "anthropic-messages",
       manualThinking: protocol === "anthropic-messages"
+    },
+    requestContext: {
+      sessionId: "ses_test",
+      requestId: "req_test",
+      clientId: "llm-chat",
+      userAgent: "llm-chat/test"
     },
     signal: new AbortController().signal
   };

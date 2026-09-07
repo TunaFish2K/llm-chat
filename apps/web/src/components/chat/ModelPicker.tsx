@@ -152,6 +152,7 @@ export function ModelPicker({
                     </span>
                     <span className="model-badges">
                       {model.capabilities.imageInput ? <i>图片</i> : null}
+                      {model.capabilities.imageOutput ? <i>生图</i> : null}
                       {model.capabilities.tools ? <i>工具</i> : null}
                       {model.capabilities.reasoning ? <i>推理</i> : null}
                     </span>

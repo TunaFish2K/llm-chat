@@ -7,6 +7,111 @@ export const protocolSchema = z.enum([
 ]);
 export type ProviderProtocol = z.infer<typeof protocolSchema>;
 
+export const providerPresetIdSchema = z.enum([
+  "custom",
+  "openai",
+  "anthropic",
+  "google",
+  "stability",
+  "openrouter",
+  "deepseek",
+  "xai",
+  "mistral",
+  "moonshot",
+  "alibaba",
+  "zai",
+  "minimax",
+  "volcengine",
+  "opencode-go"
+]);
+export type ProviderPresetId = z.infer<typeof providerPresetIdSchema>;
+
+export const imageProviderProtocolSchema = z.enum([
+  "openai-images",
+  "google-imagen",
+  "google-interactions",
+  "stability-image"
+]);
+export type ImageProviderProtocol = z.infer<typeof imageProviderProtocolSchema>;
+
+export interface ProviderPresetDefinition {
+  id: ProviderPresetId;
+  label: string;
+  description: string;
+  baseUrl: string;
+  defaultProtocol: ProviderProtocol;
+  protocols: readonly ProviderProtocol[];
+  imageProtocols: readonly ImageProviderProtocol[];
+  sessionHeaders: "none" | "opencode-go";
+}
+
+export const providerPresetDefinitions: readonly ProviderPresetDefinition[] = [
+  {
+    id: "custom", label: "自定义", description: "手动配置兼容端点。", baseUrl: "",
+    defaultProtocol: "openai-responses", protocols: ["openai-responses", "openai-chat", "anthropic-messages"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "openai", label: "OpenAI", description: "OpenAI 官方 API。", baseUrl: "https://api.openai.com/v1",
+    defaultProtocol: "openai-responses", protocols: ["openai-responses", "openai-chat"], imageProtocols: ["openai-images"], sessionHeaders: "none"
+  },
+  {
+    id: "anthropic", label: "Anthropic", description: "Anthropic Messages API。", baseUrl: "https://api.anthropic.com/v1",
+    defaultProtocol: "anthropic-messages", protocols: ["anthropic-messages"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "google", label: "Google Gemini", description: "Gemini OpenAI 兼容 API。", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: ["google-imagen", "google-interactions"], sessionHeaders: "none"
+  },
+  {
+    id: "stability", label: "Stability AI", description: "Stable Image 图片生成与编辑 API。", baseUrl: "https://api.stability.ai/v2beta",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: ["stability-image"], sessionHeaders: "none"
+  },
+  {
+    id: "openrouter", label: "OpenRouter", description: "聚合多个模型提供方的 OpenAI 兼容 API。", baseUrl: "https://openrouter.ai/api/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "deepseek", label: "DeepSeek", description: "DeepSeek 官方 API。", baseUrl: "https://api.deepseek.com/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "xai", label: "xAI", description: "Grok API。", baseUrl: "https://api.x.ai/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "mistral", label: "Mistral", description: "Mistral AI API。", baseUrl: "https://api.mistral.ai/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "moonshot", label: "Moonshot / Kimi", description: "Moonshot AI OpenAI 兼容 API。", baseUrl: "https://api.moonshot.cn/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "alibaba", label: "通义千问 / DashScope", description: "DashScope OpenAI 兼容 API。", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "zai", label: "智谱 / Z.AI", description: "Z.AI OpenAI 兼容 API。", baseUrl: "https://api.z.ai/api/paas/v4",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "minimax", label: "MiniMax", description: "MiniMax OpenAI 兼容 API。", baseUrl: "https://api.minimaxi.com/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "volcengine", label: "火山方舟", description: "火山引擎方舟 OpenAI 兼容 API。", baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "opencode-go", label: "OpenCode Go", description: "OpenCode Go 编程模型服务。", baseUrl: "https://opencode.ai/zen/go/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-responses", "openai-chat", "anthropic-messages"], imageProtocols: [], sessionHeaders: "opencode-go"
+  }
+] as const;
+
+export function providerPreset(id: ProviderPresetId): ProviderPresetDefinition {
+  return providerPresetDefinitions.find((item) => item.id === id) ?? providerPresetDefinitions[0]!;
+}
+
 export const contextPolicySchema = z.enum(["auto", "trim", "summarize", "full"]);
 export type ContextPolicy = z.infer<typeof contextPolicySchema>;
 
@@ -72,6 +177,11 @@ export type GenerationSettings = z.infer<typeof generationSettingsSchema>;
 export const modelCapabilitiesSchema = z.object({
   tools: z.boolean().default(true),
   imageInput: z.boolean().default(false),
+  imageOutput: z.boolean().optional(),
+  imageEdit: z.boolean().optional(),
+  imageInpaint: z.boolean().optional(),
+  imageVariation: z.boolean().optional(),
+  imageMultiple: z.boolean().optional(),
   temperature: z.boolean().default(true),
   topP: z.boolean().default(true),
   reasoning: z.boolean().default(false),
@@ -105,19 +215,39 @@ export const balanceConfigSchema = z.object({
 });
 export type BalanceConfig = z.infer<typeof balanceConfigSchema>;
 
-export const connectionInputSchema = z.object({
+const connectionInputObjectSchema = z.object({
   name: z.string().trim().min(1).max(80),
+  providerId: providerPresetIdSchema.default("custom"),
   protocol: protocolSchema,
   baseUrl: z.string().url(),
   apiKey: z.string().max(4096).optional(),
   secretHeaders: z.record(z.string(), z.string().max(4096)).default({}),
   balanceConfig: balanceConfigSchema.optional()
 });
-export type ConnectionInput = z.infer<typeof connectionInputSchema>;
+
+function validateProviderProtocol(
+  value: { providerId?: ProviderPresetId | undefined; protocol?: ProviderProtocol | undefined },
+  context: z.RefinementCtx
+): void {
+  if (!value.providerId || !value.protocol) return;
+  const preset = providerPreset(value.providerId);
+  if (!preset.protocols.includes(value.protocol)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["protocol"],
+      message: `${preset.label} 不支持 ${value.protocol} 协议`
+    });
+  }
+}
+
+export const connectionInputSchema = connectionInputObjectSchema.superRefine(validateProviderProtocol);
+export const connectionInputPatchSchema = connectionInputObjectSchema.partial().superRefine(validateProviderProtocol);
+export type ConnectionInput = z.input<typeof connectionInputSchema>;
 
 export interface ConnectionDto {
   id: string;
   name: string;
+  providerId: ProviderPresetId;
   protocol: ProviderProtocol;
   baseUrl: string;
   hasApiKey: boolean;
@@ -141,6 +271,7 @@ export const modelInputSchema = z.object({
   contextWindow: z.number().int().positive().max(10_000_000).nullable(),
   maxInputTokens: z.number().int().positive().max(10_000_000).nullable().optional(),
   maxOutputTokens: z.number().int().positive().max(1_000_000),
+  imageProtocol: imageProviderProtocolSchema.nullable().optional(),
   capabilities: modelCapabilitiesSchema,
   defaultSettings: modelSettingsSchema,
   enabled: z.boolean().default(true)
@@ -438,11 +569,32 @@ export const toolPolicySchema = toolPolicyObjectSchema as z.ZodType<{
 export type ToolPolicy = z.infer<typeof toolPolicySchema>;
 export type ApprovalPolicy = "default" | "always" | "never";
 
+export const agentSearchProviderSchema = z.enum(["searxng", "tavily"]);
+export type AgentSearchProvider = z.infer<typeof agentSearchProviderSchema>;
+
+export const agentSearchConfigSchema = z.object({
+  provider: agentSearchProviderSchema.default("searxng"),
+  baseUrl: z.string().url().or(z.literal("")).default("")
+});
+export type AgentSearchConfig = z.infer<typeof agentSearchConfigSchema>;
+
+export const agentSearchSecretInputSchema = z.object({
+  provider: agentSearchProviderSchema,
+  apiKey: z.string().max(4096)
+});
+export type AgentSearchSecretInput = z.infer<typeof agentSearchSecretInputSchema>;
+
+export interface AgentSearchSecretDto {
+  provider: AgentSearchProvider;
+  hasApiKey: boolean;
+}
+
 export const agentExecutionConfigSchema = z.object({
   modelId: z.string().min(1).max(200).nullable(),
   visionModelId: z.string().min(1).max(200).nullable().default(null),
   contextPolicy: contextPolicySchema,
   reasoningEffort: reasoningEffortSchema,
+  search: agentSearchConfigSchema.default({ provider: "searxng", baseUrl: "" }),
   generation: generationOverridesSchema.default({}),
   tools: toolPolicySchema,
   enabledSkillIds: z.array(z.string().min(1).max(200)).max(500).default([]),
@@ -475,6 +627,7 @@ export interface AgentSummaryDto {
   hasAvatar: boolean;
   modelId: string | null;
   execution: AgentExecutionConfig;
+  searchApiKeyConfigured: boolean;
   userProfile: AgentUserProfileOverride;
   firstMessage: string;
   alternateGreetings: string[];
@@ -641,6 +794,54 @@ export interface ImageAssetDto extends FileAssetDto {
   kind: "image";
 }
 
+export const imageGenerationOperationSchema = z.enum(["generate", "edit", "inpaint", "variation"]);
+export type ImageGenerationOperation = z.infer<typeof imageGenerationOperationSchema>;
+
+export const imageGenerationJobStatusSchema = z.enum([
+  "queued", "running", "waiting-provider", "completed", "failed", "cancelled"
+]);
+export type ImageGenerationJobStatus = z.infer<typeof imageGenerationJobStatusSchema>;
+
+export const imageGenerationInputSchema = z.object({
+  modelId: z.string().uuid(),
+  prompt: z.string().trim().min(1).max(10_000),
+  operation: imageGenerationOperationSchema.default("generate"),
+  referenceAssetIds: z.array(z.string().uuid()).max(4).default([]),
+  maskAssetId: z.string().uuid().nullable().optional(),
+  negativePrompt: z.string().trim().max(10_000).optional(),
+  count: z.number().int().min(1).max(4).default(1),
+  aspectRatio: z.string().trim().max(20).optional(),
+  size: z.string().trim().max(32).optional(),
+  quality: z.enum(["auto", "low", "medium", "high"]).optional(),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
+  seed: z.number().int().min(0).max(4_294_967_295).optional(),
+  strength: z.number().min(0).max(1).optional(),
+  providerOptions: z.record(z.string(), z.unknown()).optional()
+});
+export type ImageGenerationInput = z.infer<typeof imageGenerationInputSchema>;
+
+export interface ImageGenerationJobDto {
+  id: string;
+  conversationId: string;
+  assistantMessageId: string;
+  toolCallId: string | null;
+  modelId: string;
+  modelKey: string;
+  connectionName: string;
+  imageProtocol: ImageProviderProtocol;
+  operation: ImageGenerationOperation;
+  prompt: string;
+  status: ImageGenerationJobStatus;
+  progress: number | null;
+  providerJobId: string | null;
+  outputAssets: ImageAssetDto[];
+  revisedPrompt: string | null;
+  error: { code: string; message: string } | null;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
+}
+
 export interface VisionAnalysisDto {
   id: string;
   asset: ImageAssetDto;
@@ -694,6 +895,7 @@ export interface MessageDto {
   activeGenerationId: string | null;
   generations: GenerationDto[];
   greeting: GreetingMessageDto | null;
+  imageGenerationJob?: ImageGenerationJobDto | null;
   createdAt: number;
 }
 
@@ -813,17 +1015,12 @@ export const toolApprovalInputSchema = z.object({
 
 export const toolSettingsInputSchema = z.object({
   enabled: z.record(z.string(), z.boolean()).optional(),
-  search: z.object({
-    baseUrl: z.string().url().or(z.literal("")),
-    apiKey: z.string().max(4096).optional()
-  }).optional(),
   workspaceShellEnabled: z.boolean().optional()
 });
 export type ToolSettingsInput = z.infer<typeof toolSettingsInputSchema>;
 
 export interface ToolSettingsDto {
   enabled: Record<string, boolean>;
-  search: { baseUrl: string; hasApiKey: boolean };
   workspaceShellEnabled: boolean;
   workspacePath: string;
   skillsPath: string;
@@ -956,6 +1153,7 @@ export type AppEvent =
   | { id: number; type: "task-output"; taskId: string; cursor: number }
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
   | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
+  | { id: number; type: "image-generation"; jobId: string; conversationId: string; job: ImageGenerationJobDto }
   | { id: number; type: "resource-changed"; resource: "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
 
 const mcpServerFields = {

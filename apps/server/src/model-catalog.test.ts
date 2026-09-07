@@ -5,6 +5,7 @@ import { ModelCatalogService } from "./model-catalog";
 const connection: ConnectionDto = {
   id: "00000000-0000-4000-8000-000000000001",
   name: "OpenAI proxy",
+  providerId: "custom",
   protocol: "openai-responses",
   baseUrl: "https://proxy.example/v1",
   hasApiKey: true,

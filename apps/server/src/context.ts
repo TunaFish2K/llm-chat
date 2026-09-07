@@ -6,6 +6,7 @@ import type { ContextMessageRecord, GenerationRecord, Store } from "./database";
 import { attachmentFileName } from "./images";
 import type { PreparedImages } from "./vision";
 import { applySafeRegex } from "./safe-regex";
+import { providerRequestContext, providerRequestContextForConversation } from "./provider-context";
 
 export interface BuiltContext {
   systemPrompt: string;
@@ -208,7 +209,16 @@ async function summarizeContext(
       remaining = remaining.slice(1);
     }
     if (!chunk.length) throw new ContextError("summary_chunk_error", "无法为超长上下文选择摘要范围");
-    const result = await generateSummary(connection, model, record.settings, summaryText, chunk, signal, preparedImages);
+    const result = await generateSummary(
+      connection,
+      model,
+      record.settings,
+      summaryText,
+      chunk,
+      signal,
+      providerRequestContext(record, "summary"),
+      preparedImages
+    );
     summaryText = result.text;
     throughOrdinal = chunk.at(-1)!.ordinal;
     const covered = allMessages.filter((message) => message.ordinal <= throughOrdinal);
@@ -302,7 +312,8 @@ export async function compactConversationContext(
       resolved.snapshot.execution.settings,
       summaryText,
       chunk,
-      signal
+      signal,
+      providerRequestContextForConversation(conversationId, "summary")
     );
     summaryText = result.text;
     usage = addUsage(usage, result.usage);
@@ -347,6 +358,7 @@ async function generateSummary(
   previousSummary: string,
   messages: ContextMessageRecord[],
   signal: AbortSignal,
+  requestContext: ReturnType<typeof providerRequestContext>,
   preparedImages: PreparedImages = new Map()
 ): Promise<{ text: string; usage: UsageDto }> {
   const transcript = messages
@@ -380,6 +392,7 @@ async function generateSummary(
     messages: [{ role: "user", text: prompt, ...(summaryImages.length ? { images: summaryImages } : {}) }],
     settings: { ...settings, ...summarySettings },
     capabilities: model.capabilities,
+    requestContext,
     signal
   })) {
     if (event.type === "block" && event.blockType === "text") text = event.content;

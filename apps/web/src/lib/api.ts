@@ -1,6 +1,8 @@
 import type {
   AgentDto,
   AgentInput,
+  AgentSearchSecretDto,
+  AgentSearchSecretInput,
   AgentSummaryDto,
   AppSettings,
   BackgroundTaskDto,
@@ -22,6 +24,8 @@ import type {
   ForkConversationInput,
   FileAssetDto,
   ImageAssetDto,
+  ImageGenerationInput,
+  ImageGenerationJobDto,
   McpServerDto,
   McpServerInput,
   McpServerPatch,
@@ -194,6 +198,8 @@ export const endpoints = {
   agent: (id: string) => api.get<AgentDto>(`/api/agents/${id}`),
   createAgent: (input: AgentInput) => api.post<AgentDto>("/api/agents", input),
   updateAgent: (id: string, patch: Partial<AgentInput>) => api.patch<AgentDto>(`/api/agents/${id}`, patch),
+  updateAgentSearchSecret: (id: string, input: AgentSearchSecretInput) =>
+    api.patch<AgentSearchSecretDto>(`/api/agents/${id}/search-secret`, input),
   deleteAgent: (id: string) => api.delete<undefined>(`/api/agents/${id}`),
   importAgent: (fileName: string, dataBase64: string) =>
     api.post<AgentDto>("/api/agents/import", { fileName, dataBase64 }),
@@ -211,7 +217,9 @@ export const endpoints = {
 
   toolSettings: () => api.get<ToolSettingsDto>("/api/tools/settings"),
   updateToolSettings: (patch: ToolSettingsInput) => api.patch<ToolSettingsDto>("/api/tools/settings", patch),
-  toolCatalog: () => api.get<ToolCatalogItemDto[]>("/api/tools/catalog"),
+  toolCatalog: (agentId?: string) => api.get<ToolCatalogItemDto[]>(
+    `/api/tools/catalog${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`
+  ),
 
   plugins: () => api.get<PluginDto[]>("/api/plugins"),
   installPlugin: (sourcePath: string) => api.post<PluginDto>("/api/plugins/install", { sourcePath }),
@@ -294,6 +302,12 @@ export const endpoints = {
   contextSummary: (id: string) => api.get<ContextSummaryDto | null>(`/api/conversations/${id}/context/compact`),
   compactContext: (id: string) => api.post<ContextSummaryDto>(`/api/conversations/${id}/context/compact`, {}),
   messages: (conversationId: string) => api.get<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
+  imageGenerations: (conversationId: string) => api.get<ImageGenerationJobDto[]>(`/api/conversations/${conversationId}/image-generations`),
+  startImageGeneration: (conversationId: string, input: ImageGenerationInput) =>
+    api.post<ImageGenerationJobDto>(`/api/conversations/${conversationId}/image-generations`, input),
+  imageGeneration: (id: string) => api.get<ImageGenerationJobDto>(`/api/image-generations/${id}`),
+  cancelImageGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/cancel`, {}),
+  retryImageGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/retry`, {}),
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
   uploadFile,

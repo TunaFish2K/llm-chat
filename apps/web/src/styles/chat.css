@@ -393,6 +393,14 @@
   font-size: var(--text-sm);
 }
 
+.image-job-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
 .refusal-block,
 .unsupported-block {
   padding: 10px var(--space-3);
@@ -875,8 +883,12 @@
 }
 
 .chip-select select {
+  width: 0;
+  min-width: 0;
+  flex: 1 1 0;
   appearance: none;
-  max-width: 130px;
+  max-width: none;
+  overflow: hidden;
   border: 0;
   background: none;
   color: inherit;
@@ -884,6 +896,12 @@
   cursor: pointer;
   outline: none;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-reasoning-select {
+  flex: 0 1 170px;
+  min-width: 0;
 }
 
 .chip-select select:disabled {

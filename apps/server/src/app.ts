@@ -9,12 +9,15 @@ import fastifyStatic from "@fastify/static";
 import {
   appSettingsSchema,
   agentInputSchema,
+  agentSearchSecretInputSchema,
   connectionInputSchema,
+  connectionInputPatchSchema,
   conversationInputSchema,
   conversationRoleplayStatePatchSchema,
   encodedFileSchema,
   fileUploadMetadataSchema,
   forkConversationSchema,
+  imageGenerationInputSchema,
   imageUploadSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
@@ -53,6 +56,8 @@ import { ModelCatalogService } from "./model-catalog";
 import { AppTools } from "./app-tools";
 import { importSillyTavernPreset } from "./roleplay";
 import { executeRestrictedStscript } from "./stscript";
+import { providerRequestContextForConversation } from "./provider-context";
+import { ImageGenerationManager } from "./image-generation";
 
 export type AuthMode = "password" | "disabled";
 
@@ -108,6 +113,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const balanceService = new BalanceService();
   const modelCatalog = new ModelCatalogService();
   const eventHub = new EventHub();
+  const imageJobs = new ImageGenerationManager(store, imageService, eventHub);
+  await imageJobs.initialize();
   const taskManager = new TaskManager(store, eventHub);
   const pluginManager = new PluginManager(store, eventHub);
   const skillManager = new SkillManager(store, eventHub,
@@ -117,7 +124,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     store, tasks: taskManager, plugins: pluginManager, skills: skillManager, files: imageService,
     events: eventHub, balance: balanceService, catalog: modelCatalog
   });
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools);
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs);
   const runner = new GenerationRunner(store, {
     buildTools: (_currentStore, record) => registry.tools(record),
     prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
@@ -284,6 +291,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     taskManager.notifyAgentPolicyChanged(request.params.id);
     return agent;
   });
+  app.patch<{ Params: { id: string } }>("/api/agents/:id/search-secret", async (request) => {
+    const value = agentSearchSecretInputSchema.parse(request.body);
+    return store.updateAgentSearchSecret(request.params.id, value.provider, value.apiKey);
+  });
   app.post<{ Params: { id: string } }>("/api/agents/:id/roleplay/presets/import", async (request, reply) => {
     const value = roleplayPresetImportSchema.parse(request.body);
     const agent = store.getAgent(request.params.id);
@@ -387,7 +398,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.get("/api/tools/settings", async () => store.getToolSettings());
   app.patch("/api/tools/settings", async (request) => store.updateToolSettings(toolSettingsInputSchema.parse(request.body)));
-  app.get("/api/tools/catalog", async () => registry.catalog());
+  app.get<{ Querystring: { agentId?: string } }>("/api/tools/catalog", async (request) => registry.catalog(request.query.agentId));
   app.get("/api/plugins", async () => pluginManager.list());
   app.post("/api/plugins/install", async (request, reply) => {
     const value = z.object({ sourcePath: z.string().min(1).max(4096) }).parse(request.body);
@@ -459,7 +470,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(201).send(store.createConnection(value));
   });
   app.patch<{ Params: { id: string } }>("/api/connections/:id", async (request) => {
-    const value = connectionInputSchema.partial().parse(request.body);
+    const value = connectionInputPatchSchema.parse(request.body);
     const result = store.updateConnection(request.params.id, value);
     if (!result) throw new StoreError("connection_not_found", "连接不存在");
     return result;
@@ -480,13 +491,25 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string } }>("/api/connections/:id/test", async (request) => {
     const connection = store.getConnection(request.params.id);
     if (!connection) throw new StoreError("connection_not_found", "连接不存在");
-    const models = await adapterFor(connection.protocol).listModels(connection, AbortSignal.timeout(15_000));
+    if (connection.providerId === "stability") return { ok: true, modelsFound: 0 };
+    const models = await adapterFor(connection.protocol).listModels(
+      connection,
+      AbortSignal.timeout(15_000),
+      providerRequestContextForConversation(connection.id, "models")
+    );
     return { ok: true, modelsFound: models.length };
   });
   app.post<{ Params: { id: string } }>("/api/connections/:id/models/discover", async (request) => {
     const connection = store.getConnection(request.params.id);
     if (!connection) throw new StoreError("connection_not_found", "连接不存在");
-    const discovered = await adapterFor(connection.protocol).listModels(connection, AbortSignal.timeout(15_000));
+    if (connection.providerId === "stability") {
+      return { discovered: 0, created: [], updated: [], skipped: 0, unmatched: 0, warnings: ["Stability 图片模型需要手动添加模型标识"] };
+    }
+    const discovered = await adapterFor(connection.protocol).listModels(
+      connection,
+      AbortSignal.timeout(15_000),
+      providerRequestContextForConversation(connection.id, "models")
+    );
     const enrichment = await modelCatalog.enrich(connection, discovered);
     const created: ModelDto[] = [];
     const updated: ModelDto[] = [];
@@ -640,6 +663,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (taskManager.hasNonterminalForConversation(request.params.id)) {
       throw new StoreError("conversation_tasks_active", "请先停止该会话的后台任务，再删除会话");
     }
+    if (imageJobs.hasActiveForConversation(request.params.id)) {
+      throw new StoreError("conversation_image_tasks_active", "请先停止该会话的图片任务，再删除会话");
+    }
     if (!store.deleteConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     await imageService.scheduleAttachmentWorkspaceCleanup(request.params.id);
     return reply.code(204).send();
@@ -688,6 +714,36 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request) => {
     if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return store.listMessages(request.params.id);
+  });
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/image-generations", async (request) => {
+    if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
+    return store.listImageGenerationJobs(request.params.id);
+  });
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/image-generations", async (request, reply) => {
+    const input = imageGenerationInputSchema.parse(request.body);
+    const job = imageJobs.create({ conversationId: request.params.id, input });
+    imageJobs.start(job.id);
+    return reply.code(202).send(job);
+  });
+  app.get<{ Params: { id: string } }>("/api/image-generations/:id", async (request) => {
+    const job = store.getImageGenerationJob(request.params.id);
+    if (!job) throw new StoreError("image_generation_not_found", "图片生成任务不存在");
+    return job;
+  });
+  app.post<{ Params: { id: string } }>("/api/image-generations/:id/cancel", async (request) => {
+    return imageJobs.cancel(request.params.id);
+  });
+  app.post<{ Params: { id: string } }>("/api/image-generations/:id/retry", async (request, reply) => {
+    const previous = store.getImageGenerationJob(request.params.id);
+    if (!previous) throw new StoreError("image_generation_not_found", "图片生成任务不存在");
+    if (previous.status !== "failed" && previous.status !== "cancelled") {
+      throw new StoreError("image_generation_not_retryable", "当前图片任务不能重试");
+    }
+    const input = store.getImageGenerationInput(previous.id);
+    if (!input) throw new StoreError("image_generation_config_invalid", "图片生成请求已损坏");
+    const job = imageJobs.create({ conversationId: previous.conversationId, input });
+    imageJobs.start(job.id);
+    return reply.code(202).send(job);
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
     if (store.isConversationBusy(request.params.id)) throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
@@ -848,6 +904,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.addHook("onClose", async () => {
     runner.stopAll();
+    await imageJobs.close();
     await taskManager.close();
     registry.close();
     await closeMcpManager(store);

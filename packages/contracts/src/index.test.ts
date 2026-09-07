@@ -105,7 +105,7 @@ describe("contract schemas", () => {
       secretHeaders: { "X-Key": "secret" }, ignored: true
     });
     expect(parsed).toEqual({
-      name: "Local", protocol: "openai-chat", baseUrl: "https://example.test/v1",
+      name: "Local", providerId: "custom", protocol: "openai-chat", baseUrl: "https://example.test/v1",
       secretHeaders: { "X-Key": "secret" }
     });
     for (const input of [
@@ -113,8 +113,13 @@ describe("contract schemas", () => {
       { name: "x", protocol: "bad", baseUrl: "https://x.test" },
       { name: "x", protocol: "openai-chat", baseUrl: "not a url" },
       { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", apiKey: "x".repeat(4097) },
-      { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } }
+      { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } },
+      { name: "x", providerId: "anthropic", protocol: "openai-chat", baseUrl: "https://x.test" },
+      { name: "x", providerId: "openai", protocol: "anthropic-messages", baseUrl: "https://x.test" }
     ]) expect(connectionInputSchema.safeParse(input).success).toBe(false);
+    expect(connectionInputSchema.parse({
+      name: "OpenCode", providerId: "opencode-go", protocol: "anthropic-messages", baseUrl: "https://opencode.ai/zen/go/v1"
+    }).providerId).toBe("opencode-go");
   });
 
   it("validates optional same-origin balance configuration", () => {
@@ -192,8 +197,8 @@ describe("contract schemas", () => {
     expect(toolApprovalInputSchema.parse({ approved: false, reason: "no" })).toEqual({ approved: false, reason: "no" });
     expect(toolApprovalInputSchema.safeParse({ approved: "yes" }).success).toBe(false);
     expect(toolApprovalInputSchema.safeParse({ approved: true, reason: "x".repeat(2001) }).success).toBe(false);
-    expect(toolSettingsInputSchema.parse({ search: { baseUrl: "" } })).toEqual({ search: { baseUrl: "" } });
-    expect(toolSettingsInputSchema.safeParse({ search: { baseUrl: "bad" } }).success).toBe(false);
+    expect(toolSettingsInputSchema.parse({ workspaceShellEnabled: true })).toEqual({ workspaceShellEnabled: true });
+    expect(toolSettingsInputSchema.parse({ search: { baseUrl: "" } })).toEqual({});
     expect(toolSettingsInputSchema.safeParse({ enabled: { tool: "yes" } }).success).toBe(false);
     expect(mcpServerInputSchema.parse({ name: "Server1", url: "https://mcp.test" }))
       .toEqual({ name: "Server1", url: "https://mcp.test", headers: {}, enabled: true });

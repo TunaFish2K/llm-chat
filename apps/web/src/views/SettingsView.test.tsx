@@ -92,7 +92,6 @@ describe("SettingsView", () => {
     const description = "A long tool description with every detail preserved in the read-only dialog.";
     vi.spyOn(endpoints, "toolSettings").mockResolvedValue({
       enabled: { long_tool: true },
-      search: { baseUrl: "", hasApiKey: false },
       workspaceShellEnabled: true,
       workspacePath: "/a/very/long/workspace/path",
       skillsPath: "/a/very/long/skills/path"
@@ -252,6 +251,7 @@ describe("SettingsView", () => {
 
     await waitFor(() => expect(create).toHaveBeenCalledWith({
       name: "OpenAI",
+      providerId: "custom",
       protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "secret-key",
@@ -260,6 +260,39 @@ describe("SettingsView", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument());
     expect(screen.getByText("OpenAI")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "手动添加模型" })).toBeEnabled();
+  });
+
+  it("discovers models automatically for a preset provider after saving", async () => {
+    const user = userEvent.setup();
+    const connection = makeConnection({
+      name: "OpenAI",
+      providerId: "openai",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1"
+    });
+    const create = vi.spyOn(endpoints, "createConnection").mockResolvedValue(connection);
+    const discover = vi.spyOn(endpoints, "discoverModels").mockResolvedValue({
+      discovered: 2, created: [], updated: [], skipped: 0, unmatched: 0, warnings: []
+    });
+    vi.spyOn(endpoints, "connections").mockResolvedValue([connection]);
+    vi.spyOn(endpoints, "models").mockResolvedValue([]);
+    appStore.set({ connections: [], models: [], toasts: [] });
+    render(<SettingsView section="connections" />);
+
+    await user.click(screen.getByRole("button", { name: "新建连接" }));
+    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
+    await user.type(screen.getByLabelText("API Key"), "secret-key");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      name: "OpenAI",
+      providerId: "openai",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "secret-key"
+    })));
+    await waitFor(() => expect(discover).toHaveBeenCalledWith(connection.id));
+    expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument();
   });
 
   it("keeps the connection editor open when creation fails", async () => {

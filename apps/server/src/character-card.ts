@@ -159,6 +159,7 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
       } : null,
       contextPolicy: agent.execution.contextPolicy,
       reasoningEffort: agent.execution.reasoningEffort,
+      search: agent.execution.search,
       generation: agent.execution.generation,
       tools: agent.execution.tools,
       enabledSkillIds: agent.execution.enabledSkillIds,

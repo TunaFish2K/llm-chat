@@ -391,6 +391,72 @@ test.describe("会话与流式生成", () => {
 });
 
 test.describe("Agent 管理", () => {
+  test("每个 Agent 只绑定一个搜索服务并按 Agent 保存密钥", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖 Agent 搜索配置");
+    const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`搜索配置-${unique()}`));
+    try {
+      await gotoPath(page, `/agents/${agent.id}`);
+      await page.getByRole("tab", { name: "工具" }).click();
+      const searchProvider = page.getByLabel("搜索服务", { exact: true });
+      await expect(searchProvider).toHaveValue("searxng");
+      await searchProvider.selectOption("tavily");
+      await page.getByLabel("搜索 API Key").fill("tvly-e2e-secret");
+      await page.getByRole("button", { name: "保存修改" }).click();
+      await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
+
+      const saved = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
+      expect(saved.execution.search).toEqual({ provider: "tavily", baseUrl: "" });
+      expect(saved.searchApiKeyConfigured).toBe(true);
+      expect(JSON.stringify(saved)).not.toContain("tvly-e2e-secret");
+      const catalog = await api(request, APP_URL, "GET", `/api/tools/catalog?agentId=${agent.id}`);
+      expect(catalog.find((item) => item.name === "search_web")).toMatchObject({ available: true });
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`).catch(() => {});
+    }
+  });
+
+  test("长表格保持在消息区域内并使用横向滚动", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖表格布局");
+    const provider = await startMockProvider({
+      responseText: `| 项目 | 详情 |\n| --- | --- |\n| A | ${"long-value-".repeat(30)} |\n\n表格后面的内容。`
+    });
+    let agentId = null;
+    try {
+      const connection = await api(request, APP_URL, "POST", "/api/connections", {
+        name: `table-${unique()}`, protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {}
+      });
+      const discovery = await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`);
+      const model = discovery.created[0];
+      await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
+      const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`表格-${unique()}`, model.id));
+      agentId = agent.id;
+
+      await page.goto(APP_URL);
+      await page.getByLabel("选择 Agent").selectOption(agent.id);
+      await page.getByLabel("输入消息").fill("输出表格");
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+      const table = page.locator(".markdown table").last();
+      await expect(table).toBeVisible();
+      const metrics = await table.evaluate((element) => {
+        const wrapper = element.closest('[data-streamdown="table-wrapper"]');
+        const scroller = element.parentElement;
+        const markdown = element.closest(".markdown");
+        const blocks = markdown ? [...markdown.children].map((child) => child.getBoundingClientRect()) : [];
+        return {
+          overflowX: scroller ? getComputedStyle(scroller).overflowX : "",
+          pageFits: document.documentElement.scrollWidth <= window.innerWidth + 1,
+          blocksDoNotOverlap: blocks.every((rect, index) => index === 0 || rect.top >= blocks[index - 1]!.bottom - 1)
+        };
+      });
+      expect(metrics).toEqual({ overflowX: "auto", pageFits: true, blocksDoNotOverlap: true });
+    } finally {
+      if (agentId) await api(request, APP_URL, "DELETE", `/api/agents/${agentId}`).catch(() => {});
+      await provider.close();
+    }
+  });
+
   test("角色扮演预设和全屏长文本编辑在宽窄视口可用", async ({ page, request }) => {
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`角色预设-${unique()}`));
     try {

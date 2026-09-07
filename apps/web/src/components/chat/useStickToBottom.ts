@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
-/** Distance from the bottom that still counts as "reading the latest message". */
-const AT_BOTTOM_SLACK = 96;
-
 export interface StickToBottom {
   ref: RefObject<HTMLDivElement | null>;
   /** True while the reader has scrolled away from the newest message. */
@@ -22,19 +19,25 @@ export interface StickToBottom {
 export function useStickToBottom(deps: readonly unknown[], enabled: boolean): StickToBottom {
   const ref = useRef<HTMLDivElement>(null);
   const following = useRef(true);
+  const previousScrollTop = useRef<number | null>(null);
   const [detached, setDetached] = useState(false);
 
   const reset = useCallback(() => {
     following.current = true;
+    previousScrollTop.current = null;
     setDetached(false);
   }, []);
 
   const onScroll = useCallback(() => {
     const element = ref.current;
     if (!element) return;
-    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= AT_BOTTOM_SLACK;
-    following.current = atBottom;
-    setDetached((current) => (current === !atBottom ? current : !atBottom));
+    const previous = previousScrollTop.current;
+    const movedUp = previous !== null && element.scrollTop < previous;
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+    const nextFollowing = !movedUp && atBottom;
+    previousScrollTop.current = element.scrollTop;
+    following.current = nextFollowing;
+    setDetached(!nextFollowing);
   }, []);
 
   const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
@@ -43,9 +46,11 @@ export function useStickToBottom(deps: readonly unknown[], enabled: boolean): St
     setDetached(false);
     if (!element) return;
     if (behavior === "smooth" && typeof element.scrollTo === "function") {
+      previousScrollTop.current = element.scrollTop;
       element.scrollTo({ top: element.scrollHeight, behavior });
     } else {
       element.scrollTop = element.scrollHeight;
+      previousScrollTop.current = element.scrollTop;
     }
   }, []);
 
@@ -54,6 +59,7 @@ export function useStickToBottom(deps: readonly unknown[], enabled: boolean): St
     const element = ref.current;
     if (element && following.current) {
       element.scrollTop = element.scrollHeight;
+      previousScrollTop.current = element.scrollTop;
       setDetached(false);
     }
     // The caller decides what "new content" means; usually the message array.

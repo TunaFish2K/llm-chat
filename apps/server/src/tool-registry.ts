@@ -1,4 +1,4 @@
-import type { ToolCatalogItemDto } from "@llm-chat/contracts";
+import type { AgentSearchConfig, ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { GenerationRecord, Store } from "./database";
 import type { TaskManager } from "./background-tasks";
 import type { PluginManager } from "./plugins";
@@ -8,6 +8,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import type { ImageService } from "./images";
 import type { AppTools } from "./app-tools";
+import type { ImageGenerationManager } from "./image-generation";
 
 export const SEARCH_TOOLS_NAME = "search_tools";
 
@@ -80,10 +81,15 @@ export class ToolRegistry {
     private readonly plugins: PluginManager,
     private readonly skills: SkillManager,
     private readonly images?: ImageService,
-    private readonly appTools?: AppTools
+    private readonly appTools?: AppTools,
+    private readonly imageJobs?: ImageGenerationManager
   ) {}
 
-  async tools(record?: GenerationRecord, includeUnavailable = false): Promise<ServerTool[]> {
+  async tools(
+    record?: GenerationRecord,
+    includeUnavailable = false,
+    search?: { searchConfig?: AgentSearchConfig; searchApiKey?: string }
+  ): Promise<ServerTool[]> {
     if (record && record.agentSnapshot.extensionsPinned !== true) {
       record.agentSnapshot.toolRevisions = this.plugins.activeRevisions();
       record.agentSnapshot.skillRevisions = this.skills.activeRevisions(record.agentSnapshot.execution.enabledSkillIds);
@@ -93,10 +99,15 @@ export class ToolRegistry {
     const builtins = (await buildServerTools(this.store, true, {
       taskManager: this.tasks,
       ...(this.images ? { imageService: this.images } : {}),
+      ...(this.imageJobs ? { imageManager: this.imageJobs } : {}),
       ...(record ? {
         workspacePath: record.agentSnapshot.workspacePath,
-        attachmentWorkspacePath: resolve(this.store.dataDir, "attachment-workspaces", record.conversationId)
-      } : {})
+        attachmentWorkspacePath: resolve(this.store.dataDir, "attachment-workspaces", record.conversationId),
+        searchConfig: record.agentSnapshot.execution.search,
+        searchApiKey: record.agentSnapshot.agentId
+          ? this.store.getAgentSearchSecret(record.agentSnapshot.agentId, record.agentSnapshot.execution.search.provider)
+          : ""
+      } : search ?? {})
     })).filter((tool) => tool.definition.name !== "use_skill");
     const management = this.appTools ? this.appTools.tools() : this.managementTools();
     const all = [...builtins, this.skills.tool(record), ...management, ...await this.plugins.tools(record)];
@@ -105,8 +116,12 @@ export class ToolRegistry {
       && (!policy || (policy.overrides[tool.definition.name] ?? policy.defaultEnabled)));
   }
 
-  async catalog(): Promise<ToolCatalogItemDto[]> {
-    const entries = await this.tools(undefined, true);
+  async catalog(agentId?: string): Promise<ToolCatalogItemDto[]> {
+    const agent = agentId ? this.store.getAgent(agentId) : undefined;
+    const entries = await this.tools(undefined, true, agent ? {
+      searchConfig: agent.execution.search,
+      searchApiKey: this.store.getAgentSearchSecret(agent.id, agent.execution.search.provider)
+    } : undefined);
     return Promise.all(entries.map(async (entry): Promise<ToolCatalogItemDto> => ({
       name: entry.definition.name, label: entry.label, description: entry.definition.description,
       category: entry.category, requiresApproval: await entry.requiresApproval({}), available: entry.available,

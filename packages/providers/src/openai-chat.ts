@@ -69,7 +69,7 @@ export class OpenAiChatAdapter implements ProviderAdapter {
 
     const response = await fetch(endpoint(request.connection.baseUrl, "chat/completions"), {
       method: "POST",
-      headers: headers(request.connection),
+      headers: headers(request.connection, request.requestContext),
       body: JSON.stringify(body),
       signal: request.signal
     });

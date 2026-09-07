@@ -96,7 +96,7 @@ export class ModelCatalogService {
         const fallback = fallbackModel(connection.id, connection.protocol, model.id, model.displayName);
         const entry = bestMatch(connection, model.id, entries);
         return entry
-          ? { input: applyCatalogEntry(fallback, model, entry), matched: true, catalogMetadata: catalogMetadata(entry) }
+          ? { input: applyCatalogEntry(fallback, model, entry, connection.providerId), matched: true, catalogMetadata: catalogMetadata(entry) }
           : { input: fallback, matched: false, catalogMetadata: null };
       })
     };
@@ -148,7 +148,12 @@ export class ModelCatalogService {
   }
 }
 
-function applyCatalogEntry(fallback: ModelInput, discovered: DiscoveredModel, entry: CatalogEntry): ModelInput {
+function applyCatalogEntry(
+  fallback: ModelInput,
+  discovered: DiscoveredModel,
+  entry: CatalogEntry,
+  providerId: ConnectionDto["providerId"]
+): ModelInput {
   const meta = entry.meta;
   const limit = isRecord(meta.limit) ? meta.limit : null;
   const context = limit ? positiveInteger(limit.context) : undefined;
@@ -166,6 +171,7 @@ function applyCatalogEntry(fallback: ModelInput, discovered: DiscoveredModel, en
   const capabilities: ModelCapabilities = {
     ...fallback.capabilities,
     imageInput: inputModalities.includes("image"),
+    ...(outputModalities.includes("image") ? { imageOutput: true, imageMultiple: true } : {}),
     tools: typeof meta.tool_call === "boolean" ? meta.tool_call : fallback.capabilities.tools,
     temperature: typeof meta.temperature === "boolean" ? meta.temperature : fallback.capabilities.temperature,
     reasoning,
@@ -185,12 +191,24 @@ function applyCatalogEntry(fallback: ModelInput, discovered: DiscoveredModel, en
     contextWindow: validLimits ? context : fallback.contextWindow,
     maxInputTokens: validLimits ? input ?? null : fallback.maxInputTokens,
     maxOutputTokens,
+    imageProtocol: outputModalities.includes("image") ? inferImageProtocol(providerId, discovered.id) : null,
     capabilities,
     defaultSettings: {
       common: { maxOutputTokens: Math.min(4096, maxOutputTokens), stopSequences: [] },
       protocol: {}
     }
   };
+}
+
+function inferImageProtocol(providerId: ConnectionDto["providerId"], modelKey: string): ModelInput["imageProtocol"] {
+  const normalized = modelKey.toLowerCase();
+  if (providerId === "google") return normalized.includes("imagen") ? "google-imagen" : "google-interactions";
+  if (providerId === "stability") return "stability-image";
+  if (normalized.includes("imagen")) return "google-imagen";
+  if (normalized.includes("dall-e") || normalized.includes("gpt-image") || normalized.includes("image-")) {
+    return "openai-images";
+  }
+  return null;
 }
 
 function catalogMetadata(entry: CatalogEntry): ModelCatalogMetadata {
@@ -239,7 +257,7 @@ function matchScore(entry: CatalogEntry, target: string, hints: Set<string>, off
 
 function providerKeys(connection: ConnectionDto): Set<string> {
   const result = new Set<string>();
-  for (const value of [connection.name, safeHostname(connection.baseUrl)]) {
+  for (const value of [connection.providerId, connection.name, safeHostname(connection.baseUrl)]) {
     const normalized = normalizeId(value);
     if (normalized) result.add(normalized);
     for (const part of normalized.split("-")) if (part.length >= 3) result.add(part);

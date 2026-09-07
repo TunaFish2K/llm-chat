@@ -1,7 +1,7 @@
 // Mock OpenAI-compatible provider for E2E tests. No UI assumptions.
 import { createServer } from "node:http";
 
-export async function startMockProvider() {
+export async function startMockProvider(options = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -24,8 +24,12 @@ export async function startMockProvider() {
         });
         const deltas = [
           { choices: [{ index: 0, delta: { reasoning_content: "先想一下。" } }] },
-          { choices: [{ index: 0, delta: { content: "你好，" } }] },
-          { choices: [{ index: 0, delta: { content: "这是 E2E 流式回复。" } }] },
+          ...(options.responseText
+            ? [{ choices: [{ index: 0, delta: { content: options.responseText } }] }]
+            : [
+                { choices: [{ index: 0, delta: { content: "你好，" } }] },
+                { choices: [{ index: 0, delta: { content: "这是 E2E 流式回复。" } }] }
+              ]),
           {
             choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
             usage: {

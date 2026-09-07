@@ -142,10 +142,12 @@ describe("ChatView", () => {
     Object.defineProperties(scroll, {
       scrollHeight: { configurable: true, value: 1_200 },
       clientHeight: { configurable: true, value: 400 },
-      scrollTop: { configurable: true, value: 200, writable: true }
+      scrollTop: { configurable: true, value: 800, writable: true }
     });
     const scrollTo = vi.fn();
     Object.defineProperty(scroll, "scrollTo", { configurable: true, value: scrollTo });
+    fireEvent.scroll(scroll);
+    scroll.scrollTop = 799;
     fireEvent.scroll(scroll);
     expect(await screen.findByRole("button", { name: "回到最新消息" })).toBeVisible();
 
@@ -159,7 +161,7 @@ describe("ChatView", () => {
     appStore.set({ messages: { "conv-1": updated } });
     expect(await screen.findByText("新的流式内容")).toBeInTheDocument();
     expect(scrollTo).not.toHaveBeenCalled();
-    expect(scroll.scrollTop).toBe(200);
+    expect(scroll.scrollTop).toBe(799);
 
     fireEvent.click(screen.getByRole("button", { name: "回到最新消息" }));
     expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: "smooth" });
