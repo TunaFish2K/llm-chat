@@ -13,6 +13,7 @@ import { StoreError, type GenerationRecord, type Store } from "./database";
 import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
 import type { PreparedImages } from "./vision";
+import { providerRequestContext } from "./provider-context";
 
 type Subscriber = (event: GenerationEvent) => void;
 const schemaValidator = new Ajv({ allErrors: true, strict: false });
@@ -51,7 +52,13 @@ export interface GenerationRunnerDependencies {
 const defaultDependencies: GenerationRunnerDependencies = {
   buildContext,
   prepareImages: async () => new Map(),
-  buildTools: (store, record) => buildServerTools(store, false, { workspacePath: record.agentSnapshot.workspacePath }),
+  buildTools: (store, record) => buildServerTools(store, false, {
+    workspacePath: record.agentSnapshot.workspacePath,
+    searchConfig: record.agentSnapshot.execution.search,
+    searchApiKey: record.agentSnapshot.agentId
+      ? store.getAgentSearchSecret(record.agentSnapshot.agentId, record.agentSnapshot.execution.search.provider)
+      : ""
+  }),
   memoryPrompt: toolSystemPrompt,
   runtimePrompt: () => "",
   stream: (protocol, request) => adapterFor(protocol).stream(request),
@@ -155,6 +162,7 @@ export class GenerationRunner {
     }
     const connection: ProviderConnection = {
       id: secretConnection.id,
+      providerId: secretConnection.providerId,
       protocol: secretConnection.protocol,
       baseUrl: secretConnection.baseUrl,
       apiKey: secretConnection.apiKey,
@@ -266,6 +274,7 @@ export class GenerationRunner {
           tools: [...stepToolMap.values()].map((tool) => tool.definition),
           settings: record.settings,
           capabilities: model.capabilities,
+          requestContext: providerRequestContext(record, `step-${stepIndex}`),
           signal: job.controller.signal
         })) {
           if (event.type === "block") {

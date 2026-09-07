@@ -143,6 +143,7 @@ describe("BalanceService", () => {
 function connection(): BalanceConnection {
   return {
     id: "connection",
+    providerId: "custom",
     protocol: "openai-chat",
     baseUrl: "https://user:password@provider.test/v1",
     apiKey: "api-secret",

@@ -90,7 +90,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
 
     const response = await fetch(endpoint(request.connection.baseUrl, "responses"), {
       method: "POST",
-      headers: headers(request.connection),
+      headers: headers(request.connection, request.requestContext),
       body: JSON.stringify(body),
       signal: request.signal
     });

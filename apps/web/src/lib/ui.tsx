@@ -60,18 +60,48 @@ export function Field({
   );
 }
 
+export function Switch({
+  label,
+  checked,
+  disabled = false,
+  hideLabel = false,
+  onChange
+}: {
+  label: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  hideLabel?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`switch-control${disabled ? " disabled" : ""}`}>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="switch-track" aria-hidden="true"><span /></span>
+      <span className={hideLabel ? "sr-only" : "switch-label"}>{label}</span>
+    </label>
+  );
+}
+
 export function Modal({
   title,
   onClose,
   children,
   footer,
-  wide
+  wide,
+  fullscreen
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  fullscreen?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -129,7 +159,7 @@ export function Modal({
       }}
     >
       <div
-        className={wide ? "modal wide" : "modal"}
+        className={`modal${wide ? " wide" : ""}${fullscreen ? " fullscreen" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

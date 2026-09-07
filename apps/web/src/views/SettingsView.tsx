@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Maximize2 } from "lucide-react";
 import type {
   AppSettings,
   ContextPolicy,
@@ -18,15 +19,15 @@ import {
 } from "../lib/app-state";
 import { formatTime } from "../lib/format";
 import {
-  generationHapticsEnabled,
-  generationHapticsSupported,
-  setGenerationHapticsEnabled
+  generationHapticsSupported
 } from "../lib/haptics";
 import { linkClick, routes } from "../lib/router";
 import { useStore } from "../lib/store";
-import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Modal } from "../lib/ui";
+import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Modal, Switch } from "../lib/ui";
 import { ConnectionsView } from "./ConnectionsView";
 import { DirectoryPicker } from "../components/DirectoryPicker";
+import { OverflowText } from "../components/OverflowText";
+import { ExpandableTextarea } from "../components/ExpandableTextarea";
 
 const SECTIONS: Array<[string, string]> = [
   ["general", "通用"],
@@ -40,6 +41,17 @@ const SECTIONS: Array<[string, string]> = [
 ];
 
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
+
+function useResourceEvents(resources: string[], load: () => Promise<void>): void {
+  useEffect(() => {
+    const listener = (raw: Event) => {
+      const resource = (raw as CustomEvent<{ resource?: string }>).detail?.resource;
+      if (resource && resources.includes(resource)) void load();
+    };
+    window.addEventListener("llm-chat:resource-changed", listener);
+    return () => window.removeEventListener("llm-chat:resource-changed", listener);
+  }, [load, resources.join("\0")]);
+}
 
 export function SettingsView({ section }: { section: string }) {
   const active = SECTIONS.some(([key]) => key === section) ? section : "general";
@@ -89,7 +101,6 @@ function GeneralSection() {
   const models = useStore(appStore, (s) => s.models);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const hapticsSupported = generationHapticsSupported();
-  const [hapticsEnabled, setHapticsEnabled] = useState(() => generationHapticsEnabled());
 
   if (!settings) return <LoadingState />;
 
@@ -130,16 +141,14 @@ function GeneralSection() {
         <label className="checkbox-row">
           <input
             type="checkbox"
-            checked={hapticsEnabled}
-            disabled={!hapticsSupported}
-            onChange={(event) => {
-              setGenerationHapticsEnabled(event.target.checked);
-              setHapticsEnabled(event.target.checked);
-            }}
+            checked={settings.uiPreferences.generationHaptics}
+            onChange={(event) => patch({
+              uiPreferences: { ...settings.uiPreferences, generationHaptics: event.target.checked }
+            })}
           />
           <span className="checkbox-copy">
-            <span>生成时触感反馈</span>
-            <small>{hapticsSupported ? "仅保存在当前设备" : "当前浏览器不支持振动"}</small>
+            <span>生成时振动</span>
+            {!hapticsSupported ? <small>当前浏览器不支持振动</small> : null}
           </span>
         </label>
         <Field label="推理块折叠策略">
@@ -227,15 +236,10 @@ function GeneralSection() {
           </select>
         </Field>
         <Field label="默认系统提示">
-          <textarea
-            className="textarea"
-            aria-label="默认系统提示"
-            defaultValue={settings.defaultSystemPrompt}
-            onBlur={(event) => {
-              if (event.target.value !== settings.defaultSystemPrompt) {
-                patch({ defaultSystemPrompt: event.target.value });
-              }
-            }}
+          <ExpandableTextarea
+            label="默认系统提示"
+            value={settings.defaultSystemPrompt}
+            onChange={(value) => patch({ defaultSystemPrompt: value })}
           />
         </Field>
       </div>
@@ -255,15 +259,10 @@ function GeneralSection() {
           />
         </Field>
         <Field label="描述">
-          <textarea
-            className="textarea"
-            aria-label="用户描述"
-            defaultValue={settings.userProfile.description}
-            onBlur={(event) => {
-              if (event.target.value !== settings.userProfile.description) {
-                patch({ userProfile: { ...settings.userProfile, description: event.target.value } });
-              }
-            }}
+          <ExpandableTextarea
+            label="用户描述"
+            value={settings.userProfile.description}
+            onChange={(value) => patch({ userProfile: { ...settings.userProfile, description: value } })}
           />
         </Field>
       </div>
@@ -388,15 +387,17 @@ const CATEGORY_LABELS: Record<string, string> = {
   skill: "Skill",
   mcp: "MCP",
   background: "后台",
-  plugin: "Plugin"
+  plugin: "Plugin",
+  app: "网站管理"
 };
 
 function ToolsSection() {
   const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [searchBaseUrl, setSearchBaseUrl] = useState("");
-  const [searchApiKey, setSearchApiKey] = useState("");
+  const [detail, setDetail] = useState<
+    { kind: "tool"; tool: ToolCatalogItemDto } | { kind: "text"; title: string; text: string } | null
+  >(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -404,7 +405,6 @@ function ToolsSection() {
       const [toolSettings, items] = await Promise.all([endpoints.toolSettings(), endpoints.toolCatalog()]);
       setSettings(toolSettings);
       setCatalog(items);
-      setSearchBaseUrl(toolSettings.search.baseUrl);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     }
@@ -413,6 +413,7 @@ function ToolsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["tools", "plugins", "skills", "mcp"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!settings) return <LoadingState />;
@@ -432,73 +433,50 @@ function ToolsSection() {
     <div>
       <div className="card">
         <h3>工具环境</h3>
-        <p className="small muted">
-          工作区：<span className="mono">{settings.workspacePath}</span>
-        </p>
-        <p className="small muted">
-          Skill 目录：<span className="mono">{settings.skillsPath}</span>
-        </p>
-        <label className="checkbox-row">
-          <input
-            type="checkbox"
-            checked={settings.workspaceShellEnabled}
-            onChange={(event) => {
-              setSettings({ ...settings, workspaceShellEnabled: event.target.checked });
+        <div className="environment-value">
+          <span>工作区：</span>
+          <OverflowText
+            text={settings.workspacePath}
+            label="查看完整工作区路径"
+            className="mono"
+            onOpen={() => setDetail({ kind: "text", title: "工作区路径", text: settings.workspacePath })}
+          />
+        </div>
+        <div className="environment-value">
+          <span>Skill 目录：</span>
+          <OverflowText
+            text={settings.skillsPath}
+            label="查看完整 Skill 目录路径"
+            className="mono"
+            onOpen={() => setDetail({ kind: "text", title: "Skill 目录路径", text: settings.skillsPath })}
+          />
+        </div>
+        <Switch
+          label="启用工作区 Shell 工具"
+          checked={settings.workspaceShellEnabled}
+          onChange={(checked) => {
+              setSettings({ ...settings, workspaceShellEnabled: checked });
               endpoints
-                .updateToolSettings({ workspaceShellEnabled: event.target.checked })
+                .updateToolSettings({ workspaceShellEnabled: checked })
                 .catch((cause) => {
                   toastError(cause);
                   void load();
                 });
-            }}
-          />
-          启用工作区 Shell 工具
-        </label>
-      </div>
-
-      <div className="card">
-        <h3>搜索配置</h3>
-        <Field label="搜索服务 Base URL" hint="留空则禁用网页搜索。">
-          <input
-            className="input mono"
-            aria-label="搜索服务 Base URL"
-            value={searchBaseUrl}
-            onChange={(event) => setSearchBaseUrl(event.target.value)}
-            onBlur={() => {
-              if (searchBaseUrl !== settings.search.baseUrl) {
-                endpoints
-                  .updateToolSettings({ search: { baseUrl: searchBaseUrl } })
-                  .then(() => toast("success", "搜索配置已保存"))
-                  .catch(toastError);
-              }
-            }}
-          />
-        </Field>
-        <Field label="搜索 API Key" hint={settings.search.hasApiKey ? "已配置；留空保持不变。" : "可选。"}>
-          <input
-            className="input mono"
-            type="password"
-            aria-label="搜索 API Key"
-            value={searchApiKey}
-            onChange={(event) => setSearchApiKey(event.target.value)}
-            onBlur={() => {
-              if (searchApiKey) {
-                endpoints
-                  .updateToolSettings({ search: { baseUrl: searchBaseUrl, apiKey: searchApiKey } })
-                  .then(() => {
-                    setSearchApiKey("");
-                    toast("success", "搜索 API Key 已保存");
-                  })
-                  .catch(toastError);
-              }
-            }}
-          />
-        </Field>
+          }}
+        />
       </div>
 
       <div className="card">
         <h3>工具目录</h3>
-        <table className="table">
+        <table className="table tool-catalog-table">
+          <colgroup>
+            <col className="tool-col-main" />
+            <col className="tool-col-category" />
+            <col className="tool-col-source" />
+            <col className="tool-col-approval" />
+            <col className="tool-col-state" />
+            <col className="tool-col-enabled" />
+          </colgroup>
           <thead>
             <tr>
               <th>工具</th>
@@ -510,45 +488,110 @@ function ToolsSection() {
             </tr>
           </thead>
           <tbody>
-            {catalog.map((tool) => (
-              <tr key={tool.name}>
-                <td>
-                  <div>{tool.label}</div>
-                  <div className="small muted mono">{tool.name}</div>
-                  <div className="small muted">{tool.description}</div>
-                </td>
-                <td>{CATEGORY_LABELS[tool.category] ?? tool.category}</td>
-                <td>
-                  {tool.sourceName ?? tool.sourceKind ?? "内置"}
-                  {tool.revision ? <div className="small muted mono">{tool.revision.slice(0, 10)}</div> : null}
-                </td>
-                <td>{tool.approvalMode === "always" ? "每次审批" : tool.approvalMode === "never" ? "免审批" : "动态"}</td>
-                <td>
-                  {tool.operationalState === "error" ? (
-                    <span className="tag err" title={tool.error ?? ""}>
-                      错误
-                    </span>
-                  ) : tool.available ? (
-                    <span className="tag ok">可用</span>
-                  ) : (
-                    <span className="tag">不可用</span>
-                  )}
-                </td>
-                <td>
-                  <input
-                    type="checkbox"
-                    aria-label={`启用工具 ${tool.label}`}
-                    checked={settings.enabled[tool.name] ?? true}
-                    disabled={!tool.available}
-                    onChange={(event) => toggleTool(tool.name, event.target.checked)}
-                  />
-                </td>
-              </tr>
-            ))}
+            {catalog.map((tool) => {
+              const source = tool.sourceName ?? tool.sourceKind ?? "内置";
+              return (
+                <tr key={tool.name}>
+                  <td className="tool-summary-cell">
+                    <button
+                      type="button"
+                      className="catalog-summary-trigger"
+                      aria-label={`查看工具 ${tool.label} 的完整信息`}
+                      aria-haspopup="dialog"
+                      onClick={() => setDetail({ kind: "tool", tool })}
+                    >
+                      <span className="catalog-summary-label">{tool.label}</span>
+                      <span className="catalog-summary-id mono">{tool.name}</span>
+                      <span className="catalog-summary-description">{tool.description || "无描述"}</span>
+                      <Maximize2 className="catalog-summary-icon" size={13} aria-hidden="true" />
+                    </button>
+                  </td>
+                  <td className="tool-meta-cell" data-label="分类">
+                    {CATEGORY_LABELS[tool.category] ?? tool.category}
+                  </td>
+                  <td className="tool-meta-cell" data-label="来源">
+                    <OverflowText
+                      text={source}
+                      label={`查看工具 ${tool.label} 的完整来源`}
+                      onOpen={() => setDetail({ kind: "tool", tool })}
+                    />
+                    {tool.revision ? <span className="tool-revision mono">{tool.revision.slice(0, 10)}</span> : null}
+                  </td>
+                  <td className="tool-meta-cell" data-label="审批">
+                    {toolApprovalLabel(tool)}
+                  </td>
+                  <td className="tool-meta-cell" data-label="状态">
+                    {tool.operationalState === "error" ? (
+                      <span className="tag err" title={tool.error ?? ""}>
+                        错误
+                      </span>
+                    ) : tool.available ? (
+                      <span className="tag ok">可用</span>
+                    ) : (
+                      <span className="tag">不可用</span>
+                    )}
+                  </td>
+                  <td className="tool-meta-cell" data-label="启用">
+                    <Switch
+                      label={`启用工具 ${tool.label}`}
+                      hideLabel
+                      checked={settings.enabled[tool.name] ?? true}
+                      disabled={!tool.available}
+                      onChange={(checked) => toggleTool(tool.name, checked)}
+                    />
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      {detail?.kind === "tool" ? (
+        <ToolDetailModal tool={detail.tool} onClose={() => setDetail(null)} />
+      ) : detail?.kind === "text" ? (
+        <TextDetailModal title={detail.title} text={detail.text} onClose={() => setDetail(null)} />
+      ) : null}
     </div>
+  );
+}
+
+function toolApprovalLabel(tool: ToolCatalogItemDto): string {
+  return tool.approvalMode === "always" ? "每次审批" : tool.approvalMode === "never" ? "免审批" : "动态";
+}
+
+function ToolDetailModal({ tool, onClose }: { tool: ToolCatalogItemDto; onClose: () => void }) {
+  const source = tool.sourceName ?? tool.sourceKind ?? "内置";
+  const state = tool.operationalState === "error" ? "错误" : tool.available ? "可用" : "不可用";
+  return (
+    <Modal title={`工具详情 · ${tool.label}`} onClose={onClose} wide>
+      <dl className="catalog-detail-grid">
+        <div><dt>工具 ID</dt><dd className="mono">{tool.name}</dd></div>
+        <div><dt>分类</dt><dd>{CATEGORY_LABELS[tool.category] ?? tool.category}</dd></div>
+        <div><dt>来源</dt><dd>{source}</dd></div>
+        <div><dt>审批</dt><dd>{toolApprovalLabel(tool)}</dd></div>
+        <div><dt>状态</dt><dd>{state}</dd></div>
+        {tool.sourceId ? <div><dt>来源 ID</dt><dd className="mono">{tool.sourceId}</dd></div> : null}
+        {tool.revision ? <div><dt>修订</dt><dd className="mono">{tool.revision}</dd></div> : null}
+      </dl>
+      <section className="catalog-detail-section">
+        <h4>描述</h4>
+        <p>{tool.description || "无描述"}</p>
+      </section>
+      {tool.error ? (
+        <section className="catalog-detail-section danger-text">
+          <h4>错误</h4>
+          <p>{tool.error}</p>
+        </section>
+      ) : null}
+    </Modal>
+  );
+}
+
+function TextDetailModal({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="catalog-detail-text mono">{text}</p>
+    </Modal>
   );
 }
 
@@ -558,7 +601,7 @@ function SkillsSection() {
   const [skills, setSkills] = useState<SkillDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installPath, setInstallPath] = useState("");
-  const [removing, setRemoving] = useState<SkillDto | null>(null);
+  const [inspecting, setInspecting] = useState<SkillDto | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -573,6 +616,7 @@ function SkillsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["skills"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!skills) return <LoadingState />;
@@ -642,11 +686,20 @@ function SkillsSection() {
                 {skill.bundled ? <span className="tag accent">内置</span> : null}
                 <span className="tag mono">{skill.revision.slice(0, 10)}</span>
               </div>
-              <div className="sub">{skill.description}</div>
-              {skill.error ? <div className="sub" style={{ color: "var(--danger)" }}>{skill.error}</div> : null}
-              {skill.requiredTools.length > 0 ? (
-                <div className="sub">依赖工具：{skill.requiredTools.join(", ")}</div>
-              ) : null}
+              <button
+                type="button"
+                className="skill-summary-trigger"
+                aria-label={`查看 Skill ${skill.name} 的完整信息`}
+                aria-haspopup="dialog"
+                onClick={() => setInspecting(skill)}
+              >
+                <span className="skill-description-summary">{skill.description || "无描述"}</span>
+                {skill.error ? <span className="skill-error-summary">{skill.error}</span> : null}
+                {skill.requiredTools.length > 0 ? (
+                  <span className="skill-tools-summary">依赖工具：{skill.requiredTools.join(", ")}</span>
+                ) : null}
+                <Maximize2 className="skill-summary-icon" size={13} aria-hidden="true" />
+              </button>
             </div>
             <div className="list-row-actions">
               <button
@@ -666,45 +719,58 @@ function SkillsSection() {
               >
                 重新加载
               </button>
-              {!skill.bundled ? (
-                <button className="btn small danger" onClick={() => setRemoving(skill)}>
-                  删除
-                </button>
-              ) : null}
             </div>
           </div>
         ))
       )}
-      {removing ? (
-        <ConfirmModal
-          title={`删除 Skill ${removing.name}`}
-          message="删除后引用该 Skill 的 Agent 将无法再使用它。"
-          confirmLabel="删除"
-          danger
-          onClose={() => setRemoving(null)}
-          onConfirm={() => {
-            const target = removing;
-            setRemoving(null);
-            endpoints
-              .removeSkill(target.id)
-              .then(load)
-              .catch(toastError);
-          }}
-        />
-      ) : null}
+      {inspecting ? <SkillDetailModal skill={inspecting} onClose={() => setInspecting(null)} /> : null}
     </div>
   );
 }
 
-function SkillStateTag({ state }: { state: SkillDto["state"] }) {
-  const labels: Record<SkillDto["state"], string> = {
+function SkillDetailModal({ skill, onClose }: { skill: SkillDto; onClose: () => void }) {
+  return (
+    <Modal title={`Skill 详情 · ${skill.name}`} onClose={onClose} wide>
+      <dl className="catalog-detail-grid">
+        <div><dt>状态</dt><dd>{skillStateLabel(skill.state)}</dd></div>
+        <div><dt>来源</dt><dd>{skill.bundled ? "内置" : "已安装"}</dd></div>
+        <div><dt>修订</dt><dd className="mono">{skill.revision}</dd></div>
+        <div className="detail-grid-wide"><dt>源目录</dt><dd className="mono">{skill.sourcePath}</dd></div>
+      </dl>
+      <section className="catalog-detail-section">
+        <h4>描述</h4>
+        <p>{skill.description || "无描述"}</p>
+      </section>
+      <section className="catalog-detail-section">
+        <h4>依赖工具</h4>
+        {skill.requiredTools.length > 0 ? (
+          <div className="catalog-detail-tools">
+            {skill.requiredTools.map((tool) => <code key={tool}>{tool}</code>)}
+          </div>
+        ) : <p className="muted">无</p>}
+      </section>
+      {skill.error ? (
+        <section className="catalog-detail-section danger-text">
+          <h4>错误</h4>
+          <p>{skill.error}</p>
+        </section>
+      ) : null}
+    </Modal>
+  );
+}
+
+function skillStateLabel(state: SkillDto["state"]): string {
+  return {
     loaded: "已加载",
     "pending-reload": "待重载",
     error: "错误",
     unloaded: "已卸载"
-  };
+  }[state];
+}
+
+function SkillStateTag({ state }: { state: SkillDto["state"] }) {
   const kind = state === "loaded" ? "ok" : state === "error" ? "err" : "warn";
-  return <span className={`tag ${kind}`}>{labels[state]}</span>;
+  return <span className={`tag ${kind}`}>{skillStateLabel(state)}</span>;
 }
 
 /* ---------- plugins ---------- */
@@ -729,6 +795,7 @@ function PluginsSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["plugins"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!plugins) return <LoadingState />;
@@ -959,6 +1026,7 @@ function McpSection() {
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["mcp"], load);
 
   if (error) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!servers) return <LoadingState />;

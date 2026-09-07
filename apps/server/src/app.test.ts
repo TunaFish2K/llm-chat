@@ -59,13 +59,48 @@ describe("server API", () => {
     expect(privateProxy.json()).toMatchObject({ error: { code: "image_proxy_private_address" } });
   });
 
-  it("protects password APIs with source, origin, and session checks over HTTP", async () => {
+  it("uploads arbitrary files and serves immutable, ranged downloads without trusting their MIME type", async () => {
+    const app = await testApp();
+    const bytes = Buffer.from("0123456789", "utf8");
+    const uploaded = await app.inject({
+      method: "POST",
+      url: "/api/files",
+      headers: {
+        "content-type": "application/octet-stream",
+        "x-file-name": encodeURIComponent("report.html"),
+        "x-file-type": "text/html"
+      },
+      payload: bytes
+    });
+    expect(uploaded.statusCode).toBe(201);
+    const asset = uploaded.json();
+    expect(asset).toMatchObject({ fileName: "report.html", mimeType: "text/html", kind: "file", byteSize: 10 });
+    expect(asset.url).toBe(`/api/files/${asset.id}?v=${asset.sha256}`);
+
+    const complete = await app.inject({ method: "GET", url: asset.url });
+    expect(complete.statusCode).toBe(200);
+    expect(complete.headers["content-type"]).toContain("application/octet-stream");
+    expect(complete.headers["content-disposition"]).toBe("attachment; filename*=UTF-8''report.html");
+    expect(complete.headers["x-content-type-options"]).toBe("nosniff");
+    expect(complete.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(complete.rawPayload.equals(bytes)).toBe(true);
+
+    const range = await app.inject({ method: "GET", url: asset.url, headers: { range: "bytes=2-5" } });
+    expect(range.statusCode).toBe(206);
+    expect(range.headers["content-range"]).toBe("bytes 2-5/10");
+    expect(range.body).toBe("2345");
+    const invalid = await app.inject({ method: "GET", url: asset.url, headers: { range: "bytes=99-100" } });
+    expect(invalid.statusCode).toBe(416);
+    expect(invalid.headers["content-range"]).toBe("bytes */10");
+  });
+
+  it("protects password APIs with request-source and session checks without a configured public origin", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-auth-api-"));
     dirs.push(dir);
     let initialPassword = "";
     const app = await buildApp({
       dataFile: join(dir, "test.sqlite"), logger: false, serveWeb: false,
-      authMode: "password", publicUrl: "http://192.0.2.2",
+      authMode: "password",
       authAnnounce: (message) => { initialPassword = message.match(/\d{8}/)?.[0] ?? ""; },
       skillDiscoveryRoot: join(dir, "agent-skills")
     });
@@ -81,21 +116,27 @@ describe("server API", () => {
     const missingSource = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: initialPassword } });
     expect(missingSource.statusCode).toBe(403);
     expect(missingSource.json()).toMatchObject({ error: { code: "request_header_required" } });
-    const crossOrigin = await app.inject({
-      method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
-      headers: { "x-llm-chat-request": "1", origin: "https://attacker.example" }
-    });
-    expect(crossOrigin.statusCode).toBe(403);
-    expect(crossOrigin.json()).toMatchObject({ error: { code: "origin_mismatch" } });
+    for (const fetchSite of ["cross-site", "same-site"]) {
+      const crossSite = await app.inject({
+        method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
+        headers: {
+          "x-llm-chat-request": "1",
+          "sec-fetch-site": fetchSite,
+          origin: "https://attacker.example"
+        }
+      });
+      expect(crossSite.statusCode).toBe(403);
+      expect(crossSite.json()).toMatchObject({ error: { code: "cross_site_request_rejected" } });
+    }
     const wrong = await app.inject({
       method: "POST", url: "/api/auth/login", payload: { password: "00000000" },
-      headers: { "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { "x-llm-chat-request": "1", "sec-fetch-site": "same-origin", origin: "http://localhost:3000" }
     });
     expect(wrong.statusCode).toBe(401);
     expect(wrong.json()).toMatchObject({ error: { code: "password_invalid" } });
     const login = await app.inject({
       method: "POST", url: "/api/auth/login", payload: { password: initialPassword },
-      headers: { "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { "x-llm-chat-request": "1", "sec-fetch-site": "same-origin", origin: "http://127.0.0.1:3000" }
     });
     expect(login.statusCode).toBe(200);
     expect(login.headers["set-cookie"]).toContain("llm_chat_session=");
@@ -106,12 +147,12 @@ describe("server API", () => {
     expect(authenticated.statusCode).toBe(200);
     const tooShort = await app.inject({
       method: "PUT", url: "/api/auth/password", payload: { password: "short" },
-      headers: { cookie, "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { cookie, "x-llm-chat-request": "1", origin: "http://chat.internal" }
     });
     expect(tooShort.statusCode).toBe(400);
     const changed = await app.inject({
       method: "PUT", url: "/api/auth/password", payload: { password: "new-password-123" },
-      headers: { cookie, "x-llm-chat-request": "1", origin: "http://192.0.2.2" }
+      headers: { cookie, "x-llm-chat-request": "1", origin: "http://chat.internal" }
     });
     expect(changed.statusCode).toBe(200);
     const changedSetCookie = changed.headers["set-cookie"]!;
@@ -383,7 +424,11 @@ describe("server API", () => {
     const edited = editedResponse.json();
     expect(edited.conversation.forkedFrom).toEqual({
       conversationId: started.conversation.id,
-      messageId: sourceUser.id
+      messageId: sourceUser.id,
+      messageOrdinal: sourceUser.ordinal,
+      mode: "edit",
+      greetingIndex: null,
+      sourceGreetingIndex: null
     });
     expect(edited.generation).toMatchObject({ generationId: expect.any(String) });
     await waitForGeneration(app, edited.generation.generationId);
@@ -673,12 +718,77 @@ describe("server API", () => {
     } });
     expect(createdResponse.statusCode).toBe(201);
     const created = createdResponse.json();
+    expect(created).toMatchObject({ roleplay: { enabled: false }, roleplayEnabled: false });
     const updated = (await app.inject({ method: "PATCH", url: `/api/agents/${created.id}`, payload: {
       userProfile: { displayName: "Lee" }
     } })).json();
     expect(updated).toMatchObject({ revision: 2, userProfile: { displayName: "Lee" } });
+    const searchConfigured = await app.inject({
+      method: "PATCH", url: `/api/agents/${created.id}`,
+      payload: { execution: { ...updated.execution, search: { provider: "tavily", baseUrl: "" } } }
+    });
+    expect(searchConfigured.statusCode).toBe(200);
+    const searchSecret = await app.inject({
+      method: "PATCH", url: `/api/agents/${created.id}/search-secret`,
+      payload: { provider: "tavily", apiKey: "tvly-test-secret" }
+    });
+    expect(searchSecret.json()).toEqual({ provider: "tavily", hasApiKey: true });
+    expect(JSON.stringify((await app.inject({ method: "GET", url: `/api/agents/${created.id}` })).json()))
+      .not.toContain("tvly-test-secret");
+    expect((await app.inject({ method: "GET", url: `/api/tools/catalog?agentId=${created.id}` })).json())
+      .toEqual(expect.arrayContaining([expect.objectContaining({ name: "search_web", available: true })]));
 
+    const presetImport = await app.inject({
+      method: "POST",
+      url: `/api/agents/${created.id}/roleplay/presets/import`,
+      payload: {
+        fileName: "story.json",
+        dataBase64: Buffer.from(JSON.stringify({
+          name: "Story preset",
+          prompts: [{ identifier: "chatHistory", name: "History", role: "system", content: "" }]
+        })).toString("base64")
+      }
+    });
+    expect(presetImport.statusCode).toBe(201);
+    expect(presetImport.json().roleplay.presets.at(-1)).toMatchObject({
+      name: "Story preset",
+      importedFrom: "sillytavern"
+    });
+    const conversation = (await app.inject({
+      method: "POST", url: "/api/conversations", payload: { agentId: created.id }
+    })).json();
+    const initialRoleplay = (await app.inject({
+      method: "GET", url: `/api/conversations/${conversation.id}/roleplay-state`
+    })).json();
+    const changedRoleplay = await app.inject({
+      method: "PATCH",
+      url: `/api/conversations/${conversation.id}/roleplay-state`,
+      payload: { authorNote: "Use a quiet tone", variables: { chapter: 3 } }
+    });
+    expect(changedRoleplay.json()).toEqual(expect.objectContaining({
+      ...initialRoleplay,
+      authorNote: "Use a quiet tone",
+      variables: { chapter: 3 }
+    }));
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const configured = app.store.getAgent(created.id)!;
+    app.store.updateAgent(created.id, { roleplay: { ...configured.roleplay, enabled: true } });
+    const script = await app.inject({
+      method: "POST", url: `/api/conversations/${conversation.id}/roleplay-scripts/execute`,
+      payload: { script: "/setvar chapter 4 | /input \"continue\"", draft: "" }
+    });
+    expect(script.statusCode).toBe(200);
+    expect(script.json()).toMatchObject({ draft: "continue", state: { variables: { chapter: 4 } }, commands: 2 });
+    const audit = await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/roleplay-scripts/audit` });
+    expect(audit.json()[0]).toMatchObject({ sourceKind: "inline", success: true, commandCount: 2 });
+
+    const roleplayAsset = await app.inject({
+      method: "POST", url: `/api/agents/${created.id}/roleplay/assets`,
+      payload: { fileName: "scene.png", mimeType: "image/png", type: "background", dataBase64: png }
+    });
+    expect(roleplayAsset.statusCode).toBe(201);
+    expect(roleplayAsset.json().roleplay.assets[0]).toMatchObject({ type: "background", name: "scene.png" });
+
     expect((await app.inject({ method: "PUT", url: `/api/agents/${created.id}/avatar`, payload: {
       fileName: "avatar.png", dataBase64: png
     } })).statusCode).toBe(200);
@@ -686,6 +796,9 @@ describe("server API", () => {
     const exported = await app.inject({ method: "GET", url: `/api/agents/${created.id}/export?format=json` });
     expect(exported.headers["content-disposition"]).toContain("attachment");
     expect(JSON.parse(exported.body).data.extensions.llm_chat).toMatchObject({ version: 1 });
+    const charx = await app.inject({ method: "GET", url: `/api/agents/${created.id}/export?format=charx` });
+    expect(charx.statusCode).toBe(200);
+    expect(charx.headers["content-type"]).toContain("application/vnd.character-card+zip");
 
     const imported = await app.inject({ method: "POST", url: "/api/agents/import", payload: {
       fileName: "mira.json", dataBase64: Buffer.from(exported.body).toString("base64")

@@ -9,7 +9,7 @@ import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, ErrorState, LoadingState, StatusTag } from "../lib/ui";
 
 export function ConversationTasksView({ conversationId, taskId }: { conversationId: string; taskId: string | null }) {
-  const eventsConnected = useStore(appStore, (s) => s.eventsConnected);
+  const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
   const runningTasks = useStore(appStore, (s) => s.runningTasksByConversation[conversationId] ?? 0);
   const [tasks, setTasks] = useState<BackgroundTaskDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
           ) : tasks.length === 0 ? (
             <EmptyState title="没有后台任务" hint="模型在生成中启动的后台命令会出现在这里。" />
           ) : (
-            <table className="table">
+            <table className="table conversation-task-table">
               <thead>
                 <tr>
                   <th>命令</th>
@@ -66,20 +66,20 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
               <tbody>
                 {tasks.map((task) => (
                   <tr key={task.id} style={task.id === taskId ? { background: "var(--accent-soft)" } : undefined}>
-                    <td>
+                    <td className="conversation-task-command" data-label="命令">
                       <button className="btn ghost small mono" onClick={() => navigate(routes.conversationTasks(conversationId, task.id))}>
                         {task.command.length > 60 ? `${task.command.slice(0, 60)}…` : task.command}
                       </button>
                     </td>
-                    <td>{task.agentName}</td>
-                    <td>
+                    <td className="conversation-task-meta" data-label="Agent">{task.agentName}</td>
+                    <td className="conversation-task-meta" data-label="状态">
                       <StatusTag status={task.status} />
                       {task.overdue ? <span className="tag warn">逾期</span> : null}
                     </td>
-                    <td>{task.mode}</td>
-                    <td>{formatTime(task.startedAt)}</td>
-                    <td>{task.exitCode ?? "—"}</td>
-                    <td>
+                    <td className="conversation-task-meta" data-label="模式">{task.mode}</td>
+                    <td className="conversation-task-meta" data-label="开始">{formatTime(task.startedAt)}</td>
+                    <td className="conversation-task-meta" data-label="退出码">{task.exitCode ?? "—"}</td>
+                    <td className="conversation-task-actions" data-label="操作">
                       {["queued", "starting", "running"].includes(task.status) ? (
                         <button className="btn small danger" onClick={() => setStopping(task)}>
                           <Square size={13} />停止
@@ -158,7 +158,7 @@ function StopTaskModal({
 }
 
 function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId: string }) {
-  const eventsConnected = useStore(appStore, (s) => s.eventsConnected);
+  const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
   const [detail, setDetail] = useState<{ task: BackgroundTaskDto; events: BackgroundTaskEventDto[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [output, setOutput] = useState("");

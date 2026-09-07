@@ -7,6 +7,111 @@ export const protocolSchema = z.enum([
 ]);
 export type ProviderProtocol = z.infer<typeof protocolSchema>;
 
+export const providerPresetIdSchema = z.enum([
+  "custom",
+  "openai",
+  "anthropic",
+  "google",
+  "stability",
+  "openrouter",
+  "deepseek",
+  "xai",
+  "mistral",
+  "moonshot",
+  "alibaba",
+  "zai",
+  "minimax",
+  "volcengine",
+  "opencode-go"
+]);
+export type ProviderPresetId = z.infer<typeof providerPresetIdSchema>;
+
+export const imageProviderProtocolSchema = z.enum([
+  "openai-images",
+  "google-imagen",
+  "google-interactions",
+  "stability-image"
+]);
+export type ImageProviderProtocol = z.infer<typeof imageProviderProtocolSchema>;
+
+export interface ProviderPresetDefinition {
+  id: ProviderPresetId;
+  label: string;
+  description: string;
+  baseUrl: string;
+  defaultProtocol: ProviderProtocol;
+  protocols: readonly ProviderProtocol[];
+  imageProtocols: readonly ImageProviderProtocol[];
+  sessionHeaders: "none" | "opencode-go";
+}
+
+export const providerPresetDefinitions: readonly ProviderPresetDefinition[] = [
+  {
+    id: "custom", label: "自定义", description: "手动配置兼容端点。", baseUrl: "",
+    defaultProtocol: "openai-responses", protocols: ["openai-responses", "openai-chat", "anthropic-messages"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "openai", label: "OpenAI", description: "OpenAI 官方 API。", baseUrl: "https://api.openai.com/v1",
+    defaultProtocol: "openai-responses", protocols: ["openai-responses", "openai-chat"], imageProtocols: ["openai-images"], sessionHeaders: "none"
+  },
+  {
+    id: "anthropic", label: "Anthropic", description: "Anthropic Messages API。", baseUrl: "https://api.anthropic.com/v1",
+    defaultProtocol: "anthropic-messages", protocols: ["anthropic-messages"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "google", label: "Google Gemini", description: "Gemini OpenAI 兼容 API。", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: ["google-imagen", "google-interactions"], sessionHeaders: "none"
+  },
+  {
+    id: "stability", label: "Stability AI", description: "Stable Image 图片生成与编辑 API。", baseUrl: "https://api.stability.ai/v2beta",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: ["stability-image"], sessionHeaders: "none"
+  },
+  {
+    id: "openrouter", label: "OpenRouter", description: "聚合多个模型提供方的 OpenAI 兼容 API。", baseUrl: "https://openrouter.ai/api/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "deepseek", label: "DeepSeek", description: "DeepSeek 官方 API。", baseUrl: "https://api.deepseek.com/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "xai", label: "xAI", description: "Grok API。", baseUrl: "https://api.x.ai/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "mistral", label: "Mistral", description: "Mistral AI API。", baseUrl: "https://api.mistral.ai/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "moonshot", label: "Moonshot / Kimi", description: "Moonshot AI OpenAI 兼容 API。", baseUrl: "https://api.moonshot.cn/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "alibaba", label: "通义千问 / DashScope", description: "DashScope OpenAI 兼容 API。", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "zai", label: "智谱 / Z.AI", description: "Z.AI OpenAI 兼容 API。", baseUrl: "https://api.z.ai/api/paas/v4",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "minimax", label: "MiniMax", description: "MiniMax OpenAI 兼容 API。", baseUrl: "https://api.minimaxi.com/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "volcengine", label: "火山方舟", description: "火山引擎方舟 OpenAI 兼容 API。", baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+    defaultProtocol: "openai-chat", protocols: ["openai-chat"], imageProtocols: [], sessionHeaders: "none"
+  },
+  {
+    id: "opencode-go", label: "OpenCode Go", description: "OpenCode Go 编程模型服务。", baseUrl: "https://opencode.ai/zen/go/v1",
+    defaultProtocol: "openai-chat", protocols: ["openai-responses", "openai-chat", "anthropic-messages"], imageProtocols: [], sessionHeaders: "opencode-go"
+  }
+] as const;
+
+export function providerPreset(id: ProviderPresetId): ProviderPresetDefinition {
+  return providerPresetDefinitions.find((item) => item.id === id) ?? providerPresetDefinitions[0]!;
+}
+
 export const contextPolicySchema = z.enum(["auto", "trim", "summarize", "full"]);
 export type ContextPolicy = z.infer<typeof contextPolicySchema>;
 
@@ -72,6 +177,11 @@ export type GenerationSettings = z.infer<typeof generationSettingsSchema>;
 export const modelCapabilitiesSchema = z.object({
   tools: z.boolean().default(true),
   imageInput: z.boolean().default(false),
+  imageOutput: z.boolean().optional(),
+  imageEdit: z.boolean().optional(),
+  imageInpaint: z.boolean().optional(),
+  imageVariation: z.boolean().optional(),
+  imageMultiple: z.boolean().optional(),
   temperature: z.boolean().default(true),
   topP: z.boolean().default(true),
   reasoning: z.boolean().default(false),
@@ -105,19 +215,39 @@ export const balanceConfigSchema = z.object({
 });
 export type BalanceConfig = z.infer<typeof balanceConfigSchema>;
 
-export const connectionInputSchema = z.object({
+const connectionInputObjectSchema = z.object({
   name: z.string().trim().min(1).max(80),
+  providerId: providerPresetIdSchema.default("custom"),
   protocol: protocolSchema,
   baseUrl: z.string().url(),
   apiKey: z.string().max(4096).optional(),
   secretHeaders: z.record(z.string(), z.string().max(4096)).default({}),
   balanceConfig: balanceConfigSchema.optional()
 });
-export type ConnectionInput = z.infer<typeof connectionInputSchema>;
+
+function validateProviderProtocol(
+  value: { providerId?: ProviderPresetId | undefined; protocol?: ProviderProtocol | undefined },
+  context: z.RefinementCtx
+): void {
+  if (!value.providerId || !value.protocol) return;
+  const preset = providerPreset(value.providerId);
+  if (!preset.protocols.includes(value.protocol)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["protocol"],
+      message: `${preset.label} 不支持 ${value.protocol} 协议`
+    });
+  }
+}
+
+export const connectionInputSchema = connectionInputObjectSchema.superRefine(validateProviderProtocol);
+export const connectionInputPatchSchema = connectionInputObjectSchema.partial().superRefine(validateProviderProtocol);
+export type ConnectionInput = z.input<typeof connectionInputSchema>;
 
 export interface ConnectionDto {
   id: string;
   name: string;
+  providerId: ProviderPresetId;
   protocol: ProviderProtocol;
   baseUrl: string;
   hasApiKey: boolean;
@@ -139,16 +269,50 @@ export const modelInputSchema = z.object({
   modelKey: z.string().trim().min(1).max(200),
   displayName: z.string().trim().min(1).max(200),
   contextWindow: z.number().int().positive().max(10_000_000).nullable(),
+  maxInputTokens: z.number().int().positive().max(10_000_000).nullable().optional(),
   maxOutputTokens: z.number().int().positive().max(1_000_000),
+  imageProtocol: imageProviderProtocolSchema.nullable().optional(),
   capabilities: modelCapabilitiesSchema,
   defaultSettings: modelSettingsSchema,
   enabled: z.boolean().default(true)
 });
 export type ModelInput = z.infer<typeof modelInputSchema>;
 
-export interface ModelDto extends ModelInput {
+export const modelCatalogPricingSchema = z.object({
+  input: z.number().nonnegative(),
+  output: z.number().nonnegative(),
+  reasoning: z.number().nonnegative().optional(),
+  cacheRead: z.number().nonnegative().optional(),
+  cacheWrite: z.number().nonnegative().optional(),
+  tiers: z.array(z.object({
+    contextTokens: z.number().int().positive().optional(),
+    input: z.number().nonnegative(),
+    output: z.number().nonnegative(),
+    cacheRead: z.number().nonnegative().optional(),
+    cacheWrite: z.number().nonnegative().optional()
+  })).default([])
+});
+
+export const modelCatalogMetadataSchema = z.object({
+  providerId: z.string().min(1).max(200),
+  modelId: z.string().min(1).max(300),
+  description: z.string().max(20_000).optional(),
+  family: z.string().max(200).optional(),
+  releaseDate: z.string().max(40).optional(),
+  inputModalities: z.array(z.string().max(40)).max(20).default([]),
+  outputModalities: z.array(z.string().max(40)).max(20).default([]),
+  reasoningEfforts: z.array(reasoningEffortSchema).max(20).default([]),
+  pricing: modelCatalogPricingSchema.optional(),
+  fetchedAt: z.number().int().nonnegative()
+});
+export type ModelCatalogMetadata = z.infer<typeof modelCatalogMetadataSchema>;
+
+export interface ModelDto extends Omit<ModelInput, "maxInputTokens"> {
   id: string;
+  maxInputTokens: number | null;
   source: "manual" | "discovered";
+  catalogManaged: boolean;
+  catalogMetadata: ModelCatalogMetadata | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -162,12 +326,30 @@ export const characterBookEntrySchema = z.object({
   case_sensitive: z.boolean().optional(),
   name: z.string().optional(),
   priority: z.number().int().optional(),
-  id: z.number().int().optional(),
+  id: z.union([z.number().int(), z.string().max(200)]).optional(),
   comment: z.string().optional(),
   selective: z.boolean().optional(),
   secondary_keys: z.array(z.string()).optional(),
   constant: z.boolean().optional(),
-  position: z.enum(["before_char", "after_char"]).optional()
+  position: z.enum([
+    "before_char",
+    "after_char",
+    "before_examples",
+    "after_examples",
+    "top_author_note",
+    "bottom_author_note",
+    "at_depth"
+  ]).optional(),
+  use_regex: z.boolean().optional(),
+  match_whole_words: z.boolean().optional(),
+  secondary_logic: z.enum(["and_any", "and_all", "not_any", "not_all"]).optional(),
+  scan_depth: z.number().int().nonnegative().max(10_000).optional(),
+  probability: z.number().min(0).max(100).optional(),
+  depth: z.number().int().nonnegative().max(10_000).optional(),
+  role: z.enum(["system", "user", "assistant"]).optional(),
+  sticky: z.number().int().nonnegative().max(10_000).optional(),
+  cooldown: z.number().int().nonnegative().max(10_000).optional(),
+  delay: z.number().int().nonnegative().max(10_000).optional()
 }).passthrough();
 export type CharacterBookEntry = z.infer<typeof characterBookEntrySchema>;
 
@@ -214,6 +396,162 @@ export const generationOverridesSchema = z.object({
 });
 export type GenerationOverrides = z.infer<typeof generationOverridesSchema>;
 
+const roleplayIdSchema = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._-]+$/);
+export const roleplayGenerationTriggerSchema = z.enum(["normal", "continue", "regenerate", "script"]);
+export type RoleplayGenerationTrigger = z.infer<typeof roleplayGenerationTriggerSchema>;
+
+export const roleplayPromptBlockSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  kind: z.enum([
+    "main",
+    "lore_before",
+    "character",
+    "lore_after",
+    "persona",
+    "examples",
+    "history",
+    "author_note",
+    "post_history",
+    "custom"
+  ]),
+  enabled: z.boolean().default(true),
+  role: z.enum(["system", "user", "assistant"]).default("system"),
+  position: z.enum(["relative", "in_chat"]).default("relative"),
+  depth: z.number().int().nonnegative().max(10_000).default(0),
+  order: z.number().int().min(-1_000_000).max(1_000_000).default(0),
+  triggers: z.array(roleplayGenerationTriggerSchema).max(4)
+    .default(["normal", "continue", "regenerate", "script"]),
+  content: z.string().max(500_000).default("")
+});
+export type RoleplayPromptBlock = z.infer<typeof roleplayPromptBlockSchema>;
+
+export const roleplayPresetSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  blocks: z.array(roleplayPromptBlockSchema).min(1).max(100),
+  generation: generationOverridesSchema.default({}),
+  importedFrom: z.enum(["native", "sillytavern"]).default("native"),
+  importWarnings: z.array(z.string().max(500)).max(200).default([]),
+  source: z.record(z.string(), z.unknown()).optional()
+});
+export type RoleplayPreset = z.infer<typeof roleplayPresetSchema>;
+
+export const agentPersonaSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(100),
+  description: z.string().max(100_000).default(""),
+  avatarAssetId: roleplayIdSchema.nullable().default(null)
+});
+export type AgentPersona = z.infer<typeof agentPersonaSchema>;
+
+export const agentLorebookSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  enabled: z.boolean().default(true),
+  book: characterBookSchema
+});
+export type AgentLorebook = z.infer<typeof agentLorebookSchema>;
+
+export const agentRegexScriptSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  enabled: z.boolean().default(false),
+  pattern: z.string().max(20_000),
+  replacement: z.string().max(200_000).default(""),
+  flags: z.string().max(10).default("gu"),
+  scopes: z.array(z.enum(["user_prompt", "assistant_prompt", "world_info", "display"])).min(1).max(4),
+  runOnEdit: z.boolean().default(false),
+  importWarning: z.string().max(500).nullable().default(null)
+});
+export type AgentRegexScript = z.infer<typeof agentRegexScriptSchema>;
+
+export const quickReplySchema = z.object({
+  id: roleplayIdSchema,
+  label: z.string().trim().min(1).max(100),
+  tooltip: z.string().max(500).default(""),
+  mode: z.enum(["insert", "send", "script"]),
+  content: z.string().max(500_000),
+  enabled: z.boolean().default(true),
+  pinned: z.boolean().default(false),
+  autoTriggers: z.array(z.enum(["new_chat", "before_send", "after_reply", "lore_activated"]))
+    .max(4).default([])
+});
+export type QuickReply = z.infer<typeof quickReplySchema>;
+
+export const agentQuickReplySetSchema = z.object({
+  id: roleplayIdSchema,
+  name: z.string().trim().min(1).max(200),
+  enabled: z.boolean().default(true),
+  replies: z.array(quickReplySchema).max(100)
+});
+export type AgentQuickReplySet = z.infer<typeof agentQuickReplySetSchema>;
+
+export const roleplayAssetSchema = z.object({
+  id: roleplayIdSchema,
+  type: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(200),
+  ext: z.string().trim().min(1).max(20),
+  uri: z.string().max(10_000),
+  mimeType: z.string().max(200).nullable().default(null),
+  hash: z.string().max(128).nullable().default(null)
+});
+export type RoleplayAsset = z.infer<typeof roleplayAssetSchema>;
+
+export const agentRoleplayConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  presets: z.array(roleplayPresetSchema).max(100).default([]),
+  defaultPresetId: roleplayIdSchema.nullable().default(null),
+  personas: z.array(agentPersonaSchema).max(100).default([]),
+  defaultPersonaId: roleplayIdSchema.nullable().default(null),
+  lorebooks: z.array(agentLorebookSchema).max(100).default([]),
+  regexScripts: z.array(agentRegexScriptSchema).max(200).default([]),
+  quickReplySets: z.array(agentQuickReplySetSchema).max(100).default([]),
+  assets: z.array(roleplayAssetSchema).max(2_000).default([])
+});
+export type AgentRoleplayConfig = z.infer<typeof agentRoleplayConfigSchema>;
+
+export const conversationRoleplayStateSchema = z.object({
+  presetId: roleplayIdSchema.nullable().default(null),
+  personaId: roleplayIdSchema.nullable().default(null),
+  authorNote: z.string().max(200_000).default(""),
+  scenarioOverride: z.string().max(200_000).default(""),
+  variables: z.record(z.string().max(200), z.union([z.string(), z.number(), z.boolean()])).default({}),
+  enabledLorebookIds: z.array(roleplayIdSchema).max(100).default([]),
+  enabledRegexScriptIds: z.array(roleplayIdSchema).max(200).default([]),
+  enabledQuickReplySetIds: z.array(roleplayIdSchema).max(100).default([]),
+  backgroundAssetId: roleplayIdSchema.nullable().default(null),
+  expressionAssetId: roleplayIdSchema.nullable().default(null)
+});
+export type ConversationRoleplayState = z.infer<typeof conversationRoleplayStateSchema>;
+
+export const conversationRoleplayStatePatchSchema = conversationRoleplayStateSchema.partial();
+export type ConversationRoleplayStatePatch = z.infer<typeof conversationRoleplayStatePatchSchema>;
+
+export const roleplayPresetImportSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  dataBase64: z.string().min(1).max(16 * 1024 * 1024)
+});
+export type RoleplayPresetImport = z.infer<typeof roleplayPresetImportSchema>;
+
+export const roleplayScriptExecutionSchema = z.object({
+  script: z.string().max(500_000).optional(),
+  quickReplyId: roleplayIdSchema.optional(),
+  trigger: z.enum(["new_chat", "before_send", "after_reply", "lore_activated"]).optional(),
+  draft: z.string().max(1_000_000).default("")
+}).refine((value) => Boolean(value.script || value.quickReplyId || value.trigger), {
+  message: "script, quickReplyId, or trigger is required"
+});
+export type RoleplayScriptExecutionInput = z.infer<typeof roleplayScriptExecutionSchema>;
+
+export interface RoleplayScriptExecutionDto {
+  draft: string;
+  sendText: string | null;
+  output: string[];
+  state: ConversationRoleplayState;
+  commands: number;
+}
+
 const toolPolicyObjectSchema = z.object({
   defaultEnabled: z.boolean().default(true),
   overrides: z.record(z.string(), z.boolean()).default({}),
@@ -231,11 +569,32 @@ export const toolPolicySchema = toolPolicyObjectSchema as z.ZodType<{
 export type ToolPolicy = z.infer<typeof toolPolicySchema>;
 export type ApprovalPolicy = "default" | "always" | "never";
 
+export const agentSearchProviderSchema = z.enum(["searxng", "tavily"]);
+export type AgentSearchProvider = z.infer<typeof agentSearchProviderSchema>;
+
+export const agentSearchConfigSchema = z.object({
+  provider: agentSearchProviderSchema.default("searxng"),
+  baseUrl: z.string().url().or(z.literal("")).default("")
+});
+export type AgentSearchConfig = z.infer<typeof agentSearchConfigSchema>;
+
+export const agentSearchSecretInputSchema = z.object({
+  provider: agentSearchProviderSchema,
+  apiKey: z.string().max(4096)
+});
+export type AgentSearchSecretInput = z.infer<typeof agentSearchSecretInputSchema>;
+
+export interface AgentSearchSecretDto {
+  provider: AgentSearchProvider;
+  hasApiKey: boolean;
+}
+
 export const agentExecutionConfigSchema = z.object({
   modelId: z.string().min(1).max(200).nullable(),
   visionModelId: z.string().min(1).max(200).nullable().default(null),
   contextPolicy: contextPolicySchema,
   reasoningEffort: reasoningEffortSchema,
+  search: agentSearchConfigSchema.default({ provider: "searxng", baseUrl: "" }),
   generation: generationOverridesSchema.default({}),
   tools: toolPolicySchema,
   enabledSkillIds: z.array(z.string().min(1).max(200)).max(500).default([]),
@@ -254,7 +613,8 @@ export type AgentUserProfileOverride = z.infer<typeof agentUserProfileOverrideSc
 export const agentInputSchema = z.object({
   card: characterCardV2Schema,
   execution: agentExecutionConfigSchema,
-  userProfile: agentUserProfileOverrideSchema.default({})
+  userProfile: agentUserProfileOverrideSchema.default({}),
+  roleplay: agentRoleplayConfigSchema.optional()
 });
 export type AgentInput = z.infer<typeof agentInputSchema>;
 
@@ -267,14 +627,19 @@ export interface AgentSummaryDto {
   hasAvatar: boolean;
   modelId: string | null;
   execution: AgentExecutionConfig;
+  searchApiKeyConfigured: boolean;
   userProfile: AgentUserProfileOverride;
   firstMessage: string;
   alternateGreetings: string[];
+  roleplayEnabled: boolean;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface AgentDto extends AgentSummaryDto, AgentInput {}
+export interface AgentDto extends AgentSummaryDto {
+  card: CharacterCardV2;
+  roleplay: AgentRoleplayConfig;
+}
 
 export const encodedFileSchema = z.object({
   fileName: z.string().trim().min(1).max(255),
@@ -305,7 +670,8 @@ export const appSettingsSchema = z.object({
   }),
   uiPreferences: z.object({
     sidebarCollapsed: z.boolean(),
-    reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"])
+    reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"]),
+    generationHaptics: z.boolean().default(true)
   }),
   lastWorkspacePath: z.string().max(4096).nullable().default(null)
 });
@@ -327,7 +693,14 @@ export interface ConversationDto {
   agentId: string | null;
   executionOverrides: ConversationExecutionOverrides;
   workspacePath: string | null;
-  forkedFrom?: { conversationId: string; messageId: string | null } | null;
+  forkedFrom?: {
+    conversationId: string;
+    messageId: string | null;
+    messageOrdinal: number | null;
+    mode: "edit" | "continue" | "greeting";
+    greetingIndex: number | null;
+    sourceGreetingIndex: number | null;
+  } | null;
   draft: string;
   createdAt: number;
   updatedAt: number;
@@ -346,6 +719,19 @@ export interface GeneratedAgentDto {
   name: string;
   revision: number;
 }
+
+export const greetingMessageSchema = z.object({
+  variants: z.array(z.string().max(200_000)).min(1).max(101),
+  activeIndex: z.number().int().nonnegative(),
+  agent: z.object({
+    agentId: z.string().uuid().nullable(),
+    name: z.string().min(1).max(200),
+    revision: z.number().int().positive()
+  })
+}).refine((value) => value.activeIndex < value.variants.length, {
+  message: "activeIndex must reference a greeting variant"
+});
+export type GreetingMessageDto = z.infer<typeof greetingMessageSchema>;
 
 export interface GenerationBlockDto {
   id: string;
@@ -389,17 +775,71 @@ export interface ToolCallDto {
   error: string | null;
   startedAt: number | null;
   completedAt: number | null;
-  artifacts: ImageAssetDto[];
+  artifacts: FileAssetDto[];
 }
 
-export interface ImageAssetDto {
+export interface FileAssetDto {
   id: string;
   fileName: string;
-  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  mimeType: string;
+  kind: "image" | "file";
   byteSize: number;
   sha256: string;
   url: string;
   createdAt: number;
+}
+
+export interface ImageAssetDto extends FileAssetDto {
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  kind: "image";
+}
+
+export const imageGenerationOperationSchema = z.enum(["generate", "edit", "inpaint", "variation"]);
+export type ImageGenerationOperation = z.infer<typeof imageGenerationOperationSchema>;
+
+export const imageGenerationJobStatusSchema = z.enum([
+  "queued", "running", "waiting-provider", "completed", "failed", "cancelled"
+]);
+export type ImageGenerationJobStatus = z.infer<typeof imageGenerationJobStatusSchema>;
+
+export const imageGenerationInputSchema = z.object({
+  modelId: z.string().uuid(),
+  prompt: z.string().trim().min(1).max(10_000),
+  operation: imageGenerationOperationSchema.default("generate"),
+  referenceAssetIds: z.array(z.string().uuid()).max(4).default([]),
+  maskAssetId: z.string().uuid().nullable().optional(),
+  negativePrompt: z.string().trim().max(10_000).optional(),
+  count: z.number().int().min(1).max(4).default(1),
+  aspectRatio: z.string().trim().max(20).optional(),
+  size: z.string().trim().max(32).optional(),
+  quality: z.enum(["auto", "low", "medium", "high"]).optional(),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).optional(),
+  seed: z.number().int().min(0).max(4_294_967_295).optional(),
+  strength: z.number().min(0).max(1).optional(),
+  providerOptions: z.record(z.string(), z.unknown()).optional()
+});
+export type ImageGenerationInput = z.infer<typeof imageGenerationInputSchema>;
+
+export interface ImageGenerationJobDto {
+  id: string;
+  conversationId: string;
+  assistantMessageId: string;
+  toolCallId: string | null;
+  modelId: string;
+  modelKey: string;
+  connectionName: string;
+  imageProtocol: ImageProviderProtocol;
+  operation: ImageGenerationOperation;
+  prompt: string;
+  status: ImageGenerationJobStatus;
+  progress: number | null;
+  providerJobId: string | null;
+  outputAssets: ImageAssetDto[];
+  revisedPrompt: string | null;
+  error: { code: string; message: string } | null;
+  createdAt: number;
+  startedAt: number | null;
+  completedAt: number | null;
 }
 
 export interface VisionAnalysisDto {
@@ -418,6 +858,7 @@ export interface VisionAnalysisDto {
 export interface GenerationDto {
   id: string;
   version: number;
+  generationKind: RoleplayGenerationTrigger;
   status: GenerationStatus;
   connectionName: string;
   protocol: ProviderProtocol;
@@ -446,23 +887,28 @@ export interface GenerationDto {
 
 export interface MessageDto {
   id: string;
+  ordinal: number;
   role: "user" | "assistant";
   text: string | null;
-  attachments: ImageAssetDto[];
+  attachments: FileAssetDto[];
   generatedModel: GeneratedModelDto | null;
   activeGenerationId: string | null;
   generations: GenerationDto[];
+  greeting: GreetingMessageDto | null;
+  imageGenerationJob?: ImageGenerationJobDto | null;
   createdAt: number;
 }
 
 const messageTextSchema = z.string().trim().max(1_000_000).default("");
 const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
+const fileAssetIdsSchema = z.array(z.string().uuid()).max(8);
 
 export const sendMessageSchema = z.object({
   text: messageTextSchema,
+  assetIds: fileAssetIdsSchema.optional(),
   imageAssetIds: imageAssetIdsSchema
-}).refine((value) => value.text.length > 0 || value.imageAssetIds.length > 0, {
-  message: "Message text or at least one image is required"
+}).refine((value) => value.text.length > 0 || (value.assetIds?.length ?? 0) > 0 || value.imageAssetIds.length > 0, {
+  message: "Message text or at least one attachment is required"
 });
 
 export const startConversationSchema = sendMessageSchema.extend({
@@ -479,16 +925,22 @@ export const forkConversationSchema = z.discriminatedUnion("mode", [
     mode: z.literal("edit"),
     messageId: z.string().uuid(),
     text: messageTextSchema,
+    assetIds: fileAssetIdsSchema.optional(),
     imageAssetIds: imageAssetIdsSchema
-  }).refine((value) => value.text.length > 0 || value.imageAssetIds.length > 0, {
-    message: "Message text or at least one image is required"
+  }).refine((value) => value.text.length > 0 || (value.assetIds?.length ?? 0) > 0 || value.imageAssetIds.length > 0, {
+    message: "Message text or at least one attachment is required"
   }),
   z.object({
     mode: z.literal("continue"),
     throughMessageId: z.string().uuid().nullable()
+  }),
+  z.object({
+    mode: z.literal("greeting"),
+    messageId: z.string().uuid(),
+    greetingIndex: z.number().int().nonnegative().max(100)
   })
 ]);
-export type ForkConversationInput = z.infer<typeof forkConversationSchema>;
+export type ForkConversationInput = z.input<typeof forkConversationSchema>;
 
 export const patchConversationSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
@@ -504,6 +956,12 @@ export const imageUploadSchema = z.object({
   dataBase64: z.string().min(1).max(7_500_000).regex(/^[A-Za-z0-9+/]*={0,2}$/)
 });
 export type ImageUploadInput = z.infer<typeof imageUploadSchema>;
+
+export const fileUploadMetadataSchema = z.object({
+  fileName: z.string().trim().min(1).max(255),
+  mimeType: z.string().trim().max(255).default("application/octet-stream")
+});
+export type FileUploadMetadata = z.infer<typeof fileUploadMetadataSchema>;
 
 export interface GenerationCreatedDto {
   userMessageId?: string;
@@ -557,17 +1015,12 @@ export const toolApprovalInputSchema = z.object({
 
 export const toolSettingsInputSchema = z.object({
   enabled: z.record(z.string(), z.boolean()).optional(),
-  search: z.object({
-    baseUrl: z.string().url().or(z.literal("")),
-    apiKey: z.string().max(4096).optional()
-  }).optional(),
   workspaceShellEnabled: z.boolean().optional()
 });
 export type ToolSettingsInput = z.infer<typeof toolSettingsInputSchema>;
 
 export interface ToolSettingsDto {
   enabled: Record<string, boolean>;
-  search: { baseUrl: string; hasApiKey: boolean };
   workspaceShellEnabled: boolean;
   workspacePath: string;
   skillsPath: string;
@@ -577,7 +1030,7 @@ export interface ToolCatalogItemDto {
   name: string;
   label: string;
   description: string;
-  category: "web" | "local" | "workspace" | "memory" | "conversation" | "skill" | "mcp" | "background" | "plugin";
+  category: "web" | "local" | "workspace" | "memory" | "conversation" | "skill" | "mcp" | "background" | "plugin" | "app";
   requiresApproval: boolean;
   available: boolean;
   approvalMode?: "always" | "never" | "dynamic";
@@ -699,7 +1152,9 @@ export type AppEvent =
   | { id: number; type: "task"; taskId: string; task: BackgroundTaskDto }
   | { id: number; type: "task-output"; taskId: string; cursor: number }
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
-  | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string };
+  | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
+  | { id: number; type: "image-generation"; jobId: string; conversationId: string; job: ImageGenerationJobDto }
+  | { id: number; type: "resource-changed"; resource: "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
 
 const mcpServerFields = {
   name: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9]+$/, "名称只能包含英文字母和数字"),

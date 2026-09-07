@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MIGRATION_V1, resolveManualThinkingBudget, Store } from "./database";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
+import { defaultRoleplayConfig } from "./roleplay";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -13,11 +14,51 @@ afterEach(() => {
 });
 
 describe("Store", () => {
+  it("stores Agent-scoped roleplay state and clones it with a conversation branch", () => {
+    const store = createStore();
+    const agentId = store.getSettings().defaultAgentId;
+    const agent = store.getAgent(agentId)!;
+    const roleplay = defaultRoleplayConfig(true);
+    roleplay.personas = [{ id: "traveler", name: "Traveler", description: "", avatarAssetId: null }];
+    roleplay.defaultPersonaId = "traveler";
+    store.updateAgent(agent.id, { roleplay });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const state = store.updateConversationRoleplayState(conversation.id, {
+      authorNote: "Keep this branch note",
+      variables: { chapter: 2 },
+      personaId: "traveler"
+    });
+    const fork = store.forkConversation(conversation.id, { mode: "continue", throughMessageId: null });
+
+    expect(state).toMatchObject({ authorNote: "Keep this branch note", variables: { chapter: 2 } });
+    expect(store.getConversationRoleplayState(fork.conversation.id)).toEqual(state);
+  });
+
   it("inserts xhigh between the existing manual Thinking budget tiers", () => {
     expect(resolveManualThinkingBudget("high", 10_000)).toBe(5_500);
     expect(resolveManualThinkingBudget("xhigh", 10_000)).toBe(6_750);
     expect(resolveManualThinkingBudget("max", 10_000)).toBe(8_000);
     expect(resolveManualThinkingBudget("xhigh", 10_000, 2_000)).toBe(4_400);
+  });
+
+  it("enables the bundled llm-chat operator for the protected default Agent", () => {
+    const store = createStore();
+    const defaultAgentId = store.getSettings().defaultAgentId!;
+    expect(store.getAgent(defaultAgentId)?.execution.enabledSkillIds).toEqual(
+      expect.arrayContaining(["command-execution-guide", "llm-chat-operator"])
+    );
+
+    const row = store.sqlite.prepare("SELECT execution_json FROM agents WHERE id = ?").get(defaultAgentId) as { execution_json: string };
+    const execution = JSON.parse(row.execution_json);
+    execution.enabledSkillIds = execution.enabledSkillIds.filter((id: string) => id !== "llm-chat-operator");
+    store.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?").run(JSON.stringify(execution), defaultAgentId);
+    store.sqlite.exec("PRAGMA user_version = 21");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+
+    const upgraded = new Store(path);
+    expect(upgraded.getAgent(defaultAgentId)?.execution.enabledSkillIds).toContain("llm-chat-operator");
+    upgraded.close();
   });
 
   it("keeps provider secrets server-only and persists UI state", () => {
@@ -78,6 +119,63 @@ describe("Store", () => {
     store.close();
   });
 
+  it("applies display regex without changing the stored generation block", () => {
+    const store = createStore();
+    seedModel(store);
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    store.updateAgent(agent.id, {
+      roleplay: {
+        ...agent.roleplay,
+        enabled: true,
+        regexScripts: [{
+          id: "hide-status", name: "Hide status", enabled: true,
+          pattern: "<status>[\\s\\S]*?</status>", replacement: "", flags: "gu",
+          scopes: ["display"], runOnEdit: false, importWarning: null
+        }]
+      }
+    });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "continue");
+    store.setGenerationRunning(created.generationId);
+    store.updateGenerationBlock(created.generationId, 1, "text", "Visible<status>private</status>", true);
+    store.finishGeneration(created.generationId, "completed", { stopReason: "stop" });
+
+    const assistant = store.listMessages(conversation.id)[1]!;
+    const active = assistant.generations.find((generation) => generation.id === assistant.activeGenerationId);
+    expect(active?.blocks[0]?.content).toBe("Visible");
+    const raw = store.sqlite.prepare(
+      "SELECT content FROM generation_blocks WHERE generation_id = ? AND block_index = 1"
+    ).get(created.generationId) as { content: string };
+    expect(raw.content).toBe("Visible<status>private</status>");
+    store.close();
+  });
+
+  it("stores generic attachment metadata and enforces per-message quotas atomically", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const files = Array.from({ length: 9 }, (_, index) => store.createFileAsset({
+      sha256: index.toString(16).padStart(64, "0"),
+      fileName: `file-${index}.bin`,
+      mimeType: "application/octet-stream",
+      kind: "file",
+      byteSize: 1,
+      storageKey: `blob-${index}`
+    }));
+    expect(() => store.createMessageGeneration(conversation.id, "too many", files.map((file) => file.id)))
+      .toThrow("最多包含 8 个");
+    expect(store.listMessages(conversation.id)).toEqual([]);
+
+    const created = store.createMessageGeneration(conversation.id, "files", files.slice(0, 2).map((file) => file.id));
+    expect(store.listMessages(conversation.id)[0]?.attachments).toEqual([
+      expect.objectContaining({ id: files[0]!.id, kind: "file", url: expect.stringMatching(/^\/api\/files\//) }),
+      expect.objectContaining({ id: files[1]!.id, kind: "file" })
+    ]);
+    expect(() => store.attachFilesToMessage(created.userMessageId!, [files[0]!.id, files[0]!.id]))
+      .toThrow("不重复附件");
+    store.close();
+  });
+
   it("forks the visible path without mutating the source conversation", () => {
     const store = createStore();
     seedModel(store);
@@ -102,7 +200,15 @@ describe("Store", () => {
     });
     const forkMessages = store.listMessages(fork.conversation.id);
 
-    expect(fork.conversation.forkedFrom).toEqual({ conversationId: conversation.id, messageId: second.userMessageId });
+    expect(fork.conversation).toMatchObject({ title: store.getConversation(conversation.id)?.title });
+    expect(fork.conversation.forkedFrom).toEqual({
+      conversationId: conversation.id,
+      messageId: second.userMessageId,
+      messageOrdinal: 3,
+      mode: "edit",
+      greetingIndex: null,
+      sourceGreetingIndex: null
+    });
     expect(fork.generation).not.toBeNull();
     expect(forkMessages.map((message) => [message.role, message.text])).toEqual([
       ["user", "第一问"], ["assistant", null], ["user", "修改后的第二问"], ["assistant", null]
@@ -118,7 +224,17 @@ describe("Store", () => {
 
     const root = store.forkConversation(conversation.id, { mode: "continue", throughMessageId: null });
     expect(root.generation).toBeNull();
+    expect(root.conversation.forkedFrom).toEqual({
+      conversationId: conversation.id,
+      messageId: null,
+      messageOrdinal: null,
+      mode: "continue",
+      greetingIndex: null,
+      sourceGreetingIndex: null
+    });
     expect(store.listMessages(root.conversation.id)).toEqual([]);
+    expect(store.deleteConversation(conversation.id)).toBe(true);
+    expect(store.listConversations()).toEqual([]);
     store.close();
   });
 
@@ -161,6 +277,168 @@ describe("Store", () => {
     store.close();
   });
 
+  it("snapshots alternate greetings and switches them through an immutable root branch", () => {
+    const store = createStore();
+    const { model } = seedModel(store);
+    const settings = store.getSettings();
+    const agent = store.getAgent(settings.defaultAgentId)!;
+    const updated = store.updateAgent(agent.id, {
+      card: {
+        ...agent.card,
+        data: {
+          ...agent.card.data,
+          first_mes: "你好，{{user}}。",
+          alternate_greetings: ["欢迎来到 {{char}} 的世界。"]
+        }
+      }
+    })!;
+    store.updateSettings({ userProfile: { displayName: "旅行者", description: "" } });
+
+    const started = store.startConversation({
+      text: "开始",
+      agentId: updated.id,
+      greetingIndex: 1,
+      executionOverrides: { modelId: model.id },
+      workspacePath: null
+    });
+    store.finishGeneration(started.generation.generationId, "completed", { stopReason: "stop" });
+    const sourceGreeting = store.listMessages(started.conversation.id)[0]!;
+    expect(sourceGreeting).toMatchObject({
+      role: "assistant",
+      text: "欢迎来到 默认助手 的世界。",
+      greeting: {
+        activeIndex: 1,
+        variants: ["你好，旅行者。", "欢迎来到 默认助手 的世界。"],
+        agent: { agentId: updated.id, revision: updated.revision }
+      }
+    });
+
+    const fork = store.forkConversation(started.conversation.id, {
+      mode: "greeting",
+      messageId: sourceGreeting.id,
+      greetingIndex: 0
+    });
+    expect(fork.generation).toBeNull();
+    expect(fork.conversation.forkedFrom).toEqual({
+      conversationId: started.conversation.id,
+      messageId: sourceGreeting.id,
+      messageOrdinal: 1,
+      mode: "greeting",
+      greetingIndex: 0,
+      sourceGreetingIndex: 1
+    });
+    expect(store.listMessages(fork.conversation.id)).toEqual([
+      expect.objectContaining({ text: "你好，旅行者。", greeting: expect.objectContaining({ activeIndex: 0 }) })
+    ]);
+    expect(store.listMessages(started.conversation.id)).toHaveLength(3);
+    store.close();
+  });
+
+  it("backfills stable branch metadata when migrating a v22 database", () => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const first = store.createMessageGeneration(conversation.id, "原问题");
+    store.finishGeneration(first.generationId, "completed", { stopReason: "stop" });
+    const fork = store.forkConversation(conversation.id, {
+      mode: "edit",
+      messageId: first.userMessageId!,
+      text: "修改后的问题",
+      imageAssetIds: []
+    });
+    const greetingConversation = store.createConversation({ systemPrompt: "" });
+    const greetingMessageId = "legacy-greeting";
+    store.sqlite.prepare(`
+      INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
+      VALUES (?, ?, 1, 'assistant', '开场白', NULL, ?, ?)
+    `).run(greetingMessageId, greetingConversation.id, Date.now(), JSON.stringify({
+      variants: ["开场白", "另一个开场白"],
+      activeIndex: 0,
+      agent: { agentId: "legacy-agent", name: "旧 Agent", revision: 1 }
+    }));
+    const continued = store.forkConversation(greetingConversation.id, {
+      mode: "continue",
+      throughMessageId: greetingMessageId
+    });
+    store.sqlite.prepare(`
+      UPDATE conversations SET fork_mode = NULL, fork_point_ordinal = NULL,
+        fork_greeting_index = NULL, fork_source_greeting_index = NULL
+      WHERE id IN (?, ?)
+    `).run(fork.conversation.id, continued.conversation.id);
+    store.sqlite.exec("PRAGMA user_version = 22");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+
+    const migrated = new Store(path);
+    expect(migrated.getConversation(fork.conversation.id)?.forkedFrom).toEqual({
+      conversationId: conversation.id,
+      messageId: first.userMessageId,
+      messageOrdinal: 1,
+      mode: "edit",
+      greetingIndex: null,
+      sourceGreetingIndex: null
+    });
+    expect(migrated.getConversation(continued.conversation.id)?.forkedFrom).toEqual({
+      conversationId: greetingConversation.id,
+      messageId: greetingMessageId,
+      messageOrdinal: 1,
+      mode: "continue",
+      greetingIndex: 0,
+      sourceGreetingIndex: 0
+    });
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    migrated.close();
+  });
+
+  it("keeps catalog-managed models current until a manual metadata edit locks them", () => {
+    const store = createStore();
+    const { connection, model } = seedModel(store);
+    const metadata = {
+      providerId: "mock",
+      modelId: "mock-model",
+      inputModalities: ["text"],
+      outputModalities: ["text"],
+      reasoningEfforts: [],
+      fetchedAt: 1
+    };
+    const discovered = store.upsertDiscoveredModel({
+      ...model,
+      contextWindow: 8_192,
+      maxInputTokens: 7_000,
+      maxOutputTokens: 512
+    }, metadata);
+    expect(discovered.status).toBe("skipped");
+
+    const managedInput = {
+      ...model,
+      connectionId: connection.id,
+      modelKey: "catalog-model",
+      displayName: "Catalog Model",
+      contextWindow: 8_192,
+      maxInputTokens: 7_000,
+      maxOutputTokens: 512
+    };
+    const created = store.upsertDiscoveredModel(managedInput, metadata);
+    expect(created).toMatchObject({ status: "created", model: { catalogManaged: true, maxInputTokens: 7_000 } });
+    expect(store.upsertDiscoveredModel({
+      ...managedInput,
+      contextWindow: null,
+      maxInputTokens: null,
+      maxOutputTokens: 4_096
+    }, null).status).toBe("skipped");
+    expect(store.getModel(created.model.id)).toMatchObject({
+      contextWindow: 8_192,
+      maxInputTokens: 7_000,
+      catalogMetadata: metadata
+    });
+    expect(store.updateModel(created.model.id, { enabled: false })?.catalogManaged).toBe(true);
+    expect(store.updateModel(created.model.id, { contextWindow: 4_096 })?.catalogManaged).toBe(false);
+    expect(store.upsertDiscoveredModel({ ...managedInput, contextWindow: 16_384 }, metadata).status).toBe("skipped");
+    expect(store.restoreCatalogModel(created.model.id, { ...managedInput, contextWindow: 16_384 }, metadata))
+      .toMatchObject({ catalogManaged: true, contextWindow: 16_384, enabled: false });
+    store.close();
+  });
+
   it("migrates v1 data and backfills conversation and generation model fields", () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-v1-"));
     dirs.push(dir);
@@ -189,8 +467,9 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
+    expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
     const columns = (store.sqlite.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>)
@@ -202,6 +481,24 @@ describe("Store", () => {
       modelKey: "legacy-model"
     });
     store.close();
+  });
+
+  it("adds a custom provider identity to pre-preset connection tables", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-v27-connections-"));
+    dirs.push(dir);
+    const path = join(dir, "legacy.sqlite");
+    const legacy = new Store(path);
+    legacy.sqlite.exec("ALTER TABLE connections DROP COLUMN provider_id; PRAGMA user_version = 27;");
+    legacy.sqlite.prepare(`
+      INSERT INTO connections (id, name, protocol, base_url, api_key, secret_headers_json, balance_config_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("legacy-connection", "Legacy", "openai-chat", "https://example.test/v1", "", "{}", "{}", 1, 1);
+    legacy.close();
+
+    const migrated = new Store(path);
+    expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    migrated.close();
   });
 
   it("migrates v13 balance storage and safely repairs Anthropic usage", () => {
@@ -248,7 +545,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -284,7 +581,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -434,7 +731,7 @@ describe("Store", () => {
   it("covers connection and model CRUD boundaries while keeping secrets out of DTOs", () => {
     const store = createStore();
     const first = store.createConnection({
-      name: "Zulu", protocol: "openai-chat", baseUrl: "https://old.test/v1",
+      name: "Zulu", providerId: "openai", protocol: "openai-chat", baseUrl: "https://old.test/v1",
       apiKey: "old-key", secretHeaders: { Authorization: "secret", "X-Key": "value" },
       balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
     });
@@ -444,6 +741,7 @@ describe("Store", () => {
     });
     expect(store.listConnections().map((item) => item.name)).toEqual(["alpha", "Zulu"]);
     expect(first).toMatchObject({
+      providerId: "openai",
       hasApiKey: true,
       secretHeaderNames: ["Authorization", "X-Key"],
       balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
@@ -588,19 +886,25 @@ describe("Store", () => {
   it("persists tool, MCP, and memory settings while redacting their secrets", () => {
     const store = createStore();
     expect(store.getToolSettings()).toMatchObject({
-      enabled: {}, search: { baseUrl: "", hasApiKey: false }, workspaceShellEnabled: true
+      enabled: {}, workspaceShellEnabled: true
     });
     expect(store.updateToolSettings({
-      enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", apiKey: "search-secret" },
+      enabled: { fetch_url: false },
       workspaceShellEnabled: true
     })).toMatchObject({
-      enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", hasApiKey: true }, workspaceShellEnabled: true
+      enabled: { fetch_url: false }, workspaceShellEnabled: true
     });
-    expect(JSON.stringify(store.getToolSettings())).not.toContain("search-secret");
-    store.updateToolSettings({ search: { baseUrl: "https://new.test" } });
-    expect(store.getToolSecrets().searchApiKey).toBe("search-secret");
-    store.updateToolSettings({ search: { baseUrl: "", apiKey: "" } });
-    expect(store.getToolSettings().search.hasApiKey).toBe(false);
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    expect(agent.searchApiKeyConfigured).toBe(false);
+    store.updateAgent(agent.id, {
+      execution: { ...agent.execution, search: { provider: "tavily", baseUrl: "https://api.tavily.com" } }
+    });
+    store.updateAgentSearchSecret(agent.id, "tavily", "search-secret");
+    expect(store.getAgentSearchSecret(agent.id, "tavily")).toBe("search-secret");
+    expect(store.getAgent(agent.id)).toMatchObject({ searchApiKeyConfigured: true });
+    expect(JSON.stringify(store.getAgent(agent.id))).not.toContain("search-secret");
+    store.updateAgentSearchSecret(agent.id, "tavily", "");
+    expect(store.getAgent(agent.id)?.searchApiKeyConfigured).toBe(false);
 
     const server = store.createMcpServer({
       name: "Server", url: "https://mcp.test", headers: { Authorization: "Bearer secret" }, enabled: true
@@ -625,6 +929,30 @@ describe("Store", () => {
     expect(() => store.updateMemory(999, "missing")).toThrow("不存在");
     expect(() => store.deleteMemory(999)).toThrow("不存在");
     store.close();
+  });
+
+  it("migrates legacy global search settings into every Agent", () => {
+    const store = createStore();
+    const agentId = store.getSettings().defaultAgentId;
+    const agent = store.getAgent(agentId)!;
+    const legacyExecution = { ...agent.execution } as Record<string, unknown>;
+    delete legacyExecution.search;
+    store.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?")
+      .run(JSON.stringify(legacyExecution), agentId);
+    store.sqlite.prepare("UPDATE tool_settings SET search_base_url = ?, search_api_key = ? WHERE id = 1")
+      .run("https://legacy-search.test", "legacy-secret");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.sqlite.exec("PRAGMA user_version = 26");
+    store.close();
+
+    const migrated = new Store(path);
+    expect(migrated.getAgent(agentId)).toMatchObject({
+      searchApiKeyConfigured: true,
+      execution: { search: { provider: "searxng", baseUrl: "https://legacy-search.test" } }
+    });
+    expect(migrated.getAgentSearchSecret(agentId, "searxng")).toBe("legacy-secret");
+    expect(migrated.getToolSettings()).not.toHaveProperty("search");
+    migrated.close();
   });
 
   it("returns provider-aware context and literal chat-search matches", () => {
@@ -686,7 +1014,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(19);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

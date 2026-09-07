@@ -3,7 +3,7 @@ import type { BackgroundTaskEventDto, ContextSummaryDto, ConversationDto, Messag
 import { Bot, ExternalLink, Gauge, GitFork, Minimize2, Settings2, TerminalSquare, Wrench, X } from "lucide-react";
 import { endpoints, type TaskDetailDto } from "../lib/api";
 import { appStore, toastError } from "../lib/app-state";
-import { formatTime, formatTokens } from "../lib/format";
+import { formatCachedTokens, formatTime, formatTokens } from "../lib/format";
 import type { InspectionTarget } from "../lib/inspection";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -112,7 +112,7 @@ export function InspectorPanel({
               <Definition label="输入" value={`${formatTokens(generation.usage.inputTokens)} tokens`} />
               <Definition label="输出" value={`${formatTokens(generation.usage.outputTokens)} tokens`} />
               <Definition label="推理" value={`${formatTokens(generation.usage.reasoningTokens)} tokens`} />
-              <Definition label="缓存" value={`${formatTokens(generation.usage.cachedInputTokens)} tokens`} />
+              <Definition label="缓存" value={formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens)} />
             </InspectorSection>
             {generation.context ? <JsonSection title="上下文决策" value={generation.context} /> : null}
             {generation.visionAnalyses.length ? <JsonSection title="识图预处理" value={generation.visionAnalyses} /> : null}

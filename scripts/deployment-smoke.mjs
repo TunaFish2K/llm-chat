@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,17 +27,38 @@ try {
   const port = await availablePort();
   const secondPort = await availablePort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const serverEnv = {
+  const configPath = join(tempRoot, "config.json");
+  const secondConfigPath = join(tempRoot, "second.config.json");
+  await writeConfig(configPath, {
+    host: "127.0.0.1",
+    port,
+    dataDir,
+    authMode: "disabled",
+    trustProxy: false,
+    serveWeb: true,
+    shutdownTimeoutMs: 10_000,
+    buildId: "deployment-smoke"
+  });
+  await writeConfig(secondConfigPath, {
+    host: "127.0.0.1",
+    port: secondPort,
+    dataDir,
+    authMode: "disabled",
+    trustProxy: false,
+    serveWeb: true,
+    shutdownTimeoutMs: 10_000,
+    buildId: "deployment-smoke-second"
+  });
+  const legacyEnv = {
     ...process.env,
-    LLM_CHAT_HOST: "127.0.0.1",
-    LLM_CHAT_PORT: String(port),
-    LLM_CHAT_DATA_DIR: dataDir,
-    LLM_CHAT_AUTH_MODE: "disabled",
-    LLM_CHAT_SERVE_WEB: "true",
-    LLM_CHAT_BUILD_ID: "deployment-smoke",
-    LLM_CHAT_SHUTDOWN_TIMEOUT_MS: "10000"
+    LLM_CHAT_HOST: "0.0.0.0",
+    LLM_CHAT_PORT: String(secondPort),
+    LLM_CHAT_DATA_DIR: join(tempRoot, "ignored-data"),
+    LLM_CHAT_AUTH_MODE: "password",
+    LLM_CHAT_SERVE_WEB: "false",
+    LLM_CHAT_BUILD_ID: "ignored-environment"
   };
-  const server = launchNode([serverEntry], serverEnv);
+  const server = launchNode([serverEntry, "--config", configPath], legacyEnv);
 
   await waitForHttp(`${baseUrl}/healthz`, server, 20_000);
   const health = await fetchJson(`${baseUrl}/healthz`);
@@ -46,6 +67,7 @@ try {
   const readiness = await fetchJson(`${baseUrl}/readyz`);
   assert(readiness.response.status === 200 && readiness.body.ok === true, "readyz did not report readiness");
   assert(readiness.body.buildId === "deployment-smoke", "readyz did not surface buildId");
+  await assertImmediateEventStream(baseUrl);
 
   const index = await fetch(`${baseUrl}/`);
   const indexBody = await index.text();
@@ -60,12 +82,17 @@ try {
   assert((staleAsset.headers.get("content-type") ?? "").includes("text/plain"), "stale asset did not return text/plain");
   assert(await staleAsset.text() === "Asset not found", "stale asset returned HTML instead of the not-found text");
 
-  const second = launchNode([serverEntry], { ...serverEnv, LLM_CHAT_PORT: String(secondPort) });
+  const second = launchNode([serverEntry, "--config", secondConfigPath], legacyEnv);
   const secondExit = await waitForExit(second, 10_000);
   assert(secondExit.code !== 0, "a second server acquired the same data directory");
   assert(/另一个 llm-chat 进程占用|already.*(?:held|use)/i.test(second.output()), "second server did not report an actionable lock error");
 
-  const activeReset = launchNode([resetEntry, "--confirm-reset-password"], serverEnv);
+  const activeReset = launchNode([
+    resetEntry,
+    "--config",
+    configPath,
+    "--confirm-reset-password"
+  ], legacyEnv);
   const activeResetExit = await waitForExit(activeReset, 10_000);
   assert(activeResetExit.code !== 0, "auth reset succeeded while the server held the data lock");
   assert(/另一个 llm-chat 进程占用|already.*(?:held|use)/i.test(activeReset.output()), "active reset did not report the instance lock");
@@ -129,17 +156,31 @@ try {
   assert(serverExit.code === 0, `SIGTERM shutdown exited ${serverExit.code}: ${server.output()}`);
   assert(!processExists(backgroundPid), `background child ${backgroundPid} survived server shutdown`);
 
-  const reset = launchNode([resetEntry, "--confirm-reset-password"], serverEnv);
+  const reset = launchNode([
+    resetEntry,
+    "--config",
+    configPath,
+    "--confirm-reset-password"
+  ], legacyEnv);
   const resetExit = await waitForExit(reset, 10_000);
   assert(resetExit.code === 0, `offline auth reset failed: ${reset.output()}`);
   for (const field of ["sessionsRevoked", "initialPassword"]) {
     assert(new RegExp(`${field}: \\d+`).test(reset.output()), `offline auth reset omitted ${field}`);
   }
   assert(/Use this password to log in/i.test(reset.output()), "offline auth reset omitted login guidance");
-  const unconfirmedReset = launchNode([resetEntry], serverEnv);
+  const unconfirmedReset = launchNode([resetEntry, "--config", configPath], legacyEnv);
   const unconfirmedExit = await waitForExit(unconfirmedReset, 10_000);
   assert(unconfirmedExit.code !== 0, "auth reset accepted a missing confirmation flag");
   assert(unconfirmedReset.output().includes("--confirm-reset-password"), "auth reset did not explain the required confirmation flag");
+  const missingConfigReset = launchNode([
+    resetEntry,
+    "--config",
+    join(tempRoot, "missing.json"),
+    "--confirm-reset-password"
+  ], legacyEnv);
+  const missingConfigExit = await waitForExit(missingConfigReset, 10_000);
+  assert(missingConfigExit.code !== 0, "auth reset generated a missing config file");
+  assert(missingConfigReset.output().includes("无法读取配置文件"), "auth reset did not report its missing config file");
 
   process.stdout.write("Deployment smoke passed.\n");
 } finally {
@@ -195,6 +236,33 @@ async function startProvider(childPidFile) {
   const address = server.address();
   assert(address && typeof address === "object", "provider did not bind a TCP port");
   return { server, baseUrl: `http://127.0.0.1:${address.port}/v1` };
+}
+
+async function writeConfig(path, value) {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+}
+
+async function assertImmediateEventStream(baseUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1_500);
+  try {
+    const response = await fetch(`${baseUrl}/api/events`, { signal: controller.signal });
+    assert(response.status === 200, `event stream returned ${response.status}`);
+    assert((response.headers.get("content-type") ?? "").includes("text/event-stream"), "event stream has the wrong MIME type");
+    const reader = response.body?.getReader();
+    assert(reader, "event stream has no response body");
+    const { value, done } = await reader.read();
+    assert(!done && new TextDecoder().decode(value).includes(": connected"), "event stream did not send its initial frame");
+    await reader.cancel();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("event stream did not open within 1500 ms");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+  }
 }
 
 function launchNode(args, env) {

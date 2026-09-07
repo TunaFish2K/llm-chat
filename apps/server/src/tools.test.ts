@@ -357,8 +357,9 @@ describe("fetch and search tools", () => {
 
   it("builds SearXNG requests with auth and maps limited results and errors", async () => {
     const store = createStore();
-    store.updateToolSettings({ search: { baseUrl: "https://search.test", apiKey: "token" } });
-    const search = tool(await buildServerTools(store), "search_web");
+    const search = tool(await buildServerTools(store, false, {
+      searchConfig: { provider: "searxng", baseUrl: "https://search.test" }, searchApiKey: "token"
+    }), "search_web");
     const fetchMock = vi.fn(async (_url: URL | string, _init?: RequestInit) => Response.json({ results: [
       { title: "One", url: "https://one.test", content: "first" },
       { title: "Two" }, { title: "Three" }
@@ -374,8 +375,30 @@ describe("fetch and search tools", () => {
     expect(init?.headers).toMatchObject({ authorization: "Bearer token" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 429 })));
     await expect(search.execute({ query: "x" }, signal())).rejects.toThrow("HTTP 429");
-    store.updateToolSettings({ search: { baseUrl: "", apiKey: "" } });
-    await expect(search.execute({ query: "x" }, signal())).rejects.toThrow("not configured");
+    const unavailable = tool(await buildServerTools(store, true, {
+      searchConfig: { provider: "searxng", baseUrl: "" }, searchApiKey: ""
+    }), "search_web");
+    await expect(unavailable.execute({ query: "x" }, signal())).rejects.toThrow("not configured");
+    store.close();
+  });
+
+  it("builds Tavily requests and maps results", async () => {
+    const store = createStore();
+    const search = tool(await buildServerTools(store, false, {
+      searchConfig: { provider: "tavily", baseUrl: "" }, searchApiKey: "tvly-secret"
+    }), "search_web");
+    const fetchMock = vi.fn(async (_url: URL | string, _init?: RequestInit) => Response.json({ results: [
+      { title: "Tavily result", url: "https://one.test", content: "snippet" }
+    ] }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(search.execute({ query: "hello", limit: 3 }, signal())).resolves.toBe(JSON.stringify([
+      { id: 1, title: "Tavily result", url: "https://one.test", text: "snippet" }
+    ]));
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://api.tavily.com/search");
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({ authorization: "Bearer tvly-secret" });
+    expect(JSON.parse(String(init?.body))).toMatchObject({ query: "hello", max_results: 3, search_depth: "basic" });
     store.close();
   });
 });

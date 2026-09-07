@@ -2,17 +2,20 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resetPassword } from "../auth";
 import { Store } from "../database";
+import { loadRuntimeConfig, selectRuntimeConfig } from "./config";
 import { acquireInstanceLock } from "./instance-lock";
 
 const CONFIRMATION_FLAG = "--confirm-reset-password";
 
 async function main(): Promise<void> {
-  if (process.argv.length !== 3 || process.argv[2] !== CONFIRMATION_FLAG) {
-    throw new Error(`拒绝重置：必须且只能传入 ${CONFIRMATION_FLAG}`);
+  const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+  const selection = selectRuntimeConfig(process.argv.slice(2), projectRoot);
+  if (selection.remainingArgs.length !== 1 || selection.remainingArgs[0] !== CONFIRMATION_FLAG) {
+    throw new Error(`拒绝重置：必须传入 ${CONFIRMATION_FLAG}，且只能额外使用 --config <path>`);
   }
 
-  const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-  const dataDir = resolve(process.env.LLM_CHAT_DATA_DIR ?? resolve(projectRoot, "data"));
+  const { config } = await loadRuntimeConfig(selection.configPath, projectRoot, false);
+  const dataDir = config.dataDir;
   const instanceLock = await acquireInstanceLock(dataDir, (error) => {
     process.stderr.write(`${formatError(error)}\n`);
     process.exit(1);

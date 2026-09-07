@@ -68,6 +68,32 @@ describe("context builder", () => {
     store.close();
   });
 
+  it("exposes ordinary attachments as escaped sandbox metadata without sending their bytes", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const asset = store.createFileAsset({
+      sha256: "a".repeat(64),
+      fileName: "notes & instructions.txt",
+      mimeType: "text/plain",
+      kind: "file",
+      byteSize: 17,
+      storageKey: "not-read-by-context"
+    });
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+    const latest = store.createMessageGeneration(conversation.id, "请检查附件", [asset.id]);
+    const built = await buildContext(
+      store, store.getGenerationRecord(latest.generationId)!, seeded.model,
+      store.getConnection(seeded.connection.id)!, new AbortController().signal
+    );
+    const text = built.messages.at(-1)?.text ?? "";
+    expect(text).toContain('<attached_files trust="untrusted" workspace="attachments">');
+    expect(text).toContain('name="notes &amp; instructions.txt"');
+    expect(text).toContain(`path="incoming/${latest.userMessageId}/${asset.id}-notes &amp; instructions.txt"`);
+    expect(text).not.toContain("not-read-by-context");
+    expect(built.messages.at(-1)?.images).toBeUndefined();
+    store.close();
+  });
+
   it("returns unchanged trim context when it fits", async () => {
     const store = createStore();
     const seeded = seedModel(store);
@@ -79,6 +105,31 @@ describe("context builder", () => {
     );
     expect(built.metadata).toMatchObject({ policy: "trim", omittedMessages: 0, summaryUsed: false });
     expect(built.messages).toEqual([{ role: "user", text: "latest" }]);
+    store.close();
+  });
+
+  it("applies Agent-owned prompt regex without changing stored message text", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    store.updateAgent(agent.id, {
+      roleplay: {
+        ...agent.roleplay,
+        enabled: true,
+        regexScripts: [{
+          id: "redact", name: "Redact", enabled: true, pattern: "token-[0-9]+", replacement: "token-[hidden]",
+          flags: "gu", scopes: ["user_prompt"], runOnEdit: false, importWarning: null
+        }]
+      }
+    });
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+    const latest = store.createMessageGeneration(conversation.id, "use token-1234");
+    const built = await buildContext(
+      store, store.getGenerationRecord(latest.generationId)!, seeded.model,
+      store.getConnection(seeded.connection.id)!, new AbortController().signal
+    );
+    expect(built.messages.at(-1)?.text).toBe("use token-[hidden]");
+    expect(store.listMessages(conversation.id)[0]?.text).toBe("use token-1234");
     store.close();
   });
 
@@ -116,7 +167,10 @@ describe("context builder", () => {
     const invalid = store.updateModel(seeded.model.id, { contextWindow: 300 })!;
     await expect(buildContext(store, record, invalid, connection, new AbortController().signal))
       .rejects.toMatchObject({ code: "context_budget_invalid" });
-    const small = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
+    const inputLimited = store.updateModel(seeded.model.id, { contextWindow: 8_192, maxInputTokens: 200 })!;
+    await expect(buildContext(store, record, inputLimited, connection, new AbortController().signal))
+      .rejects.toMatchObject({ code: "context_budget_invalid" });
+    const small = store.updateModel(seeded.model.id, { contextWindow: 512, maxInputTokens: null })!;
     await expect(buildContext(store, record, small, connection, new AbortController().signal))
       .rejects.toMatchObject({ code: "message_too_large" });
     store.close();

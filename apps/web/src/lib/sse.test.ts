@@ -54,21 +54,24 @@ describe("subscribeGeneration", () => {
     subscription.close();
   });
 
-  it("does not reconnect after a terminal status or explicit close", () => {
+  it.each(["waiting-approval", "completed"] as const)("does not reconnect after a %s status", (status) => {
     vi.useFakeTimers();
     const subscription = subscribeGeneration("generation", vi.fn());
     const source = FakeEventSource.instances[0]!;
-    source.emit("status", { type: "status", status: "completed" });
+    source.emit("status", { type: "status", status });
     source.onerror?.();
     vi.runAllTimers();
     expect(FakeEventSource.instances).toHaveLength(1);
     subscription.close();
+  });
 
+  it("does not reconnect after explicit close", () => {
+    vi.useFakeTimers();
     const active = subscribeGeneration("other", vi.fn());
-    const other = FakeEventSource.instances[1]!;
+    const other = FakeEventSource.instances[0]!;
     other.onerror?.();
     active.close();
     vi.runAllTimers();
-    expect(FakeEventSource.instances).toHaveLength(2);
+    expect(FakeEventSource.instances).toHaveLength(1);
   });
 });

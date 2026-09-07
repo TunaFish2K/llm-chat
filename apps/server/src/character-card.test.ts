@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { exportCharacterCard, importCharacterCard } from "./character-card";
+import { strToU8, zipSync } from "fflate";
+import {
+  exportCharacterCard,
+  exportCharacterCardWithAssets,
+  importCharacterCard,
+  importCharacterCardWithAssets
+} from "./character-card";
+import { ImageService } from "./images";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 
 const ONE_PIXEL_PNG = Buffer.from(
@@ -73,8 +80,49 @@ describe("Character Card V2 import and export", () => {
 
     const invalidExtension = card("Defaulted", { llm_chat: { version: 2, execution: portableExecution } });
     const defaulted = importCharacterCard(store, "defaulted.json", Buffer.from(JSON.stringify(invalidExtension)));
-    expect(defaulted.execution).toEqual(defaultAgent.execution);
+    expect(defaulted.execution).toMatchObject({
+      modelId: defaultAgent.execution.modelId,
+      contextPolicy: defaultAgent.execution.contextPolicy,
+      reasoningEffort: defaultAgent.execution.reasoningEffort,
+      tools: { overrides: expect.objectContaining({ app_agents: false, app_connections: false, app_conversations: false }) }
+    });
     expect(defaulted.userProfile).toEqual({});
+  });
+
+  it("imports common Tavern regex and quick replies without enabling executable content", () => {
+    const store = createStore();
+    const source = card("Portable resources", {
+      regex_scripts: [
+        null,
+        {
+          scriptName: "Hide secret", findRegex: "/secret/gi", replaceString: "hidden",
+          placement: [1], runOnEdit: true
+        },
+        { name: "Display cleanup", pattern: "draft", replacement: "clean", flags: "g" }
+      ],
+      quick_replies: [
+        null,
+        { label: "Wave", title: "Insert a greeting", message: "Hello" },
+        { name: "Set mood", tooltip: "Restricted script", content: "/setvar mood calm" },
+        { label: "Disabled", content: "Later", disabled: true }
+      ]
+    });
+    const imported = importCharacterCard(store, "resources.json", Buffer.from(JSON.stringify(source)));
+
+    expect(imported.roleplay.regexScripts).toEqual([
+      expect.objectContaining({
+        name: "Hide secret", enabled: false, pattern: "secret", flags: "gi",
+        scopes: ["user_prompt"], runOnEdit: true, importWarning: expect.stringContaining("尚未执行")
+      }),
+      expect.objectContaining({
+        name: "Display cleanup", enabled: false, pattern: "draft", flags: "g", scopes: ["display"]
+      })
+    ]);
+    expect(imported.roleplay.quickReplySets[0]?.replies).toEqual([
+      expect.objectContaining({ label: "Wave", mode: "insert", enabled: true }),
+      expect.objectContaining({ label: "Set mood", mode: "script", enabled: false }),
+      expect.objectContaining({ label: "Disabled", mode: "insert", enabled: false })
+    ]);
   });
 
   it("requires a valid PNG avatar for PNG export", () => {
@@ -88,6 +136,98 @@ describe("Character Card V2 import and export", () => {
     const json = exportCharacterCard(store, detached, "json");
     expect(json.fileName).toBe("character.json");
     expect(JSON.parse(Buffer.from(json.bytes).toString("utf8")).data.extensions.llm_chat.execution.model).toBeNull();
+  });
+
+  it("exports portable vision references and keeps unavailable CHARX assets as external URIs", async () => {
+    const store = createStore();
+    const files = new ImageService(store);
+    await files.initialize();
+    const { model } = seedModel(store);
+    const agent = importCharacterCard(store, "portable.json", Buffer.from(JSON.stringify(card("A/B"))));
+    const portable = exportCharacterCard(store, {
+      ...agent,
+      execution: { ...agent.execution, modelId: model.id, visionModelId: model.id }
+    }, "json");
+    const extension = JSON.parse(Buffer.from(portable.bytes).toString("utf8")).data.extensions.llm_chat;
+    expect(extension.execution.visionModel).toMatchObject({ modelKey: model.modelKey });
+
+    const archive = await exportCharacterCardWithAssets(store, files, {
+      ...agent,
+      roleplay: {
+        ...agent.roleplay,
+        assets: [{
+          id: "missing", type: "background", name: "Remote", ext: "png",
+          uri: "https://example.test/background.png", mimeType: "image/png", hash: null
+        }]
+      }
+    }, "charx");
+    expect(archive.fileName).toBe("A_B.charx");
+    expect(archive.bytes.byteLength).toBeGreaterThan(0);
+  });
+
+  it("imports CCv3 CHARX assets and exports a portable archive", async () => {
+    const store = createStore();
+    const files = new ImageService(store);
+    await files.initialize();
+    const source = {
+      spec: "chara_card_v3", spec_version: "3.0", data: {
+        ...cardData("Archive"),
+        assets: [{ type: "background", name: "sky", ext: "png", uri: "embeded://assets/sky.png" }],
+        future_field: { preserved: true }
+      }
+    };
+    const archive = zipSync({
+      "card.json": strToU8(JSON.stringify(source)),
+      "assets/sky.png": ONE_PIXEL_PNG
+    });
+    const agent = await importCharacterCardWithAssets(store, files, "archive.charx", archive);
+    expect(agent.card.data.extensions.llm_chat_ccv3_source).toMatchObject({ spec: "chara_card_v3" });
+    expect(agent.roleplay.assets).toHaveLength(1);
+    expect(store.unreferencedFileAssets(Date.now() + 1)).toHaveLength(0);
+
+    const exported = await exportCharacterCardWithAssets(store, files, agent, "charx");
+    expect(exported.fileName).toBe("Archive.charx");
+    const roundTrip = await importCharacterCardWithAssets(store, files, "roundtrip.charx", exported.bytes);
+    expect(roundTrip.roleplay.assets[0]).toMatchObject({ type: "background", name: "sky" });
+  });
+
+  it("restores a CHARX icon while ignoring missing and malformed asset entries", async () => {
+    const store = createStore();
+    const files = new ImageService(store);
+    await files.initialize();
+    const source = {
+      spec: "chara_card_v3", spec_version: "3.0", data: {
+        ...cardData("Assets"),
+        assets: [
+          null,
+          { type: "icon", name: "avatar", ext: "png", uri: "embedded://assets/avatar.png" },
+          { type: "document", name: "blob", ext: "bad.ext", uri: "embeded://assets/blob.bin" },
+          { type: "background", name: "missing", ext: "png", uri: "embeded://assets/missing.png" },
+          { type: "background", name: "unsafe", ext: "png", uri: "embeded://../outside.png" }
+        ]
+      }
+    };
+    const archive = zipSync({
+      "nested/card.json": strToU8(JSON.stringify(source)),
+      "assets/avatar.png": ONE_PIXEL_PNG,
+      "assets/blob.bin": Buffer.from("opaque")
+    });
+    const imported = await importCharacterCardWithAssets(store, files, "assets.charx", archive);
+    expect(imported.hasAvatar).toBe(true);
+    expect(imported.roleplay.assets).toEqual([
+      expect.objectContaining({ type: "icon", mimeType: "image/png" }),
+      expect.objectContaining({ type: "document", ext: "bin", mimeType: "application/octet-stream" })
+    ]);
+  });
+
+  it("rejects unsafe CHARX archives", () => {
+    const store = createStore();
+    const missing = zipSync({ "other.json": strToU8("{}") });
+    expect(() => importCharacterCard(store, "missing.charx", missing)).toThrow("CHARX 中没有 card.json");
+    expect(() => importCharacterCard(store, "broken.charx", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0])))
+      .toThrow("CHARX 文件无法安全解包");
+    const wrappedLegacy = importCharacterCard(store, "wrapped.json", Buffer.from(JSON.stringify({ data: cardData("Wrapped") })));
+    expect(wrappedLegacy.name).toBe("Wrapped");
   });
 
   it("rejects truncated, corrupt, metadata-free, and invalid-metadata PNG cards", () => {
