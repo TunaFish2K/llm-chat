@@ -26,8 +26,6 @@ import {
   LoaderCircle,
   MessageSquare,
   Minimize2,
-  PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
@@ -88,9 +86,7 @@ interface ChatViewProps {
   conversationId: string | null;
   view?: "chat" | "trajectory" | "tasks";
   taskId?: string | null;
-  sidebarCollapsed?: boolean;
   inspectorOpen?: boolean;
-  onToggleSidebar?: () => void;
   onToggleInspector?: () => void;
   onInspect?: (target: InspectionTarget) => void;
   onViewChange?: (view: "chat" | "trajectory" | "tasks") => void;
@@ -100,9 +96,7 @@ export function ChatView({
   conversationId,
   view = "chat",
   taskId = null,
-  sidebarCollapsed = false,
   inspectorOpen = false,
-  onToggleSidebar = () => undefined,
   onToggleInspector = () => undefined,
   onInspect = () => undefined,
   onViewChange = () => undefined
@@ -213,9 +207,7 @@ export function ChatView({
       <ConversationHeader
         conversation={conversation}
         view={view}
-        sidebarCollapsed={sidebarCollapsed}
         inspectorOpen={inspectorOpen}
-        onToggleSidebar={onToggleSidebar}
         onToggleInspector={onToggleInspector}
         onViewChange={onViewChange}
         runningTasks={runningTasks}
@@ -309,9 +301,7 @@ export function ChatView({
 function ConversationHeader({
   conversation,
   view,
-  sidebarCollapsed,
   inspectorOpen,
-  onToggleSidebar,
   onToggleInspector,
   onViewChange,
   runningTasks,
@@ -349,9 +339,6 @@ function ConversationHeader({
 
   return (
     <header className="conversation-header">
-      <button className="icon-button shell-control" onClick={onToggleSidebar} aria-label={sidebarCollapsed ? "展开会话栏" : "折叠会话栏"} title={sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}>
-        {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-      </button>
       <div className="conversation-heading">
         {editing ? (
           <input

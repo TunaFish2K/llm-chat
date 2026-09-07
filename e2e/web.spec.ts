@@ -74,6 +74,26 @@ test.describe("应用外壳", () => {
     }
   });
 
+  test("桌面收起栏在所有主页面保持可导航和可展开", async ({ page }) => {
+    test.skip(test.info().project.name === "mobile-chromium", "移动端使用完整导航抽屉");
+
+    await gotoPath(page, "/settings/general");
+    await page.getByRole("button", { name: "折叠会话栏" }).click();
+
+    const rail = page.locator(".workspace-sidebar[data-compact]");
+    await expect(rail).toBeVisible();
+    await expect(rail).toHaveCSS("width", "56px");
+    await expect(page.getByRole("navigation", { name: "最近会话" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
+
+    await page.getByRole("link", { name: "Agent" }).click();
+    await expect(page).toHaveURL(/\/agents$/);
+    await expect(page.getByRole("heading", { name: "Agent", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "展开会话栏" }).click();
+    await expect(page.locator(".workspace-sidebar[data-compact]")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "折叠会话栏" })).toBeVisible();
+  });
+
   test("PWA 资源可访问且 API 不被缓存", async ({ page }) => {
     await page.goto(APP_URL);
     const documentResponse = await page.request.get(APP_URL);

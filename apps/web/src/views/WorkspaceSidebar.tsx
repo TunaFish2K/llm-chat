@@ -6,10 +6,12 @@ import {
   CircleEllipsis,
   Download,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
-  Plus,
   Search,
   Settings,
+  SquarePen,
   Trash2,
   X
 } from "lucide-react";
@@ -25,12 +27,14 @@ export function WorkspaceSidebar({
   route,
   compact,
   onClose,
+  onToggleCompact,
   pwa,
   onInstall
 }: {
   route: Route;
   compact: boolean;
   onClose?: () => void;
+  onToggleCompact?: () => void;
   pwa: PwaState;
   onInstall: () => void;
 }) {
@@ -82,97 +86,117 @@ export function WorkspaceSidebar({
   return (
     <aside className="workspace-sidebar" data-compact={compact || undefined} aria-label="主导航与会话">
       <header className="sidebar-brand">
-        <a href="/" onClick={linkClick("/")} aria-label="llm-chat 首页">
-          <img src="/icons/icon-192.png" width={28} height={28} alt="" />
-          {!compact ? <span>llm-chat</span> : null}
-        </a>
-        {onClose ? <button className="icon-button" onClick={onClose} aria-label="关闭导航"><X size={18} /></button> : null}
+        {compact ? (
+          <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label="展开会话栏" title="展开会话栏">
+            <img src="/icons/icon-192.png" width={28} height={28} alt="" />
+            <PanelLeftOpen className="sidebar-brand-action" size={14} aria-hidden="true" />
+          </button>
+        ) : (
+          <>
+            <a href="/" onClick={linkClick("/")} aria-label="llm-chat 首页">
+              <img src="/icons/icon-192.png" width={28} height={28} alt="" />
+              <span>llm-chat</span>
+            </a>
+            {onClose ? (
+              <button className="icon-button" onClick={onClose} aria-label="关闭导航" title="关闭导航"><X size={18} /></button>
+            ) : onToggleCompact ? (
+              <button className="icon-button sidebar-collapse-button" onClick={onToggleCompact} aria-label="折叠会话栏" title="折叠会话栏"><PanelLeftClose size={18} /></button>
+            ) : null}
+          </>
+        )}
       </header>
 
-      <div className="sidebar-primary-actions">
-        <button className="button primary" onClick={() => navigate(routes.chat())} aria-label="新会话" title="新会话">
-          <Plus size={17} /> {!compact ? <span>新会话</span> : null}
-        </button>
-      </div>
-
-      {!compact ? (
-        <label className="search-field sidebar-search">
-          <Search size={15} aria-hidden="true" />
-          <input
-            type="search"
-            aria-label="搜索会话"
-            placeholder="搜索会话"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          {query ? <button onClick={() => setQuery("")} aria-label="清除搜索"><X size={14} /></button> : null}
-        </label>
-      ) : null}
-
-      <div className="conversation-scroll">
-        {compact ? (
-          <nav className="compact-conversations" aria-label="最近会话">
-            {visible.slice(0, 8).map((conversation) => (
-              <a
-                key={conversation.id}
-                href={routes.chat(conversation.id)}
-                onClick={linkClick(routes.chat(conversation.id))}
-                className={conversation.id === activeId ? "active" : ""}
-                title={conversation.title}
-                aria-label={conversation.title}
-              >
-                <MessageSquare size={17} />
-              </a>
-            ))}
+      {compact ? (
+        <>
+          <nav className="sidebar-rail-primary" aria-label="主要操作">
+            <button className="sidebar-rail-button primary" onClick={() => navigate(routes.chat())} aria-label="新会话" title="新会话">
+              <SquarePen size={18} />
+            </button>
+            <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label="聊天" compact />
+            <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={18} />} label="Agent" compact />
           </nav>
-        ) : groups.length ? groups.map((group) => (
-          <section className="conversation-group" key={group.label}>
-            <h2>{group.label}</h2>
-            <div role="list" aria-label={`${group.label}会话`}>
-              {group.items.map((conversation) => (
-                <div className="conversation-row" data-active={conversation.id === activeId || undefined} key={conversation.id} role="listitem">
-                  <a href={routes.chat(conversation.id)} onClick={linkClick(routes.chat(conversation.id))}>
-                    <span>{conversation.title || "未命名会话"}</span>
-                    <small>{formatTime(conversation.updatedAt)}</small>
-                  </a>
-                  <div className="conversation-actions">
-                    <button
-                      className="icon-button"
-                      aria-label={`重命名 ${conversation.title}`}
-                      title="重命名"
-                      onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}
-                    ><Pencil size={14} /></button>
-                    <button
-                      className="icon-button danger-quiet"
-                      aria-label={`删除 ${conversation.title}`}
-                      title="删除"
-                      onClick={() => setDeleting(conversation)}
-                    ><Trash2 size={14} /></button>
-                  </div>
+          <div className="sidebar-rail-spacer" />
+          <div className="sidebar-rail-utilities">
+            <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label="设置" compact />
+            {pwa.installAvailable ? (
+              <button className="sidebar-rail-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={18} /></button>
+            ) : null}
+            <span className="sidebar-rail-status" data-connected={connected || undefined} title={connected ? "事件流已连接" : "事件流断开，正在重连"} aria-label={connected ? "事件流已连接" : "事件流断开，正在重连"}>
+              {connected ? <CheckCircle2 size={17} /> : <CircleEllipsis size={17} />}
+            </span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="sidebar-primary-actions">
+            <button className="button primary" onClick={() => navigate(routes.chat())} aria-label="新会话" title="新会话">
+              <SquarePen size={17} /><span>新会话</span>
+            </button>
+          </div>
+
+          <label className="search-field sidebar-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              type="search"
+              aria-label="搜索会话"
+              placeholder="搜索会话"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            {query ? <button onClick={() => setQuery("")} aria-label="清除搜索"><X size={14} /></button> : null}
+          </label>
+
+          <div className="conversation-scroll">
+            {groups.length ? groups.map((group) => (
+              <section className="conversation-group" key={group.label}>
+                <h2>{group.label}</h2>
+                <div role="list" aria-label={`${group.label}会话`}>
+                  {group.items.map((conversation) => (
+                    <div className="conversation-row" data-active={conversation.id === activeId || undefined} key={conversation.id} role="listitem">
+                      <a href={routes.chat(conversation.id)} onClick={linkClick(routes.chat(conversation.id))}>
+                        <span>{conversation.title || "未命名会话"}</span>
+                        <small>{formatTime(conversation.updatedAt)}</small>
+                      </a>
+                      <div className="conversation-actions">
+                        <button
+                          className="icon-button"
+                          aria-label={`重命名 ${conversation.title}`}
+                          title="重命名"
+                          onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}
+                        ><Pencil size={14} /></button>
+                        <button
+                          className="icon-button danger-quiet"
+                          aria-label={`删除 ${conversation.title}`}
+                          title="删除"
+                          onClick={() => setDeleting(conversation)}
+                        ><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
-        )) : (
-          <p className="sidebar-empty">{conversations.length ? "没有匹配的会话" : "还没有会话"}</p>
-        )}
-      </div>
+              </section>
+            )) : (
+              <p className="sidebar-empty">{conversations.length ? "没有匹配的会话" : "还没有会话"}</p>
+            )}
+          </div>
 
-      <nav className="sidebar-navigation" aria-label="功能导航">
-        <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label="聊天" compact={compact} />
-        <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={compact} />
-        <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label="设置" compact={compact} />
-      </nav>
+          <nav className="sidebar-navigation" aria-label="功能导航">
+            <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label="聊天" compact={false} />
+            <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={false} />
+            <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label="设置" compact={false} />
+          </nav>
 
-      <footer className="sidebar-status">
-        <span title={connected ? "事件流已连接" : "事件流断开，正在重连"}>
-          {connected ? <CheckCircle2 size={15} /> : <CircleEllipsis size={15} />}
-          {!compact ? (connected ? "已连接" : "重连中") : null}
-        </span>
-        {pwa.installAvailable ? (
-          <button className="icon-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={15} /></button>
-        ) : null}
-      </footer>
+          <footer className="sidebar-status">
+            <span title={connected ? "事件流已连接" : "事件流断开，正在重连"}>
+              {connected ? <CheckCircle2 size={15} /> : <CircleEllipsis size={15} />}
+              {connected ? "已连接" : "重连中"}
+            </span>
+            {pwa.installAvailable ? (
+              <button className="icon-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={15} /></button>
+            ) : null}
+          </footer>
+        </>
+      )}
 
       {renaming ? (
         <Modal

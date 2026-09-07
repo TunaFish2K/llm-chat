@@ -74,7 +74,7 @@ export function App() {
     ? state.conversations.find((item) => item.id === route.conversationId) ?? null
     : null;
   const showInspector = route.name === "chat" && Boolean(conversation) && inspectorOpen;
-  const sidebarTrack = mobile ? 0 : sidebarCollapsed ? 64 : leftWidth;
+  const sidebarTrack = mobile ? 0 : sidebarCollapsed ? 56 : leftWidth;
   const inspectorTrack = mobile ? 0 : showInspector ? rightWidth : 0;
   const title = routeTitle(route, state.conversations, state.agents);
 
@@ -91,7 +91,13 @@ export function App() {
       data-inspector-open={showInspector || undefined}
     >
       {!mobile ? (
-        <WorkspaceSidebar route={route} compact={sidebarCollapsed} pwa={pwa} onInstall={() => void promptInstall()} />
+        <WorkspaceSidebar
+          route={route}
+          compact={sidebarCollapsed}
+          onToggleCompact={() => setSidebarCollapsed((value) => !value)}
+          pwa={pwa}
+          onInstall={() => void promptInstall()}
+        />
       ) : null}
       {!mobile && !sidebarCollapsed ? <ResizeHandle side="left" position={sidebarTrack} value={leftWidth} min={LEFT_MIN} max={LEFT_MAX} onChange={setLeftWidth} /> : null}
 
@@ -104,9 +110,7 @@ export function App() {
         <Suspense fallback={<LoadingState label="正在加载界面…" />}>
           <RouteView
             route={route}
-            sidebarCollapsed={sidebarCollapsed}
             inspectorOpen={showInspector}
-            onToggleSidebar={() => mobile ? setSidebarDrawer(true) : setSidebarCollapsed((value) => !value)}
             onToggleInspector={() => setInspectorOpen((value) => !value)}
             onInspect={(target) => { setInspection(target); setInspectorOpen(true); }}
           />
@@ -139,16 +143,12 @@ export function App() {
 
 function RouteView({
   route,
-  sidebarCollapsed,
   inspectorOpen,
-  onToggleSidebar,
   onToggleInspector,
   onInspect
 }: {
   route: Route;
-  sidebarCollapsed: boolean;
   inspectorOpen: boolean;
-  onToggleSidebar: () => void;
   onToggleInspector: () => void;
   onInspect: (target: InspectionTarget) => void;
 }) {
@@ -160,9 +160,7 @@ function RouteView({
       conversationId={route.conversationId}
       view={route.view}
       taskId={route.taskId}
-      sidebarCollapsed={sidebarCollapsed}
       inspectorOpen={inspectorOpen}
-      onToggleSidebar={onToggleSidebar}
       onToggleInspector={onToggleInspector}
       onInspect={onInspect}
       onViewChange={(view) => navigate(
