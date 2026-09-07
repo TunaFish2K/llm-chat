@@ -5,12 +5,13 @@ import { access, glob, mkdir, readFile, realpath, readdir, stat, writeFile } fro
 import { isIP } from "node:net";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import type { ToolCatalogItemDto } from "@llm-chat/contracts";
+import { imageGenerationInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { AgentSnapshot } from "./database";
 import type { TaskManager } from "./background-tasks";
 import type { ImageService } from "./images";
+import type { ImageGenerationManager } from "./image-generation";
 import { mcpManager } from "./mcp";
 
 const execFileAsync = promisify(execFile);
@@ -45,7 +46,11 @@ export interface ToolDependencies {
   lookup?: typeof lookup;
   taskManager?: TaskManager;
   imageService?: ImageService;
+  imageManager?: ImageGenerationManager;
   workspacePath?: string | null;
+  attachmentWorkspacePath?: string;
+  searchConfig?: AgentSearchConfig;
+  searchApiKey?: string;
 }
 
 export async function buildServerTools(
@@ -53,12 +58,28 @@ export async function buildServerTools(
   includeDisabled = false,
   dependencies: ToolDependencies = {}
 ): Promise<ServerTool[]> {
-  const settings = store.getToolSettings();
+  const searchConfig = dependencies.searchConfig;
+  const searchApiKey = dependencies.searchApiKey ?? "";
   const workspace = Object.prototype.hasOwnProperty.call(dependencies, "workspacePath")
     ? dependencies.workspacePath ?? null
     : resolve(store.dataDir, "workspace");
   const skills = resolve(store.dataDir, "skills");
-  await Promise.all([...(workspace ? [mkdir(workspace, { recursive: true, mode: 0o700 })] : []), mkdir(skills, { recursive: true, mode: 0o700 })]);
+  const attachments = dependencies.attachmentWorkspacePath ?? null;
+  await Promise.all([
+    ...(workspace ? [mkdir(workspace, { recursive: true, mode: 0o700 })] : []),
+    ...(attachments ? [mkdir(attachments, { recursive: true, mode: 0o700 })] : []),
+    mkdir(skills, { recursive: true, mode: 0o700 })
+  ]);
+  const rootFor = (input: JsonObject): string => {
+    const requested = input.workspace === "attachments" ? attachments : workspace;
+    if (!requested) throw new Error(input.workspace === "attachments" ? "Conversation attachment workspace is unavailable" : "Conversation has no project workspace");
+    return requested;
+  };
+  const imageModels = store.listModels().filter((model) => model.enabled && model.capabilities.imageOutput && model.imageProtocol);
+  const imageModelDescription = imageModels.length
+    ? ` Available image models: ${imageModels.map((model) => `${model.displayName} (${model.id})`).join(", ")}.`
+    : " No enabled image-capable models are configured.";
+  const workspaceProperty = { workspace: workspaceSelectorProperty() };
 
   const tools: ServerTool[] = [
     tool("get_time_info", "当前时间", "local", "Get the server's current local date, time, timezone, UTC offset, and Unix timestamp.", {}, false,
@@ -69,10 +90,62 @@ export async function buildServerTools(
     tool("fetch_url", "读取网页", "web", "Fetch a public HTTP or HTTPS URL and return readable text. Private and loopback addresses are blocked.", {
       url: stringProperty("Public HTTP or HTTPS URL")
     }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal, dependencies.lookup ?? lookup)),
-    tool("search_web", "网页搜索", "web", "Search the web for current information using the configured SearXNG service. Returns titles, URLs, and snippets.", {
+    tool("search_web", "网页搜索", "web", "Search the web for current information using the Agent's configured search service. Returns titles, URLs, and snippets.", {
       query: stringProperty("Focused search query"),
       limit: integerProperty("Number of results, 1 to 10")
-    }, false, async (input, signal) => searchWeb(store, requiredString(input, "query"), optionalInteger(input, "limit", 5, 1, 10), signal), Boolean(settings.search.baseUrl)),
+    }, false, async (input, signal) => searchWeb(
+      searchConfig,
+      searchApiKey,
+      requiredString(input, "query"),
+      optionalInteger(input, "limit", 5, 1, 10),
+      signal
+    ), searchAvailable(searchConfig, searchApiKey)),
+    tool("image_generate", "生成图片", "local", `Generate, edit, inpaint, or vary an image with a configured image model. The result is attached to this tool call and returned as image assets.${imageModelDescription}`, {
+      model_id: { type: "string", format: "uuid", enum: imageModels.map((model) => model.id), description: "Configured image-capable model id" },
+      prompt: stringProperty("Image prompt"),
+      operation: { type: "string", enum: ["generate", "edit", "inpaint", "variation"] },
+      reference_asset_ids: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 4 },
+      mask_asset_id: { type: ["string", "null"], format: "uuid" },
+      negative_prompt: stringProperty("Optional negative prompt"),
+      count: integerProperty("Number of images, 1 to 4"),
+      aspect_ratio: stringProperty("Optional aspect ratio such as 1:1 or 16:9"),
+      size: stringProperty("Provider image size"),
+      quality: { type: "string", enum: ["auto", "low", "medium", "high"] },
+      output_format: { type: "string", enum: ["png", "jpeg", "webp"] },
+      seed: integerProperty("Optional deterministic seed"),
+      strength: { type: "number", minimum: 0, maximum: 1 },
+      provider_options: { type: "object", additionalProperties: true }
+    }, true, async (input, signal, context) => {
+      if (!dependencies.imageManager || !context) throw new Error("Image generation service and tool context are required");
+      const request = imageGenerationInputSchema.parse({
+        modelId: input.model_id,
+        prompt: input.prompt,
+        ...(input.operation !== undefined ? { operation: input.operation } : {}),
+        ...(input.reference_asset_ids !== undefined ? { referenceAssetIds: input.reference_asset_ids } : {}),
+        ...(input.mask_asset_id !== undefined ? { maskAssetId: input.mask_asset_id } : {}),
+        ...(input.negative_prompt !== undefined ? { negativePrompt: input.negative_prompt } : {}),
+        ...(input.count !== undefined ? { count: input.count } : {}),
+        ...(input.aspect_ratio !== undefined ? { aspectRatio: input.aspect_ratio } : {}),
+        ...(input.size !== undefined ? { size: input.size } : {}),
+        ...(input.quality !== undefined ? { quality: input.quality } : {}),
+        ...(input.output_format !== undefined ? { outputFormat: input.output_format } : {}),
+        ...(input.seed !== undefined ? { seed: input.seed } : {}),
+        ...(input.strength !== undefined ? { strength: input.strength } : {}),
+        ...(input.provider_options !== undefined ? { providerOptions: input.provider_options } : {})
+      });
+      const job = await dependencies.imageManager.createAndWait({
+        conversationId: context.conversationId,
+        toolCallId: context.toolCallId,
+        input: request
+      }, signal);
+      return JSON.stringify({
+        jobId: job.id,
+        status: job.status,
+        revisedPrompt: job.revisedPrompt,
+        assets: job.outputAssets,
+        markdown: job.outputAssets.map((asset) => `![${asset.fileName}](${asset.url})`).join("\n")
+      });
+    }, Boolean(dependencies.imageManager)),
     tool("recent_chats", "最近对话", "conversation", "List recent conversation titles and update times. Use conversation_search to read matching content.", {
       limit: integerProperty("Number of conversations, 1 to 30")
     }, false, async (input) => JSON.stringify(store.recentChats(optionalInteger(input, "limit", 10, 1, 30)))),
@@ -86,49 +159,65 @@ export async function buildServerTools(
       content: stringProperty("Memory text for create or edit")
     }, (input) => input.action === "delete", async (input) => memoryAction(store, input)),
     tool("workspace_list", "列出文件", "workspace", "List files and directories using paths relative to the conversation workspace root. Use . for the root; returned paths can be used directly by workspace file tools and shell commands.", {
+      ...workspaceProperty,
       path: workspacePathProperty("Directory to list"),
       recursive: booleanProperty("List recursively")
-    }, false, async (input) => listWorkspace(workspace!, optionalString(input, "path") ?? ".", Boolean(input.recursive)), Boolean(workspace)),
+    }, false, async (input) => listWorkspace(rootFor(input), optionalString(input, "path") ?? ".", Boolean(input.recursive)), Boolean(workspace || attachments)),
     tool("workspace_read_file", "读取文件", "workspace", "Read a UTF-8 text file using a path relative to the conversation workspace root (maximum 8 MiB). The returned path is also workspace-relative.", {
-      path: workspacePathProperty("File to read")
-    }, false, async (input) => readWorkspaceFile(workspace!, requiredString(input, "path")), Boolean(workspace)),
+      ...workspaceProperty, path: workspacePathProperty("File to read")
+    }, false, async (input) => readWorkspaceFile(rootFor(input), requiredString(input, "path")), Boolean(workspace || attachments)),
     tool("workspace_write_file", "写入文件", "workspace", "Write a UTF-8 text file using a path relative to the conversation workspace root. The returned path is also workspace-relative.", {
-      path: workspacePathProperty("File to write"),
+      ...workspaceProperty, path: workspacePathProperty("File to write"),
       text: stringProperty("Complete UTF-8 file content"),
       overwrite: booleanProperty("Whether an existing file may be replaced; defaults to true")
-    }, true, async (input) => writeWorkspaceFile(workspace!, requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false), Boolean(workspace)),
+    }, true, async (input) => writeWorkspaceFile(rootFor(input), requiredString(input, "path"), requiredString(input, "text"), input.overwrite !== false), Boolean(workspace || attachments)),
     tool("workspace_edit_file", "编辑文件", "workspace", "Replace exact text in a UTF-8 file using a path relative to the conversation workspace root. The returned path is also workspace-relative.", {
-      path: workspacePathProperty("File to edit"),
+      ...workspaceProperty, path: workspacePathProperty("File to edit"),
       old_text: stringProperty("Exact text to replace"),
       new_text: stringProperty("Replacement text"),
       replace_all: booleanProperty("Replace every occurrence; defaults to false")
-    }, true, async (input) => editWorkspaceFile(workspace!, input), Boolean(workspace)),
+    }, true, async (input) => editWorkspaceFile(rootFor(input), input), Boolean(workspace || attachments)),
     tool("workspace_glob", "查找文件", "workspace", "Find workspace-relative paths with a glob pattern such as **/*.ts. Returned paths can be used directly by workspace file tools and shell commands.", {
-      pattern: stringProperty("Glob pattern relative to the conversation workspace root; use . for the root. Legacy /workspace/... patterns are accepted.")
-    }, false, async (input) => globWorkspace(workspace!, requiredString(input, "pattern")), Boolean(workspace)),
+      ...workspaceProperty, pattern: stringProperty("Glob pattern relative to the selected workspace root; use . for the root. Legacy /workspace/... patterns are accepted.")
+    }, false, async (input) => globWorkspace(rootFor(input), requiredString(input, "pattern")), Boolean(workspace || attachments)),
     tool("workspace_grep", "搜索文件", "workspace", "Search UTF-8 workspace files for plain text or a regular expression. Match paths are relative to the conversation workspace root and can be used directly by file tools and shell commands.", {
-      query: stringProperty("Text or regular expression"),
+      ...workspaceProperty, query: stringProperty("Text or regular expression"),
       pattern: stringProperty("File glob relative to the conversation workspace root; defaults to **/* (all files). Legacy /workspace/... patterns are accepted."),
       regex: booleanProperty("Treat query as a JavaScript regular expression")
-    }, false, async (input) => grepWorkspace(workspace!, input), Boolean(workspace)),
+    }, false, async (input) => grepWorkspace(rootFor(input), input), Boolean(workspace || attachments)),
     tool("workspace_shell", "运行命令", "workspace", "Run a shell command with its working directory confined to the conversation workspace. Use workspace-relative paths in commands and . for the workspace root. Commands require explicit user approval.", {
-      command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
+      ...workspaceProperty, command: stringProperty("Shell command; use paths relative to the conversation workspace root selected by workspace"),
       cwd: workspacePathProperty("Working directory for the command"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
-    }, true, async (input, signal) => runShell(workspace!, input, signal), Boolean(workspace)),
+    }, true, async (input, signal) => runShell(rootFor(input), input, signal), Boolean(workspace || attachments)),
     tool("workspace_publish_image", "发布图片", "workspace", "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. Use this before showing a machine-local image to the user.", {
-      path: workspacePathProperty("Image file to publish"),
+      ...workspaceProperty, path: workspacePathProperty("Image file to publish"),
       alt: stringProperty("Short alternative text for the image")
     }, false, async (input, _signal, context) => {
       if (!dependencies.imageService || !context) throw new Error("Image service and tool context are required");
-      const asset = await dependencies.imageService.importWorkspaceImage(workspace!, requiredString(input, "path"));
+      const asset = await dependencies.imageService.importWorkspaceImage(rootFor(input), requiredString(input, "path"));
       store.attachImageToToolCall(context.toolCallId, asset.id);
       const alt = (optionalString(input, "alt") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "image";
       return JSON.stringify({ asset, markdown: `![${alt}](${asset.url})` });
-    }, Boolean(workspace && dependencies.imageService))
+    }, Boolean((workspace || attachments) && dependencies.imageService)),
+    tool("workspace_publish_file", "发布文件", "workspace", "Import a file from the selected workspace into immutable llm-chat storage and return a permanent Markdown link. Publishing requires approval because it exposes machine-local data to the user.", {
+      ...workspaceProperty,
+      path: workspacePathProperty("File to publish"),
+      label: stringProperty("Optional download label"),
+      mime_type: stringProperty("Optional MIME type; defaults to application/octet-stream")
+    }, true, async (input, _signal, context) => {
+      if (!dependencies.imageService || !context) throw new Error("File service and tool context are required");
+      const asset = await dependencies.imageService.importWorkspaceFile(
+        rootFor(input), requiredString(input, "path"), optionalString(input, "mime_type") ?? "application/octet-stream"
+      );
+      store.attachFileToToolCall(context.toolCallId, asset.id);
+      const label = (optionalString(input, "label") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "file";
+      const markdown = asset.kind === "image" ? `![${label}](${asset.url})` : `[${label}](${asset.url})`;
+      return JSON.stringify({ asset, markdown });
+    }, Boolean((workspace || attachments) && dependencies.imageService))
   ];
 
-  if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager));
+  if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager, rootFor));
 
   const skillList = await listSkills(skills);
   tools.push(tool("use_skill", "加载 Skill", "skill", skillList.length
@@ -164,7 +253,8 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   get_time_info: "读取服务端当前日期、时间、时区和时间戳。",
   eval_javascript: "在无 Node.js、文件、网络和 DOM 权限的隔离环境中执行计算。",
   fetch_url: "读取公开 HTTP/HTTPS 网页；自动阻止私网和回环地址。",
-  search_web: "通过服务端配置的 SearXNG 搜索最新网页信息。",
+  search_web: "通过当前 Agent 配置的搜索服务获取最新网页信息。",
+  image_generate: "使用已配置的图片模型生成、编辑或变体图片。",
   recent_chats: "列出最近对话的标题和更新时间。",
   conversation_search: "在服务端保存的历史对话中搜索内容。",
   memory_tool: "增删改跨会话长期记忆；记忆会加入后续对话上下文。",
@@ -176,13 +266,15 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_grep: "按文本或正则表达式搜索沙箱工作区文件。",
   workspace_shell: "在沙箱工作区目录中运行 Shell 命令，每次执行均需批准。",
   workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
+  workspace_publish_file: "把工作区文件导入为不可变应用资产，并返回永久下载链接。发布前需要批准。",
   use_skill: "按需加载服务端 Skills 目录中的专用说明。"
 };
 
-function backgroundTools(manager: TaskManager): ServerTool[] {
+function backgroundTools(manager: TaskManager, rootFor: (input: JsonObject) => string): ServerTool[] {
   return [
     tool("background_start", "启动后台任务", "background", "Start a long-running command in the frozen conversation workspace and return its task id immediately. Use paths relative to the workspace root in the command.", {
-      command: stringProperty("Shell command; use paths relative to the conversation workspace root"),
+      workspace: workspaceSelectorProperty(),
+      command: stringProperty("Shell command; use paths relative to the selected workspace root"),
       mode: { type: "string", enum: ["pipe", "pty"], description: "Use pty for interactive terminal programs" },
       expected_duration_seconds: integerProperty("Optional expected duration in seconds"),
       hard_timeout_seconds: integerProperty("Optional hard timeout in seconds")
@@ -190,6 +282,7 @@ function backgroundTools(manager: TaskManager): ServerTool[] {
       if (!context) throw new Error("Tool execution context is required");
       const task = manager.create({
         conversationId: context.conversationId, generationId: context.generationId, snapshot: context.snapshot,
+        workspacePath: rootFor(input),
         command: requiredString(input, "command"), mode: input.mode === "pty" ? "pty" : "pipe",
         expectedDurationMs: optionalPositiveSeconds(input, "expected_duration_seconds"),
         hardTimeoutMs: optionalPositiveSeconds(input, "hard_timeout_seconds")
@@ -311,6 +404,9 @@ function stringProperty(description: string): JsonObject { return { type: "strin
 function workspacePathProperty(subject: string): JsonObject {
   return stringProperty(`${subject}, relative to the conversation workspace root. Use . for the root. Legacy /workspace paths are accepted.`);
 }
+function workspaceSelectorProperty(): JsonObject {
+  return { type: "string", enum: ["project", "attachments"], default: "project", description: "Select project workspace or the isolated conversation attachment workspace" };
+}
 function integerProperty(description: string): JsonObject { return { type: "integer", description }; }
 function booleanProperty(description: string): JsonObject { return { type: "boolean", description }; }
 
@@ -359,19 +455,61 @@ async function runJavascript(code: string, signal: AbortSignal): Promise<string>
   });
 }
 
-async function searchWeb(store: Store, query: string, limit: number, signal: AbortSignal): Promise<string> {
-  const settings = store.getToolSettings();
-  if (!settings.search.baseUrl) throw new Error("Web search is not configured");
-  const endpoint = new URL(settings.search.baseUrl);
+const DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
+
+function searchAvailable(config: AgentSearchConfig | undefined, apiKey: string): boolean {
+  if (!config) return false;
+  return config.provider === "tavily" ? apiKey.length > 0 : config.baseUrl.length > 0;
+}
+
+function searchEndpoint(baseUrl: string): URL {
+  const endpoint = new URL(baseUrl);
   if (endpoint.pathname === "/" || !endpoint.pathname) endpoint.pathname = "/search";
+  return endpoint;
+}
+
+async function searchWeb(
+  config: AgentSearchConfig | undefined,
+  apiKey: string,
+  query: string,
+  limit: number,
+  signal: AbortSignal
+): Promise<string> {
+  if (!config) throw new Error("Web search is not configured for this Agent");
+  if (config.provider === "tavily") {
+    if (!apiKey) throw new Error("Tavily API key is not configured");
+    const response = await fetch(searchEndpoint(config.baseUrl || DEFAULT_TAVILY_BASE_URL), {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        query,
+        max_results: limit,
+        search_depth: "basic",
+        include_answer: false,
+        include_raw_content: false
+      }),
+      signal
+    });
+    if (!response.ok) throw new Error(`Tavily search returned HTTP ${response.status}`);
+    const payload = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }> };
+    return JSON.stringify((payload.results ?? []).slice(0, limit).map((item, index) => ({
+      id: index + 1, title: item.title ?? "", url: item.url ?? "", text: item.content ?? ""
+    })));
+  }
+
+  if (!config.baseUrl) throw new Error("SearXNG is not configured");
+  const endpoint = searchEndpoint(config.baseUrl);
   endpoint.searchParams.set("q", query);
   endpoint.searchParams.set("format", "json");
-  const secret = store.getToolSecrets().searchApiKey;
   const response = await fetch(endpoint, {
-    headers: { accept: "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
+    headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
     signal
   });
-  if (!response.ok) throw new Error(`Search service returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`SearXNG search returned HTTP ${response.status}`);
   const payload = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }> };
   return JSON.stringify((payload.results ?? []).slice(0, limit).map((item, index) => ({
     id: index + 1, title: item.title ?? "", url: item.url ?? "", text: item.content ?? ""

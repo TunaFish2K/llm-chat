@@ -20,7 +20,7 @@ function seed() {
     conversations: [conversation],
     messages: { "conv-1": [makeMessage({ id: "assistant-1", activeGenerationId: generation.id, generations: [generation] })] },
     toasts: [],
-    eventsConnected: true,
+    eventsConnectionState: "connected",
     runningTasksByConversation: {}
   });
   return { conversation, generation };
@@ -41,6 +41,7 @@ describe("InspectorPanel", () => {
     expect(screen.getByText("生成 v1")).toBeInTheDocument();
     expect(screen.getByText("100 tokens")).toBeInTheDocument();
     expect(screen.getByText("20 tokens")).toBeInTheDocument();
+    expect(screen.getByText("40 tokens（40%）")).toBeInTheDocument();
     expect(screen.getByText("上下文决策")).toBeInTheDocument();
     expect(screen.getByText("有效设置")).toBeInTheDocument();
   });

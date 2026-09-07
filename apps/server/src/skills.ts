@@ -62,6 +62,29 @@ Use generic background tools to supervise a full coding harness. Inspect the sel
 `
   },
   {
+    id: "llm-chat-operator",
+    content: `---
+id: llm-chat-operator
+name: llm-chat Operator
+description: Inspect and manage this llm-chat instance, including Agents, Character Cards, roleplay workflows, conversations, connections, models, MCP servers, Skills, Plugins, and tool settings.
+requiredTools: app_agents, app_conversations, app_settings, app_connections, app_models, app_mcp_servers, app_skills, app_plugins, app_tool_settings, app_roleplay
+---
+# llm-chat Operator
+
+Use the \`app_*\` tools when the user asks you to inspect or change llm-chat itself. Do not edit the database, server configuration, or application files as a substitute for these tools.
+
+Read the relevant current state before changing it. Apply only the fields the user asked to change, then read the result back when verification matters. Do not claim success until the management tool returns successfully.
+
+For Character Cards, prefer \`app_agents\` import with a current-conversation attachment when the user supplied a card file or image. Public URLs and workspace files are alternatives only when the user identifies them. Preserve card data that the user did not ask to replace.
+
+Use \`app_roleplay\` for Agent-owned presets, personas, lorebooks, safe regex, quick replies, and current-conversation roleplay state. Roleplay changes must remain scoped to the selected Agent or conversation. The restricted script action can only change roleplay state and draft text; it cannot run JavaScript, shell commands, or network requests. Read the script audit log when verification matters.
+
+Management tools intentionally cannot reveal or write API keys and secret headers. Explain that boundary and direct the user to the connection or MCP editor for secret-bearing fields; never ask them to paste a secret into chat merely to work around the boundary.
+
+Creating and updating the requested object is allowed when the request is explicit. Before deleting a conversation, Agent, model, connection, Plugin, or another durable object, confirm the exact target unless the user already explicitly authorized that deletion. Do not start model generations or compact conversations through indirect workarounds.
+`
+  },
+  {
     id: "tool-author",
     content: `---
 id: tool-author

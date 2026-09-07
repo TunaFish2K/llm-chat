@@ -1,8 +1,16 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 const unique = () => Math.random().toString(36).slice(2, 8);
+
+async function openExecutionSettings(page: Page): Promise<void> {
+  const visibleButton = page.locator('button[aria-label="高级执行设置"]:visible');
+  if (await visibleButton.count() === 0) {
+    await page.getByRole("button", { name: "更多会话设置" }).click();
+  }
+  await page.locator('button[aria-label="高级执行设置"]:visible').click();
+}
 
 test.describe("认证", () => {
   test("登录、浏览并退出", async ({ page }) => {
@@ -31,7 +39,8 @@ test.describe("应用外壳", () => {
   test("主导航与会话任务视图切换，深链接可直接打开", async ({ page, request }) => {
     await page.goto(APP_URL);
     await openDrawerIfNeeded(page);
-    await expect(page.locator(".sidebar-brand")).toHaveText(/llm-chat/);
+    await expect(page.locator(".sidebar-brand")).toHaveText(/Chat/);
+    await expect(page.getByTitle("事件流已连接")).toBeVisible({ timeout: 2_000 });
     await expect(page.getByRole("link", { name: "后台任务" })).toHaveCount(0);
 
     await gotoPath(page, "/agents");
@@ -44,7 +53,7 @@ test.describe("应用外壳", () => {
     });
     try {
       await gotoPath(page, `/c/${conversation.id}`);
-      await page.getByRole("tab", { name: "任务" }).click();
+      await page.getByRole("button", { name: /打开后台任务/ }).click();
       await expect(page).toHaveURL(new RegExp(`/c/${conversation.id}/tasks$`));
       await expect(page.getByText("没有后台任务")).toBeVisible();
     } finally {
@@ -69,6 +78,10 @@ test.describe("应用外壳", () => {
         .poll(async () => (await api(request, APP_URL, "GET", "/api/settings")).theme)
         .toBe(next);
       await expect(page.locator("html")).toHaveAttribute("data-theme", next);
+      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
+        "content",
+        next === "light" ? "#f5f7f5" : "#0d100e"
+      );
     } finally {
       await api(request, APP_URL, "PATCH", "/api/settings", { theme: before });
     }
@@ -111,7 +124,13 @@ test.describe("应用外壳", () => {
 
     const manifest = await page.request.get(`${APP_URL}/manifest.webmanifest`);
     expect(manifest.ok()).toBeTruthy();
-    expect((await manifest.json()).name).toBe("llm-chat");
+    expect(await manifest.json()).toMatchObject({
+      name: "Chat",
+      short_name: "Chat",
+      theme_color: "#0d100e",
+      background_color: "#0d100e"
+    });
+    await expect(page).toHaveTitle("Chat");
     const sw = await page.request.get(`${APP_URL}/sw.js`);
     expect(sw.ok()).toBeTruthy();
     expect(await sw.text()).toContain("/api/");
@@ -196,6 +215,32 @@ test.describe("会话与流式生成", () => {
       // The conversation lives at a real path; opening it directly works.
       await expect(page).toHaveURL(/\/c\/[0-9a-f-]+/);
       const conversationUrl = page.url();
+      if (test.info().project.name === "mobile-chromium") {
+        await expect(page.locator(".mobile-appbar")).toHaveCount(0);
+        await expect(page.locator(".conversation-header")).toHaveCount(1);
+        expect(await page.locator(".composer-tool-scroll").evaluate((element) => ({
+          fits: element.scrollWidth <= element.clientWidth,
+          overflow: getComputedStyle(element).overflowX
+        }))).toEqual({ fits: true, overflow: "visible" });
+        await page.getByRole("button", { name: "选择模型" }).click();
+        const modelSearch = page.getByRole("searchbox", { name: "搜索模型" });
+        await expect(modelSearch).toBeVisible();
+        expect(await modelSearch.evaluate((element) => element === document.activeElement)).toBe(false);
+        await page.getByRole("button", { name: "关闭模型选择" }).click();
+        await page.getByRole("button", { name: "打开导航" }).click();
+        await expect(page.getByRole("button", { name: "关闭导航" })).toHaveCount(1);
+        await expect(page.locator(".workspace-sidebar").getByRole("button", { name: "关闭导航" })).toHaveCount(0);
+        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+        await page.getByRole("button", { name: "打开导航" }).click();
+        const drawer = page.locator(".drawer-panel");
+        const box = await drawer.boundingBox();
+        if (!box) throw new Error("导航抽屉没有尺寸");
+        await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.55);
+        await page.mouse.down();
+        await page.mouse.move(box.x + 8, box.y + box.height * 0.55, { steps: 5 });
+        await page.mouse.up();
+        await expect(drawer).toHaveCount(0);
+      }
       await page.goto(`${APP_URL}/`);
       await page.goto(conversationUrl);
       await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
@@ -208,7 +253,7 @@ test.describe("会话与流式生成", () => {
 
       // The Harness-style trajectory and inspector are projections of the
       // persisted generation, not a second execution runtime.
-      await page.getByRole("tab", { name: "轨迹" }).click();
+      await page.getByRole("button", { name: "打开运行轨迹" }).click();
       await expect(page).toHaveURL(/\/trajectory$/);
       await expect(page.getByText("第 1 轮")).toBeVisible();
       await page.getByRole("button", { name: /生成 v1/ }).click();
@@ -218,19 +263,55 @@ test.describe("会话与流式生成", () => {
       if (await inspector.getByRole("button", { name: "关闭检查器" }).isVisible()) {
         await inspector.getByRole("button", { name: "关闭检查器" }).click();
       }
-      await page.getByRole("tab", { name: "对话" }).click();
+      await page.getByRole("button", { name: "关闭运行轨迹" }).click();
 
-      // Rename and then delete the conversation through the sidebar.
+      // Long titles remain inside the single conversation bar.
       await openDrawerIfNeeded(page);
       const item = page.locator(".conversation-row").first();
       await item.hover();
       await item.getByRole("button", { name: /重命名/ }).click();
-      const title = `重命名-${unique()}`;
-      await page.getByLabel("会话标题").fill(title);
+      const title = `长标题-${"标题".repeat(88)}-${unique()}`;
+      await page.getByRole("textbox", { name: "会话标题" }).fill(title);
       await page.getByRole("button", { name: "保存" }).click();
       await openDrawerIfNeeded(page);
       await expect(page.locator(".conversation-row").first()).toContainText(title);
+      if (test.info().project.name === "mobile-chromium") {
+        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+      }
+      await expect(page.locator(".conversation-title")).toHaveAttribute("title", title);
+      expect(await page.locator(".conversation-header").evaluate((header) => {
+        const titleButton = header.querySelector<HTMLElement>(".conversation-title")!;
+        const titleText = titleButton.querySelector<HTMLElement>("strong")!;
+        const headerBox = header.getBoundingClientRect();
+        const titleBox = titleButton.getBoundingClientRect();
+        return {
+          inside: titleBox.left >= headerBox.left && titleBox.right <= headerBox.right,
+          truncated: titleText.scrollWidth > titleText.clientWidth,
+          overflow: getComputedStyle(titleText).textOverflow
+        };
+      })).toEqual({ inside: true, truncated: true, overflow: "ellipsis" });
 
+      // A fork stays inside the conversation family and is switched at its source message.
+      const originalUrl = page.url();
+      const userMessage = page.locator('.msg[data-role="user"]', { hasText: "你好，测试一下" });
+      await userMessage.hover();
+      await userMessage.getByRole("button", { name: "编辑并分叉" }).click();
+      await page.getByLabel("修改后的消息").fill("你好，这是分支");
+      await page.getByRole("button", { name: "创建分支并生成" }).click();
+      await expect(page).not.toHaveURL(originalUrl);
+      await expect(page.getByLabel("对话分支切换")).toContainText("2 / 2");
+
+      await openDrawerIfNeeded(page);
+      await expect(page.locator(".conversation-row", { hasText: title })).toHaveCount(1);
+      await expect(page.locator(".conversation-row", { hasText: "· 分支" })).toHaveCount(0);
+      if (test.info().project.name === "mobile-chromium") {
+        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+      }
+      await page.getByRole("button", { name: "上一分支" }).click();
+      await expect(page).toHaveURL(originalUrl);
+      await expect(page.getByLabel("对话分支切换")).toContainText("1 / 2");
+
+      // Deleting the visible family root also deletes its hidden branches.
       await openDrawerIfNeeded(page);
       const renamed = page.locator(".conversation-row", { hasText: title });
       await renamed.hover();
@@ -253,7 +334,7 @@ test.describe("会话与流式生成", () => {
         title: `覆盖会话-${unique()}`
       });
       await gotoPath(page, `/c/${conversation.id}`);
-      await page.getByRole("button", { name: "高级执行设置" }).click();
+      await openExecutionSettings(page);
       const modal = page.locator(".modal");
       await expect(modal).toBeVisible();
 
@@ -290,7 +371,7 @@ test.describe("会话与流式生成", () => {
 
       // Explicitly selecting no model and an empty stop list must remain
       // distinct from inheriting the Agent values.
-      await page.getByRole("button", { name: "高级执行设置" }).click();
+      await openExecutionSettings(page);
       const explicitModal = page.locator(".modal");
       await explicitModal.getByLabel("会话模型覆盖").selectOption("__none__");
       await explicitModal.getByLabel("停止序列（每行一个）").fill("");
@@ -300,7 +381,7 @@ test.describe("会话与流式生成", () => {
       expect(explicit.generation?.common?.stopSequences).toEqual([]);
 
       // Clearing removes every override field.
-      await page.getByRole("button", { name: "高级执行设置" }).click();
+      await openExecutionSettings(page);
       await page.getByRole("button", { name: "清除覆盖" }).click();
       await page.locator(".modal").getByRole("button", { name: "保存", exact: true }).click();
       await expect
@@ -330,6 +411,145 @@ test.describe("会话与流式生成", () => {
 });
 
 test.describe("Agent 管理", () => {
+  test("每个 Agent 只绑定一个搜索服务并按 Agent 保存密钥", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖 Agent 搜索配置");
+    const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`搜索配置-${unique()}`));
+    try {
+      await gotoPath(page, `/agents/${agent.id}`);
+      await page.getByRole("tab", { name: "工具" }).click();
+      const searchProvider = page.getByLabel("搜索服务", { exact: true });
+      await expect(searchProvider).toHaveValue("searxng");
+      await searchProvider.selectOption("tavily");
+      await page.getByLabel("搜索 API Key").fill("tvly-e2e-secret");
+      await page.getByRole("button", { name: "保存修改" }).click();
+      await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
+
+      const saved = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
+      expect(saved.execution.search).toEqual({ provider: "tavily", baseUrl: "" });
+      expect(saved.searchApiKeyConfigured).toBe(true);
+      expect(JSON.stringify(saved)).not.toContain("tvly-e2e-secret");
+      const catalog = await api(request, APP_URL, "GET", `/api/tools/catalog?agentId=${agent.id}`);
+      expect(catalog.find((item) => item.name === "search_web")).toMatchObject({ available: true });
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`).catch(() => {});
+    }
+  });
+
+  test("长表格保持在消息区域内并使用横向滚动", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖表格布局");
+    const provider = await startMockProvider({
+      responseText: `| 项目 | 详情 |\n| --- | --- |\n| A | ${"long-value-".repeat(30)} |\n\n表格后面的内容。`
+    });
+    let agentId = null;
+    try {
+      const connection = await api(request, APP_URL, "POST", "/api/connections", {
+        name: `table-${unique()}`, protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {}
+      });
+      const discovery = await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`);
+      const model = discovery.created[0];
+      await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
+      const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`表格-${unique()}`, model.id));
+      agentId = agent.id;
+
+      await page.goto(APP_URL);
+      await page.getByLabel("选择 Agent").selectOption(agent.id);
+      await page.getByLabel("输入消息").fill("输出表格");
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+      const table = page.locator(".markdown table").last();
+      await expect(table).toBeVisible();
+      const metrics = await table.evaluate((element) => {
+        const wrapper = element.closest('[data-streamdown="table-wrapper"]');
+        const scroller = element.parentElement;
+        const markdown = element.closest(".markdown");
+        const blocks = markdown ? [...markdown.children].map((child) => child.getBoundingClientRect()) : [];
+        return {
+          overflowX: scroller ? getComputedStyle(scroller).overflowX : "",
+          pageFits: document.documentElement.scrollWidth <= window.innerWidth + 1,
+          blocksDoNotOverlap: blocks.every((rect, index) => index === 0 || rect.top >= blocks[index - 1]!.bottom - 1)
+        };
+      });
+      expect(metrics).toEqual({ overflowX: "auto", pageFits: true, blocksDoNotOverlap: true });
+    } finally {
+      if (agentId) await api(request, APP_URL, "DELETE", `/api/agents/${agentId}`).catch(() => {});
+      await provider.close();
+    }
+  });
+
+  test("角色扮演预设和全屏长文本编辑在宽窄视口可用", async ({ page, request }) => {
+    const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`角色预设-${unique()}`));
+    try {
+      await gotoPath(page, `/agents/${agent.id}`);
+      await page.getByRole("tab", { name: "角色扮演" }).click();
+      await page.getByRole("switch", { name: "启用角色扮演" }).check();
+      await page.getByRole("button", { name: "展开编辑主提示 内容" }).click();
+      const dialog = page.getByRole("dialog", { name: "主提示 内容" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("textbox").fill("{{original}}\n保持角色一致。");
+      await dialog.getByRole("textbox").press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+
+      const personas = page.getByRole("heading", { name: "人物身份" }).locator("xpath=ancestor::section[1]");
+      await personas.getByRole("button", { name: "新增", exact: true }).click();
+      await personas.locator("details").first().locator("summary").click();
+      await personas.getByRole("textbox", { name: /人物名称/ }).fill("旅行者");
+
+      const lorebooks = page.getByRole("heading", { name: "附加世界书" }).locator("xpath=ancestor::section[1]");
+      await lorebooks.getByRole("button", { name: "新增", exact: true }).click();
+      await lorebooks.locator("details").first().locator("summary").click();
+      await lorebooks.getByRole("button", { name: "新增条目" }).click();
+
+      const quick = page.getByRole("heading", { name: "快捷回复与受限脚本" }).locator("xpath=ancestor::section[1]");
+      await quick.getByRole("button", { name: "新增组" }).click();
+      await quick.locator("details.roleplay-resource").first().locator("summary").click();
+      await quick.getByRole("button", { name: "新增快捷回复" }).click();
+      await page.getByRole("button", { name: "保存修改" }).click();
+      await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
+      const stored = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
+      expect(stored.roleplay.enabled).toBe(true);
+      expect(stored.roleplay.presets[0].blocks.find((block: { kind: string }) => block.kind === "main").content)
+        .toContain("保持角色一致");
+      expect(stored.roleplay.personas[0].name).toBe("旅行者");
+      expect(stored.roleplay.lorebooks).toHaveLength(1);
+      expect(stored.roleplay.quickReplySets[0].replies).toHaveLength(1);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`).catch(() => {});
+    }
+  });
+
+  test("角色会话设置只在启用角色扮演的 Agent 中出现", async ({ page, request }) => {
+    const project = test.info().project.name;
+    test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖会话设置断点");
+    const created = await api(request, APP_URL, "POST", "/api/agents", agentInput(`角色会话-${unique()}`));
+    const full = await api(request, APP_URL, "GET", `/api/agents/${created.id}`);
+    const personaId = crypto.randomUUID();
+    await api(request, APP_URL, "PATCH", `/api/agents/${created.id}`, {
+      roleplay: {
+        ...full.roleplay,
+        enabled: true,
+        personas: [{ id: personaId, name: "旅人", description: "来自远方", avatarAssetId: null }],
+        defaultPersonaId: personaId
+      }
+    });
+    const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: created.id });
+    try {
+      await gotoPath(page, `/c/${conversation.id}`);
+      await page.getByRole("button", { name: "更多会话设置" }).click();
+      await page.getByRole("button", { name: "角色会话设置" }).click();
+      const dialog = page.getByRole("dialog", { name: "角色会话设置" });
+      await expect(dialog).toBeVisible();
+      await dialog.getByLabel("人物身份").selectOption(personaId);
+      await dialog.getByRole("button", { name: "保存" }).click();
+      await expect(dialog).toHaveCount(0);
+      expect((await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}/roleplay-state`)).personaId).toBe(personaId);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    } finally {
+      await api(request, APP_URL, "DELETE", `/api/conversations/${conversation.id}`).catch(() => {});
+      await api(request, APP_URL, "DELETE", `/api/agents/${created.id}`).catch(() => {});
+    }
+  });
+
   test("创建、编辑并删除 Agent", async ({ page }) => {
     const name = `小猫助手-${unique()}`;
     await gotoPath(page, "/agents");
@@ -344,9 +564,9 @@ test.describe("Agent 管理", () => {
     await page.getByRole("button", { name: "保存修改" }).click();
     await expect(page.getByRole("heading", { name: renamed })).toBeVisible();
 
-    // Tool policy table lists catalog entries.
+    // Tool policy controls remain directly operable in desktop and compact layouts.
     await page.getByRole("tab", { name: "工具" }).click();
-    await expect(page.getByRole("columnheader", { name: "审批" })).toBeVisible();
+    await expect(page.getByRole("group", { name: /审批策略/ }).first()).toBeVisible();
 
     // Back to list and delete.
     await page.getByRole("button", { name: "返回列表" }).click();
@@ -447,6 +667,12 @@ test.describe("设置分区", () => {
       await gotoPath(page, "/settings/connections");
       await expect(page.locator(".management-card-header .list-row-actions").first()).toBeVisible();
       await assertActionLayout(".management-card-header .list-row-actions", true);
+      if (project === "mobile-chromium") {
+        const modelTable = page.locator(".connection-model-table").first();
+        await expect(modelTable).toBeVisible();
+        expect(await modelTable.evaluate((element) => element.getBoundingClientRect().right)).toBeLessThanOrEqual(390);
+        expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+      }
     } finally {
       await api(request, APP_URL, "DELETE", `/api/connections/${connection.id}`).catch(() => {});
     }
@@ -457,6 +683,38 @@ test.describe("设置分区", () => {
     await expect(page.getByRole("heading", { name: "工具目录" })).toBeVisible();
     await expect(page.locator(".table tbody tr").first()).toBeVisible();
     await expect(page.getByText("工作区：")).toBeVisible();
+
+    const skillTool = page.getByRole("button", { name: "查看工具 加载 Skill 的完整信息" });
+    await expect(skillTool).toBeVisible();
+    expect(await skillTool.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(86);
+    await skillTool.click();
+    const toolDialog = page.getByRole("dialog", { name: "工具详情 · 加载 Skill" });
+    await expect(toolDialog).toContainText("coding-supervisor");
+    await toolDialog.getByRole("button", { name: "关闭对话框" }).click();
+    await expect(skillTool).toBeFocused();
+
+    await page.getByRole("button", { name: "查看完整工作区路径" }).click();
+    await expect(page.getByRole("dialog", { name: "工作区路径" })).toContainText("workspace");
+    await page.getByRole("button", { name: "关闭对话框" }).click();
+
+    const skillToolRow = page.locator(".tool-catalog-table tbody tr").filter({ hasText: "use_skill" });
+    await expect(skillToolRow.getByRole("switch")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
+      await page.evaluate(() => window.innerWidth)
+    );
+  });
+
+  test("Skill 摘要可打开完整详情", async ({ page }) => {
+    await gotoPath(page, "/settings/skills");
+    const summary = page.locator(".skill-summary-trigger").first();
+    await expect(summary).toBeVisible();
+    await expect(summary.locator(".skill-description-summary")).toHaveCSS("-webkit-line-clamp", "2");
+    await summary.click();
+    const dialog = page.getByRole("dialog", { name: /Skill 详情/ });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("heading", { name: "描述" })).toBeVisible();
+    await dialog.getByRole("button", { name: "关闭对话框" }).click();
+    await expect(summary).toBeFocused();
   });
 
   test("记忆列表为只读", async ({ page }) => {

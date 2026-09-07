@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "../lib/api";
@@ -18,17 +18,28 @@ describe("SettingsView", () => {
     expect(screen.getByLabelText("默认推理档位")).toHaveValue("medium");
   });
 
-  it("stores generation haptics as a device-local preference", async () => {
+  it("stores generation haptics in application settings", async () => {
     const user = userEvent.setup();
     Object.defineProperty(window.navigator, "vibrate", { configurable: true, value: vi.fn() });
+    const fetchMock = vi.fn().mockResolvedValue(json(makeSettings({
+      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: false }
+    })));
+    vi.stubGlobal("fetch", fetchMock);
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
 
-    const toggle = screen.getByRole("checkbox", { name: /生成时触感反馈/ });
+    const toggle = screen.getByRole("checkbox", { name: /生成时振动/ });
     expect(toggle).toBeChecked();
     await user.click(toggle);
-    expect(toggle).not.toBeChecked();
-    expect(window.localStorage.getItem("llm-chat.generation-haptics")).toBe("off");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/settings",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: false }
+        })
+      })
+    ));
   });
 
   it("validates password confirmation before allowing change", async () => {
@@ -74,6 +85,74 @@ describe("SettingsView", () => {
     );
     render(<SettingsView section="memories" />);
     expect(await screen.findByText("主人喜欢咖啡")).toBeInTheDocument();
+  });
+
+  it("opens complete tool and environment details from compact summaries", async () => {
+    const user = userEvent.setup();
+    const description = "A long tool description with every detail preserved in the read-only dialog.";
+    vi.spyOn(endpoints, "toolSettings").mockResolvedValue({
+      enabled: { long_tool: true },
+      workspaceShellEnabled: true,
+      workspacePath: "/a/very/long/workspace/path",
+      skillsPath: "/a/very/long/skills/path"
+    });
+    vi.spyOn(endpoints, "toolCatalog").mockResolvedValue([{
+      name: "long_tool",
+      label: "Long Tool",
+      description,
+      category: "workspace",
+      requiresApproval: true,
+      available: true,
+      approvalMode: "always",
+      sourceKind: "plugin",
+      sourceId: "plugin-long",
+      sourceName: "Long Plugin Source",
+      revision: "1234567890abcdef",
+      operationalState: "loaded",
+      error: null
+    }]);
+
+    render(<SettingsView section="tools" />);
+    const toolTrigger = await screen.findByRole("button", { name: "查看工具 Long Tool 的完整信息" });
+    await user.click(toolTrigger);
+    const toolDialog = screen.getByRole("dialog", { name: "工具详情 · Long Tool" });
+    expect(within(toolDialog).getByText(description)).toBeInTheDocument();
+    expect(within(toolDialog).getByText("long_tool")).toBeInTheDocument();
+    expect(within(toolDialog).getByText("plugin-long")).toBeInTheDocument();
+    await user.click(within(toolDialog).getByRole("button", { name: "关闭对话框" }));
+    await waitFor(() => expect(toolTrigger).toHaveFocus());
+
+    await user.click(screen.getByRole("button", { name: "查看完整工作区路径" }));
+    const pathDialog = screen.getByRole("dialog", { name: "工作区路径" });
+    expect(within(pathDialog).getByText("/a/very/long/workspace/path")).toBeInTheDocument();
+  });
+
+  it("opens complete Skill descriptions, dependencies and errors", async () => {
+    const user = userEvent.setup();
+    const description = "A long Skill description that is clamped in the list and complete in its detail dialog.";
+    vi.spyOn(endpoints, "skills").mockResolvedValue([{
+      id: "skill-detail",
+      name: "Detail Skill",
+      description,
+      revision: "abcdef1234567890",
+      sourcePath: "/tmp/detail-skill",
+      state: "error",
+      error: "The complete Skill error",
+      requiredTools: ["workspace_shell", "background_start"],
+      recommendedApprovals: {},
+      bundled: false,
+      installedAt: 1,
+      updatedAt: 1
+    }]);
+
+    render(<SettingsView section="skills" />);
+    const trigger = await screen.findByRole("button", { name: "查看 Skill Detail Skill 的完整信息" });
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Skill 详情 · Detail Skill" });
+    expect(within(dialog).getByText(description)).toBeInTheDocument();
+    expect(within(dialog).getByText("workspace_shell")).toBeInTheDocument();
+    expect(within(dialog).getByText("background_start")).toBeInTheDocument();
+    expect(within(dialog).getByText("The complete Skill error")).toBeInTheDocument();
   });
 
   it("groups Skill, Plugin and MCP actions outside their content columns", async () => {
@@ -123,7 +202,7 @@ describe("SettingsView", () => {
     }]);
 
     for (const [section, name, actionCount] of [
-      ["skills", "Long Skill", 2],
+      ["skills", "Long Skill", 1],
       ["plugins", "Long Plugin", 4],
       ["mcp", "Long MCP", 3]
     ] as const) {
@@ -172,6 +251,7 @@ describe("SettingsView", () => {
 
     await waitFor(() => expect(create).toHaveBeenCalledWith({
       name: "OpenAI",
+      providerId: "custom",
       protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "secret-key",
@@ -180,6 +260,39 @@ describe("SettingsView", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument());
     expect(screen.getByText("OpenAI")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "手动添加模型" })).toBeEnabled();
+  });
+
+  it("discovers models automatically for a preset provider after saving", async () => {
+    const user = userEvent.setup();
+    const connection = makeConnection({
+      name: "OpenAI",
+      providerId: "openai",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1"
+    });
+    const create = vi.spyOn(endpoints, "createConnection").mockResolvedValue(connection);
+    const discover = vi.spyOn(endpoints, "discoverModels").mockResolvedValue({
+      discovered: 2, created: [], updated: [], skipped: 0, unmatched: 0, warnings: []
+    });
+    vi.spyOn(endpoints, "connections").mockResolvedValue([connection]);
+    vi.spyOn(endpoints, "models").mockResolvedValue([]);
+    appStore.set({ connections: [], models: [], toasts: [] });
+    render(<SettingsView section="connections" />);
+
+    await user.click(screen.getByRole("button", { name: "新建连接" }));
+    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
+    await user.type(screen.getByLabelText("API Key"), "secret-key");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      name: "OpenAI",
+      providerId: "openai",
+      protocol: "openai-responses",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "secret-key"
+    })));
+    await waitFor(() => expect(discover).toHaveBeenCalledWith(connection.id));
+    expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument();
   });
 
   it("keeps the connection editor open when creation fails", async () => {

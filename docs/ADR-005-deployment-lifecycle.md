@@ -15,8 +15,8 @@ without guessing which state is safe to share or replace.
 
 ### One process per data directory
 
-The server acquires an instance lock for the canonical `LLM_CHAT_DATA_DIR` before constructing `Store`. The lock
-uses `.llm-chat-instance` and canonicalization prevents path aliases, including symlinks, from bypassing it. A
+The server reads its JSON configuration and acquires an instance lock for the canonical `dataDir` before
+constructing `Store`. The lock uses `.llm-chat-instance` and canonicalization prevents path aliases, including symlinks, from bypassing it. A
 second server using the directory fails. The offline authentication reset CLI uses the same lock.
 
 There is one replica per data directory. An update or restart must stop the old process and wait for its exit before
@@ -24,11 +24,22 @@ starting the next process; a different port does not make overlapping access saf
 
 ### Immutable code and the Web artifact
 
-Production serves the built Web artifact by default (`LLM_CHAT_SERVE_WEB=true`). Startup requires
-`apps/web/dist/index.html` in that code release. An API-only process may explicitly set `LLM_CHAT_SERVE_WEB=false`;
+Production serves the built Web artifact by default (`serveWeb: true`). Startup requires
+`apps/web/dist/index.html` in that code release. An API-only process may explicitly set `serveWeb: false`;
 that mode does not register the Web static-file handler and does not require the Web artifact. Code releases are
-immutable after build. The `LLM_CHAT_DATA_DIR` remains a separate writable directory containing SQLite and managed
+immutable after build. The configured `dataDir` remains a separate writable directory containing SQLite and managed
 runtime state.
+
+### Plain JSON runtime configuration
+
+The server reads runtime settings from `config.json` in the project root or from the path selected with
+`--config <path>`. It does not read the retired `LLM_CHAT_*` runtime environment variables. A normal server start
+atomically creates a missing file with complete safe defaults and owner-only permissions; it never overwrites an
+existing invalid file. Maintenance commands require an existing configuration so they cannot silently select a new
+default data directory. Relative `dataDir` values resolve from the configuration file's directory.
+
+The file is plain JSON and receives no application-level encryption. It currently contains process settings rather
+than model credentials. Operators protect and back it up separately from the runtime data directory.
 
 ### Liveness and readiness are distinct
 
@@ -49,20 +60,20 @@ Plugin/MCP resources, and the Store before releasing the instance lock.
 
 Background tasks are marked `interrupted` during service shutdown. A live task receives `SIGTERM` for its process
 group and gets up to two seconds to exit; the manager then sends `SIGKILL` and waits for the exit. Queued and
-remaining non-terminal tasks are also marked interrupted. The application-level `LLM_CHAT_SHUTDOWN_TIMEOUT_MS`
+remaining non-terminal tasks are also marked interrupted. The application-level `shutdownTimeoutMs`
 is bounded to 1000-300000 ms, defaults to 30000 ms, and forces process exit if the complete shutdown exceeds it.
 The external manager's grace period must be longer than this application timeout.
 
 ### Offline-only authentication reset
 
-Password recovery is an offline CLI operation, not an HTTP operation. It requires exactly
-`--confirm-reset-password`, acquires the data-directory lock, creates a new eight-digit password, and revokes active
-sessions in one transaction. It preserves chat and application data. The service must be stopped while it runs. The
-CLI prints the replacement password.
+Password recovery is an offline CLI operation, not an HTTP operation. It requires `--confirm-reset-password`,
+accepts the shared `--config <path>` selector, acquires the data-directory lock, creates a new eight-digit password,
+and revokes active sessions in one transaction. It preserves chat and application data. The service must be stopped
+while it runs. The CLI prints the replacement password.
 
 ### Whole-directory backup
 
-The backup and restore unit is the complete `LLM_CHAT_DATA_DIR`, not only the SQLite file. SQLite sidecars,
+The runtime backup and restore unit is the complete configured `dataDir`, not only the SQLite file. SQLite sidecars,
 content-addressed Plugin and Skill revisions, background task logs, persisted large tool outputs, workspace files,
 and other runtime state can be required to interpret or recover the database. The directory also contains API keys,
 secret headers, password hashes, session material, and Plugin secrets, so it is treated as secret material. The simple
@@ -71,7 +82,7 @@ merging it with a live or partially retained directory.
 
 ### Build identity
 
-`LLM_CHAT_BUILD_ID` is a validated single-line identifier (1-200 characters) with default `development`. The server
+`buildId` is a validated single-line configuration value (1-200 characters) with default `development`. The server
 includes it in `/healthz`, `/readyz`, and lifecycle logs. Operators set a stable release identifier so probes and
 logs distinguish code versions during rollout and rollback.
 
@@ -90,6 +101,8 @@ systemd, or nginx configuration.
 - A task that ignores `SIGTERM` is forcibly terminated after two seconds, and the application has a bounded final
   shutdown deadline. Operators must choose a manager grace period longer than that deadline.
 - API-only deployments can omit the Web artifact, but they cannot provide the bundled Web UI from that process.
+- Runtime configuration has one explicit JSON source and can bootstrap itself on first server start; operators must
+  manage and back up an external configuration file separately.
 - Build IDs make mixed-release observations visible in probes and logs, while immutable releases make update and
   rollback selection explicit.
 - Whole-directory backups are larger and contain secrets, but SQLite-only backups cannot restore managed revisions,

@@ -10,7 +10,7 @@ export function makeSettings(patch: Partial<AppSettings> = {}): AppSettings {
     defaultAgentId: "agent-1",
     lastAgentId: "agent-1",
     userProfile: { displayName: "主人", description: "" },
-    uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" },
+    uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
     lastWorkspacePath: null,
     ...patch
   };
@@ -25,9 +25,11 @@ export function makeAgent(patch: Partial<AgentSummaryDto> = {}): AgentSummaryDto
     revision: 1,
     hasAvatar: false,
     modelId: "model-1",
+    searchApiKeyConfigured: false,
     execution: {
       modelId: "model-1",
       visionModelId: null,
+      search: { provider: "searxng", baseUrl: "" },
       contextPolicy: "trim",
       reasoningEffort: "medium",
       generation: {},
@@ -40,6 +42,7 @@ export function makeAgent(patch: Partial<AgentSummaryDto> = {}): AgentSummaryDto
     userProfile: {},
     firstMessage: "你好！",
     alternateGreetings: [],
+    roleplayEnabled: false,
     createdAt: 1,
     updatedAt: 1,
     ...patch
@@ -67,6 +70,7 @@ export function makeConnection(patch: Partial<ConnectionDto> = {}): ConnectionDt
   return {
     id: "connection-1",
     name: "测试连接",
+    providerId: "custom",
     protocol: "openai-chat",
     baseUrl: "https://example.com/v1",
     hasApiKey: true,
@@ -84,6 +88,7 @@ export function makeModel(patch: Partial<ModelDto> = {}): ModelDto {
     modelKey: "gpt-test",
     displayName: "GPT 测试",
     contextWindow: 128_000,
+    maxInputTokens: null,
     maxOutputTokens: 8_192,
     capabilities: {
       imageInput: false,
@@ -98,6 +103,8 @@ export function makeModel(patch: Partial<ModelDto> = {}): ModelDto {
     defaultSettings: { common: { maxOutputTokens: 8_192, stopSequences: [] }, protocol: {} },
     enabled: true,
     source: "manual",
+    catalogManaged: false,
+    catalogMetadata: null,
     createdAt: 1,
     updatedAt: 1,
     ...patch
@@ -108,6 +115,7 @@ export function makeGeneration(patch: Partial<GenerationDto> = {}): GenerationDt
   return {
     id: "gen-1",
     version: 1,
+    generationKind: "normal",
     status: "completed",
     connectionName: "test-conn",
     protocol: "openai-chat",
@@ -134,12 +142,14 @@ export function makeGeneration(patch: Partial<GenerationDto> = {}): GenerationDt
 export function makeMessage(patch: Partial<MessageDto> = {}): MessageDto {
   return {
     id: "msg-1",
+    ordinal: 1,
     role: "assistant",
     text: null,
     generatedModel: null,
     attachments: [],
     activeGenerationId: null,
     generations: [],
+    greeting: null,
     createdAt: 2,
     ...patch
   };

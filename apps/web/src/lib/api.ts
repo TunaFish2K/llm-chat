@@ -1,6 +1,8 @@
 import type {
   AgentDto,
   AgentInput,
+  AgentSearchSecretDto,
+  AgentSearchSecretInput,
   AgentSummaryDto,
   AppSettings,
   BackgroundTaskDto,
@@ -11,13 +13,19 @@ import type {
   ContextSummaryDto,
   ConversationDto,
   ConversationExecutionOverrides,
+  ConversationRoleplayState,
+  ConversationRoleplayStatePatch,
+  RoleplayScriptExecutionDto,
   ConversationForkDto,
   ConversationStartedDto,
   DirectoryListingDto,
   GenerationCreatedDto,
   GenerationDto,
   ForkConversationInput,
+  FileAssetDto,
   ImageAssetDto,
+  ImageGenerationInput,
+  ImageGenerationJobDto,
   McpServerDto,
   McpServerInput,
   McpServerPatch,
@@ -109,6 +117,27 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+async function uploadFile(file: File): Promise<FileAssetDto> {
+  const response = await fetch("/api/files", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "content-type": "application/octet-stream",
+      "x-llm-chat-request": "1",
+      "x-file-name": encodeURIComponent(file.name || "file"),
+      "x-file-type": file.type || "application/octet-stream"
+    },
+    body: file
+  });
+  if (response.status === 401) emitAuthRequired();
+  const data = await response.json() as FileAssetDto | { error?: { code?: string; message?: string } };
+  if (!response.ok) {
+    const error = (data as { error?: { code?: string; message?: string } }).error;
+    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? "文件上传失败");
+  }
+  return data as FileAssetDto;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
@@ -169,16 +198,28 @@ export const endpoints = {
   agent: (id: string) => api.get<AgentDto>(`/api/agents/${id}`),
   createAgent: (input: AgentInput) => api.post<AgentDto>("/api/agents", input),
   updateAgent: (id: string, patch: Partial<AgentInput>) => api.patch<AgentDto>(`/api/agents/${id}`, patch),
+  updateAgentSearchSecret: (id: string, input: AgentSearchSecretInput) =>
+    api.patch<AgentSearchSecretDto>(`/api/agents/${id}/search-secret`, input),
   deleteAgent: (id: string) => api.delete<undefined>(`/api/agents/${id}`),
   importAgent: (fileName: string, dataBase64: string) =>
     api.post<AgentDto>("/api/agents/import", { fileName, dataBase64 }),
   setAgentAvatar: (id: string, fileName: string, dataBase64: string) =>
     api.put<AgentDto>(`/api/agents/${id}/avatar`, { fileName, dataBase64 }),
   deleteAgentAvatar: (id: string) => api.delete<undefined>(`/api/agents/${id}/avatar`),
+  importRoleplayPreset: (id: string, fileName: string, dataBase64: string) =>
+    api.post<AgentDto>(`/api/agents/${id}/roleplay/presets/import`, { fileName, dataBase64 }),
+  uploadRoleplayAsset: (id: string, file: File, dataBase64: string, type: string) =>
+    api.post<AgentDto>(`/api/agents/${id}/roleplay/assets`, {
+      fileName: file.name, mimeType: file.type || "application/octet-stream", type, dataBase64
+    }),
+  deleteRoleplayAsset: (id: string, assetId: string) =>
+    api.delete<undefined>(`/api/agents/${id}/roleplay/assets/${assetId}`),
 
   toolSettings: () => api.get<ToolSettingsDto>("/api/tools/settings"),
   updateToolSettings: (patch: ToolSettingsInput) => api.patch<ToolSettingsDto>("/api/tools/settings", patch),
-  toolCatalog: () => api.get<ToolCatalogItemDto[]>("/api/tools/catalog"),
+  toolCatalog: (agentId?: string) => api.get<ToolCatalogItemDto[]>(
+    `/api/tools/catalog${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ""}`
+  ),
 
   plugins: () => api.get<PluginDto[]>("/api/plugins"),
   installPlugin: (sourcePath: string) => api.post<PluginDto>("/api/plugins/install", { sourcePath }),
@@ -211,13 +252,21 @@ export const endpoints = {
     api.get<ConnectionBalanceDto>(`/api/connections/${id}/balance${refresh ? "?refresh=1" : ""}`),
   testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`),
   discoverModels: (id: string) =>
-    api.post<{ discovered: number; created: ModelDto[] }>(`/api/connections/${id}/models/discover`),
+    api.post<{
+      discovered: number;
+      created: ModelDto[];
+      updated: ModelDto[];
+      skipped: number;
+      unmatched: number;
+      warnings: string[];
+    }>(`/api/connections/${id}/models/discover`),
 
   models: (connectionId?: string) =>
     api.get<ModelDto[]>(`/api/models${connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : ""}`),
   createModel: (input: ModelInput) => api.post<ModelDto>("/api/models", input),
   updateModel: (id: string, patch: Partial<ModelInput>) => api.patch<ModelDto>(`/api/models/${id}`, patch),
   deleteModel: (id: string) => api.delete<undefined>(`/api/models/${id}`),
+  restoreModelCatalog: (id: string) => api.post<ModelDto>(`/api/models/${id}/catalog/restore`, {}),
 
   conversations: () => api.get<ConversationDto[]>("/api/conversations"),
   createConversation: (input: {
@@ -229,6 +278,7 @@ export const endpoints = {
     api.post<ConversationDto>("/api/conversations", input),
   startConversation: (input: {
     text: string;
+    assetIds?: string[];
     imageAssetIds?: string[];
     agentId: string;
     greetingIndex?: number;
@@ -238,18 +288,33 @@ export const endpoints = {
   conversation: (id: string) => api.get<ConversationDto>(`/api/conversations/${id}`),
   updateConversation: (id: string, patch: Record<string, unknown>) =>
     api.patch<ConversationDto>(`/api/conversations/${id}`, patch),
+  conversationRoleplayState: (id: string) =>
+    api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`),
+  updateConversationRoleplayState: (id: string, patch: ConversationRoleplayStatePatch) =>
+    api.patch<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, patch),
+  executeRoleplayScript: (id: string, input: { script?: string; quickReplyId?: string; trigger?: "new_chat" | "before_send" | "after_reply" | "lore_activated"; draft?: string }) =>
+    api.post<RoleplayScriptExecutionDto>(`/api/conversations/${id}/roleplay-scripts/execute`, input),
+  roleplayScriptAudit: (id: string) =>
+    api.get<Array<Record<string, unknown>>>(`/api/conversations/${id}/roleplay-scripts/audit`),
   deleteConversation: (id: string) => api.delete<undefined>(`/api/conversations/${id}`),
   forkConversation: (id: string, input: ForkConversationInput) =>
     api.post<ConversationForkDto>(`/api/conversations/${id}/forks`, input),
   contextSummary: (id: string) => api.get<ContextSummaryDto | null>(`/api/conversations/${id}/context/compact`),
   compactContext: (id: string) => api.post<ContextSummaryDto>(`/api/conversations/${id}/context/compact`, {}),
   messages: (conversationId: string) => api.get<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
+  imageGenerations: (conversationId: string) => api.get<ImageGenerationJobDto[]>(`/api/conversations/${conversationId}/image-generations`),
+  startImageGeneration: (conversationId: string, input: ImageGenerationInput) =>
+    api.post<ImageGenerationJobDto>(`/api/conversations/${conversationId}/image-generations`, input),
+  imageGeneration: (id: string) => api.get<ImageGenerationJobDto>(`/api/image-generations/${id}`),
+  cancelImageGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/cancel`, {}),
+  retryImageGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/retry`, {}),
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
-  sendMessage: (conversationId: string, text: string, imageAssetIds: string[] = []) =>
+  uploadFile,
+  sendMessage: (conversationId: string, text: string, assetIds: string[] = []) =>
     api.post<GenerationCreatedDto>(`/api/conversations/${conversationId}/messages`, {
       text,
-      ...(imageAssetIds.length ? { imageAssetIds } : {})
+      ...(assetIds.length ? { assetIds } : {})
     }),
   retryGeneration: (messageId: string) => api.post<GenerationCreatedDto>(`/api/messages/${messageId}/generations`, {}),
   selectGeneration: (messageId: string, generationId: string) =>

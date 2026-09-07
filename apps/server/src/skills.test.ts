@@ -87,10 +87,13 @@ describe("SkillManager", () => {
     await manager.initialize();
 
     expect(manager.list().map((item) => item.id)).toEqual(expect.arrayContaining([
-      "coding-supervisor", "tool-author", "command-execution-guide", "legacy-helper"
+      "coding-supervisor", "tool-author", "command-execution-guide", "llm-chat-operator", "legacy-helper"
     ]));
-    expect(manager.list().filter((item) => item.bundled)).toHaveLength(3);
-    expect(emitted).toEqual(expect.arrayContaining(["coding-supervisor", "tool-author", "command-execution-guide", "legacy-helper"]));
+    expect(manager.list().filter((item) => item.bundled)).toHaveLength(4);
+    expect(manager.list().find((item) => item.id === "llm-chat-operator")?.requiredTools).toEqual(
+      expect.arrayContaining(["app_agents", "app_conversations", "app_connections", "app_models", "app_skills"])
+    );
+    expect(emitted).toEqual(expect.arrayContaining(["coding-supervisor", "tool-author", "command-execution-guide", "llm-chat-operator", "legacy-helper"]));
     manager.close();
   });
 

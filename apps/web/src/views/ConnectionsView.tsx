@@ -6,15 +6,15 @@ import type {
   ModelCapabilities,
   ModelDto,
   ModelInput,
+  ProviderPresetId,
   ProviderProtocol
 } from "@llm-chat/contracts";
+import { providerPreset, providerPresetDefinitions } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { appStore, refreshConnectionsAndModels, toast, toastError } from "../lib/app-state";
-import { formatTime } from "../lib/format";
+import { formatTime, formatTokens } from "../lib/format";
 import { useStore } from "../lib/store";
-import { ConfirmModal, EmptyState, Field, Modal } from "../lib/ui";
-
-const PROTOCOLS: ProviderProtocol[] = ["openai-responses", "openai-chat", "anthropic-messages"];
+import { ConfirmModal, EmptyState, Field, Modal, Switch } from "../lib/ui";
 
 interface BalanceState {
   loading: boolean;
@@ -75,7 +75,14 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     try {
       const result = await endpoints.discoverModels(connection.id);
       await refreshConnectionsAndModels();
-      toast("success", `发现 ${result.discovered} 个模型，新增 ${result.created.length} 个`);
+      const details = [
+        `发现 ${result.discovered}`,
+        `新增 ${result.created.length}`,
+        `更新 ${result.updated.length}`,
+        `保留手动配置 ${result.skipped}`,
+        `目录未匹配 ${result.unmatched}`
+      ];
+      toast(result.warnings.length > 0 ? "info" : "success", `${details.join("，")}。${result.warnings.join("；")}`);
     } catch (error) {
       toastError(error);
     } finally {
@@ -116,6 +123,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                   <header className="management-card-header">
                     <h3 className="list-row-title">
                       <strong>{connection.name}</strong>
+                      <span className="tag">{providerPreset(connection.providerId).label}</span>
                       <span className="tag">{connection.protocol}</span>
                     </h3>
                     <div className="list-row-actions">
@@ -164,7 +172,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                   {connectionModels.length === 0 ? (
                     <p className="small muted">该连接下没有模型。</p>
                   ) : (
-                    <table className="table">
+                    <table className="table connection-model-table">
                       <thead>
                         <tr>
                           <th>模型</th>
@@ -177,26 +185,34 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       <tbody>
                         {connectionModels.map((model) => (
                           <tr key={model.id}>
-                            <td>
-                              <div>{model.displayName}</div>
+                            <td className="connection-model-summary" data-label="模型">
+                              <div className="list-row-title">
+                                <span>{model.displayName}</span>
+                                {model.catalogManaged ? <span className="tag ok">自动维护</span> : null}
+                              </div>
                               <div className="small muted mono">{model.modelKey}</div>
                             </td>
-                            <td>{model.contextWindow ?? "—"}</td>
-                            <td>{model.source === "discovered" ? "发现" : "手动"}</td>
-                            <td>
-                              <input
-                                type="checkbox"
-                                aria-label={`启用 ${model.displayName}`}
+                            <td className="connection-model-context" data-label="上下文">
+                              <div>{formatTokens(model.contextWindow ?? undefined)}</div>
+                              <div className="small muted">
+                                输入 {formatTokens(model.maxInputTokens ?? undefined)} · 输出 {formatTokens(model.maxOutputTokens)}
+                              </div>
+                            </td>
+                            <td className="connection-model-meta" data-label="来源">{model.source === "discovered" ? "发现" : "手动"}</td>
+                            <td className="connection-model-meta connection-model-enabled" data-label="启用">
+                              <Switch
+                                label={`启用 ${model.displayName}`}
+                                hideLabel
                                 checked={model.enabled}
-                                onChange={(event) => {
+                                onChange={(checked) => {
                                   endpoints
-                                    .updateModel(model.id, { enabled: event.target.checked })
+                                    .updateModel(model.id, { enabled: checked })
                                     .then(() => refreshConnectionsAndModels())
                                     .catch(toastError);
                                 }}
                               />
                             </td>
-                            <td>
+                            <td className="connection-model-actions" data-label="操作">
                               <button className="btn small" onClick={() => setEditingModel(model)}>
                                 编辑
                               </button>{" "}
@@ -267,8 +283,10 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
 }
 
 function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto | null; onClose: () => void }) {
+  const initialProviderId = connection?.providerId ?? "custom";
+  const [providerId, setProviderId] = useState<ProviderPresetId>(initialProviderId);
   const [name, setName] = useState(connection?.name ?? "");
-  const [protocol, setProtocol] = useState<ProviderProtocol>(connection?.protocol ?? "openai-responses");
+  const [protocol, setProtocol] = useState<ProviderProtocol>(connection?.protocol ?? providerPreset(initialProviderId).defaultProtocol);
   const [baseUrl, setBaseUrl] = useState(connection?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [headers, setHeaders] = useState<Array<{ name: string; value: string }>>([]);
@@ -277,6 +295,17 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
   const [balanceExpression, setBalanceExpression] = useState(connection?.balanceConfig?.resultExpression ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedProvider = providerPreset(providerId);
+
+  const chooseProvider = (next: ProviderPresetId) => {
+    const preset = providerPreset(next);
+    setProviderId(next);
+    if (next !== "custom") {
+      if (!name.trim() || providerId === "custom") setName(preset.label);
+      setBaseUrl(preset.baseUrl);
+      setProtocol(preset.defaultProtocol);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -286,9 +315,11 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
       for (const header of headers) {
         if (header.name.trim()) secretHeaders[header.name.trim()] = header.value;
       }
+      let saved: ConnectionDto;
       if (connection) {
         const patch: Partial<ConnectionInput> = {
           name: name.trim(),
+          providerId,
           protocol,
           baseUrl: baseUrl.trim(),
           ...(apiKey ? { apiKey } : {}),
@@ -305,10 +336,11 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
               ? { balanceConfig: { ...connection.balanceConfig, enabled: false } }
               : {})
         };
-        await endpoints.updateConnection(connection.id, patch);
+        saved = await endpoints.updateConnection(connection.id, patch);
       } else {
         const input: ConnectionInput = {
           name: name.trim(),
+          providerId,
           protocol,
           baseUrl: baseUrl.trim(),
           ...(apiKey ? { apiKey } : {}),
@@ -323,10 +355,20 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
               }
             : {})
         };
-        await endpoints.createConnection(input);
+        saved = await endpoints.createConnection(input);
       }
       await refreshConnectionsAndModels();
-      toast("success", "连接已保存");
+      if (providerId !== "custom" && providerId !== "stability") {
+        try {
+          const result = await endpoints.discoverModels(saved.id);
+          await refreshConnectionsAndModels();
+          toast("success", `连接已保存，发现 ${result.discovered} 个模型，新增 ${result.created.length} 个`);
+        } catch (cause) {
+          toast("error", `连接已保存，但自动发现模型失败：${cause instanceof Error ? cause.message : "请求失败"}`);
+        }
+      } else {
+        toast("success", "连接已保存");
+      }
       onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败");
@@ -345,7 +387,11 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
           <button className="btn" onClick={onClose}>
             取消
           </button>
-          <button className="btn primary" disabled={busy || !name.trim() || !baseUrl.trim()} onClick={() => void save()}>
+          <button
+            className="btn primary"
+            disabled={busy || !name.trim() || !baseUrl.trim() || (providerId !== "custom" && !apiKey && !connection?.hasApiKey)}
+            onClick={() => void save()}
+          >
             保存
           </button>
         </>
@@ -356,6 +402,20 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
           {error}
         </p>
       ) : null}
+      <Field label="Provider" hint={selectedProvider.description} htmlFor="conn-provider">
+        <select
+          id="conn-provider"
+          className="select"
+          value={providerId}
+          onChange={(event) => chooseProvider(event.target.value as ProviderPresetId)}
+        >
+          {providerPresetDefinitions.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.label}
+            </option>
+          ))}
+        </select>
+      </Field>
       <div className="grid-2">
         <Field label="名称" htmlFor="conn-name">
           <input id="conn-name" className="input" value={name} onChange={(event) => setName(event.target.value)} />
@@ -367,9 +427,9 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
             value={protocol}
             onChange={(event) => setProtocol(event.target.value as ProviderProtocol)}
           >
-            {PROTOCOLS.map((item) => (
+            {selectedProvider.protocols.map((item) => (
               <option key={item} value={item}>
-                {item}
+                {item === "openai-responses" ? "OpenAI Responses" : item === "openai-chat" ? "OpenAI Chat Completions" : "Anthropic Messages"}
               </option>
             ))}
           </select>
@@ -386,7 +446,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
       </Field>
       <Field
         label="API Key"
-        hint={connection?.hasApiKey ? "已配置；留空保持不变。" : "可选。"}
+        hint={connection?.hasApiKey ? "已配置；留空保持不变。" : providerId === "custom" ? "可选。" : "预置 Provider 需要 API Key。"}
         htmlFor="conn-api-key"
       >
         <input
@@ -467,6 +527,11 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
 
 const CAPABILITY_LABELS: Array<[keyof ModelCapabilities, string]> = [
   ["imageInput", "图片输入"],
+  ["imageOutput", "图片输出"],
+  ["imageEdit", "图片编辑"],
+  ["imageInpaint", "图片局部重绘"],
+  ["imageVariation", "图片变体"],
+  ["imageMultiple", "多图输出"],
   ["tools", "工具"],
   ["temperature", "温度"],
   ["topP", "Top-P"],
@@ -482,7 +547,11 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
   const [modelKey, setModelKey] = useState(model?.modelKey ?? "");
   const [displayName, setDisplayName] = useState(model?.displayName ?? "");
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");
+  const [maxInputTokens, setMaxInputTokens] = useState(model?.maxInputTokens?.toString() ?? "");
   const [maxOutputTokens, setMaxOutputTokens] = useState(String(model?.maxOutputTokens ?? 4096));
+  const [imageProtocol, setImageProtocol] = useState<ModelInput["imageProtocol"]>(model?.imageProtocol ?? null);
+  const selectedConnection = connections.find((connection) => connection.id === connectionId);
+  const supportedImageProtocols = providerPreset(selectedConnection?.providerId ?? "custom").imageProtocols;
   const [capabilities, setCapabilities] = useState<ModelCapabilities>(
     model?.capabilities ?? {
       imageInput: false,
@@ -509,7 +578,9 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
         modelKey: modelKey.trim(),
         displayName: displayName.trim(),
         contextWindow: contextWindow === "" ? null : Number(contextWindow),
+        maxInputTokens: maxInputTokens === "" ? null : Number(maxInputTokens),
         maxOutputTokens: Number(maxOutputTokens) || 4096,
+        imageProtocol: imageProtocol ?? null,
         capabilities,
         defaultSettings: {
           common: {
@@ -533,6 +604,22 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
     }
   };
 
+  const restoreCatalog = async () => {
+    if (!model) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await endpoints.restoreModelCatalog(model.id);
+      await refreshConnectionsAndModels();
+      toast("success", "已恢复目录托管并刷新模型参数");
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "恢复目录托管失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Modal
       title={model ? `编辑模型 ${model.displayName}` : "手动添加模型"}
@@ -540,6 +627,11 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
       wide
       footer={
         <>
+          {model && !model.catalogManaged ? (
+            <button className="btn" disabled={busy} onClick={() => void restoreCatalog()}>
+              恢复目录托管
+            </button>
+          ) : null}
           <button className="btn" onClick={onClose}>
             取消
           </button>
@@ -558,13 +650,38 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           {error}
         </p>
       ) : null}
+      {model ? (
+        <div className="model-management-note" data-managed={model.catalogManaged || undefined}>
+          <div>
+            <strong>{model.catalogManaged ? "自动维护模型参数" : "当前使用手动参数"}</strong>
+            <span>
+              {model.catalogManaged
+                ? model.catalogMetadata
+                  ? "参数来自 models.dev。保存下面的技术参数会转为手动配置，后续发现不会覆盖。"
+                  : "暂未匹配目录记录；重新发现时会继续尝试。保存参数后将转为手动配置。"
+                : model.catalogMetadata
+                  ? "可恢复目录托管，重新采用 models.dev 的能力、限制和价格数据。"
+                  : "该模型尚未匹配到目录记录。"}
+            </span>
+          </div>
+          <span className={`tag ${model.catalogManaged ? "ok" : ""}`}>{model.catalogManaged ? "自动" : "手动"}</span>
+        </div>
+      ) : null}
       <div className="grid-2">
         <Field label="所属连接">
           <select
             className="select"
             aria-label="所属连接"
             value={connectionId}
-            onChange={(event) => setConnectionId(event.target.value)}
+            onChange={(event) => {
+              const nextConnectionId = event.target.value;
+              setConnectionId(nextConnectionId);
+              const protocols = providerPreset(connections.find((item) => item.id === nextConnectionId)?.providerId ?? "custom").imageProtocols;
+              if (protocols.length && imageProtocol && !protocols.includes(imageProtocol)) {
+                setImageProtocol(null);
+                setCapabilities((current) => ({ ...current, imageOutput: false }));
+              }
+            }}
           >
             {connections.map((connection) => (
               <option key={connection.id} value={connection.id}>
@@ -590,7 +707,35 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           onChange={(event) => setModelKey(event.target.value)}
         />
       </Field>
-      <div className="grid-2">
+      <Field label="图片协议" hint="启用后，模型可用于聊天旁的图片生成任务。">
+        <select
+          className="select"
+          aria-label="图片协议"
+          value={imageProtocol ?? ""}
+          onChange={(event) => {
+            const next = (event.target.value || null) as ModelInput["imageProtocol"];
+            setImageProtocol(next);
+            setCapabilities((current) => ({ ...current, imageOutput: Boolean(next) }));
+          }}
+        >
+          <option value="">不启用图片生成</option>
+          {(supportedImageProtocols.length
+            ? supportedImageProtocols
+            : ["openai-images", "google-imagen", "google-interactions", "stability-image"] as const
+          ).map((protocol) => (
+            <option key={protocol} value={protocol}>
+              {protocol === "openai-images"
+                ? "OpenAI Images"
+                : protocol === "google-imagen"
+                ? "Google Imagen"
+                : protocol === "google-interactions"
+                ? "Google Gemini 图片"
+                : "Stability Image"}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div className="grid-3">
         <Field label="上下文窗口" hint="留空表示未知。">
           <input
             className="input"
@@ -598,6 +743,15 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
             aria-label="上下文窗口"
             value={contextWindow}
             onChange={(event) => setContextWindow(event.target.value)}
+          />
+        </Field>
+        <Field label="最大输入 token" hint="留空时按上下文窗口计算。">
+          <input
+            className="input"
+            type="number"
+            aria-label="最大输入 token"
+            value={maxInputTokens}
+            onChange={(event) => setMaxInputTokens(event.target.value)}
           />
         </Field>
         <Field label="最大输出 token">
@@ -610,6 +764,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           />
         </Field>
       </div>
+      {model?.catalogMetadata ? <ModelCatalogDetails model={model} /> : null}
       <Field label="能力">
         <div>
           {CAPABILITY_LABELS.map(([key, label]) => (
@@ -650,5 +805,34 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
         </Field>
       </div>
     </Modal>
+  );
+}
+
+function ModelCatalogDetails({ model }: { model: ModelDto }) {
+  const metadata = model.catalogMetadata;
+  if (!metadata) return null;
+  const pricing = metadata.pricing;
+  return (
+    <details className="model-catalog-details">
+      <summary>模型目录详情</summary>
+      <dl className="catalog-detail-grid">
+        <div><dt>目录标识</dt><dd className="mono">{metadata.providerId} / {metadata.modelId}</dd></div>
+        <div><dt>系列与发布</dt><dd>{metadata.family ?? "—"} · {metadata.releaseDate ?? "—"}</dd></div>
+        <div><dt>输入模态</dt><dd>{metadata.inputModalities.join("、") || "—"}</dd></div>
+        <div><dt>输出模态</dt><dd>{metadata.outputModalities.join("、") || "—"}</dd></div>
+        <div className="detail-grid-wide"><dt>推理档位</dt><dd>{metadata.reasoningEfforts.join("、") || "目录未声明"}</dd></div>
+        {metadata.description ? <div className="detail-grid-wide"><dt>说明</dt><dd>{metadata.description}</dd></div> : null}
+        {pricing ? (
+          <div className="detail-grid-wide">
+            <dt>价格（每百万 token）</dt>
+            <dd>
+              输入 ${pricing.input} · 输出 ${pricing.output}
+              {pricing.cacheRead !== undefined ? ` · 缓存读取 $${pricing.cacheRead}` : ""}
+              {pricing.cacheWrite !== undefined ? ` · 缓存写入 $${pricing.cacheWrite}` : ""}
+            </dd>
+          </div>
+        ) : null}
+      </dl>
+    </details>
   );
 }

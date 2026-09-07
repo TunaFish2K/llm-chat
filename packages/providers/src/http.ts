@@ -1,4 +1,4 @@
-import { ProviderError, type ProviderConnection } from "./types";
+import { ProviderError, type ProviderConnection, type ProviderRequestContext } from "./types";
 
 const textDecoder = new TextDecoder();
 
@@ -11,7 +11,10 @@ export function endpoint(baseUrl: string, resource: string): string {
   return url.toString();
 }
 
-export function headers(connection: ProviderConnection): Record<string, string> {
+export function headers(
+  connection: ProviderConnection,
+  requestContext?: ProviderRequestContext
+): Record<string, string> {
   const result: Record<string, string> = { "content-type": "application/json" };
   if (connection.apiKey) {
     if (connection.protocol === "anthropic-messages") {
@@ -21,7 +24,17 @@ export function headers(connection: ProviderConnection): Record<string, string> 
       result.authorization = `Bearer ${connection.apiKey}`;
     }
   }
-  return { ...result, ...connection.secretHeaders };
+  const merged = { ...result, ...connection.secretHeaders };
+  if (connection.providerId === "opencode-go" && requestContext) {
+    return {
+      ...merged,
+      "x-opencode-session": requestContext.sessionId,
+      "x-opencode-request": requestContext.requestId,
+      "x-opencode-client": requestContext.clientId,
+      "User-Agent": requestContext.userAgent
+    };
+  }
+  return merged;
 }
 
 export async function ensureOk(response: Response): Promise<void> {
@@ -80,10 +93,11 @@ export async function* readSse(response: Response): AsyncGenerator<{ event: stri
 
 export async function listModelEndpoint(
   connection: ProviderConnection,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  requestContext?: ProviderRequestContext
 ): Promise<Array<{ id: string; displayName: string }>> {
   const response = await fetch(endpoint(connection.baseUrl, "models"), {
-    headers: headers(connection),
+    headers: headers(connection, requestContext),
     ...(signal ? { signal } : {})
   });
   await ensureOk(response);

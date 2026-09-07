@@ -26,7 +26,7 @@ export function LoginView() {
       <form className="login-card" onSubmit={(event) => void submit(event)}>
         <div className="brand">
           <img src="/icons/icon-192.png" alt="" width={36} height={36} />
-          llm-chat
+          Chat
         </div>
         <div className="field">
           <label htmlFor="login-password">访问密码</label>

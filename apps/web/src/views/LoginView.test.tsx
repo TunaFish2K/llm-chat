@@ -12,6 +12,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 describe("LoginView", () => {
   it("renders a password form with an accessible label", () => {
     render(<LoginView />);
+    expect(screen.getByText("Chat")).toBeInTheDocument();
     expect(screen.getByLabelText("访问密码")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "登录" })).toBeDisabled();
   });

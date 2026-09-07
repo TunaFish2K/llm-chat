@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeBackgroundTask, makeMessage } from "../../test/fixtures";
-import { appStore, loadMessages, refreshTaskCounts } from "./app-state";
+import { makeBackgroundTask, makeGeneration, makeMessage } from "../../test/fixtures";
+import { FakeEventSource } from "../../test/setup";
+import { appStore, loadMessages, refreshTaskCounts, restartGenerationTracking, startAppEvents, trackGeneration } from "./app-state";
 
 describe("message compatibility", () => {
   it("normalizes attachment and generation arrays omitted by an older server", async () => {
@@ -18,6 +19,66 @@ describe("message compatibility", () => {
 
     expect(messages[0]).toMatchObject({ attachments: [], generations: [] });
     expect(appStore.get().messages["conv-legacy"]?.[0]).toMatchObject({ attachments: [], generations: [] });
+  });
+});
+
+describe("event stream lifecycle", () => {
+  it("uses connecting before the first open and reconnecting only after a disconnect", () => {
+    appStore.set({ eventsConnectionState: "connecting" });
+    startAppEvents();
+    const source = FakeEventSource.instances.at(-1)!;
+
+    source.onerror?.();
+    expect(appStore.get().eventsConnectionState).toBe("connecting");
+    source.onopen?.();
+    expect(appStore.get().eventsConnectionState).toBe("connected");
+    source.onerror?.();
+    expect(appStore.get().eventsConnectionState).toBe("reconnecting");
+  });
+
+  it("opens a fresh generation stream after approval and receives the tool result", () => {
+    const generationId = "gen-approval";
+    const messageId = "message-approval";
+    const pending = {
+      id: "call-approval",
+      index: 0,
+      stepIndex: 0,
+      name: "workspace_shell",
+      arguments: "{}",
+      approvalState: "pending" as const,
+      requiresApproval: true,
+      output: null,
+      error: null,
+      startedAt: null,
+      completedAt: null,
+      artifacts: []
+    };
+    const generation = makeGeneration({ id: generationId, status: "running", toolCalls: [pending] });
+    appStore.set({
+      messages: {
+        approval: [makeMessage({ id: messageId, activeGenerationId: generationId, generations: [generation] })]
+      }
+    });
+
+    trackGeneration("approval", messageId, generationId);
+    const waitingStream = FakeEventSource.instances.at(-1)!;
+    waitingStream.emit("status", { type: "status", generationId, status: "waiting-approval", stopReason: "tool_approval" });
+    expect(waitingStream.closed).toBe(true);
+
+    restartGenerationTracking("approval", messageId, generationId);
+    const resumedStream = FakeEventSource.instances.at(-1)!;
+    expect(resumedStream).not.toBe(waitingStream);
+    resumedStream.emit("tool-call", {
+      type: "tool-call",
+      generationId,
+      toolCall: { ...pending, approvalState: "completed", output: "done", startedAt: 10, completedAt: 11 }
+    });
+
+    expect(appStore.get().messages.approval?.[0]?.generations[0]?.toolCalls[0]).toMatchObject({
+      approvalState: "completed",
+      output: "done"
+    });
+    resumedStream.emit("status", { type: "status", generationId, status: "waiting-approval", stopReason: "tool_approval" });
   });
 });
 

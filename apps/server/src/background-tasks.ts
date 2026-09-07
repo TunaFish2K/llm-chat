@@ -37,6 +37,7 @@ export interface StartTaskInput {
   mode: "pipe" | "pty";
   expectedDurationMs: number | null;
   hardTimeoutMs: number | null;
+  workspacePath?: string | undefined;
 }
 
 export class TaskManager {
@@ -49,7 +50,8 @@ export class TaskManager {
 
   create(input: StartTaskInput): BackgroundTaskDto {
     if (this.closed) throw new Error("Task manager is closing");
-    if (!input.snapshot.workspacePath) throw new Error("Conversation has no workspace");
+    const workspacePath = input.workspacePath ?? input.snapshot.workspacePath;
+    if (!workspacePath) throw new Error("Conversation has no workspace");
     const id = randomUUID();
     const now = Date.now();
     this.store.sqlite.prepare(`
@@ -58,7 +60,7 @@ export class TaskManager {
         workspace_path, status, expected_duration_ms, hard_timeout_ms, log_limit_bytes, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
     `).run(id, input.conversationId, input.generationId, input.snapshot.agentId, input.snapshot.name,
-      input.snapshot.revision, input.command, input.mode, input.snapshot.workspacePath,
+      input.snapshot.revision, input.command, input.mode, workspacePath,
       input.expectedDurationMs, input.hardTimeoutMs, input.snapshot.execution.taskLogLimitBytes, now);
     this.event(id, "state", null, { status: "queued" });
     const task = this.get(id)!;

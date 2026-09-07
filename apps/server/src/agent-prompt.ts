@@ -1,18 +1,33 @@
-import type { CharacterBookEntry } from "@llm-chat/contracts";
+import type { CharacterBookEntry, RoleplayPromptBlock } from "@llm-chat/contracts";
 import type { ProviderMessage } from "@llm-chat/providers";
 import type { AgentSnapshot, ContextMessageRecord } from "./database";
 import { substituteCardPlaceholders } from "./database";
+import { selectedRoleplayPreset } from "./roleplay";
+import { renderRoleplayMacros } from "./roleplay-macros";
+import { applySafeRegex } from "./safe-regex";
 
 export interface CompiledAgentPrompt {
   systemPrompt: string;
   exampleMessages: ProviderMessage[];
   postHistoryInstructions: string;
+  beforeHistoryMessages: ProviderMessage[];
+  afterHistoryMessages: ProviderMessage[];
+  inChatMessages: Array<{ depth: number; message: ProviderMessage }>;
 }
 
 export function compileAgentPrompt(
   snapshot: AgentSnapshot,
   history: ContextMessageRecord[],
   availableInputTokens = 8_000
+): CompiledAgentPrompt {
+  if (snapshot.roleplay.enabled) return compileRoleplayPrompt(snapshot, history, availableInputTokens);
+  return compileLegacyPrompt(snapshot, history, availableInputTokens);
+}
+
+function compileLegacyPrompt(
+  snapshot: AgentSnapshot,
+  history: ContextMessageRecord[],
+  availableInputTokens: number
 ): CompiledAgentPrompt {
   const card = snapshot.card.data;
   const render = (value: string) => substituteCardPlaceholders(
@@ -51,8 +66,140 @@ export function compileAgentPrompt(
   return {
     systemPrompt: sections.join("\n\n"),
     exampleMessages: examples,
-    postHistoryInstructions: render(card.post_history_instructions)
+    postHistoryInstructions: render(card.post_history_instructions),
+    beforeHistoryMessages: [],
+    afterHistoryMessages: [],
+    inChatMessages: []
   };
+}
+
+function compileRoleplayPrompt(
+  snapshot: AgentSnapshot,
+  history: ContextMessageRecord[],
+  availableInputTokens: number
+): CompiledAgentPrompt {
+  const card = snapshot.card.data;
+  const state = snapshot.roleplayState;
+  const preset = selectedRoleplayPreset(snapshot.roleplay, state);
+  if (!preset) return compileLegacyPrompt(snapshot, history, availableInputTokens);
+  const persona = snapshot.roleplay.personas.find((item) => item.id === state.personaId);
+  const userName = persona?.name || snapshot.userProfile.displayName;
+  const macroSeed = history.map((message) => `${message.messageId}:${message.text}`).join("\u0000") || snapshot.agentId || card.name;
+  const render = (value: string) => renderRoleplayMacros(value, {
+    character: card.name,
+    user: userName,
+    variables: state.variables,
+    seed: macroSeed
+  });
+  const rawSystem = render(card.system_prompt);
+  const systemBase = rawSystem.trim()
+    ? rawSystem.replace(/\{\{original\}\}/gi, snapshot.baseSystemPrompt)
+    : snapshot.baseSystemPrompt;
+  const entries = [
+    ...(card.character_book?.entries ?? []),
+    ...snapshot.roleplay.lorebooks
+      .filter((book) => state.enabledLorebookIds.includes(book.id))
+      .flatMap((book) => book.book.entries)
+  ];
+  const lore = selectLoreEntries(entries, history, {
+    scanDepth: card.character_book?.scan_depth ?? 4,
+    tokenBudget: card.character_book?.token_budget ?? Math.max(128, Math.floor(availableInputTokens * 0.25)),
+    recursive: card.character_book?.recursive_scanning ?? false
+  });
+  const loreBefore = lore.filter((entry) => ["before_char", "before_examples"].includes(entry.position ?? "before_char"));
+  const loreAfter = lore.filter((entry) => ["after_char", "after_examples"].includes(entry.position ?? "before_char"));
+  const examples = parseExampleMessages(render(card.mes_example), card.name, userName);
+  const historyOrder = preset.blocks.find((block) => block.kind === "history")?.order ?? Number.MAX_SAFE_INTEGER;
+  const systemBefore: string[] = [];
+  const systemAfter: string[] = [];
+  const beforeHistoryMessages: ProviderMessage[] = [];
+  const afterHistoryMessages: ProviderMessage[] = [];
+  const inChatMessages: Array<{ depth: number; message: ProviderMessage }> = [];
+  let exampleMessages: ProviderMessage[] = [];
+
+  for (const block of [...preset.blocks].sort((a, b) => a.order - b.order)) {
+    if (!block.enabled || !block.triggers.includes(snapshot.generationKind) || block.kind === "history") continue;
+    const generated = roleplayBlockContent(block, {
+      systemBase,
+      character: section("角色", [
+        `名称：${render(card.name)}`,
+        card.description ? `描述：${render(card.description)}` : "",
+        card.personality ? `性格：${render(card.personality)}` : "",
+        (state.scenarioOverride || card.scenario) ? `场景：${render(state.scenarioOverride || card.scenario)}` : ""
+      ].filter(Boolean).join("\n")),
+      loreBefore: loreBefore.map((entry) => applySafeRegex(
+        render(entry.content), snapshot.roleplay.regexScripts, state.enabledRegexScriptIds, "world_info"
+      )).join("\n\n"),
+      loreAfter: loreAfter.map((entry) => applySafeRegex(
+        render(entry.content), snapshot.roleplay.regexScripts, state.enabledRegexScriptIds, "world_info"
+      )).join("\n\n"),
+      persona: section("用户", [
+        `名称：${userName}`,
+        (persona?.description || snapshot.userProfile.description)
+          ? `描述：${render(persona?.description || snapshot.userProfile.description)}`
+          : ""
+      ].filter(Boolean).join("\n")),
+      examples: render(card.mes_example),
+      authorNote: render(state.authorNote),
+      postHistory: render(card.post_history_instructions),
+      render
+    });
+    if (!generated.trim()) continue;
+    if (block.kind === "examples" && examples.length && !block.content.trim()) {
+      exampleMessages = examples;
+      continue;
+    }
+    if (block.position === "in_chat") {
+      inChatMessages.push({ depth: block.depth, message: promptMessage(block.role, generated) });
+      continue;
+    }
+    const beforeHistory = block.order < historyOrder;
+    if (block.role === "system") {
+      (beforeHistory ? systemBefore : systemAfter).push(generated);
+    } else {
+      (beforeHistory ? beforeHistoryMessages : afterHistoryMessages).push(promptMessage(block.role, generated));
+    }
+  }
+
+  return {
+    systemPrompt: systemBefore.join("\n\n"),
+    exampleMessages,
+    postHistoryInstructions: systemAfter.join("\n\n"),
+    beforeHistoryMessages,
+    afterHistoryMessages,
+    inChatMessages
+  };
+}
+
+function roleplayBlockContent(
+  block: RoleplayPromptBlock,
+  values: {
+    systemBase: string;
+    character: string;
+    loreBefore: string;
+    loreAfter: string;
+    persona: string;
+    examples: string;
+    authorNote: string;
+    postHistory: string;
+    render: (value: string) => string;
+  }
+): string {
+  const custom = values.render(block.content);
+  if (custom.trim()) return custom.replace(/\{\{original\}\}/gi, values.systemBase);
+  if (block.kind === "main") return values.systemBase;
+  if (block.kind === "character") return values.character;
+  if (block.kind === "lore_before") return section("世界信息", values.loreBefore);
+  if (block.kind === "lore_after") return section("补充世界信息", values.loreAfter);
+  if (block.kind === "persona") return values.persona;
+  if (block.kind === "examples") return values.examples;
+  if (block.kind === "author_note") return section("作者注释", values.authorNote);
+  if (block.kind === "post_history") return values.postHistory;
+  return "";
+}
+
+function promptMessage(role: RoleplayPromptBlock["role"], text: string): ProviderMessage {
+  return { role: role === "system" ? "user" : role, text };
 }
 
 function section(title: string, content: string): string {

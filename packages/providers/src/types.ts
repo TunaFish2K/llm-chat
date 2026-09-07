@@ -2,16 +2,28 @@ import type {
   BlockType,
   GenerationSettings,
   ModelCapabilities,
+  ImageGenerationInput,
+  ImageGenerationOperation,
+  ImageProviderProtocol,
+  ProviderPresetId,
   ProviderProtocol,
   UsageDto
 } from "@llm-chat/contracts";
 
 export interface ProviderConnection {
   id: string;
+  providerId: ProviderPresetId;
   protocol: ProviderProtocol;
   baseUrl: string;
   apiKey: string;
   secretHeaders: Record<string, string>;
+}
+
+export interface ProviderRequestContext {
+  sessionId: string;
+  requestId: string;
+  clientId: string;
+  userAgent: string;
 }
 
 export interface ProviderMessage {
@@ -64,6 +76,7 @@ export interface GenerateRequest {
    */
   settings: GenerationSettings;
   capabilities: ModelCapabilities;
+  requestContext: ProviderRequestContext;
   signal: AbortSignal;
 }
 
@@ -88,8 +101,56 @@ export interface DiscoveredModel {
 
 export interface ProviderAdapter {
   readonly protocol: ProviderProtocol;
-  listModels(connection: ProviderConnection, signal?: AbortSignal): Promise<DiscoveredModel[]>;
+  listModels(connection: ProviderConnection, signal?: AbortSignal, requestContext?: ProviderRequestContext): Promise<DiscoveredModel[]>;
   stream(request: GenerateRequest): AsyncGenerator<ProviderEvent>;
+}
+
+export interface ImageGenerationRequest {
+  connection: ProviderConnection;
+  modelKey: string;
+  protocol: ImageProviderProtocol;
+  operation: ImageGenerationOperation;
+  prompt: string;
+  referenceImages: ProviderImage[];
+  mask?: ProviderImage;
+  options: Omit<ImageGenerationInput, "modelId" | "prompt" | "operation" | "referenceAssetIds" | "maskAssetId">;
+  signal: AbortSignal;
+}
+
+export interface GeneratedImage {
+  data?: Uint8Array;
+  url?: string;
+  mimeType: ProviderImage["mimeType"];
+  revisedPrompt?: string;
+}
+
+export interface ImageGenerationCompleted {
+  status: "completed";
+  images: GeneratedImage[];
+  revisedPrompt?: string;
+}
+
+export interface ImageGenerationPending {
+  status: "pending";
+  providerJobId: string;
+  pollAfterMs?: number;
+}
+
+export type ImageGenerationStart = ImageGenerationCompleted | ImageGenerationPending;
+
+export interface ImageGenerationPollResult {
+  status: "pending" | "completed" | "failed";
+  providerJobId: string;
+  pollAfterMs?: number;
+  result?: ImageGenerationCompleted;
+  error?: string;
+}
+
+export interface ImageGenerationAdapter {
+  readonly protocol: ImageProviderProtocol;
+  start(request: ImageGenerationRequest): Promise<ImageGenerationStart>;
+  poll?(request: ImageGenerationRequest, providerJobId: string): Promise<ImageGenerationPollResult>;
+  cancel?(request: ImageGenerationRequest, providerJobId: string): Promise<void>;
 }
 
 export class ProviderError extends Error {

@@ -5,10 +5,11 @@ import type {
   ConversationDto,
   GenerationDto,
   MessageDto,
-  ModelDto
+  ModelDto,
+  FileAssetDto
 } from "@llm-chat/contracts";
 import { api, endpoints, onAuthRequired } from "./api";
-import { cancelGenerationHaptic, scheduleGenerationHaptic } from "./haptics";
+import { cancelGenerationHaptic, scheduleGenerationHaptic, setGenerationHapticsEnabled } from "./haptics";
 import { createStore } from "./store";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
 
@@ -17,6 +18,8 @@ export interface Toast {
   kind: "info" | "success" | "error";
   text: string;
 }
+
+export type EventsConnectionState = "connecting" | "connected" | "reconnecting";
 
 export interface AppState {
   auth: "loading" | "required" | "ready";
@@ -28,7 +31,7 @@ export interface AppState {
   conversations: ConversationDto[];
   messages: Record<string, MessageDto[]>;
   toasts: Toast[];
-  eventsConnected: boolean;
+  eventsConnectionState: EventsConnectionState;
   runningTasksByConversation: Record<string, number>;
 }
 
@@ -42,7 +45,7 @@ export const appStore = createStore<AppState>({
   conversations: [],
   messages: {},
   toasts: [],
-  eventsConnected: false,
+  eventsConnectionState: "connecting",
   runningTasksByConversation: {}
 });
 
@@ -64,6 +67,7 @@ export async function bootstrap(conversationId?: string): Promise<void> {
   appStore.set({ auth: "loading", bootError: null });
   try {
     const data = await endpoints.bootstrap(conversationId);
+    setGenerationHapticsEnabled(data.settings.uiPreferences.generationHaptics);
     const normalizedMessages = data.messages ? normalizeMessages(data.messages) : undefined;
     const bootMessages = conversationId && normalizedMessages ? { [conversationId]: normalizedMessages } : {};
     appStore.set({
@@ -108,6 +112,7 @@ export async function refreshConnectionsAndModels(): Promise<void> {
 
 export async function refreshSettings(): Promise<void> {
   const settings = await endpoints.settings();
+  setGenerationHapticsEnabled(settings.uiPreferences.generationHaptics);
   appStore.set({ settings });
 }
 
@@ -123,18 +128,35 @@ export async function loadMessages(conversationId: string): Promise<MessageDto[]
 }
 
 function normalizeMessages(messages: MessageDto[]): MessageDto[] {
-  return messages.map((message) => ({
+  return messages.map((message, index) => ({
     ...message,
-    attachments: Array.isArray(message.attachments) ? message.attachments : [],
-    generations: Array.isArray(message.generations) ? message.generations : []
+    ordinal: Number.isInteger(message.ordinal) ? message.ordinal : index + 1,
+    attachments: Array.isArray(message.attachments) ? message.attachments.map(normalizeAsset) : [],
+    generations: Array.isArray(message.generations) ? message.generations.map((generation) => ({
+      ...generation,
+      generationKind: generation.generationKind ?? "normal",
+      toolCalls: Array.isArray(generation.toolCalls) ? generation.toolCalls.map((call) => ({
+        ...call,
+        artifacts: Array.isArray(call.artifacts) ? call.artifacts.map(normalizeAsset) : []
+      })) : []
+    })) : []
   }));
 }
 
+function normalizeAsset(asset: FileAssetDto): FileAssetDto {
+  if (asset.kind === "image" || asset.kind === "file") return asset;
+  return {
+    ...asset,
+    kind: asset.mimeType.startsWith("image/") ? "image" : "file"
+  } as FileAssetDto;
+}
+
 export function upsertMessage(conversationId: string, message: MessageDto): void {
+  const normalized = normalizeMessages([message])[0]!;
   appStore.set((state) => {
     const list = state.messages[conversationId] ?? [];
-    const index = list.findIndex((item) => item.id === message.id);
-    const next = index >= 0 ? list.map((item, i) => (i === index ? message : item)) : [...list, message];
+    const index = list.findIndex((item) => item.id === normalized.id);
+    const next = index >= 0 ? list.map((item, i) => (i === index ? normalized : item)) : [...list, normalized];
     return { messages: { ...state.messages, [conversationId]: next } };
   });
 }
@@ -149,6 +171,11 @@ const generationOwners = new Map<string, { conversationId: string; messageId: st
 export function trackGeneration(conversationId: string, messageId: string, generationId: string): void {
   generationOwners.set(generationId, { conversationId, messageId });
   ensureGenerationStream(generationId);
+}
+
+export function restartGenerationTracking(conversationId: string, messageId: string, generationId: string): void {
+  closeGenerationStream(generationId);
+  trackGeneration(conversationId, messageId, generationId);
 }
 
 export function ensureGenerationStream(generationId: string): void {
@@ -178,7 +205,7 @@ async function handleGenerationEvent(
   }
   if (event.type === "snapshot") {
     applyGeneration(owner.conversationId, owner.messageId, event.generation);
-    if (!isGenerationActive(event.generation.status)) closeGenerationStream(generationId);
+    if (generationStreamEnded(event.generation.status)) closeGenerationStream(generationId);
     return;
   }
   const message = findMessage(owner.conversationId, owner.messageId);
@@ -218,18 +245,24 @@ async function handleGenerationEvent(
     cancelGenerationHaptic();
   }
   applyGeneration(owner.conversationId, owner.messageId, next);
-  if (event.type === "status" && !isGenerationActive(event.status)) {
+  if (event.type === "status" && generationStreamEnded(event.status)) {
     closeGenerationStream(generationId);
-    // Final status may update message-level fields; re-sync from the server.
-    try {
-      await loadMessages(owner.conversationId);
-    } catch {
-      /* ignore */
+    if (!isGenerationActive(event.status)) {
+      // Final status may update message-level fields; re-sync from the server.
+      try {
+        await loadMessages(owner.conversationId);
+      } catch {
+        /* ignore */
+      }
     }
   }
   if (event.type === "error") {
     closeGenerationStream(generationId);
   }
+}
+
+function generationStreamEnded(status: string): boolean {
+  return status === "waiting-approval" || !isGenerationActive(status);
 }
 
 function closeGenerationStream(generationId: string): void {
@@ -265,13 +298,27 @@ let appEventsSubscription: Subscription | null = null;
 
 export function startAppEvents(): void {
   if (appEventsSubscription) return;
+  let hasConnected = false;
   appEventsSubscription = subscribeAppEvents(
     (event) => {
       if (event.type === "task") {
         void refreshTaskCounts();
+      } else if (event.type === "image-generation") {
+        void loadMessages(event.conversationId);
+      } else if (event.type === "resource-changed") {
+        if (event.resource === "agents") void refreshAgents();
+        if (event.resource === "conversations") void refreshConversations();
+        if (event.resource === "settings") void refreshSettings();
+        if (event.resource === "connections" || event.resource === "models") void refreshConnectionsAndModels();
+        window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: event }));
       }
     },
-    (connected) => appStore.set({ eventsConnected: connected })
+    (connected) => {
+      if (connected) hasConnected = true;
+      appStore.set({
+        eventsConnectionState: connected ? "connected" : hasConnected ? "reconnecting" : "connecting"
+      });
+    }
   );
 }
 

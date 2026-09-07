@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import type {
   AgentDto,
+  AgentSearchProvider,
   ApprovalPolicy,
   CharacterBook,
   ContextPolicy,
@@ -15,12 +17,15 @@ import { appStore, refreshAgents, toast, toastError } from "../lib/app-state";
 import { fileToBase64 } from "../lib/format";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
-import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState } from "../lib/ui";
+import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Switch } from "../lib/ui";
+import { ExpandableTextarea } from "../components/ExpandableTextarea";
+import { RoleplayTab } from "../components/agent/RoleplayTab";
 
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
 const TABS = [
   ["card", "角色卡"],
+  ["roleplay", "角色扮演"],
   ["avatar", "头像"],
   ["execution", "执行配置"],
   ["tools", "工具"],
@@ -37,13 +42,15 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [searchApiKeyPatch, setSearchApiKeyPatch] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     setAgent(null);
     setError(null);
     setDirty(false);
-    Promise.all([endpoints.agent(agentId), endpoints.toolCatalog(), endpoints.skills()])
+    setSearchApiKeyPatch(undefined);
+    Promise.all([endpoints.agent(agentId), endpoints.toolCatalog(agentId), endpoints.skills()])
       .then(([agentData, catalogData, skillData]) => {
         if (cancelled) return;
         setAgent(agentData);
@@ -57,6 +64,19 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
       cancelled = true;
     };
   }, [agentId]);
+
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      const resource = (event as CustomEvent<{ resource?: string }>).detail?.resource;
+      if (resource === "agents" && !dirty) void endpoints.agent(agentId).then(setAgent).catch(toastError);
+      if (resource === "tools" || (resource === "agents" && !dirty)) {
+        void endpoints.toolCatalog(agentId).then(setCatalog).catch(toastError);
+      }
+      if (resource === "skills") void endpoints.skills().then(setSkills).catch(toastError);
+    };
+    window.addEventListener("llm-chat:resource-changed", refresh);
+    return () => window.removeEventListener("llm-chat:resource-changed", refresh);
+  }, [agentId, dirty]);
 
   const mutate = (fn: (draft: AgentDto) => void) => {
     setAgent((current) => {
@@ -72,12 +92,21 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
     if (!agent) return;
     setSaving(true);
     try {
-      const updated = await endpoints.updateAgent(agent.id, {
+      let updated = await endpoints.updateAgent(agent.id, {
         card: agent.card,
         execution: agent.execution,
-        userProfile: agent.userProfile
+        userProfile: agent.userProfile,
+        roleplay: agent.roleplay
       });
+      if (searchApiKeyPatch !== undefined) {
+        await endpoints.updateAgentSearchSecret(agent.id, {
+          provider: updated.execution.search.provider,
+          apiKey: searchApiKeyPatch
+        });
+        updated = await endpoints.agent(agent.id);
+      }
       setAgent(updated);
+      setSearchApiKeyPatch(undefined);
       setDirty(false);
       await refreshAgents();
       toast("success", "已保存 Agent");
@@ -137,9 +166,30 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
       <div className="panel-scroll">
         <div className="panel-inner">
           {tab === "card" ? <CardTab agent={agent} mutate={mutate} /> : null}
+          {tab === "roleplay" ? (
+            <RoleplayTab
+              agent={agent}
+              mutate={mutate}
+              onReplace={(next) => {
+                setAgent(next);
+                setDirty(false);
+              }}
+            />
+          ) : null}
           {tab === "avatar" ? <AvatarTab agent={agent} onChanged={(next) => setAgent(next)} /> : null}
           {tab === "execution" ? <ExecutionTab agent={agent} mutate={mutate} /> : null}
-          {tab === "tools" ? <ToolsTab agent={agent} mutate={mutate} catalog={catalog} /> : null}
+          {tab === "tools" ? (
+            <ToolsTab
+              agent={agent}
+              mutate={mutate}
+              catalog={catalog}
+              searchApiKeyPatch={searchApiKeyPatch}
+              onSearchApiKeyChange={(value) => {
+                setSearchApiKeyPatch(value);
+                setDirty(true);
+              }}
+            />
+          ) : null}
           {tab === "skills" ? <SkillsTab agent={agent} mutate={mutate} skills={skills} /> : null}
           {tab === "user" ? <UserProfileTab agent={agent} mutate={mutate} /> : null}
         </div>
@@ -167,78 +217,126 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           onChange={(event) => setField("name", event.target.value)}
         />
       </Field>
-      <Field label="描述" htmlFor="agent-description">
-        <textarea
-          id="agent-description"
-          className="textarea"
+      <Field label="描述">
+        <ExpandableTextarea
+          label="角色描述"
           value={data.description}
-          onChange={(event) => setField("description", event.target.value)}
+          onChange={(value) => setField("description", value)}
         />
       </Field>
       <div className="grid-2">
-        <Field label="性格" htmlFor="agent-personality">
-          <textarea
-            id="agent-personality"
-            className="textarea"
+        <Field label="性格">
+          <ExpandableTextarea
+            label="角色性格"
             value={data.personality}
-            onChange={(event) => setField("personality", event.target.value)}
+            onChange={(value) => setField("personality", value)}
           />
         </Field>
-        <Field label="场景" htmlFor="agent-scenario">
-          <textarea
-            id="agent-scenario"
-            className="textarea"
+        <Field label="场景">
+          <ExpandableTextarea
+            label="角色场景"
             value={data.scenario}
-            onChange={(event) => setField("scenario", event.target.value)}
+            onChange={(value) => setField("scenario", value)}
           />
         </Field>
       </div>
-      <Field label="开场白" htmlFor="agent-first-mes">
-        <textarea
-          id="agent-first-mes"
-          className="textarea"
+      <Field label="开场白">
+        <ExpandableTextarea
+          label="开场白"
           value={data.first_mes}
-          onChange={(event) => setField("first_mes", event.target.value)}
+          onChange={(value) => setField("first_mes", value)}
         />
       </Field>
-      <Field label="备选开场白" hint="每行一条，新会话可选择不同开场白。">
-        <textarea
-          className="textarea"
-          aria-label="备选开场白"
-          value={data.alternate_greetings.join("\n")}
-          onChange={(event) => setField("alternate_greetings", event.target.value.split("\n"))}
-        />
-      </Field>
-      <Field label="对话示例" htmlFor="agent-mes-example">
-        <textarea
-          id="agent-mes-example"
-          className="textarea"
+      <div className="field greeting-editor">
+        <div className="field-heading">
+          <div>
+            <label>备选开场白</label>
+            <span className="hint">每条可包含多行；新会话中可预览和切换。</span>
+          </div>
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => setField("alternate_greetings", [...data.alternate_greetings, ""])}
+          >
+            <Plus size={15} aria-hidden="true" />新增
+          </button>
+        </div>
+        {data.alternate_greetings.length === 0 ? (
+          <p className="small muted">尚未添加备选开场白。</p>
+        ) : (
+          <div className="greeting-editor-list">
+            {data.alternate_greetings.map((greeting, index) => (
+              <div className="greeting-editor-item" key={index}>
+                <div className="greeting-editor-item-header">
+                  <span>备选 {index + 1}</span>
+                  <div className="row compact">
+                    <button
+                      type="button"
+                      className="btn ghost icon"
+                      title="上移"
+                      aria-label={`上移备选开场白 ${index + 1}`}
+                      disabled={index === 0}
+                      onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                        itemIndex === index - 1 ? greeting : itemIndex === index ? data.alternate_greetings[index - 1] : item
+                      ))}
+                    ><ArrowUp size={15} /></button>
+                    <button
+                      type="button"
+                      className="btn ghost icon"
+                      title="下移"
+                      aria-label={`下移备选开场白 ${index + 1}`}
+                      disabled={index === data.alternate_greetings.length - 1}
+                      onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                        itemIndex === index + 1 ? greeting : itemIndex === index ? data.alternate_greetings[index + 1] : item
+                      ))}
+                    ><ArrowDown size={15} /></button>
+                    <button
+                      type="button"
+                      className="btn ghost icon danger"
+                      title="删除"
+                      aria-label={`删除备选开场白 ${index + 1}`}
+                      onClick={() => setField("alternate_greetings", data.alternate_greetings.filter((_, itemIndex) => itemIndex !== index))}
+                    ><Trash2 size={15} /></button>
+                  </div>
+                </div>
+                <ExpandableTextarea
+                  label={`备选开场白 ${index + 1}`}
+                  value={greeting}
+                  onChange={(value) => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
+                    itemIndex === index ? value : item
+                  ))}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <Field label="对话示例">
+        <ExpandableTextarea
+          label="对话示例"
           value={data.mes_example}
-          onChange={(event) => setField("mes_example", event.target.value)}
+          onChange={(value) => setField("mes_example", value)}
         />
       </Field>
-      <Field label="系统提示" htmlFor="agent-system-prompt">
-        <textarea
-          id="agent-system-prompt"
-          className="textarea"
+      <Field label="系统提示">
+        <ExpandableTextarea
+          label="系统提示"
           value={data.system_prompt}
-          onChange={(event) => setField("system_prompt", event.target.value)}
+          onChange={(value) => setField("system_prompt", value)}
         />
       </Field>
-      <Field label="历史后指令" htmlFor="agent-post-history">
-        <textarea
-          id="agent-post-history"
-          className="textarea"
+      <Field label="历史后指令">
+        <ExpandableTextarea
+          label="历史后指令"
           value={data.post_history_instructions}
-          onChange={(event) => setField("post_history_instructions", event.target.value)}
+          onChange={(value) => setField("post_history_instructions", value)}
         />
       </Field>
-      <Field label="创作者备注" htmlFor="agent-creator-notes">
-        <textarea
-          id="agent-creator-notes"
-          className="textarea"
+      <Field label="创作者备注">
+        <ExpandableTextarea
+          label="创作者备注"
           value={data.creator_notes}
-          onChange={(event) => setField("creator_notes", event.target.value)}
+          onChange={(value) => setField("creator_notes", value)}
         />
       </Field>
       <div className="grid-2">
@@ -276,15 +374,14 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
         />
       </Field>
       <Field label="世界书（Character Book，JSON）" hint="保持 null 表示不使用。">
-        <textarea
-          className="textarea mono"
-          aria-label="世界书 JSON"
-          rows={6}
+        <ExpandableTextarea
+          label="世界书 JSON"
+          mono
           value={bookJson}
-          onChange={(event) => {
-            setBookJson(event.target.value);
+          onChange={(value) => {
+            setBookJson(value);
             try {
-              const parsed = JSON.parse(event.target.value) as CharacterBook | null;
+              const parsed = JSON.parse(value) as CharacterBook | null;
               setBookError(null);
               setField("character_book", parsed ?? undefined);
             } catch {
@@ -395,6 +492,11 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
   const models = useStore(appStore, (s) => s.models);
   const execution = agent.execution;
   const generation = execution.generation ?? {};
+  const selectedModel = models.find((model) => model.id === execution.modelId);
+  const advertisedReasoning = selectedModel?.catalogMetadata?.reasoningEfforts ?? [];
+  const reasoningLevels = advertisedReasoning.length > 0
+    ? [...new Set([...advertisedReasoning, execution.reasoningEffort])]
+    : REASONING_LEVELS;
 
   const setExecution = (patch: Partial<AgentDto["execution"]>) =>
     mutate((draft) => {
@@ -464,7 +566,7 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
               value={execution.reasoningEffort}
               onChange={(event) => setExecution({ reasoningEffort: event.target.value as ReasoningEffort })}
             >
-              {REASONING_LEVELS.map((level) => (
+              {reasoningLevels.map((level) => (
                 <option key={level} value={level}>
                   {level}
                 </option>
@@ -580,11 +682,15 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
 function ToolsTab({
   agent,
   mutate,
-  catalog
+  catalog,
+  searchApiKeyPatch,
+  onSearchApiKeyChange
 }: {
   agent: AgentDto;
   mutate: (fn: (draft: AgentDto) => void) => void;
   catalog: ToolCatalogItemDto[];
+  searchApiKeyPatch: string | undefined;
+  onSearchApiKeyChange: (value: string) => void;
 }) {
   const tools = agent.execution.tools;
 
@@ -613,17 +719,68 @@ function ToolsTab({
   };
 
   return (
-    <div className="card">
-      <h3>工具策略</h3>
-      <label className="checkbox-row">
-        <input
-          type="checkbox"
-          checked={tools.defaultEnabled}
-          onChange={(event) => setTools({ defaultEnabled: event.target.checked })}
-        />
-        默认启用所有工具
-      </label>
-      <table className="table" style={{ marginTop: 12 }}>
+    <div>
+      <div className="card agent-search-config">
+        <h3>搜索服务</h3>
+        <div className="grid-2">
+          <Field label="搜索服务">
+            <select
+              className="select"
+              aria-label="搜索服务"
+              value={agent.execution.search.provider}
+              onChange={(event) => mutate((draft) => {
+                draft.execution.search.provider = event.target.value as AgentSearchProvider;
+              })}
+            >
+              <option value="searxng">SearXNG</option>
+              <option value="tavily">Tavily</option>
+            </select>
+          </Field>
+          <Field
+            label="搜索服务 Base URL"
+            hint={agent.execution.search.provider === "tavily" ? "留空使用 https://api.tavily.com。" : "留空则禁用网页搜索。"}
+          >
+            <input
+              className="input mono"
+              aria-label="搜索服务 Base URL"
+              value={agent.execution.search.baseUrl}
+              placeholder={agent.execution.search.provider === "tavily" ? "https://api.tavily.com" : "https://searx.example.com"}
+              onChange={(event) => mutate((draft) => {
+                draft.execution.search.baseUrl = event.target.value;
+              })}
+            />
+          </Field>
+        </div>
+        <Field
+          label="搜索 API Key"
+          hint={agent.execution.search.provider === "tavily"
+            ? agent.searchApiKeyConfigured ? "已配置；留空保持不变。" : "Tavily 必须配置 API Key。"
+            : agent.searchApiKeyConfigured ? "已配置；留空保持不变。" : "SearXNG 可选。"}
+        >
+          <div className="inline-form-row">
+            <input
+              className="input mono"
+              type="password"
+              aria-label="搜索 API Key"
+              value={searchApiKeyPatch ?? ""}
+              placeholder={agent.searchApiKeyConfigured && searchApiKeyPatch === undefined ? "已配置（输入新值以替换）" : ""}
+              onChange={(event) => onSearchApiKeyChange(event.target.value)}
+            />
+            {agent.searchApiKeyConfigured ? (
+              <button type="button" className="btn small danger" onClick={() => onSearchApiKeyChange("")}>清除</button>
+            ) : null}
+          </div>
+        </Field>
+      </div>
+
+      <div className="card">
+        <h3>工具策略</h3>
+      <Switch
+        label="默认启用所有工具"
+        checked={tools.defaultEnabled}
+        onChange={(checked) => setTools({ defaultEnabled: checked })}
+      />
+      <table className="table agent-policy-table" style={{ marginTop: 12 }}>
         <thead>
           <tr>
             <th>工具</th>
@@ -643,56 +800,67 @@ function ToolsTab({
                   <div>{tool.label}</div>
                   <div className="small muted mono">{tool.name}</div>
                 </td>
-                <td>
-                  <select
-                    className="select"
-                    aria-label={`${tool.label} 启用策略`}
+                <td data-label="启用">
+                  <PolicySelector
+                    label={`${tool.label} 启用策略`}
                     value={enabled === undefined ? "default" : enabled ? "on" : "off"}
-                    onChange={(event) => {
-                      const value = event.target.value;
+                    options={[["default", "默认"], ["on", "启用"], ["off", "停用"]]}
+                    onChange={(value) => {
                       setOverride("overrides", tool.name, value === "default" ? null : value === "on");
                     }}
-                  >
-                    <option value="default">默认</option>
-                    <option value="on">启用</option>
-                    <option value="off">停用</option>
-                  </select>
+                  />
                 </td>
-                <td>
-                  <select
-                    className="select"
-                    aria-label={`${tool.label} 直接性`}
+                <td data-label="直接性">
+                  <PolicySelector
+                    label={`${tool.label} 直接性`}
                     value={direct === undefined ? "default" : direct ? "direct" : "lazy"}
-                    onChange={(event) => {
-                      const value = event.target.value;
+                    options={[["default", "默认"], ["direct", "直接"], ["lazy", "惰性"]]}
+                    onChange={(value) => {
                       setOverride("directOverrides", tool.name, value === "default" ? null : value === "direct");
                     }}
-                  >
-                    <option value="default">默认</option>
-                    <option value="direct">直接</option>
-                    <option value="lazy">惰性</option>
-                  </select>
+                  />
                 </td>
-                <td>
-                  <select
-                    className="select"
-                    aria-label={`${tool.label} 审批策略`}
+                <td data-label="审批">
+                  <PolicySelector
+                    label={`${tool.label} 审批策略`}
                     value={approval ?? "default"}
-                    onChange={(event) => {
-                      const value = event.target.value as ApprovalPolicy;
+                    options={[["default", "默认"], ["always", "每次"], ["never", "免审"]]}
+                    onChange={(value) => {
                       setApproval(tool.name, value === "default" ? null : value);
                     }}
-                  >
-                    <option value="default">默认</option>
-                    <option value="always">每次审批</option>
-                    <option value="never">自动允许</option>
-                  </select>
+                  />
                 </td>
               </tr>
             );
           })}
         </tbody>
       </table>
+    </div>
+    </div>
+  );
+}
+
+function PolicySelector<T extends string>({
+  label,
+  value,
+  options,
+  onChange
+}: {
+  label: string;
+  value: T;
+  options: Array<[T, string]>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <div className="policy-segmented" role="group" aria-label={label}>
+      {options.map(([option, text]) => (
+        <button
+          type="button"
+          key={option}
+          aria-pressed={value === option}
+          onClick={() => onChange(option)}
+        >{text}</button>
+      ))}
     </div>
   );
 }
@@ -713,14 +881,19 @@ function SkillsTab({
       {skills.length === 0 ? (
         <EmptyState title="没有可用 Skill" hint="在设置中安装或发现 Skill。" />
       ) : (
-        skills.map((skill) => (
-          <label key={skill.id} className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={enabled.has(skill.id)}
-              disabled={skill.state === "error" || skill.state === "unloaded"}
-              onChange={(event) => {
-                const checked = event.target.checked;
+        <div className="agent-skill-list">
+          {skills.map((skill) => (
+            <div key={skill.id} className="agent-skill-row">
+              <div className="agent-skill-copy">
+                <strong>{skill.name}</strong>
+                <span>{skill.description || "无描述"}</span>
+              </div>
+              <Switch
+                label={`启用 ${skill.name}`}
+                hideLabel
+                checked={enabled.has(skill.id)}
+                disabled={skill.state === "error" || skill.state === "unloaded"}
+                onChange={(checked) => {
                 mutate((draft) => {
                   const next = new Set(draft.execution.enabledSkillIds);
                   if (checked) next.add(skill.id);
@@ -728,12 +901,10 @@ function SkillsTab({
                   draft.execution.enabledSkillIds = [...next];
                 });
               }}
-            />
-            <span>
-              {skill.name} <span className="small muted">{skill.description}</span>
-            </span>
-          </label>
-        ))
+              />
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -760,15 +931,14 @@ function UserProfileTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draf
         />
       </Field>
       <Field label="用户描述">
-        <textarea
-          className="textarea"
-          aria-label="用户描述"
+        <ExpandableTextarea
+          label="用户描述"
           value={agent.userProfile.description ?? ""}
-          onChange={(event) =>
+          onChange={(value) =>
             mutate((draft) => {
               draft.userProfile = {
                 ...draft.userProfile,
-                description: event.target.value === "" ? undefined : event.target.value
+                description: value === "" ? undefined : value
               };
             })
           }

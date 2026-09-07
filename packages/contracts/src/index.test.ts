@@ -11,6 +11,7 @@ import {
   forkConversationSchema,
   generationSettingsSchema,
   generationStatusSchema,
+  greetingMessageSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
   modelCapabilitiesSchema,
@@ -104,7 +105,7 @@ describe("contract schemas", () => {
       secretHeaders: { "X-Key": "secret" }, ignored: true
     });
     expect(parsed).toEqual({
-      name: "Local", protocol: "openai-chat", baseUrl: "https://example.test/v1",
+      name: "Local", providerId: "custom", protocol: "openai-chat", baseUrl: "https://example.test/v1",
       secretHeaders: { "X-Key": "secret" }
     });
     for (const input of [
@@ -112,8 +113,13 @@ describe("contract schemas", () => {
       { name: "x", protocol: "bad", baseUrl: "https://x.test" },
       { name: "x", protocol: "openai-chat", baseUrl: "not a url" },
       { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", apiKey: "x".repeat(4097) },
-      { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } }
+      { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } },
+      { name: "x", providerId: "anthropic", protocol: "openai-chat", baseUrl: "https://x.test" },
+      { name: "x", providerId: "openai", protocol: "anthropic-messages", baseUrl: "https://x.test" }
     ]) expect(connectionInputSchema.safeParse(input).success).toBe(false);
+    expect(connectionInputSchema.parse({
+      name: "OpenCode", providerId: "opencode-go", protocol: "anthropic-messages", baseUrl: "https://opencode.ai/zen/go/v1"
+    }).providerId).toBe("opencode-go");
   });
 
   it("validates optional same-origin balance configuration", () => {
@@ -142,7 +148,9 @@ describe("contract schemas", () => {
       connectionId: uuid, modelKey: "model", displayName: "Model", contextWindow: null,
       maxOutputTokens: 1, capabilities: {}, defaultSettings: { common: { maxOutputTokens: 1 } }
     };
-    expect(modelInputSchema.parse(base)).toMatchObject({ enabled: true, contextWindow: null });
+    expect(modelInputSchema.parse({ ...base, maxInputTokens: 64_000 })).toMatchObject({
+      enabled: true, contextWindow: null, maxInputTokens: 64_000
+    });
     for (const patch of [
       { connectionId: "bad" }, { modelKey: " " }, { displayName: "x".repeat(201) },
       { contextWindow: 0 }, { contextWindow: 10_000_001 }, { maxOutputTokens: 0 }
@@ -154,7 +162,7 @@ describe("contract schemas", () => {
       defaultModelId: null, defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
       reasoningEffort: "none", defaultAgentId: uuid, lastAgentId: uuid,
       userProfile: { displayName: "User", description: "" },
-      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer" },
+      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
       lastWorkspacePath: null
     };
     expect(appSettingsSchema.parse(app)).toEqual(app);
@@ -170,6 +178,11 @@ describe("contract schemas", () => {
       .toEqual({ mode: "edit", messageId: uuid, text: "changed", imageAssetIds: [] });
     expect(forkConversationSchema.parse({ mode: "continue", throughMessageId: null }))
       .toEqual({ mode: "continue", throughMessageId: null });
+    expect(forkConversationSchema.parse({ mode: "greeting", messageId: uuid, greetingIndex: 2 }))
+      .toEqual({ mode: "greeting", messageId: uuid, greetingIndex: 2 });
+    expect(greetingMessageSchema.parse({
+      variants: ["你好", "欢迎"], activeIndex: 1, agent: { agentId: uuid, name: "Agent", revision: 3 }
+    })).toMatchObject({ activeIndex: 1, variants: ["你好", "欢迎"] });
     for (const input of [{ text: " " }, { text: "x".repeat(1_000_001) }]) {
       expect(sendMessageSchema.safeParse(input).success).toBe(false);
     }
@@ -184,8 +197,8 @@ describe("contract schemas", () => {
     expect(toolApprovalInputSchema.parse({ approved: false, reason: "no" })).toEqual({ approved: false, reason: "no" });
     expect(toolApprovalInputSchema.safeParse({ approved: "yes" }).success).toBe(false);
     expect(toolApprovalInputSchema.safeParse({ approved: true, reason: "x".repeat(2001) }).success).toBe(false);
-    expect(toolSettingsInputSchema.parse({ search: { baseUrl: "" } })).toEqual({ search: { baseUrl: "" } });
-    expect(toolSettingsInputSchema.safeParse({ search: { baseUrl: "bad" } }).success).toBe(false);
+    expect(toolSettingsInputSchema.parse({ workspaceShellEnabled: true })).toEqual({ workspaceShellEnabled: true });
+    expect(toolSettingsInputSchema.parse({ search: { baseUrl: "" } })).toEqual({});
     expect(toolSettingsInputSchema.safeParse({ enabled: { tool: "yes" } }).success).toBe(false);
     expect(mcpServerInputSchema.parse({ name: "Server1", url: "https://mcp.test" }))
       .toEqual({ name: "Server1", url: "https://mcp.test", headers: {}, enabled: true });
