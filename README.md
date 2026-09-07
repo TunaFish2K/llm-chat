@@ -156,6 +156,8 @@ Agent 修改后，选择该 Agent 的会话会在下一次生成时读取新配�
 打开 Agent 的“工具”与“Skill”页管理搜索服务、启用状态、直接性、三态审批策略和后台资源额度。每个 Agent 只能选择一个搜索服务：SearXNG 或 Tavily；搜索 API Key 只通过服务端保存。打开“设置”管理全局工具、Plugins、Skills 和 MCP。全局 Skill 页不删除来源目录；删除或卸载应交给对应的外部包管理器。
 
 - 搜索工具按 Agent 配置调用 SearXNG JSON 接口或 Tavily `/search` 接口。SearXNG 需要填写服务地址；Tavily 使用 `https://api.tavily.com` 作为默认地址并需要 API Key。配置完成后工具才会注入模型。
+- `coding-supervisor` Skill 优先通过 Codex app-server 管理编码任务；如果 Codex 不可用，回退到通用后台任务。任务页可以发现并接管已有 thread、发送任务、查看结构化事件、处理审批和中断 turn。
+- Codex 默认使用 `server-workspace` 策略。仅在服务端设置 `LLM_CHAT_CODEX_PROFILE=trusted-local-yolo` 时，`trusted-local-yolo` 选项才会生效；部署到其他服务器时应保留默认策略。`LLM_CHAT_CODEX_BIN` 和 `LLM_CHAT_CODEX_SOCKET` 可覆盖 Codex 可执行文件与已有 app-server socket。
 - 新会话可以不绑定工作目录，也可以从服务端目录浏览器选择任意现有可访问目录。旧会话迁移到 `dataDir/workspace`。
 - 文件、Shell 和后台任务工具只访问生成快照中固定的会话工作目录。
 - `background_start`、`background_write` 和 `background_stop` 默认需要审批；读取和等待默认自动执行。

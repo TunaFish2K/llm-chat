@@ -32,26 +32,40 @@ export class VisionService {
     const assets = [...new Map(messages.flatMap((message) => message.images ?? []).map((asset) => [asset.id, asset])).values()];
     if (!assets.length) return new Map();
 
-    if (mainModel.capabilities.imageInput) {
-      const prepared = new Map<string, PreparedImage>();
-      for (const asset of assets) {
-        signal.throwIfAborted();
-        const loaded = await this.images.readAsset(asset.id);
-        prepared.set(asset.id, {
-          asset,
-          image: {
-            mimeType: loaded.asset.mimeType,
-            dataBase64: Buffer.from(loaded.bytes).toString("base64"),
-            fileName: loaded.asset.fileName
-          }
-        });
-      }
-      return prepared;
+    const maxImageInputs = mainModel.capabilities.imageInput
+      ? mainModel.capabilities.maxImageInputs
+      : 0;
+    const directAssets = mainModel.capabilities.imageInput
+      ? maxImageInputs == null
+        ? assets
+        : maxImageInputs > 0
+          ? assets.slice(-maxImageInputs)
+          : []
+      : [];
+    const directAssetIds = new Set(directAssets.map((asset) => asset.id));
+    const prepared = new Map<string, PreparedImage>();
+    for (const asset of directAssets) {
+      signal.throwIfAborted();
+      const loaded = await this.images.readAsset(asset.id);
+      prepared.set(asset.id, {
+        asset,
+        image: {
+          mimeType: loaded.asset.mimeType,
+          dataBase64: Buffer.from(loaded.bytes).toString("base64"),
+          fileName: loaded.asset.fileName
+        }
+      });
     }
+
+    const descriptionAssets = assets.filter((asset) => !directAssetIds.has(asset.id));
+    if (!descriptionAssets.length) return prepared;
 
     const visionModelId = record.agentSnapshot.execution.visionModelId ?? null;
     if (!visionModelId) {
-      throw new VisionError("vision_model_required", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
+      const limitHint = maxImageInputs == null || !mainModel.capabilities.imageInput
+        ? "当前模型不支持图片"
+        : `当前模型最多接受 ${maxImageInputs} 张图片`;
+      throw new VisionError("vision_model_required", `${limitHint}，请先为 Agent 配置备用识图模型`);
     }
     const visionModel = this.store.getModel(visionModelId);
     const connection = visionModel?.enabled ? this.store.getConnection(visionModel.connectionId) : undefined;
@@ -59,8 +73,7 @@ export class VisionService {
       throw new VisionError("vision_model_unavailable", "Agent 配置的备用识图模型不可用或未启用图片输入");
     }
 
-    const prepared = new Map<string, PreparedImage>();
-    for (const asset of assets) {
+    for (const asset of descriptionAssets) {
       signal.throwIfAborted();
       const cacheKey = visionCacheKey(asset, visionModel);
       const existing = this.store.getVisionAnalysisByCacheKey(cacheKey);

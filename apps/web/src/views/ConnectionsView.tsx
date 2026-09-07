@@ -525,7 +525,9 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
   );
 }
 
-const CAPABILITY_LABELS: Array<[keyof ModelCapabilities, string]> = [
+type BooleanModelCapability = Exclude<keyof ModelCapabilities, "maxImageInputs">;
+
+const CAPABILITY_LABELS: Array<[BooleanModelCapability, string]> = [
   ["imageInput", "图片输入"],
   ["imageOutput", "图片输出"],
   ["imageEdit", "图片编辑"],
@@ -549,6 +551,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");
   const [maxInputTokens, setMaxInputTokens] = useState(model?.maxInputTokens?.toString() ?? "");
   const [maxOutputTokens, setMaxOutputTokens] = useState(String(model?.maxOutputTokens ?? 4096));
+  const [maxImageInputs, setMaxImageInputs] = useState(model?.capabilities.maxImageInputs?.toString() ?? "");
   const [imageProtocol, setImageProtocol] = useState<ModelInput["imageProtocol"]>(model?.imageProtocol ?? null);
   const selectedConnection = connections.find((connection) => connection.id === connectionId);
   const supportedImageProtocols = providerPreset(selectedConnection?.providerId ?? "custom").imageProtocols;
@@ -581,7 +584,10 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
         maxInputTokens: maxInputTokens === "" ? null : Number(maxInputTokens),
         maxOutputTokens: Number(maxOutputTokens) || 4096,
         imageProtocol: imageProtocol ?? null,
-        capabilities,
+        capabilities: {
+          ...capabilities,
+          maxImageInputs: maxImageInputs === "" ? null : Number(maxImageInputs)
+        },
         defaultSettings: {
           common: {
             ...(temperature === "" ? {} : { temperature: Number(temperature) }),
@@ -764,6 +770,17 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           />
         </Field>
       </div>
+      <Field label="最大图片输入数" hint="留空表示不声明上限；超出上限的旧图片会转换为缓存的文字说明。">
+        <input
+          className="input"
+          type="number"
+          min="1"
+          step="1"
+          aria-label="最大图片输入数"
+          value={maxImageInputs}
+          onChange={(event) => setMaxImageInputs(event.target.value)}
+        />
+      </Field>
       {model?.catalogMetadata ? <ModelCatalogDetails model={model} /> : null}
       <Field label="能力">
         <div>

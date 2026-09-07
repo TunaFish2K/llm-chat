@@ -31,6 +31,10 @@ describe("server tool catalog", () => {
     expect(tool(available, "image_generate").definition.inputSchema.properties).toMatchObject({
       model_id: { enum: [model.id] }
     });
+    expect(tool(available, "image_generate").definition.inputSchema.required).toEqual(["model_id", "prompt"]);
+    await expect(tool(available, "image_generate").execute(
+      { prompt: "a coastal sunset" }, signal(), {} as never
+    )).rejects.toThrow(`image_generate requires model_id`);
     store.close();
   });
 

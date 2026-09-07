@@ -45,7 +45,7 @@ export function App() {
   const mobile = useMediaQuery("(max-width: 767px)");
   const [navDrawer, setNavDrawer] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspection, setInspection] = useState<InspectionTarget | null>(null);
   const [leftWidth, setLeftWidth] = useStoredNumber("llm-chat.sidebar-width", 276, LEFT_MIN, LEFT_MAX);
   const [rightWidth, setRightWidth] = useStoredNumber("llm-chat.inspector-width", 360, RIGHT_MIN, RIGHT_MAX);
@@ -55,9 +55,10 @@ export function App() {
 
   useEffect(() => {
     initAuthGate();
+    const unsubscribePwa = subscribePwa(setPwa);
     initPwa();
     void bootstrap(initialConversation.current);
-    return subscribePwa(setPwa);
+    return unsubscribePwa;
   }, []);
 
   useEffect(() => {
@@ -77,8 +78,7 @@ export function App() {
     setNavDrawer(false);
     setInspection(null);
     if (route.name !== "chat" || !route.conversationId) setInspectorOpen(false);
-    else setInspectorOpen(!mobile);
-  }, [route, mobile]);
+  }, [route]);
 
   const conversation =
     route.name === "chat" && route.conversationId

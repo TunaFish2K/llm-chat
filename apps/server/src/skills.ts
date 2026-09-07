@@ -52,13 +52,15 @@ Do not put a quick command in the background merely because background tools are
     content: `---
 id: coding-supervisor
 name: Coding Supervisor
-description: Supervise a generic CLI coding harness through background PTY tools.
-requiredTools: background_start, background_list, background_status, background_read, background_wait, background_write, background_stop
+description: Delegate coding work to Codex through structured app-server tools, with generic PTY fallback.
+requiredTools: codex_runtime, codex_sessions, codex_start, codex_send, codex_wait, codex_respond, codex_interrupt, background_start, background_list, background_status, background_read, background_wait, background_write, background_stop
 recommendedApprovals: background_start=always, background_write=never, background_stop=never
 ---
 # Coding Supervisor
 
-Use generic background tools to supervise a full coding harness. Inspect the selected command's help before choosing flags. Start an interactive harness with \`background_start\` in PTY mode, tell the user what started, then alternate \`background_wait\` and \`background_read\` until it exits. When the harness asks for approval, inspect the request and use \`background_write\` to approve or deny it. Use \`background_stop\` only for an emergency or explicit user request. Never assume a provider-specific command line.
+Prefer \`codex_start\`, \`codex_send\`, and \`codex_wait\` for coding work when Codex is available. Let Codex own code edits, tests, and repository exploration; use the returned structured events to supervise progress and verify the result. Use \`codex_respond\` for requests that fit the configured execution profile and \`codex_interrupt\` when the task is unsafe or no longer needed.
+
+If Codex is unavailable, use generic background tools to supervise another coding harness. Inspect the selected command's help before choosing flags. Start an interactive harness with \`background_start\` in PTY mode, then alternate \`background_wait\` and \`background_read\` until it exits. Use \`background_write\` only when the harness genuinely requires terminal input. Never assume a provider-specific command line.
 `
   },
   {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BackgroundTaskDto, BackgroundTaskEventDto } from "@llm-chat/contracts";
-import { RefreshCw, Square, X } from "lucide-react";
+import type { BackgroundTaskDto, BackgroundTaskEventDto, CodexEventDto, CodexRuntimeDto, CodexSessionDto, CodexThreadDto } from "@llm-chat/contracts";
+import { Bot, Link2, Play, RefreshCw, Send, Square, Unplug, X } from "lucide-react";
 import { endpoints } from "../lib/api";
 import { appStore, toast, toastError } from "../lib/app-state";
 import { formatBytes, formatTime } from "../lib/format";
@@ -34,6 +34,7 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
 
   return (
     <div className="conversation-tasks-view">
+      <CodexPanel conversationId={conversationId} />
       <div className="conversation-tasks-toolbar" role="toolbar" aria-label="后台任务工具栏">
         <span className="small muted">
           {tasks ? `${tasks.length} 个任务${runningTasks ? ` · ${runningTasks} 个运行中` : ""}` : "正在加载任务"}
@@ -106,6 +107,185 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
       ) : null}
     </div>
   );
+}
+
+function CodexPanel({ conversationId }: { conversationId: string }) {
+  const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
+  const [runtime, setRuntime] = useState<CodexRuntimeDto | null>(null);
+  const [sessions, setSessions] = useState<CodexSessionDto[]>([]);
+  const [threads, setThreads] = useState<CodexThreadDto[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [events, setEvents] = useState<CodexEventDto[]>([]);
+  const [draft, setDraft] = useState("");
+  const [threadId, setThreadId] = useState("");
+  const [profile, setProfile] = useState<"server-workspace" | "trusted-local-yolo">("server-workspace");
+  const [busy, setBusy] = useState(false);
+  const cursor = useRef(0);
+
+  const load = useCallback(async () => {
+    try {
+      const [nextRuntime, rawSessions] = await Promise.all([
+        endpoints.codexRuntime(), endpoints.codexSessions(conversationId)
+      ]);
+      const nextSessions = Array.isArray(rawSessions) ? rawSessions : [];
+      setRuntime(nextRuntime);
+      setSessions(nextSessions);
+      setSelectedId((current) => current && nextSessions.some((session) => session.id === current)
+        ? current : nextSessions[0]?.id ?? null);
+    } catch (cause) {
+      toastError(cause);
+    }
+  }, [conversationId]);
+
+  const loadDetail = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const detail = await endpoints.codexSession(selectedId, cursor.current);
+      setSessions((current) => current.map((session) => session.id === detail.session.id ? detail.session : session));
+      if (detail.events.length) {
+        setEvents((current) => [...current, ...detail.events]);
+        cursor.current = detail.events[detail.events.length - 1]!.id;
+      }
+    } catch (cause) {
+      toastError(cause);
+    }
+  }, [selectedId]);
+
+  useEffect(() => {
+    setRuntime(null);
+    setSessions([]);
+    setThreads([]);
+    setSelectedId(null);
+    void load();
+    const timer = setInterval(() => void load(), 5_000);
+    return () => clearInterval(timer);
+  }, [conversationId, load, eventsConnected]);
+
+  useEffect(() => {
+    cursor.current = 0;
+    setEvents([]);
+    void loadDetail();
+    const timer = setInterval(() => void loadDetail(), 1_500);
+    return () => clearInterval(timer);
+  }, [selectedId, loadDetail]);
+
+  const selected = sessions.find((session) => session.id === selectedId) ?? null;
+  const create = async (existingThreadId?: string) => {
+    setBusy(true);
+    try {
+      const next = await endpoints.createCodexSession({
+        conversationId, profile, ...(existingThreadId ? { threadId: existingThreadId } : {})
+      });
+      setSessions((current) => [next, ...current.filter((item) => item.id !== next.id)]);
+      setSelectedId(next.id);
+      setThreadId("");
+      toast("success", existingThreadId ? "已接管 Codex 会话" : "已启动 Codex 会话");
+    } catch (cause) {
+      toastError(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const send = async () => {
+    if (!selected || !draft.trim()) return;
+    setBusy(true);
+    try {
+      await endpoints.sendCodexTurn(selected.id, { text: draft.trim() });
+      setDraft("");
+      await loadDetail();
+    } catch (cause) {
+      toastError(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="card codex-panel" aria-label="Codex 控制面板">
+      <div className="task-detail-heading">
+        <h3><Bot size={18} />Codex Worker</h3>
+        <span className={`tag ${runtime?.connected ? "success" : runtime?.error ? "danger" : "muted"}`}>
+          {runtime?.connected ? `已连接${runtime.version ? ` · ${runtime.version}` : ""}` : runtime?.error ? "不可用" : "检查中"}
+        </span>
+        <button className="btn ghost small" onClick={() => void load()} title="刷新 Codex 状态"><RefreshCw size={14} />刷新</button>
+      </div>
+      <div className="codex-panel-toolbar">
+        <select className="select" aria-label="Codex 运行策略" value={profile} onChange={(event) => setProfile(event.target.value as typeof profile)}>
+          <option value="server-workspace">服务器工作区</option>
+          <option value="trusted-local-yolo">本机 YOLO</option>
+        </select>
+        <input className="input mono" aria-label="已有 Codex thread ID" placeholder="已有 thread ID（可选）" value={threadId} onChange={(event) => setThreadId(event.target.value)} />
+        <button className="btn small" disabled={busy || !runtime?.available} onClick={() => void create(threadId.trim() || undefined)}>
+          {threadId.trim() ? <Link2 size={14} /> : <Play size={14} />}{threadId.trim() ? "接管" : "启动"}
+        </button>
+        <button className="btn ghost small" disabled={busy || !runtime?.connected} onClick={() => {
+          endpoints.codexThreads(selected?.cwd).then(setThreads).catch(toastError);
+        }}><RefreshCw size={14} />发现已有</button>
+      </div>
+      {threads.length ? (
+        <div className="codex-thread-list" aria-label="可接管的 Codex 会话">
+          {threads.map((thread) => (
+            <button key={thread.id} className="btn ghost small mono" onClick={() => setThreadId(thread.id)} title={thread.preview || thread.id}>
+              <Link2 size={13} />{thread.name || thread.preview || thread.id.slice(0, 12)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {sessions.length ? (
+        <div className="codex-session-tabs" role="tablist" aria-label="Codex 会话">
+          {sessions.map((session) => (
+            <button key={session.id} className={`btn small ${session.id === selectedId ? "primary" : "ghost"}`} onClick={() => setSelectedId(session.id)}>
+              <span className="mono">{session.preview || session.threadId.slice(0, 12)}</span><StatusTag status={session.status} />
+            </button>
+          ))}
+        </div>
+      ) : <p className="small muted">还没有绑定的 Codex 会话。可以启动新会话，或发现并接管已有 thread。</p>}
+      {selected ? (
+        <>
+          <div className="small muted codex-session-meta">
+            <span className="mono">{selected.cwd}</span> · {selected.profile} · thread <span className="mono">{selected.threadId}</span>
+            <button className="btn ghost small" onClick={() => {
+              endpoints.interruptCodex(selected.id).then(() => void load()).catch(toastError);
+            }}><Square size={13} />中断</button>
+            <button className="btn ghost small" onClick={() => {
+              endpoints.detachCodex(selected.id).then(() => { setSelectedId(null); void load(); }).catch(toastError);
+            }}><Unplug size={13} />解绑</button>
+          </div>
+          <div className="codex-events" aria-label="Codex 事件">
+            {events.length ? events.slice(-80).map((event) => (
+              <div className="codex-event" key={event.id}>
+                <span className="tag muted">{event.kind}</span>
+                <span className="mono small">{codexEventText(event)}</span>
+                {event.kind === "approval" ? (
+                  <div className="row compact">
+                    <button className="btn small" onClick={() => {
+                      endpoints.respondCodex(selected.id, { requestId: String(event.payload.requestId ?? ""), response: { decision: "accept" } }).then(() => void loadDetail()).catch(toastError);
+                    }}>允许</button>
+                    <button className="btn small danger" onClick={() => {
+                      endpoints.respondCodex(selected.id, { requestId: String(event.payload.requestId ?? ""), response: { decision: "decline" } }).then(() => void loadDetail()).catch(toastError);
+                    }}>拒绝</button>
+                  </div>
+                ) : null}
+              </div>
+            )) : <span className="small muted">等待 Codex 事件…</span>}
+          </div>
+          <div className="codex-composer">
+            <textarea className="textarea" rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="给 Codex 发送编码任务…" />
+            <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => void send()}><Send size={15} />发送</button>
+          </div>
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+function codexEventText(event: CodexEventDto): string {
+  const payload = event.payload;
+  if (typeof payload.delta === "string") return payload.delta;
+  if (typeof payload.text === "string") return payload.text;
+  if (typeof payload.status === "string") return `${event.method}: ${payload.status}`;
+  return `${event.method} ${JSON.stringify(payload).slice(0, 500)}`;
 }
 
 function StopTaskModal({
