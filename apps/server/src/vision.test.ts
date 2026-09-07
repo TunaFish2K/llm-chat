@@ -100,4 +100,55 @@ describe("VisionService", () => {
     expect(store.getGeneration(created.generationId)?.visionAnalyses).toEqual([]);
     expect(adapterFor).not.toHaveBeenCalled();
   });
+
+  it("keeps the newest images direct and describes older images when the model has a limit", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const main = store.updateModel(seeded.model.id, {
+      capabilities: { ...seeded.model.capabilities, imageInput: true, maxImageInputs: 1 }
+    })!;
+    const connection = store.createConnection({
+      name: "Vision", protocol: "openai-chat", baseUrl: "https://vision.test/v1", apiKey: "key", secretHeaders: {}
+    });
+    const vision = store.createModel({
+      connectionId: connection.id,
+      modelKey: "vision-model",
+      displayName: "Vision Model",
+      contextWindow: 4096,
+      maxOutputTokens: 2048,
+      capabilities: {
+        imageInput: true, tools: false, temperature: true, topP: true, reasoning: false,
+        reasoningSummary: false, adaptiveThinking: false, manualThinking: false
+      },
+      defaultSettings: { common: { maxOutputTokens: 2048, stopSequences: [] }, protocol: {} },
+      enabled: true
+    });
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    store.updateAgent(agent.id, { execution: { ...agent.execution, visionModelId: vision.id } });
+    const images = new ImageService(store);
+    await images.initialize();
+    const oldest = await images.importBytes("old.png", PNG);
+    const newest = await images.importBytes("new.png", PNG);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "Look at both", [oldest.id, newest.id]);
+    vi.mocked(adapterFor).mockReturnValue({
+      protocol: "openai-chat",
+      listModels: async () => [],
+      async *stream() {
+        yield { type: "block", index: 1, blockType: "text", content: "An older screenshot.", complete: true } as const;
+        yield { type: "complete", stopReason: "stop" } as const;
+      }
+    });
+
+    const prepared = await new VisionService(store, images).prepare(
+      store.getGenerationRecord(created.generationId)!, main, new AbortController().signal,
+      () => undefined
+    );
+
+    expect(prepared.get(oldest.id)?.description).toBe("An older screenshot.");
+    expect(prepared.get(oldest.id)?.image).toBeUndefined();
+    expect(prepared.get(newest.id)?.image).toMatchObject({ fileName: "new.png" });
+    expect(adapterFor).toHaveBeenCalledTimes(1);
+    store.close();
+  });
 });

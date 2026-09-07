@@ -356,7 +356,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 30) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 31) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1130,6 +1130,38 @@ function migrate(sqlite: DatabaseSyncType): void {
         INSERT OR IGNORE INTO conversation_family_state (root_conversation_id, active_conversation_id, updated_at)
           SELECT id, id, updated_at FROM conversations WHERE parent_conversation_id IS NULL;
         PRAGMA user_version = 30;
+      `);
+    }
+    if (current < 31) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS codex_sessions (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          thread_id TEXT NOT NULL UNIQUE,
+          cwd TEXT NOT NULL,
+          preview TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'detached',
+          profile TEXT NOT NULL DEFAULT 'server-workspace',
+          model TEXT,
+          current_turn_id TEXT,
+          managed INTEGER NOT NULL DEFAULT 1,
+          error TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_codex_sessions_conversation
+          ON codex_sessions(conversation_id, updated_at DESC);
+        CREATE TABLE IF NOT EXISTS codex_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL REFERENCES codex_sessions(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          method TEXT NOT NULL,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_codex_events_session
+          ON codex_events(session_id, id);
+        PRAGMA user_version = 31;
       `);
     }
     sqlite.exec("COMMIT");

@@ -43,9 +43,19 @@ pnpm build
 
 ## 启动配置
 
-服务只读取 JSON 运行时配置，不读取旧的 `LLM_CHAT_*` 运行时环境变量。从发布目录根执行
+服务的常规运行配置只读取 JSON 文件，不读取旧的通用 `LLM_CHAT_*` 运行时环境变量。从发布目录根执行
 `pnpm start` 时，默认使用项目根目录的 `config.json`。如果文件不存在，服务会以 `0600` 权限
 排他创建完整默认配置，然后继续启动；已有但无效的配置不会被覆盖。
+
+Codex worker 是例外：它支持以下仅用于 Codex app-server 的环境覆盖。未设置时使用 `codex`，默认采用
+`server-workspace` 策略；npm 安装的 Codex 会自动使用 stdio app-server，官方 standalone 安装则优先使用
+本地 daemon 控制 socket。
+
+| 环境变量 | 作用 |
+| --- | --- |
+| `LLM_CHAT_CODEX_BIN` | Codex 可执行文件路径，默认 `codex` |
+| `LLM_CHAT_CODEX_SOCKET` | 已运行 app-server 的控制 socket 路径 |
+| `LLM_CHAT_CODEX_PROFILE` | 设置为 `trusted-local-yolo` 才启用本机 YOLO；默认 `server-workspace` |
 
 ```json
 {

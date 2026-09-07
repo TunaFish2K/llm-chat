@@ -22,6 +22,8 @@ const listeners = new Set<PwaListener>();
 let deferredInstall: InstallPrompt | null = null;
 let initialized = false;
 let updateWorker: ((reloadPage?: boolean) => Promise<void>) | null = null;
+let registration: ServiceWorkerRegistration | undefined;
+let lastUpdateCheck = 0;
 
 function emit(patch: Partial<PwaState>): void {
   state = { ...state, ...patch };
@@ -56,8 +58,20 @@ export function initPwa(): void {
     immediate: true,
     onNeedRefresh() { emit({ updateAvailable: true }); },
     onOfflineReady() { emit({ offlineReady: true }); },
-    onRegisteredSW(_url, registration) {
-      window.setInterval(() => void registration?.update(), 60 * 60 * 1000);
+    onRegisteredSW(_url, next) {
+      registration = next;
+      const check = () => {
+        if (document.visibilityState === "hidden" || !registration) return;
+        const now = Date.now();
+        if (now - lastUpdateCheck < 30_000) return;
+        lastUpdateCheck = now;
+        void registration.update();
+      };
+      window.setInterval(check, 60 * 60 * 1000);
+      window.addEventListener("pageshow", check);
+      window.addEventListener("focus", check);
+      document.addEventListener("visibilitychange", check);
+      check();
     }
   });
 }

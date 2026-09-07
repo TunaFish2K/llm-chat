@@ -68,6 +68,7 @@ describe("contract schemas", () => {
       tools: true, imageInput: false, temperature: true, topP: true, reasoning: false, reasoningSummary: false,
       adaptiveThinking: false, manualThinking: false
     });
+    expect(modelCapabilitiesSchema.parse({ maxImageInputs: 3 }).maxImageInputs).toBe(3);
     expect(generationSettingsSchema.parse({ common: { maxOutputTokens: 2 }, reasoningEffort: "high" }))
       .toMatchObject({ protocol: {}, reasoningEffort: "high" });
   });
