@@ -288,6 +288,8 @@ export const endpoints = {
   conversation: (id: string) => api.get<ConversationDto>(`/api/conversations/${id}`),
   updateConversation: (id: string, patch: Record<string, unknown>) =>
     api.patch<ConversationDto>(`/api/conversations/${id}`, patch),
+  selectConversationBranch: (id: string, branchId: string) =>
+    api.patch<{ activeBranchId: string }>(`/api/conversations/${id}/active-branch`, { branchId }),
   conversationRoleplayState: (id: string) =>
     api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`),
   updateConversationRoleplayState: (id: string, patch: ConversationRoleplayStatePatch) =>

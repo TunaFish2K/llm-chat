@@ -129,7 +129,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     buildTools: (_currentStore, record) => registry.tools(record),
     prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
       visionService.prepare(record, model, signal, onAnalysis),
-    runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId)
+    runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId),
+    imageService
   });
   app.decorate("store", store);
   app.decorate("runner", runner);
@@ -597,6 +598,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const result = store.updateConversation(request.params.id, { ...value, ...(value.workspacePath !== undefined ? { workspacePath } : {}) });
     if (!result) throw new StoreError("conversation_not_found", "会话不存在");
     return result;
+  });
+  app.patch<{ Params: { id: string } }>("/api/conversations/:id/active-branch", async (request) => {
+    const value = z.object({ branchId: z.string().uuid() }).parse(request.body);
+    return store.selectConversationBranch(request.params.id, value.branchId);
   });
   app.get<{ Params: { id: string } }>("/api/conversations/:id/roleplay-state", async (request) => {
     return store.getConversationRoleplayState(request.params.id);

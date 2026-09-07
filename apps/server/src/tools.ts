@@ -145,7 +145,7 @@ export async function buildServerTools(
         assets: job.outputAssets,
         markdown: job.outputAssets.map((asset) => `![${asset.fileName}](${asset.url})`).join("\n")
       });
-    }, Boolean(dependencies.imageManager)),
+    }, Boolean(dependencies.imageManager) && imageModels.length > 0),
     tool("recent_chats", "最近对话", "conversation", "List recent conversation titles and update times. Use conversation_search to read matching content.", {
       limit: integerProperty("Number of conversations, 1 to 30")
     }, false, async (input) => JSON.stringify(store.recentChats(optionalInteger(input, "limit", 10, 1, 30)))),

@@ -14,6 +14,7 @@ import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
 import type { PreparedImages } from "./vision";
 import { providerRequestContext } from "./provider-context";
+import type { ImageService } from "./images";
 
 type Subscriber = (event: GenerationEvent) => void;
 const schemaValidator = new Ajv({ allErrors: true, strict: false });
@@ -47,6 +48,7 @@ export interface GenerationRunnerDependencies {
   runtimePrompt: (store: Store, record: GenerationRecord) => string;
   stream: (protocol: ProviderProtocol, request: GenerateRequest) => AsyncIterable<ProviderEvent>;
   persistToolOutput: (store: Store, callId: string, output: string) => Promise<string>;
+  imageService?: ImageService;
 }
 
 const defaultDependencies: GenerationRunnerDependencies = {
@@ -178,6 +180,7 @@ export class GenerationRunner {
       providerPayload?: unknown;
     }>();
     let flushTimer: NodeJS.Timeout | undefined;
+    let generatedImageIndex = 0;
     const flush = () => {
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = undefined;
@@ -302,6 +305,13 @@ export class GenerationRunner {
             scheduleFlush();
           } else if (event.type === "tool-call") {
             calls.push(event.call);
+          } else if (event.type === "image") {
+            if (!this.dependencies.imageService) throw new Error("图片服务不可用");
+            const asset = await this.dependencies.imageService.importGeneratedBytes(
+              `${record.modelKey}-response-${++generatedImageIndex}`,
+              Buffer.from(event.dataBase64, "base64")
+            );
+            this.store.attachImagesToMessage(record.assistantMessageId, [asset.id]);
           } else if (event.type === "provider-context") {
             providerContext = event.payload;
           } else if (event.type === "usage") {

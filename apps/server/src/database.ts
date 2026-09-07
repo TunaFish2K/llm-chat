@@ -356,7 +356,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 29) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 30) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1116,6 +1116,20 @@ function migrate(sqlite: DatabaseSyncType): void {
         CREATE INDEX IF NOT EXISTS idx_image_jobs_conversation ON image_generation_jobs(conversation_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_image_jobs_status ON image_generation_jobs(status, created_at);
         PRAGMA user_version = 29;
+      `);
+    }
+    if (current < 30) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_family_state (
+          root_conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+          active_conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversation_family_state_active
+          ON conversation_family_state(active_conversation_id);
+        INSERT OR IGNORE INTO conversation_family_state (root_conversation_id, active_conversation_id, updated_at)
+          SELECT id, id, updated_at FROM conversations WHERE parent_conversation_id IS NULL;
+        PRAGMA user_version = 30;
       `);
     }
     sqlite.exec("COMMIT");
@@ -2238,11 +2252,20 @@ export class Store {
   }
 
   listConversations(): ConversationDto[] {
-    return (this.sqlite.prepare(`
+    const conversations = (this.sqlite.prepare(`
       SELECT c.*, a.execution_json AS agent_execution_json
       FROM conversations c LEFT JOIN agents a ON a.id = c.agent_id
       ORDER BY c.updated_at DESC
     `).all() as Row[]).map(conversationDto);
+    const activeByRoot = new Map<string, string>();
+    for (const conversation of conversations) {
+      const root = this.rootConversationId(conversation.id);
+      if (root && !activeByRoot.has(root)) activeByRoot.set(root, this.activeBranchIdForRoot(root));
+    }
+    return conversations.map((conversation) => ({
+      ...conversation,
+      activeBranchId: activeByRoot.get(this.rootConversationId(conversation.id) ?? conversation.id) ?? conversation.id
+    }));
   }
 
   getConversation(id: string): ConversationDto | undefined {
@@ -2250,7 +2273,9 @@ export class Store {
       SELECT c.*, a.execution_json AS agent_execution_json
       FROM conversations c LEFT JOIN agents a ON a.id = c.agent_id WHERE c.id = ?
     `).get(id) as Row | undefined;
-    return row ? conversationDto(row) : undefined;
+    if (!row) return undefined;
+    const conversation = conversationDto(row);
+    return { ...conversation, activeBranchId: this.activeBranchIdFor(conversation.id) };
   }
 
   createConversation(input: {
@@ -2283,6 +2308,10 @@ export class Store {
       VALUES (?, ?, '', ?, ?, '', NULL, ?, ?, ?, ?, ?)
     `).run(id, input.title ?? "新对话", contextPolicy, modelId, agent.id, json(overrides),
       "workspacePath" in input ? input.workspacePath ?? null : null, now, now);
+    this.sqlite.prepare(`
+      INSERT OR IGNORE INTO conversation_family_state (root_conversation_id, active_conversation_id, updated_at)
+      VALUES (?, ?, ?)
+    `).run(id, id, now);
     this.sqlite.prepare("UPDATE app_settings SET last_agent_id = ? WHERE id = 1").run(agent.id);
     if ("workspacePath" in input && input.workspacePath) {
       this.sqlite.prepare("UPDATE app_settings SET last_workspace_path = ? WHERE id = 1").run(input.workspacePath);
@@ -2395,6 +2424,10 @@ export class Store {
 
   deleteConversation(id: string): boolean {
     return this.transaction(() => {
+      const root = this.rootConversationId(id);
+      const selected = root
+        ? this.sqlite.prepare("SELECT active_conversation_id FROM conversation_family_state WHERE root_conversation_id = ?").get(root) as Row | undefined
+        : undefined;
       const descendants = this.sqlite.prepare(`
         WITH RECURSIVE subtree(id, depth) AS (
           SELECT id, 0 FROM conversations WHERE id = ?
@@ -2406,6 +2439,11 @@ export class Store {
       `).all(id) as Row[];
       for (const row of descendants) {
         this.sqlite.prepare("DELETE FROM conversations WHERE id = ?").run(String(row.id));
+      }
+      if (root && this.rootConversationId(root)) {
+        const candidate = selected?.active_conversation_id ? String(selected.active_conversation_id) : root;
+        const active = this.rootConversationId(candidate) === root ? candidate : root;
+        this.setFamilyActiveBranch(root, active);
       }
       return descendants.length > 0;
     });
@@ -2460,6 +2498,7 @@ export class Store {
           INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
           VALUES (?, ?, 1, 'assistant', ?, NULL, ?, ?)
         `).run(randomUUID(), fork.id, text, Date.now(), json(greeting));
+        this.activateConversationBranch(fork.id);
         return { conversation: this.getConversation(fork.id)!, generation: null };
       }
 
@@ -2519,8 +2558,65 @@ export class Store {
           input.assetIds ?? input.imageAssetIds
         );
       }
+      this.activateConversationBranch(fork.id);
       return { conversation: this.getConversation(fork.id)!, generation };
     });
+  }
+
+  selectConversationBranch(sourceConversationId: string, branchId: string): { activeBranchId: string } {
+    return this.transaction(() => {
+      const root = this.rootConversationId(sourceConversationId);
+      const branchRoot = this.rootConversationId(branchId);
+      if (!root || !branchRoot) throw new StoreError("conversation_not_found", "会话不存在");
+      if (root !== branchRoot) throw new StoreError("conversation_branch_invalid", "所选分支不属于当前会话");
+      this.setFamilyActiveBranch(root, branchId);
+      return { activeBranchId: branchId };
+    });
+  }
+
+  private rootConversationId(id: string): string | undefined {
+    const row = this.sqlite.prepare(`
+      WITH RECURSIVE lineage(id, parent_id, depth) AS (
+        SELECT id, parent_conversation_id, 0 FROM conversations WHERE id = ?
+        UNION ALL
+        SELECT parent.id, parent.parent_conversation_id, lineage.depth + 1
+        FROM conversations parent JOIN lineage ON parent.id = lineage.parent_id
+        WHERE lineage.depth < 100
+      )
+      SELECT id FROM lineage ORDER BY depth DESC LIMIT 1
+    `).get(id) as Row | undefined;
+    return row ? String(row.id) : undefined;
+  }
+
+  private activeBranchIdFor(id: string): string {
+    const root = this.rootConversationId(id) ?? id;
+    return this.activeBranchIdForRoot(root);
+  }
+
+  private activeBranchIdForRoot(root: string): string {
+    const row = this.sqlite.prepare(
+      "SELECT active_conversation_id FROM conversation_family_state WHERE root_conversation_id = ?"
+    ).get(root) as Row | undefined;
+    const active = row?.active_conversation_id ? String(row.active_conversation_id) : root;
+    return this.rootConversationId(active) === root ? active : root;
+  }
+
+  private setFamilyActiveBranch(root: string, active: string): void {
+    this.sqlite.prepare(`
+      INSERT INTO conversation_family_state (root_conversation_id, active_conversation_id, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(root_conversation_id) DO UPDATE SET active_conversation_id = excluded.active_conversation_id,
+        updated_at = excluded.updated_at
+    `).run(root, active, Date.now());
+  }
+
+  private activateConversationBranch(id: string): void {
+    const root = this.rootConversationId(id);
+    if (!root) throw new StoreError("conversation_not_found", "会话不存在");
+    if (root !== id) {
+      this.sqlite.prepare("DELETE FROM conversation_family_state WHERE root_conversation_id = ?").run(id);
+    }
+    this.setFamilyActiveBranch(root, id);
   }
 
   private rootConversationTitle(conversationId: string): string {

@@ -334,6 +334,25 @@ describe("Store", () => {
     store.close();
   });
 
+  it("persists the selected branch for a conversation family", () => {
+    const store = createStore();
+    seedModel(store);
+    const root = store.createConversation({ systemPrompt: "" });
+    const first = store.forkConversation(root.id, { mode: "continue", throughMessageId: null }).conversation;
+    const second = store.forkConversation(first.id, { mode: "continue", throughMessageId: null }).conversation;
+    const third = store.forkConversation(second.id, { mode: "continue", throughMessageId: null }).conversation;
+
+    expect(store.getConversation(root.id)?.activeBranchId).toBe(third.id);
+    expect(store.selectConversationBranch(root.id, first.id)).toEqual({ activeBranchId: first.id });
+    expect(store.listConversations().find((item) => item.id === root.id)?.activeBranchId).toBe(first.id);
+
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.close();
+    const reopened = new Store(path);
+    expect(reopened.getConversation(root.id)?.activeBranchId).toBe(first.id);
+    reopened.close();
+  });
+
   it("backfills stable branch metadata when migrating a v22 database", () => {
     const store = createStore();
     seedModel(store);
@@ -386,7 +405,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
     migrated.close();
   });
 
@@ -467,7 +486,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getSettings().reasoningEffort).toBe("none");
@@ -497,7 +516,7 @@ describe("Store", () => {
 
     const migrated = new Store(path);
     expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
     migrated.close();
   });
 
@@ -545,7 +564,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -581,7 +600,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -1014,7 +1033,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(30);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

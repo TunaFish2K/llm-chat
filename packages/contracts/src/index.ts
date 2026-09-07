@@ -686,6 +686,7 @@ export const conversationInputSchema = z.object({
 
 export interface ConversationDto {
   id: string;
+  activeBranchId?: string | null;
   title: string;
   systemPrompt: string;
   contextPolicy: ContextPolicy;

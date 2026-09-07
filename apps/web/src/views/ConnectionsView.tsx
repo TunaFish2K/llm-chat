@@ -707,7 +707,7 @@ function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () =
           onChange={(event) => setModelKey(event.target.value)}
         />
       </Field>
-      <Field label="图片协议" hint="启用后，模型可用于聊天旁的图片生成任务。">
+      <Field label="图片协议" hint="配置后，模型可用于 Responses 原生生图和 Agent 的 image_generate 工具；两者可同时使用。">
         <select
           className="select"
           aria-label="图片协议"

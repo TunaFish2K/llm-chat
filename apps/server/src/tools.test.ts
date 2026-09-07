@@ -15,6 +15,25 @@ const signal = () => new AbortController().signal;
 const tool = (tools: ServerTool[], name: string) => tools.find((item) => item.definition.name === name)!;
 
 describe("server tool catalog", () => {
+  it("only exposes image_generate when an enabled image model is configured", async () => {
+    const store = createStore();
+    const { model } = seedModel(store);
+    const imageManager = { createAndWait: vi.fn() } as never;
+    const unavailable = await buildServerTools(store, true, { imageManager });
+    expect(tool(unavailable, "image_generate").available).toBe(false);
+
+    store.updateModel(model.id, {
+      imageProtocol: "openai-images",
+      capabilities: { ...model.capabilities, imageOutput: true }
+    });
+    const available = await buildServerTools(store, true, { imageManager });
+    expect(tool(available, "image_generate")).toMatchObject({ available: true });
+    expect(tool(available, "image_generate").definition.inputSchema.properties).toMatchObject({
+      model_id: { enum: [model.id] }
+    });
+    store.close();
+  });
+
   it("reports enablement, availability, schemas, and approval requirements", async () => {
     const store = createStore();
     store.updateToolSettings({ enabled: { get_time_info: false }, workspaceShellEnabled: false });

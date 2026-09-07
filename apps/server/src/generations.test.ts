@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContextError } from "./context";
 import type { Store } from "./database";
 import { GenerationRunner, type GenerationRunnerDependencies } from "./generations";
+import type { ImageService } from "./images";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 import type { ServerTool } from "./tools";
 
@@ -182,6 +183,27 @@ describe("GenerationRunner lifecycle", () => {
       expect.objectContaining({ type: "usage", usage: { inputTokens: 3, outputTokens: 2, totalTokens: 5 } }),
       expect.objectContaining({ type: "status", status: "completed", stopReason: "stop" })
     ]));
+  });
+
+  it("imports native provider images and attaches them to the assistant message", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const attach = vi.spyOn(store, "attachImagesToMessage");
+    const importGeneratedBytes = vi.fn().mockResolvedValue({ id: "asset-generated" });
+    const imageService = { importGeneratedBytes } as unknown as ImageService;
+    const runner = makeRunner(store, {
+      imageService,
+      stream: () => events([
+        { type: "image", dataBase64: "aW1hZ2U=" },
+        { type: "complete", stopReason: "stop" }
+      ])
+    });
+
+    runner.start(generation.generationId);
+    await terminal(store, generation.generationId);
+
+    expect(importGeneratedBytes).toHaveBeenCalledWith("mock-model-response-1", expect.any(Uint8Array));
+    expect(attach).toHaveBeenCalledWith(store.getGenerationRecord(generation.generationId)!.assistantMessageId, ["asset-generated"]);
   });
 
   it("aggregates every usage dimension across tool rounds and derives missing totals", async () => {
