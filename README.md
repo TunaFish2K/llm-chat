@@ -12,7 +12,7 @@
 - 支持原生多步工具调用。工具调用、审批状态和结果随生成版本持久化。
 - 支持 JPEG、PNG、WebP 和 GIF 图片输入。模型可声明原生图片能力；普通文本模型可由 Agent 配置备用识图模型，识图说明、用量和缓存命中会随生成记录。
 - 工作区图片可通过工具导入为内容寻址的永久资源。资源 URL 包含 SHA-256，并使用不可变浏览器缓存；公网 Markdown 图片通过服务端安全代理加载。
-- 内置时间、隔离 JavaScript、网页读取、SearXNG 搜索、历史对话、长期记忆、Skills、会话工作目录和后台任务工具。
+- 内置时间、隔离 JavaScript、网页读取、SearXNG/Tavily 搜索、历史对话、长期记忆、Skills、会话工作目录和后台任务工具。
 - 支持隔离的 ESM 工具 Plugin。Plugin 使用内容寻址修订，并可在运行时安装、卸载和手动重载。
 - 支持 pipe 和 PTY 后台任务。Agent 可以监控完整 CLI harness，并在终端提示出现时代表用户审批或拒绝。
 - 支持远程 MCP Streamable HTTP，并兼容旧 SSE 传输。
@@ -153,9 +153,9 @@ Agent 修改后，选择该 Agent 的会话会在下一次生成时读取新配�
 
 ## 工具配置
 
-打开 Agent 的“工具”与“Skill”页管理启用状态、直接性、三态审批策略和后台资源额度。打开“设置”管理全局工具、Plugins、Skills、MCP 和搜索服务。全局 Skill 页不删除来源目录；删除或卸载应交给对应的外部包管理器。
+打开 Agent 的“工具”与“Skill”页管理搜索服务、启用状态、直接性、三态审批策略和后台资源额度。每个 Agent 只能选择一个搜索服务：SearXNG 或 Tavily；搜索 API Key 只通过服务端保存。打开“设置”管理全局工具、Plugins、Skills 和 MCP。全局 Skill 页不删除来源目录；删除或卸载应交给对应的外部包管理器。
 
-- 搜索工具使用 SearXNG JSON 接口。填写服务地址后工具才会注入模型。
+- 搜索工具按 Agent 配置调用 SearXNG JSON 接口或 Tavily `/search` 接口。SearXNG 需要填写服务地址；Tavily 使用 `https://api.tavily.com` 作为默认地址并需要 API Key。配置完成后工具才会注入模型。
 - 新会话可以不绑定工作目录，也可以从服务端目录浏览器选择任意现有可访问目录。旧会话迁移到 `dataDir/workspace`。
 - 文件、Shell 和后台任务工具只访问生成快照中固定的会话工作目录。
 - `background_start`、`background_write` 和 `background_stop` 默认需要审批；读取和等待默认自动执行。

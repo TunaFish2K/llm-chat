@@ -108,7 +108,7 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     const response = await fetch(endpoint(request.connection.baseUrl, "messages"), {
       method: "POST",
-      headers: headers(request.connection),
+      headers: headers(request.connection, request.requestContext),
       body: JSON.stringify(body),
       signal: request.signal
     });

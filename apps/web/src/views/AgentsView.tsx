@@ -32,6 +32,7 @@ export function defaultAgentInput(name: string): AgentInput {
     execution: {
       modelId: null,
       visionModelId: null,
+      search: { provider: "searxng", baseUrl: "" },
       contextPolicy: "auto",
       reasoningEffort: "medium",
       generation: {},

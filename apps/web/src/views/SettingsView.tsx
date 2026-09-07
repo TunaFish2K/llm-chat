@@ -395,8 +395,6 @@ function ToolsSection() {
   const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [searchBaseUrl, setSearchBaseUrl] = useState("");
-  const [searchApiKey, setSearchApiKey] = useState("");
   const [detail, setDetail] = useState<
     { kind: "tool"; tool: ToolCatalogItemDto } | { kind: "text"; title: string; text: string } | null
   >(null);
@@ -407,7 +405,6 @@ function ToolsSection() {
       const [toolSettings, items] = await Promise.all([endpoints.toolSettings(), endpoints.toolCatalog()]);
       setSettings(toolSettings);
       setCatalog(items);
-      setSearchBaseUrl(toolSettings.search.baseUrl);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     }
@@ -467,46 +464,6 @@ function ToolsSection() {
                 });
           }}
         />
-      </div>
-
-      <div className="card">
-        <h3>搜索配置</h3>
-        <Field label="搜索服务 Base URL" hint="留空则禁用网页搜索。">
-          <input
-            className="input mono"
-            aria-label="搜索服务 Base URL"
-            value={searchBaseUrl}
-            onChange={(event) => setSearchBaseUrl(event.target.value)}
-            onBlur={() => {
-              if (searchBaseUrl !== settings.search.baseUrl) {
-                endpoints
-                  .updateToolSettings({ search: { baseUrl: searchBaseUrl } })
-                  .then(() => toast("success", "搜索配置已保存"))
-                  .catch(toastError);
-              }
-            }}
-          />
-        </Field>
-        <Field label="搜索 API Key" hint={settings.search.hasApiKey ? "已配置；留空保持不变。" : "可选。"}>
-          <input
-            className="input mono"
-            type="password"
-            aria-label="搜索 API Key"
-            value={searchApiKey}
-            onChange={(event) => setSearchApiKey(event.target.value)}
-            onBlur={() => {
-              if (searchApiKey) {
-                endpoints
-                  .updateToolSettings({ search: { baseUrl: searchBaseUrl, apiKey: searchApiKey } })
-                  .then(() => {
-                    setSearchApiKey("");
-                    toast("success", "搜索 API Key 已保存");
-                  })
-                  .catch(toastError);
-              }
-            }}
-          />
-        </Field>
       </div>
 
       <div className="card">

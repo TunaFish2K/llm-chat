@@ -386,7 +386,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(26);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     migrated.close();
   });
 
@@ -467,8 +467,9 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(26);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
+    expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getSettings().reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
     const columns = (store.sqlite.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>)
@@ -480,6 +481,24 @@ describe("Store", () => {
       modelKey: "legacy-model"
     });
     store.close();
+  });
+
+  it("adds a custom provider identity to pre-preset connection tables", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-v27-connections-"));
+    dirs.push(dir);
+    const path = join(dir, "legacy.sqlite");
+    const legacy = new Store(path);
+    legacy.sqlite.exec("ALTER TABLE connections DROP COLUMN provider_id; PRAGMA user_version = 27;");
+    legacy.sqlite.prepare(`
+      INSERT INTO connections (id, name, protocol, base_url, api_key, secret_headers_json, balance_config_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("legacy-connection", "Legacy", "openai-chat", "https://example.test/v1", "", "{}", "{}", 1, 1);
+    legacy.close();
+
+    const migrated = new Store(path);
+    expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
+    migrated.close();
   });
 
   it("migrates v13 balance storage and safely repairs Anthropic usage", () => {
@@ -526,7 +545,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(26);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -562,7 +581,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(26);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -712,7 +731,7 @@ describe("Store", () => {
   it("covers connection and model CRUD boundaries while keeping secrets out of DTOs", () => {
     const store = createStore();
     const first = store.createConnection({
-      name: "Zulu", protocol: "openai-chat", baseUrl: "https://old.test/v1",
+      name: "Zulu", providerId: "openai", protocol: "openai-chat", baseUrl: "https://old.test/v1",
       apiKey: "old-key", secretHeaders: { Authorization: "secret", "X-Key": "value" },
       balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
     });
@@ -722,6 +741,7 @@ describe("Store", () => {
     });
     expect(store.listConnections().map((item) => item.name)).toEqual(["alpha", "Zulu"]);
     expect(first).toMatchObject({
+      providerId: "openai",
       hasApiKey: true,
       secretHeaderNames: ["Authorization", "X-Key"],
       balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
@@ -866,19 +886,25 @@ describe("Store", () => {
   it("persists tool, MCP, and memory settings while redacting their secrets", () => {
     const store = createStore();
     expect(store.getToolSettings()).toMatchObject({
-      enabled: {}, search: { baseUrl: "", hasApiKey: false }, workspaceShellEnabled: true
+      enabled: {}, workspaceShellEnabled: true
     });
     expect(store.updateToolSettings({
-      enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", apiKey: "search-secret" },
+      enabled: { fetch_url: false },
       workspaceShellEnabled: true
     })).toMatchObject({
-      enabled: { fetch_url: false }, search: { baseUrl: "https://search.test", hasApiKey: true }, workspaceShellEnabled: true
+      enabled: { fetch_url: false }, workspaceShellEnabled: true
     });
-    expect(JSON.stringify(store.getToolSettings())).not.toContain("search-secret");
-    store.updateToolSettings({ search: { baseUrl: "https://new.test" } });
-    expect(store.getToolSecrets().searchApiKey).toBe("search-secret");
-    store.updateToolSettings({ search: { baseUrl: "", apiKey: "" } });
-    expect(store.getToolSettings().search.hasApiKey).toBe(false);
+    const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+    expect(agent.searchApiKeyConfigured).toBe(false);
+    store.updateAgent(agent.id, {
+      execution: { ...agent.execution, search: { provider: "tavily", baseUrl: "https://api.tavily.com" } }
+    });
+    store.updateAgentSearchSecret(agent.id, "tavily", "search-secret");
+    expect(store.getAgentSearchSecret(agent.id, "tavily")).toBe("search-secret");
+    expect(store.getAgent(agent.id)).toMatchObject({ searchApiKeyConfigured: true });
+    expect(JSON.stringify(store.getAgent(agent.id))).not.toContain("search-secret");
+    store.updateAgentSearchSecret(agent.id, "tavily", "");
+    expect(store.getAgent(agent.id)?.searchApiKeyConfigured).toBe(false);
 
     const server = store.createMcpServer({
       name: "Server", url: "https://mcp.test", headers: { Authorization: "Bearer secret" }, enabled: true
@@ -903,6 +929,30 @@ describe("Store", () => {
     expect(() => store.updateMemory(999, "missing")).toThrow("不存在");
     expect(() => store.deleteMemory(999)).toThrow("不存在");
     store.close();
+  });
+
+  it("migrates legacy global search settings into every Agent", () => {
+    const store = createStore();
+    const agentId = store.getSettings().defaultAgentId;
+    const agent = store.getAgent(agentId)!;
+    const legacyExecution = { ...agent.execution } as Record<string, unknown>;
+    delete legacyExecution.search;
+    store.sqlite.prepare("UPDATE agents SET execution_json = ? WHERE id = ?")
+      .run(JSON.stringify(legacyExecution), agentId);
+    store.sqlite.prepare("UPDATE tool_settings SET search_base_url = ?, search_api_key = ? WHERE id = 1")
+      .run("https://legacy-search.test", "legacy-secret");
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.sqlite.exec("PRAGMA user_version = 26");
+    store.close();
+
+    const migrated = new Store(path);
+    expect(migrated.getAgent(agentId)).toMatchObject({
+      searchApiKeyConfigured: true,
+      execution: { search: { provider: "searxng", baseUrl: "https://legacy-search.test" } }
+    });
+    expect(migrated.getAgentSearchSecret(agentId, "searxng")).toBe("legacy-secret");
+    expect(migrated.getToolSettings()).not.toHaveProperty("search");
+    migrated.close();
   });
 
   it("returns provider-aware context and literal chat-search matches", () => {
@@ -964,7 +1014,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(26);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(29);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

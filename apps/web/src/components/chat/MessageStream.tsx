@@ -13,7 +13,7 @@ import {
   Square,
   Wrench
 } from "lucide-react";
-import type { GenerationDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
+import type { GenerationDto, ImageGenerationJobDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, toastError, trackGeneration } from "../../lib/app-state";
 import type { ConversationBranchGroup } from "../../lib/conversation-tree";
@@ -49,6 +49,7 @@ export function MessageItem({
 }) {
   const agents = useStore(appStore, (state) => state.agents);
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  const imageJob = message.imageGenerationJob ?? null;
   const generation = message.role === "assistant" ? activeGeneration(message) : null;
   const generatedAgent = message.greeting?.agent ?? generation?.generatedAgent;
   const agent = agents.find((item) => item.id === generatedAgent?.agentId);
@@ -89,6 +90,7 @@ export function MessageItem({
         <time>{formatTime(message.createdAt)}</time>
         {generation ? <StatusTag status={generation.status} /> : null}
       </div>
+      {attachments.length ? <AssetGallery assets={attachments} /> : null}
       {generation ? (
         <GenerationTimeline
           conversationId={conversationId}
@@ -117,10 +119,49 @@ export function MessageItem({
             </footer>
           ) : null}
         </>
+      ) : attachments.length ? null : imageJob ? (
+        <ImageGenerationStatus conversationId={conversationId} job={imageJob} />
       ) : (
         <p className="muted">（无生成内容）</p>
       )}
     </article>
+  );
+}
+
+function ImageGenerationStatus({ conversationId, job }: { conversationId: string; job: ImageGenerationJobDto }) {
+  const label = job.status === "queued"
+    ? "图片任务排队中"
+    : job.status === "running"
+    ? "正在生成图片"
+    : job.status === "waiting-provider"
+    ? "等待图片服务完成"
+    : job.status === "failed"
+    ? `图片生成失败：${job.error?.message ?? "未知错误"}`
+    : job.status === "cancelled"
+    ? "图片生成已取消"
+    : "图片已生成";
+  const active = job.status === "queued" || job.status === "running" || job.status === "waiting-provider";
+  const retryable = job.status === "failed" || job.status === "cancelled";
+  return (
+    <div className={job.status === "failed" ? "refusal-block" : "image-job-status"}>
+      <span>{label}</span>
+      {active ? (
+        <MessageAction
+          label="停止图片生成"
+          danger
+          onClick={() => void endpoints.cancelImageGeneration(job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+        >
+          <Square size={14} fill="currentColor" />
+        </MessageAction>
+      ) : retryable ? (
+        <MessageAction
+          label="重试图片生成"
+          onClick={() => void endpoints.retryImageGeneration(job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+        >
+          <RotateCcw size={14} />
+        </MessageAction>
+      ) : null}
+    </div>
   );
 }
 

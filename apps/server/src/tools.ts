@@ -5,12 +5,13 @@ import { access, glob, mkdir, readFile, realpath, readdir, stat, writeFile } fro
 import { isIP } from "node:net";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import type { ToolCatalogItemDto } from "@llm-chat/contracts";
+import { imageGenerationInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { AgentSnapshot } from "./database";
 import type { TaskManager } from "./background-tasks";
 import type { ImageService } from "./images";
+import type { ImageGenerationManager } from "./image-generation";
 import { mcpManager } from "./mcp";
 
 const execFileAsync = promisify(execFile);
@@ -45,8 +46,11 @@ export interface ToolDependencies {
   lookup?: typeof lookup;
   taskManager?: TaskManager;
   imageService?: ImageService;
+  imageManager?: ImageGenerationManager;
   workspacePath?: string | null;
   attachmentWorkspacePath?: string;
+  searchConfig?: AgentSearchConfig;
+  searchApiKey?: string;
 }
 
 export async function buildServerTools(
@@ -54,7 +58,8 @@ export async function buildServerTools(
   includeDisabled = false,
   dependencies: ToolDependencies = {}
 ): Promise<ServerTool[]> {
-  const settings = store.getToolSettings();
+  const searchConfig = dependencies.searchConfig;
+  const searchApiKey = dependencies.searchApiKey ?? "";
   const workspace = Object.prototype.hasOwnProperty.call(dependencies, "workspacePath")
     ? dependencies.workspacePath ?? null
     : resolve(store.dataDir, "workspace");
@@ -70,6 +75,10 @@ export async function buildServerTools(
     if (!requested) throw new Error(input.workspace === "attachments" ? "Conversation attachment workspace is unavailable" : "Conversation has no project workspace");
     return requested;
   };
+  const imageModels = store.listModels().filter((model) => model.enabled && model.capabilities.imageOutput && model.imageProtocol);
+  const imageModelDescription = imageModels.length
+    ? ` Available image models: ${imageModels.map((model) => `${model.displayName} (${model.id})`).join(", ")}.`
+    : " No enabled image-capable models are configured.";
   const workspaceProperty = { workspace: workspaceSelectorProperty() };
 
   const tools: ServerTool[] = [
@@ -81,10 +90,62 @@ export async function buildServerTools(
     tool("fetch_url", "读取网页", "web", "Fetch a public HTTP or HTTPS URL and return readable text. Private and loopback addresses are blocked.", {
       url: stringProperty("Public HTTP or HTTPS URL")
     }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal, dependencies.lookup ?? lookup)),
-    tool("search_web", "网页搜索", "web", "Search the web for current information using the configured SearXNG service. Returns titles, URLs, and snippets.", {
+    tool("search_web", "网页搜索", "web", "Search the web for current information using the Agent's configured search service. Returns titles, URLs, and snippets.", {
       query: stringProperty("Focused search query"),
       limit: integerProperty("Number of results, 1 to 10")
-    }, false, async (input, signal) => searchWeb(store, requiredString(input, "query"), optionalInteger(input, "limit", 5, 1, 10), signal), Boolean(settings.search.baseUrl)),
+    }, false, async (input, signal) => searchWeb(
+      searchConfig,
+      searchApiKey,
+      requiredString(input, "query"),
+      optionalInteger(input, "limit", 5, 1, 10),
+      signal
+    ), searchAvailable(searchConfig, searchApiKey)),
+    tool("image_generate", "生成图片", "local", `Generate, edit, inpaint, or vary an image with a configured image model. The result is attached to this tool call and returned as image assets.${imageModelDescription}`, {
+      model_id: { type: "string", format: "uuid", enum: imageModels.map((model) => model.id), description: "Configured image-capable model id" },
+      prompt: stringProperty("Image prompt"),
+      operation: { type: "string", enum: ["generate", "edit", "inpaint", "variation"] },
+      reference_asset_ids: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 4 },
+      mask_asset_id: { type: ["string", "null"], format: "uuid" },
+      negative_prompt: stringProperty("Optional negative prompt"),
+      count: integerProperty("Number of images, 1 to 4"),
+      aspect_ratio: stringProperty("Optional aspect ratio such as 1:1 or 16:9"),
+      size: stringProperty("Provider image size"),
+      quality: { type: "string", enum: ["auto", "low", "medium", "high"] },
+      output_format: { type: "string", enum: ["png", "jpeg", "webp"] },
+      seed: integerProperty("Optional deterministic seed"),
+      strength: { type: "number", minimum: 0, maximum: 1 },
+      provider_options: { type: "object", additionalProperties: true }
+    }, true, async (input, signal, context) => {
+      if (!dependencies.imageManager || !context) throw new Error("Image generation service and tool context are required");
+      const request = imageGenerationInputSchema.parse({
+        modelId: input.model_id,
+        prompt: input.prompt,
+        ...(input.operation !== undefined ? { operation: input.operation } : {}),
+        ...(input.reference_asset_ids !== undefined ? { referenceAssetIds: input.reference_asset_ids } : {}),
+        ...(input.mask_asset_id !== undefined ? { maskAssetId: input.mask_asset_id } : {}),
+        ...(input.negative_prompt !== undefined ? { negativePrompt: input.negative_prompt } : {}),
+        ...(input.count !== undefined ? { count: input.count } : {}),
+        ...(input.aspect_ratio !== undefined ? { aspectRatio: input.aspect_ratio } : {}),
+        ...(input.size !== undefined ? { size: input.size } : {}),
+        ...(input.quality !== undefined ? { quality: input.quality } : {}),
+        ...(input.output_format !== undefined ? { outputFormat: input.output_format } : {}),
+        ...(input.seed !== undefined ? { seed: input.seed } : {}),
+        ...(input.strength !== undefined ? { strength: input.strength } : {}),
+        ...(input.provider_options !== undefined ? { providerOptions: input.provider_options } : {})
+      });
+      const job = await dependencies.imageManager.createAndWait({
+        conversationId: context.conversationId,
+        toolCallId: context.toolCallId,
+        input: request
+      }, signal);
+      return JSON.stringify({
+        jobId: job.id,
+        status: job.status,
+        revisedPrompt: job.revisedPrompt,
+        assets: job.outputAssets,
+        markdown: job.outputAssets.map((asset) => `![${asset.fileName}](${asset.url})`).join("\n")
+      });
+    }, Boolean(dependencies.imageManager)),
     tool("recent_chats", "最近对话", "conversation", "List recent conversation titles and update times. Use conversation_search to read matching content.", {
       limit: integerProperty("Number of conversations, 1 to 30")
     }, false, async (input) => JSON.stringify(store.recentChats(optionalInteger(input, "limit", 10, 1, 30)))),
@@ -192,7 +253,8 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   get_time_info: "读取服务端当前日期、时间、时区和时间戳。",
   eval_javascript: "在无 Node.js、文件、网络和 DOM 权限的隔离环境中执行计算。",
   fetch_url: "读取公开 HTTP/HTTPS 网页；自动阻止私网和回环地址。",
-  search_web: "通过服务端配置的 SearXNG 搜索最新网页信息。",
+  search_web: "通过当前 Agent 配置的搜索服务获取最新网页信息。",
+  image_generate: "使用已配置的图片模型生成、编辑或变体图片。",
   recent_chats: "列出最近对话的标题和更新时间。",
   conversation_search: "在服务端保存的历史对话中搜索内容。",
   memory_tool: "增删改跨会话长期记忆；记忆会加入后续对话上下文。",
@@ -393,19 +455,61 @@ async function runJavascript(code: string, signal: AbortSignal): Promise<string>
   });
 }
 
-async function searchWeb(store: Store, query: string, limit: number, signal: AbortSignal): Promise<string> {
-  const settings = store.getToolSettings();
-  if (!settings.search.baseUrl) throw new Error("Web search is not configured");
-  const endpoint = new URL(settings.search.baseUrl);
+const DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
+
+function searchAvailable(config: AgentSearchConfig | undefined, apiKey: string): boolean {
+  if (!config) return false;
+  return config.provider === "tavily" ? apiKey.length > 0 : config.baseUrl.length > 0;
+}
+
+function searchEndpoint(baseUrl: string): URL {
+  const endpoint = new URL(baseUrl);
   if (endpoint.pathname === "/" || !endpoint.pathname) endpoint.pathname = "/search";
+  return endpoint;
+}
+
+async function searchWeb(
+  config: AgentSearchConfig | undefined,
+  apiKey: string,
+  query: string,
+  limit: number,
+  signal: AbortSignal
+): Promise<string> {
+  if (!config) throw new Error("Web search is not configured for this Agent");
+  if (config.provider === "tavily") {
+    if (!apiKey) throw new Error("Tavily API key is not configured");
+    const response = await fetch(searchEndpoint(config.baseUrl || DEFAULT_TAVILY_BASE_URL), {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        query,
+        max_results: limit,
+        search_depth: "basic",
+        include_answer: false,
+        include_raw_content: false
+      }),
+      signal
+    });
+    if (!response.ok) throw new Error(`Tavily search returned HTTP ${response.status}`);
+    const payload = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }> };
+    return JSON.stringify((payload.results ?? []).slice(0, limit).map((item, index) => ({
+      id: index + 1, title: item.title ?? "", url: item.url ?? "", text: item.content ?? ""
+    })));
+  }
+
+  if (!config.baseUrl) throw new Error("SearXNG is not configured");
+  const endpoint = searchEndpoint(config.baseUrl);
   endpoint.searchParams.set("q", query);
   endpoint.searchParams.set("format", "json");
-  const secret = store.getToolSecrets().searchApiKey;
   const response = await fetch(endpoint, {
-    headers: { accept: "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
+    headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
     signal
   });
-  if (!response.ok) throw new Error(`Search service returned HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`SearXNG search returned HTTP ${response.status}`);
   const payload = await response.json() as { results?: Array<{ title?: string; url?: string; content?: string }> };
   return JSON.stringify((payload.results ?? []).slice(0, limit).map((item, index) => ({
     id: index + 1, title: item.title ?? "", url: item.url ?? "", text: item.content ?? ""

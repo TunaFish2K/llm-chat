@@ -303,6 +303,8 @@ export function startAppEvents(): void {
     (event) => {
       if (event.type === "task") {
         void refreshTaskCounts();
+      } else if (event.type === "image-generation") {
+        void loadMessages(event.conversationId);
       } else if (event.type === "resource-changed") {
         if (event.resource === "agents") void refreshAgents();
         if (event.resource === "conversations") void refreshConversations();

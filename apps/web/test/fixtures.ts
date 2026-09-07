@@ -25,9 +25,11 @@ export function makeAgent(patch: Partial<AgentSummaryDto> = {}): AgentSummaryDto
     revision: 1,
     hasAvatar: false,
     modelId: "model-1",
+    searchApiKeyConfigured: false,
     execution: {
       modelId: "model-1",
       visionModelId: null,
+      search: { provider: "searxng", baseUrl: "" },
       contextPolicy: "trim",
       reasoningEffort: "medium",
       generation: {},
@@ -68,6 +70,7 @@ export function makeConnection(patch: Partial<ConnectionDto> = {}): ConnectionDt
   return {
     id: "connection-1",
     name: "测试连接",
+    providerId: "custom",
     protocol: "openai-chat",
     baseUrl: "https://example.com/v1",
     hasApiKey: true,

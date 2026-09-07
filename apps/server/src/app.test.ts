@@ -723,6 +723,20 @@ describe("server API", () => {
       userProfile: { displayName: "Lee" }
     } })).json();
     expect(updated).toMatchObject({ revision: 2, userProfile: { displayName: "Lee" } });
+    const searchConfigured = await app.inject({
+      method: "PATCH", url: `/api/agents/${created.id}`,
+      payload: { execution: { ...updated.execution, search: { provider: "tavily", baseUrl: "" } } }
+    });
+    expect(searchConfigured.statusCode).toBe(200);
+    const searchSecret = await app.inject({
+      method: "PATCH", url: `/api/agents/${created.id}/search-secret`,
+      payload: { provider: "tavily", apiKey: "tvly-test-secret" }
+    });
+    expect(searchSecret.json()).toEqual({ provider: "tavily", hasApiKey: true });
+    expect(JSON.stringify((await app.inject({ method: "GET", url: `/api/agents/${created.id}` })).json()))
+      .not.toContain("tvly-test-secret");
+    expect((await app.inject({ method: "GET", url: `/api/tools/catalog?agentId=${created.id}` })).json())
+      .toEqual(expect.arrayContaining([expect.objectContaining({ name: "search_web", available: true })]));
 
     const presetImport = await app.inject({
       method: "POST",

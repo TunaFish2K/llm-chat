@@ -9,6 +9,7 @@ import type { FileAssetRecord, Store } from "./database";
 import { StoreError } from "./database";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_GENERATED_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const CACHE_MAX_BYTES = 256 * 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -40,8 +41,16 @@ export class ImageService {
   }
 
   async importBytes(fileName: string, bytes: Uint8Array): Promise<ImageAssetDto> {
-    if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) {
-      throw new StoreError("image_too_large", "图片必须小于 5 MiB");
+    return this.importImageBytes(fileName, bytes, MAX_IMAGE_BYTES, "图片必须小于 5 MiB");
+  }
+
+  async importGeneratedBytes(fileName: string, bytes: Uint8Array): Promise<ImageAssetDto> {
+    return this.importImageBytes(fileName, bytes, MAX_GENERATED_IMAGE_BYTES, "生成图片必须小于 32 MiB");
+  }
+
+  private async importImageBytes(fileName: string, bytes: Uint8Array, maxBytes: number, sizeMessage: string): Promise<ImageAssetDto> {
+    if (!bytes.byteLength || bytes.byteLength > maxBytes) {
+      throw new StoreError("image_too_large", sizeMessage);
     }
     const mimeType = sniffImage(bytes);
     if (!mimeType) throw new StoreError("image_type_invalid", "仅支持 JPEG、PNG、WebP 和 GIF 图片");
