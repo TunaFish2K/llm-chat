@@ -285,6 +285,29 @@ describe("provider adapters", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "text", content: "答案", complete: true }));
   });
 
+  it("sends native image generation and returns the final image result", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        namedFrame("response.output_item.done", {
+          item: { type: "image_generation_call", id: "image-call-1", result: "aW1hZ2U=" }
+        }),
+        namedFrame("response.completed", { response: {} })
+      ]);
+    }));
+    const req = request("openai-responses");
+    req.capabilities.imageOutput = true;
+    const events = await collect(new OpenAiResponsesAdapter().stream(req));
+    expect(sentBody?.tools).toEqual([{ type: "image_generation" }]);
+    expect(events).toContainEqual({ type: "image", dataBase64: "aW1hZ2U=" });
+    expect(events).toContainEqual({
+      type: "provider-context",
+      payload: [{ type: "image_generation_call", id: "image-call-1" }]
+    });
+    expect(events.some((event) => event.type === "block" && event.blockType === "unsupported")).toBe(false);
+  });
+
   it("preserves Anthropic thinking signatures and usage", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
       namedFrame("message_start", { message: { usage: { input_tokens: 7 } } }),

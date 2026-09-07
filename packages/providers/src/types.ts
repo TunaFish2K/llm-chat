@@ -90,6 +90,7 @@ export type ProviderEvent =
       providerPayload?: unknown;
     }
   | { type: "provider-context"; payload: unknown }
+  | { type: "image"; dataBase64: string }
   | { type: "tool-call"; call: ProviderToolCall }
   | { type: "usage"; usage: UsageDto }
   | { type: "complete"; stopReason: string };

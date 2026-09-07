@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Maximize2 } from "lucide-react";
 import type {
   AppSettings,
@@ -33,6 +33,7 @@ const SECTIONS: Array<[string, string]> = [
   ["general", "通用"],
   ["security", "安全"],
   ["connections", "连接与模型"],
+  ["image-generation", "图片生成"],
   ["tools", "工具"],
   ["skills", "Skill"],
   ["plugins", "Plugin"],
@@ -81,6 +82,7 @@ export function SettingsView({ section }: { section: string }) {
           <div className="panel-inner">
             {active === "general" ? <GeneralSection /> : null}
             {active === "security" ? <SecuritySection /> : null}
+            {active === "image-generation" ? <ImageGenerationSection /> : null}
             {active === "tools" ? <ToolsSection /> : null}
             {active === "skills" ? <SkillsSection /> : null}
             {active === "plugins" ? <PluginsSection /> : null}
@@ -90,6 +92,64 @@ export function SettingsView({ section }: { section: string }) {
         </div>
       )}
     </>
+  );
+}
+
+function ImageGenerationSection() {
+  const connections = useStore(appStore, (state) => state.connections);
+  const models = useStore(appStore, (state) => state.models);
+  const connectionById = useMemo(() => new Map(connections.map((connection) => [connection.id, connection])), [connections]);
+  const imageModels = models.filter((model) => model.capabilities.imageOutput);
+
+  return (
+    <div>
+      <div className="card">
+        <h3>图片生成</h3>
+        <p className="hint">
+          同一个图片模型可以直接作为对话模型调用 Responses 原生生图，也可以配置给 Agent 的 image_generate 工具。
+          直接生图只需要启用“图片输出”；工具生图还需要设置图片协议。
+        </p>
+        <a className="button secondary" href={routes.settings("connections")} onClick={linkClick(routes.settings("connections"))}>
+          配置连接与模型
+        </a>
+      </div>
+
+      <div className="card">
+        <h3>图片模型</h3>
+        {imageModels.length ? (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th>连接</th>
+                <th>直接对话生图</th>
+                <th>Agent 工具生图</th>
+              </tr>
+            </thead>
+            <tbody>
+              {imageModels.map((model) => {
+                const connection = connectionById.get(model.connectionId);
+                const nativeResponses = model.enabled && connection?.protocol === "openai-responses";
+                const toolGeneration = model.enabled && Boolean(model.imageProtocol);
+                return (
+                  <tr key={model.id}>
+                    <td>
+                      <strong>{model.displayName}</strong>
+                      <small className="mono muted">{model.modelKey}</small>
+                    </td>
+                    <td>{connection?.name ?? "连接已删除"}</td>
+                    <td>{nativeResponses ? <span className="tag ok">可用</span> : <span className="tag">需 Responses</span>}</td>
+                    <td>{toolGeneration ? <span className="tag ok">可用</span> : <span className="tag">需图片协议</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : (
+          <p className="sidebar-empty">还没有启用图片输出的模型。请在连接与模型中编辑模型能力。</p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "../lib/api";
 import { appStore } from "../lib/app-state";
 import { SettingsView } from "./SettingsView";
-import { makeAgent, makeConnection, makeSettings } from "../../test/fixtures";
+import { makeAgent, makeConnection, makeModel, makeSettings } from "../../test/fixtures";
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -16,6 +16,26 @@ describe("SettingsView", () => {
     render(<SettingsView section="general" />);
     expect(screen.getByLabelText("主题")).toHaveValue("dark");
     expect(screen.getByLabelText("默认推理档位")).toHaveValue("medium");
+  });
+
+  it("shows both image generation paths in their own settings section", () => {
+    const model = makeModel({
+      displayName: "GPT Image 2",
+      modelKey: "gpt-image-2",
+      capabilities: { ...makeModel().capabilities, imageOutput: true },
+      imageProtocol: "openai-images"
+    });
+    appStore.set({
+      connections: [makeConnection({ protocol: "openai-responses" })],
+      models: [model]
+    });
+
+    render(<SettingsView section="image-generation" />);
+
+    expect(screen.getByRole("heading", { name: "图片生成" })).toBeInTheDocument();
+    expect(screen.getByText("GPT Image 2")).toBeInTheDocument();
+    expect(screen.getByText("直接对话生图")).toBeInTheDocument();
+    expect(screen.getAllByText("可用")).toHaveLength(2);
   });
 
   it("stores generation haptics in application settings", async () => {

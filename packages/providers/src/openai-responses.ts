@@ -1,6 +1,6 @@
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
-import type { GenerateRequest, ProviderAdapter, ProviderEvent } from "./types";
+import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent } from "./types";
 
 /**
  * OpenAI Responses unified-effort mapping:
@@ -64,15 +64,15 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
       store: false,
       max_output_tokens: common.maxOutputTokens
     };
-    if (request.tools?.length) {
-      body.tools = request.tools.map((tool) => ({
+    const tools: Array<Record<string, unknown>> = request.tools?.map((tool) => ({
         type: "function",
         name: tool.name,
         description: tool.description,
         parameters: tool.inputSchema,
         strict: false
-      }));
-    }
+      })) ?? [];
+    if (request.capabilities.imageOutput) tools.push({ type: "image_generation" });
+    if (tools.length) body.tools = tools;
     if (common.temperature !== undefined) body.temperature = common.temperature;
     if (common.topP !== undefined) body.top_p = common.topP;
 
@@ -122,7 +122,13 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
       } else if (type === "response.output_item.done" && event.item) {
         const item = event.item as Record<string, unknown>;
         if (item.type === "reasoning") providerItems.push(item);
-        if (item.type === "function_call") {
+        if (item.type === "image_generation_call") {
+          if (typeof item.id === "string") providerItems.push({ type: item.type, id: item.id });
+          if (typeof item.result !== "string" || !item.result) {
+            throw new ProviderError("image_generation_result_missing", "Responses 未返回生成图片数据");
+          }
+          yield { type: "image", dataBase64: item.result };
+        } else if (item.type === "function_call") {
           const id = typeof item.call_id === "string" ? item.call_id : String(item.id ?? "");
           const name = typeof item.name === "string" ? item.name : "";
           const args = typeof item.arguments === "string" ? item.arguments : "{}";

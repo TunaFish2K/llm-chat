@@ -19,7 +19,7 @@ import { AgentAvatar } from "../components/chat/atoms";
 import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
 import { BranchSwitchers, MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
-import { conversationBranchGroups, greetingBranchContext } from "../lib/conversation-tree";
+import { conversationBranchGroups, greetingBranchContext, resolveConversationRoot } from "../lib/conversation-tree";
 import { greetingOptions } from "../components/chat/model";
 import { EditForkDialog } from "../components/chat/dialogs";
 import { RoleplayConversationDialog } from "../components/chat/RoleplayConversationDialog";
@@ -111,6 +111,14 @@ export function ChatView({
   }, [conversationId]);
 
   useEffect(() => {
+    if (!conversation || !conversationId || !conversation.activeBranchId) return;
+    const root = resolveConversationRoot(conversation, conversations);
+    if (root.id === conversation.id && conversation.activeBranchId !== conversationId) {
+      navigate(routes.chat(conversation.activeBranchId));
+    }
+  }, [conversation, conversationId, conversations]);
+
+  useEffect(() => {
     setRoleplayOpen(false);
     const summary = conversations.length && conversation?.agentId
       ? appStore.get().agents.find((agent) => agent.id === conversation.agentId)
@@ -152,12 +160,23 @@ export function ChatView({
   const forkConversation = (input: ForkConversationInput): Promise<boolean> =>
     conversation ? forkConversationFrom(conversation.id, input) : Promise.resolve(false);
 
+  const switchBranch = async (branchId: string) => {
+    if (!conversation) return;
+    try {
+      await endpoints.selectConversationBranch(conversation.id, branchId);
+      await refreshConversations();
+      navigate(routes.chat(branchId));
+    } catch (error) {
+      toastError(error);
+    }
+  };
+
   const switchGreeting = (message: MessageDto, greetingIndex: number) => {
     if (!conversation) return;
     const context = greetingBranchContext(conversation, message, conversations);
     const existing = context?.routesByGreetingIndex.get(greetingIndex);
     if (existing) {
-      navigate(routes.chat(existing));
+      void switchBranch(existing);
       return;
     }
     void forkConversationFrom(context?.sourceConversationId ?? conversation.id, {
@@ -219,7 +238,7 @@ export function ChatView({
                 <div className="root-branch-controls">
                   <BranchSwitchers
                     groups={branchGroups.filter((group) => group.messageOrdinal === null)}
-                    onChange={(id) => navigate(routes.chat(id))}
+                    onChange={(id) => void switchBranch(id)}
                   />
                 </div>
                 {!conversationId ? (
@@ -246,7 +265,7 @@ export function ChatView({
                         onEdit: setEditingMessage,
                         onContinue: continueFrom,
                         onGreetingFork: switchGreeting,
-                        onBranchChange: (id) => navigate(routes.chat(id)),
+                        onBranchChange: (id) => void switchBranch(id),
                         branching: branching || busy
                       }}
                     />

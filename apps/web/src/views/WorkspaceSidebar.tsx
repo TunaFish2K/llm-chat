@@ -55,7 +55,11 @@ export function WorkspaceSidebar({
   const families = useMemo(() => listConversationFamilies(conversations), [conversations]);
   const visible = useMemo(() => families
     .filter((family) => !normalized || family.root.title.toLocaleLowerCase().includes(normalized))
-    .map((family) => ({ ...family.root, updatedAt: family.latestUpdatedAt })), [families, normalized]);
+    .map((family) => ({
+      ...family.root,
+      activeBranchId: family.root.activeBranchId ?? family.root.id,
+      updatedAt: family.latestUpdatedAt
+    })), [families, normalized]);
   const groups = useMemo(() => groupConversations(visible), [visible]);
 
   const rename = async () => {
@@ -165,8 +169,8 @@ export function WorkspaceSidebar({
                 {visible.slice(0, 8).map((conversation) => (
                   <a
                     key={conversation.id}
-                    href={routes.chat(conversation.id)}
-                    onClick={linkClick(routes.chat(conversation.id))}
+                    href={routes.chat(conversation.activeBranchId ?? conversation.id)}
+                    onClick={linkClick(routes.chat(conversation.activeBranchId ?? conversation.id))}
                     className={conversation.id === activeId ? "active" : ""}
                     title={conversation.title}
                     aria-label={conversation.title}
@@ -181,7 +185,10 @@ export function WorkspaceSidebar({
                 <div role="list" aria-label={`${group.label}会话`}>
                   {group.items.map((conversation) => (
                     <div className="conversation-row" data-active={conversation.id === activeId || undefined} key={conversation.id} role="listitem">
-                      <a href={routes.chat(conversation.id)} onClick={linkClick(routes.chat(conversation.id))}>
+                      <a
+                        href={routes.chat(conversation.activeBranchId ?? conversation.id)}
+                        onClick={linkClick(routes.chat(conversation.activeBranchId ?? conversation.id))}
+                      >
                         <span>{conversation.title || "未命名会话"}</span>
                         <small>{formatTime(conversation.updatedAt)}</small>
                       </a>

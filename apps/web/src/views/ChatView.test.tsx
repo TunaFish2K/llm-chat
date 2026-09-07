@@ -422,13 +422,21 @@ describe("ChatView", () => {
     ];
     seedStore(messages, { conversation: root });
     appStore.set({ conversations: [root, second, first] });
-    vi.stubGlobal("fetch", messageFetch(messages));
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/conversations/conv-1/active-branch" && init?.method === "PATCH") {
+        return Promise.resolve(json({ activeBranchId: "branch-1" }));
+      }
+      if (url === "/api/conversations") return Promise.resolve(json([root, second, first]));
+      if (url === "/api/conversations/conv-1/messages") return Promise.resolve(json(messages));
+      return Promise.resolve(json({ error: { code: "unexpected", message: `unexpected ${url}` } }, 500));
+    });
+    vi.stubGlobal("fetch", fetchMock);
     render(<ChatView conversationId="conv-1" />);
 
     expect(await screen.findByLabelText("对话分支切换")).toHaveTextContent("1 / 3");
     expect(screen.queryByRole("button", { name: /分叉自/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "下一分支" }));
-    expect(window.location.pathname).toBe("/c/branch-1");
+    await waitFor(() => expect(window.location.pathname).toBe("/c/branch-1"));
   });
 
   it("switches a persisted greeting by creating a root branch", async () => {
@@ -499,12 +507,19 @@ describe("ChatView", () => {
     });
     seedStore([greeting], { conversation: root });
     appStore.set({ conversations: [root, branch] });
-    const fetchMock = messageFetch([greeting]);
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/conversations/conv-1/active-branch" && init?.method === "PATCH") {
+        return Promise.resolve(json({ activeBranchId: branch.id }));
+      }
+      if (url === "/api/conversations/conv-1/messages") return Promise.resolve(json([greeting]));
+      if (url === "/api/conversations") return Promise.resolve(json([root, branch]));
+      return Promise.resolve(json({ error: { code: "unexpected", message: `unexpected ${url}` } }, 500));
+    });
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatView conversationId="conv-1" />);
 
     await user.click(await screen.findByRole("button", { name: "下一条开场白" }));
-    expect(window.location.pathname).toBe("/c/conv-greeting");
+    await waitFor(() => expect(window.location.pathname).toBe("/c/conv-greeting"));
     expect(fetchMock.mock.calls.some(([url, init]) =>
       url === "/api/conversations/conv-1/forks" && (init as RequestInit | undefined)?.method === "POST"
     )).toBe(false);
