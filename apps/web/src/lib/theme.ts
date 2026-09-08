@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { AppSettings } from "@llm-chat/contracts";
+import { updateFavicon } from "./brand-icon";
 
 export const THEME_COLORS = { dark: "#0d100e", light: "#f5f7f5" } as const;
 
@@ -13,6 +14,7 @@ export function useTheme(settings: AppSettings | null): void {
       const resolved = theme === "system" ? (media.matches ? "light" : "dark") : theme;
       root.dataset.theme = resolved;
       root.style.colorScheme = resolved;
+      updateFavicon(resolved);
       document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
         ?.setAttribute("content", THEME_COLORS[resolved]);
     };

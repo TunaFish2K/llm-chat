@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,green \"pnpm --filter @llm-chat/server dev\" \"pnpm --filter @llm-chat/web dev\"",
     "build": "pnpm --filter @llm-chat/web build && pnpm --filter @llm-chat/server build",
+    "icons:generate": "tsx scripts/generate-icons.ts",
     "start": "pnpm --filter @llm-chat/server start",
     "audit:prod": "pnpm audit --prod",
     "test": "vitest run",
@@ -31,6 +32,7 @@
     "@vitest/coverage-v8": "^3.2.7",
     "concurrently": "^9.2.0",
     "jsdom": "^30.0.1",
+    "sharp": "^0.34.5",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"

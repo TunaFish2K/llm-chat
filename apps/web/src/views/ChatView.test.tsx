@@ -45,6 +45,42 @@ function messageFetch(messages: MessageDto[]) {
 beforeEach(() => window.history.pushState(null, "", "/"));
 
 describe("ChatView", () => {
+  it("confirms a different Agent for existing messages and leaves the current selection untouched", async () => {
+    const messages = [makeMessage({ role: "user", text: "保留历史" })];
+    seedStore(messages);
+    appStore.set({ agents: [makeAgent(), makeAgent({ id: "second", name: "第二助手" })] });
+    const updated = makeConversation({ agentId: "second", executionOverrides: {} });
+    const patch = vi.fn();
+    const fallback = messageFetch(messages);
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+      if (url === "/api/conversations/conv-1" && init?.method === "PATCH") {
+        patch(JSON.parse(init.body as string));
+        return Promise.resolve(json(updated));
+      }
+      if (url === "/api/conversations") return Promise.resolve(json([updated]));
+      return fallback(url, init);
+    }));
+    const user = userEvent.setup();
+    render(<ChatView conversationId="conv-1" />);
+    const trigger = screen.getByRole("button", { name: "选择 Agent" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "测试助手" }));
+    expect(screen.queryByRole("dialog", { name: "切换 Agent" })).not.toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "第二助手" }));
+    expect(screen.getByRole("dialog", { name: "切换 Agent" })).toHaveTextContent("覆盖将全部清除");
+    await user.click(screen.getByRole("button", { name: "取消" }));
+    expect(trigger).toHaveTextContent("测试助手");
+    expect(patch).not.toHaveBeenCalled();
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "第二助手" }));
+    await user.click(screen.getByRole("button", { name: "切换" }));
+    await waitFor(() => expect(trigger).toHaveTextContent("第二助手"));
+    expect(patch).toHaveBeenCalledExactlyOnceWith({ agentId: "second" });
+    expect(screen.getByText("保留历史")).toBeInTheDocument();
+  });
+
   it("renders legacy user messages that omit attachments", async () => {
     const { attachments: _attachments, ...legacyMessage } = makeMessage({ role: "user", text: "旧消息仍可显示" });
     const messages = [legacyMessage as MessageDto];

@@ -78,6 +78,8 @@ test.describe("应用外壳", () => {
         .poll(async () => (await api(request, APP_URL, "GET", "/api/settings")).theme)
         .toBe(next);
       await expect(page.locator("html")).toHaveAttribute("data-theme", next);
+      await expect.poll(async () => decodeURIComponent(await page.locator("#app-favicon").getAttribute("href") ?? ""))
+        .toContain(`fill="${next === "light" ? "#c64b2f" : "#ff8964"}"`);
       await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
         "content",
         next === "light" ? "#f5f7f5" : "#0d100e"
@@ -128,12 +130,20 @@ test.describe("应用外壳", () => {
       name: "Chat",
       short_name: "Chat",
       theme_color: "#0d100e",
-      background_color: "#0d100e"
+      background_color: "#0d100e",
+      icons: [
+        { src: "/icons/icon-192-v2.png", sizes: "192x192" },
+        { src: "/icons/icon-512-v2.png", sizes: "512x512" },
+        { src: "/icons/icon-1024-v2.png", sizes: "1024x1024" },
+        { src: "/icons/icon-maskable-512-v2.png", sizes: "512x512", purpose: "maskable" }
+      ]
     });
     await expect(page).toHaveTitle("Chat");
     const sw = await page.request.get(`${APP_URL}/sw.js`);
     expect(sw.ok()).toBeTruthy();
     expect(await sw.text()).toContain("/api/");
+    expect(await sw.text()).toContain("icons/favicon-v2.svg");
+    await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", "/icons/apple-touch-icon-180-v2.png");
     const apiResponse = await page.request.get(`${APP_URL}/api/health`);
     expect(apiResponse.headers()["cache-control"]).toBe("no-store");
   });
@@ -199,8 +209,9 @@ test.describe("会话与流式生成", () => {
 
       await page.goto(APP_URL);
       // Pick the dedicated agent in the composer.
-      await page.getByLabel("选择 Agent").selectOption(agent.id);
-      await expect(page.getByLabel("选择 Agent")).toHaveValue(agent.id);
+      await page.getByLabel("选择 Agent", { exact: true }).click();
+      await page.getByRole("button", { name: agent.name, exact: true }).click();
+      await expect(page.getByLabel("选择 Agent", { exact: true })).toContainText(agent.name);
       await page.getByLabel("输入消息").fill("你好，测试一下");
       await page.getByRole("button", { name: "发送", exact: true }).click();
 
@@ -399,8 +410,9 @@ test.describe("会话与流式生成", () => {
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`无模型-${unique()}`));
     try {
       await page.goto(APP_URL);
-      await page.getByLabel("选择 Agent").selectOption(agent.id);
-      await expect(page.getByLabel("选择 Agent")).toHaveValue(agent.id);
+      await page.getByLabel("选择 Agent", { exact: true }).click();
+      await page.getByRole("button", { name: agent.name, exact: true }).click();
+      await expect(page.getByLabel("选择 Agent", { exact: true })).toContainText(agent.name);
       await expect(page.getByLabel("输入消息")).toHaveAttribute("placeholder", "请先选择模型");
       await page.getByLabel("输入消息").fill("没有模型会怎样");
       await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
@@ -454,7 +466,8 @@ test.describe("Agent 管理", () => {
       agentId = agent.id;
 
       await page.goto(APP_URL);
-      await page.getByLabel("选择 Agent").selectOption(agent.id);
+      await page.getByLabel("选择 Agent", { exact: true }).click();
+      await page.getByRole("button", { name: agent.name, exact: true }).click();
       await page.getByLabel("输入消息").fill("输出表格");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const table = page.locator(".markdown table").last();

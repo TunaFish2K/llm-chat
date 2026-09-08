@@ -25,7 +25,7 @@ export function LoginView() {
     <div className="login-wrap">
       <form className="login-card" onSubmit={(event) => void submit(event)}>
         <div className="brand">
-          <img src="/icons/icon-192.png" alt="" width={36} height={36} />
+          <img src="/icons/icon-192-v2.png" alt="" width={36} height={36} />
           Chat
         </div>
         <div className="field">
