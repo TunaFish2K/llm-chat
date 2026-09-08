@@ -98,13 +98,13 @@ export function WorkspaceSidebar({
       <header className="sidebar-brand">
         {compact ? (
           <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label="展开会话栏" title="展开会话栏">
-            <img src="/icons/icon-192.png" width={28} height={28} alt="" />
+            <img src="/icons/icon-192-v2.png" width={28} height={28} alt="" />
             <PanelLeftOpen className="sidebar-brand-action" size={14} aria-hidden="true" />
           </button>
         ) : (
           <>
             <a href="/" onClick={linkClick("/")} aria-label="Chat 首页">
-              <img src="/icons/icon-192.png" width={28} height={28} alt="" />
+              <img src="/icons/icon-192-v2.png" width={28} height={28} alt="" />
               <span>Chat</span>
             </a>
             {onClose ? (

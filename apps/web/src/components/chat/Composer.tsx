@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Popover } from "radix-ui";
 import {
-  Bot,
-  ChevronDown,
   FolderOpen,
   Drama,
   Gauge,
-  ImagePlus,
   LoaderCircle,
   Minimize2,
   MoreHorizontal,
@@ -31,13 +28,13 @@ import { appStore, isGenerationActive, loadMessages, refreshConversations, resta
 import type { InspectionTarget } from "../../lib/inspection";
 import { navigate, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
-import { Field, Modal } from "../../lib/ui";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
 import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson, shortPath } from "./model";
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
+import { AgentPicker } from "./AgentPicker";
 import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEditor";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
@@ -99,10 +96,6 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const { attachments, setAttachments, uploading, uploadFiles } = useAttachments([], conversation?.id);
   const { items: queuedMessages, reload: reloadQueue } = useMessageQueue(conversation?.id);
-  const [imageSubmitting, setImageSubmitting] = useState(false);
-  const [imagePromptOpen, setImagePromptOpen] = useState(false);
-  const [imagePrompt, setImagePrompt] = useState("");
-  const [imageModelId, setImageModelId] = useState("");
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedConversation = useRef<string | null>(null);
   const wasGenerating = useRef(false);
@@ -147,10 +140,6 @@ export function Composer({
   const imageConfigured = Boolean(
     effectiveModel?.capabilities.imageInput || (visionModel?.enabled && visionModel.capabilities.imageInput)
   );
-  const imageModels = models.filter((model) => model.enabled && model.capabilities.imageOutput && model.imageProtocol);
-  const imageModel = imageModels.find((model) => model.id === imageModelId)
-    ?? imageModels.find((model) => model.id === effectiveModelId)
-    ?? imageModels[0];
   const reasoning = overrides.reasoningEffort ?? effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none";
   const advertisedReasoning = effectiveModel?.catalogMetadata?.reasoningEfforts ?? [];
   const reasoningLevels: ReasoningEffort[] = effectiveModel && !effectiveModel.capabilities.reasoning ? ["none"] : advertisedReasoning.length > 0
@@ -268,6 +257,7 @@ export function Composer({
 
   /** Switching mid-conversation drops every override, so it needs confirming. */
   const chooseAgent = (agentId: string) => {
+    if (agentId === effectiveAgentId) return;
     if (conversation && messages.length) setPendingAgent(agentId);
     else void applyAgent(agentId);
   };
@@ -362,31 +352,6 @@ export function Composer({
     }
   };
 
-  const generateImage = async () => {
-    if (!conversation || !imageModel || controlsDisabled || imageSubmitting) return;
-    if (!imagePrompt.trim()) return;
-    setImageSubmitting(true);
-    setImagePromptOpen(false);
-    try {
-      const job = await endpoints.startImageGeneration(conversation.id, {
-        modelId: imageModel.id,
-        prompt: imagePrompt.trim(),
-        operation: "generate",
-        referenceAssetIds: [],
-        count: 1
-      });
-      setText("");
-      setAttachments([]);
-      persistDraft("");
-      await loadMessages(conversation.id);
-      toast("info", job.status === "completed" ? "图片已生成" : "图片任务已提交");
-    } catch (error) {
-      toastError(error);
-    } finally {
-      setImageSubmitting(false);
-    }
-  };
-
   const useQuickReply = async (reply: (typeof quickReplies)[number]) => {
     if (controlsDisabled) return;
     if (reply.mode === "insert") {
@@ -414,7 +379,7 @@ export function Composer({
     }
   };
 
-  const controlsDisabled = generating || sending || imageSubmitting;
+  const controlsDisabled = generating || sending;
   const sendDisabled =
     sending ||
     uploading ||
@@ -487,22 +452,7 @@ export function Composer({
 
               <div className="composer-tools">
                 <div className="composer-tool-scroll">
-                  <label className="chip chip-select composer-agent-select">
-                    <Bot size={15} aria-hidden="true" />
-                    <select
-                      aria-label="选择 Agent"
-                      value={effectiveAgentId}
-                      disabled={controlsDisabled}
-                      onChange={(event) => chooseAgent(event.target.value)}
-                    >
-                      {agents.map((agent) => (
-                        <option key={agent.id} value={agent.id}>
-                          {agent.name}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={13} aria-hidden="true" />
-                  </label>
+                  <AgentPicker agents={agents} value={effectiveAgentId} disabled={controlsDisabled} onChange={chooseAgent} />
 
                   <ModelPicker
                     effectiveModelId={effectiveModelId}
@@ -518,20 +468,7 @@ export function Composer({
                     inherited={effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none"}
                     levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
                   <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
-                  <button
-                    type="button"
-                    className="chip composer-attachment-button"
-                    onClick={() => {
-                      setImagePrompt(text.trim());
-                      setImageModelId(imageModel?.id ?? "");
-                      setImagePromptOpen(true);
-                    }}
-                    disabled={controlsDisabled || !conversation || !imageModel}
-                    aria-label="生成图片"
-                    title={imageModel ? `使用 ${imageModel.displayName} 生成图片` : "没有可用的图片模型"}
-                  >
-                    {imageSubmitting ? <LoaderCircle className="spin" size={16} /> : <ImagePlus size={16} />}
-                  </button>
+
                   <button
                     type="button"
                     className="chip composer-inline-tool"
@@ -641,35 +578,6 @@ export function Composer({
       ) : null}
       {pendingAgent ? (
         <AgentSwitchDialog onClose={() => setPendingAgent(null)} onConfirm={() => void applyAgent(pendingAgent)} />
-      ) : null}
-      {imagePromptOpen ? (
-        <Modal
-          title="生成图片"
-          onClose={() => setImagePromptOpen(false)}
-          footer={
-            <>
-              <Button onClick={() => setImagePromptOpen(false)} disabled={imageSubmitting}>取消</Button>
-              <Button variant="primary" onClick={() => void generateImage()} disabled={imageSubmitting || !imagePrompt.trim() || !imageModel}>
-                {imageSubmitting ? "提交中…" : "生成"}
-              </Button>
-            </>
-          }
-        >
-          <Field label="图片模型">
-            <select className="select" value={imageModel?.id ?? ""} onChange={(event) => setImageModelId(event.target.value)}>
-              {imageModels.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}
-            </select>
-          </Field>
-          <Field label="提示词" hint="描述主体、场景、风格和构图。">
-            <textarea
-              className="textarea"
-              value={imagePrompt}
-              onChange={(event) => setImagePrompt(event.target.value)}
-              rows={5}
-              autoFocus
-            />
-          </Field>
-        </Modal>
       ) : null}
     </div>
   );

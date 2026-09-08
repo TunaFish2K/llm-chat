@@ -72,6 +72,17 @@ test("附件菜单、灯泡滑条与历史附件编辑分叉", async ({ page, re
   try {
     await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
     await expect(page.getByRole("button", { name: "选择模型" }).locator(".model-brand-icon")).toBeVisible();
+    await expect(page.locator(".composer .lucide-image-plus")).toHaveCount(0);
+    if (test.info().project.name === "mobile-chromium") await page.setViewportSize({ width: 320, height: 740 });
+    await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+    const agentMenu = page.getByRole("dialog", { name: "Agent 选择", exact: true });
+    await expect(agentMenu).toHaveAttribute("data-side", "top");
+    const agentBox = await agentMenu.boundingBox();
+    expect(agentBox!.x).toBeGreaterThanOrEqual(0);
+    expect(agentBox!.x + agentBox!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    if (test.info().project.name === "mobile-chromium") await expect(page.getByRole("searchbox", { name: "搜索 Agent" })).not.toBeFocused();
+    await agentMenu.locator(".agent-option[aria-pressed=true]").click();
+    await expect(agentMenu).toHaveCount(0);
     await page.getByRole("button", { name: /^推理档位：/ }).click();
     const slider = page.getByRole("slider", { name: "推理档位" });
     await expect(slider).toHaveAttribute("aria-orientation", "vertical");

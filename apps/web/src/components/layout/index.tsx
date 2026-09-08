@@ -67,7 +67,7 @@ export function BootScreen({ error, onRetry }: { error: string | null; onRetry: 
     <div className="boot-screen">
       <div className="boot-state">
         <div className="boot-brand">
-          <img src="/icons/icon-192.png" width={36} height={36} alt="" />
+          <img src="/icons/icon-192-v2.png" width={36} height={36} alt="" />
           <strong>Chat</strong>
         </div>
         {error ? (
