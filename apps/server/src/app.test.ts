@@ -28,36 +28,34 @@ describe("server API", () => {
     expect(response.map((item: { conversationId: string }) => item.conversationId)).toEqual([title.id, started.conversation.id]);
     expect(response[1].snippet).toContain("needle");
     expect((await app.inject({ method: "GET", url: "/api/conversations/search?query=%25" })).json()).toHaveLength(1);
-    const path = `/api/conversations/${started.conversation.id}/history`;
-    const history = (await app.inject({ method: "GET", url: path })).json();
-    await app.inject({ method: "POST", url: path, payload: { action: "undo", revision: history.revision } });
+    app.store.sqlite.prepare("UPDATE messages SET history_active = 0 WHERE conversation_id = ?").run(started.conversation.id);
     expect((await app.inject({ method: "GET", url: "/api/conversations/search?query=needle" })).json()).toHaveLength(1);
     expect((await app.inject({ method: "GET", url: `/api/conversations/search?query=${"x".repeat(201)}` })).statusCode).toBe(400);
   });
 
-  it("cancels before undo, pauses queued messages, and redoes without a provider request", async () => {
+  it("retires history mutations without cancelling work, and exposes paused queues independently", async () => {
     const app = await testApp(); const model = await createApiModel(app);
     const started = app.store.startConversation({ text: "original", modelId: model.id, contextPolicy: "full" });
     const id = started.conversation.id;
     app.store.setGenerationWaitingApproval(started.generation.generationId);
-    await app.inject({ method: "POST", url: `/api/conversations/${id}/queued-messages`, payload: { text: "waiting" } });
-    const historyPath = `/api/conversations/${id}/history`;
-    const initial = (await app.inject({ method: "GET", url: historyPath })).json();
-    const undone = await app.inject({ method: "POST", url: historyPath, payload: { action: "undo", revision: initial.revision } });
-    expect(undone.statusCode).toBe(200);
-    expect(undone.json()).toMatchObject({ canRedo: true, queuePaused: true });
-    expect(app.store.getGeneration(started.generation.generationId)?.status).toBe("stopped");
-    expect(app.store.listMessages(id)).toEqual([]);
-    expect(app.store.listQueuedMessages(id)).toHaveLength(1);
-    const stale = await app.inject({ method: "POST", url: historyPath, payload: { action: "redo", revision: initial.revision } });
-    expect(stale.json()).toMatchObject({ error: { code: "history_conflict" } });
-    const redone = await app.inject({ method: "POST", url: historyPath, payload: { action: "redo", revision: undone.json().revision } });
-    expect(redone.statusCode).toBe(200);
-    expect(app.store.listMessages(id).map((message) => message.id)).toContain(started.generation.assistantMessageId);
-    expect(app.store.getGeneration(started.generation.generationId)?.status).toBe("stopped");
-    await app.inject({ method: "DELETE", url: `/api/conversations/${id}/queued-messages` });
-    expect((await app.inject({ method: "POST", url: `/api/conversations/${id}/queue/resume` })).statusCode).toBe(200);
-    expect((await app.inject({ method: "GET", url: historyPath })).json().queuePaused).toBe(false);
+    app.store.sqlite.prepare("UPDATE conversations SET queue_paused = 1 WHERE id = ?").run(id);
+    const item = app.store.enqueueMessage(id, "waiting", [], "steer");
+    const original = app.store.listMessages(id);
+    for (const action of ["undo", "redo", "rewind"]) {
+      const response = await app.inject({ method: "POST", url: `/api/conversations/${id}/history`, payload: { action, revision: 0 } });
+      expect(response.statusCode).toBe(410);
+      expect(response.json().error.code).toBe("history_retired");
+    }
+    expect(app.store.listMessages(id)).toEqual(original);
+    expect(app.store.getGeneration(started.generation.generationId)?.status).toBe("waiting-approval");
+    expect((await app.inject({ method: "GET", url: `/api/conversations/${id}/queue` })).json()).toMatchObject({ paused: true, items: [{ id: item.id, mode: "steer" }] });
+    expect((await app.inject({ method: "GET", url: `/api/conversations/${id}/history` })).json()).toEqual({
+      revision: 0, canUndo: false, canRedo: false, records: [], queuePaused: true
+    });
+    expect((await app.inject({ method: "GET", url: `/api/conversations/${id}/queued-messages` })).json()).toHaveLength(1);
+    await app.inject({ method: "POST", url: `/api/conversations/${id}/queue/resume` });
+    expect((await app.inject({ method: "GET", url: `/api/conversations/${id}/queue` })).json()).toMatchObject({ paused: false, items: [{ id: item.id }] });
+    expect((await app.inject({ method: "GET", url: "/api/conversations/missing/queue" })).statusCode).toBe(404);
   });
 
   it("persists queued attachments and supports scoped deletion while a generation is waiting", async () => {

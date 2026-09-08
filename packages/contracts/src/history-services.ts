@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { MessageDto } from "./index";
+import type { QueuedMessageDto } from "./index";
 
 export const searchEngineInputSchema = z.object({
   id: z.string().min(1).max(100),
@@ -20,13 +20,4 @@ export interface ImageToolModelDto {
   modelId: string; id: string; name: string; connectionName: string; enabled: boolean; available: boolean; protocol: string | null;
 }
 export interface ServiceSettingsDto { searchEngines: SearchEngineDto[]; imageModels: ImageToolModelDto[] }
-export interface ConversationHistoryDto {
-  revision: number; canUndo: boolean; canRedo: boolean; queuePaused: boolean;
-  records: Array<{ id: string; createdAt: number; redo: boolean; messages: MessageDto[] }>;
-}
-export const historyChangeSchema = z.object({
-  action: z.enum(["undo", "rewind", "redo"]),
-  revision: z.number().int().nonnegative(),
-  throughMessageId: z.string().uuid().optional()
-});
-export type HistoryChangeInput = z.infer<typeof historyChangeSchema>;
+export interface MessageQueueStateDto { items: QueuedMessageDto[]; paused: boolean }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefCallback } from "react";
 import {
   ListTree,
   Menu,
@@ -26,7 +26,8 @@ export function ConversationHeader({
   runningTasks,
   onToggleSidebar,
   onToggleInspector,
-  onViewChange
+  onViewChange,
+  actionsRef
 }: {
   conversation: ConversationDto | null;
   view: ConversationView;
@@ -37,6 +38,7 @@ export function ConversationHeader({
   onToggleSidebar: () => void;
   onToggleInspector: () => void;
   onViewChange: (view: ConversationView) => void;
+  actionsRef?: RefCallback<HTMLDivElement>;
 }) {
   const conversations = useStore(appStore, (state) => state.conversations);
   const displayedConversation = conversation ? resolveConversationRoot(conversation, conversations) : null;
@@ -141,6 +143,7 @@ export function ConversationHeader({
       >
         {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
       </button>
+      <div className="conversation-action-slot" ref={actionsRef} />
     </header>
   );
 }

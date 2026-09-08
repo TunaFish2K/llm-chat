@@ -11,7 +11,7 @@ async function setup(request: APIRequestContext, baseUrl: string) {
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`controls-${Date.now()}`, model.id));
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
-  return { conversation, model, cleanup: async () => {
+  return { conversation, model, agent, cleanup: async () => {
     const conversations = await api(request, APP_URL, "GET", "/api/conversations");
     for (const item of conversations.filter((item: { agentId: string }) => item.agentId === agent.id)) {
       await api(request, APP_URL, "DELETE", `/api/conversations/${item.id}/queued-messages`);
@@ -52,7 +52,8 @@ async function checkToolbar(page: Page) {
     expect(button.border).toBe(0);
     expect(button.x).toBeGreaterThanOrEqual(geometry.left);
     expect(button.right).toBeLessThanOrEqual(geometry.right + 0.1);
-    if (index && button.y === geometry.buttons[index - 1]!.y) {
+    if (index) {
+      expect(button.y).toBe(geometry.buttons[index - 1]!.y);
       expect(button.x).toBeGreaterThanOrEqual(geometry.buttons[index - 1]!.right - 0.1);
       expect(button.iconX - geometry.buttons[index - 1]!.iconRight).toBeGreaterThanOrEqual(12);
     }
@@ -70,6 +71,27 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
     await expect(brand.locator('path[fill="#4D6BFE"]')).toHaveCount(1);
     await expect(page.locator(".composer-tools .lucide-chevron-down")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toHaveText("");
+    await expect(page.locator(".composer-tools").getByRole("button", { name: "选择工作目录" })).toHaveCount(0);
+    await expect(page.locator(".composer-tools").getByRole("button", { name: "会话操作", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "低频设置" }).click();
+    await page.getByRole("button", { name: "选择工作目录" }).click();
+    await expect(page.getByRole("dialog", { name: "选择工作目录" })).toBeVisible();
+    await page.getByRole("dialog", { name: "选择工作目录" }).getByRole("button", { name: "关闭对话框" }).click();
+    await page.locator(".conversation-header").getByRole("button", { name: "会话操作", exact: true }).click();
+    await expect(page.getByRole("button", { name: "立即压缩上下文" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /撤回|重做|恢复记录|回溯至此轮/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    if (test.info().project.name === "mobile-chromium") {
+      await page.setViewportSize({ width: 280, height: 844 });
+      await expect(page.locator(".composer-tools").getByRole("button", { name: "选择 Agent", exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "低频设置" }).click();
+      await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
+      await page.getByRole("searchbox", { name: "搜索 Agent" }).fill(fixture.agent.name);
+      await page.getByRole("button", { name: fixture.agent.name, exact: true }).click();
+      await page.keyboard.press("Escape");
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.locator(".composer-tools").getByRole("button", { name: "选择 Agent", exact: true })).toBeVisible();
+    }
     for (const generating of [false, true]) {
       if (generating) {
         await page.getByLabel("输入消息").fill("保持生成以验证工具栏");
@@ -81,7 +103,7 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
         for (const width of [320, 390, 640, 1440]) {
           await page.setViewportSize({ width, height: 844 });
           await expect(() => checkToolbar(page)).toPass({ timeout: 3000 });
-          const badge = page.locator('.composer-tools .composer-inline-tool > b:visible');
+          const badge = page.locator('.composer-tools .composer-settings-trigger > b:visible');
           if (await badge.count()) {
             const bounds = await badge.evaluate((element) => {
               const box = element.getBoundingClientRect(), parent = element.parentElement!.getBoundingClientRect();

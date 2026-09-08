@@ -7,7 +7,7 @@ const unique = () => Math.random().toString(36).slice(2, 8);
 async function openExecutionSettings(page: Page): Promise<void> {
   const visibleButton = page.locator('button[aria-label="高级执行设置"]:visible');
   if (await visibleButton.count() === 0) {
-    await page.getByRole("button", { name: "更多会话设置" }).click();
+    await page.getByRole("button", { name: "低频设置" }).click();
   }
   await page.locator('button[aria-label="高级执行设置"]:visible').click();
 }
@@ -232,7 +232,7 @@ test.describe("会话与流式生成", () => {
         expect(await page.locator(".composer-tool-scroll").evaluate((element) => ({
           fits: element.scrollWidth <= element.clientWidth,
           overflow: getComputedStyle(element).overflowX
-        }))).toEqual({ fits: true, overflow: "visible" });
+        }))).toEqual({ fits: true, overflow: "auto" });
         await page.getByRole("button", { name: "选择模型" }).click();
         const modelSearch = page.getByRole("searchbox", { name: "搜索模型" });
         await expect(modelSearch).toBeVisible();
@@ -573,7 +573,7 @@ test.describe("Agent 管理", () => {
     const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: created.id });
     try {
       await gotoPath(page, `/c/${conversation.id}`);
-      await page.getByRole("button", { name: "更多会话设置" }).click();
+      await page.getByRole("button", { name: "会话操作", exact: true }).click();
       await page.getByRole("button", { name: "角色会话设置" }).click();
       const dialog = page.getByRole("dialog", { name: "角色会话设置" });
       await expect(dialog).toBeVisible();
