@@ -15,6 +15,7 @@ import type { ImageService } from "./images";
 import type { ImageGenerationManager } from "./image-generation";
 import type { CodexManager } from "./codex";
 import { mcpManager } from "./mcp";
+import { ServiceSettings } from "./service-settings";
 
 const MAX_TOOL_OUTPUT = 32 * 1024;
 const MAX_FETCH_BYTES = 2 * 1024 * 1024;
@@ -53,8 +54,6 @@ export interface ToolDependencies {
   codexManager?: CodexManager;
   workspacePath?: string | null;
   attachmentWorkspacePath?: string;
-  searchConfig?: AgentSearchConfig;
-  searchApiKey?: string;
 }
 
 export async function buildServerTools(
@@ -62,8 +61,6 @@ export async function buildServerTools(
   includeDisabled = false,
   dependencies: ToolDependencies = {}
 ): Promise<ServerTool[]> {
-  const searchConfig = dependencies.searchConfig;
-  const searchApiKey = dependencies.searchApiKey ?? "";
   const workspace = Object.prototype.hasOwnProperty.call(dependencies, "workspacePath")
     ? dependencies.workspacePath ?? null
     : resolve(store.dataDir, "workspace");
@@ -79,10 +76,7 @@ export async function buildServerTools(
     if (!requested) throw new Error(input.workspace === "attachments" ? "Conversation attachment workspace is unavailable" : "Conversation has no project workspace");
     return requested;
   };
-  const imageModels = store.listModels().filter((model) => model.enabled && model.capabilities.imageOutput && model.imageProtocol);
-  const imageModelDescription = imageModels.length
-    ? ` Available image models: ${imageModels.map((model) => `${model.displayName} (${model.id})`).join(", ")}.`
-    : " No enabled image-capable models are configured.";
+  const services = new ServiceSettings(store);
   const workspaceProperty = { workspace: workspaceSelectorProperty() };
 
   const tools: ServerTool[] = [
@@ -103,18 +97,21 @@ export async function buildServerTools(
     tool("fetch_url", "读取网页", "web", "Fetch a public HTTP or HTTPS URL and return readable text. Private and loopback addresses are blocked.", {
       url: stringProperty("Public HTTP or HTTPS URL")
     }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal, dependencies.lookup ?? lookup)),
-    tool("search_web", "网页搜索", "web", "Search the web for current information using the Agent's configured search service. Returns titles, URLs, and snippets.", {
+    tool("search_web", "网页搜索", "web", "Use action=list_engines to list available search services in recommended order. Use action=search (default) to search. Prefer earlier services unless another fits the task better. Omit engine_id to use the first available service. Returns titles, URLs, and snippets.", {
+      action: { type: "string", enum: ["list_engines", "search"] },
+      engine_id: stringProperty("Readable service id from list_engines, such as tavily or searxng"),
       query: stringProperty("Focused search query"),
       limit: integerProperty("Number of results, 1 to 10")
-    }, false, async (input, signal) => searchWeb(
-      searchConfig,
-      searchApiKey,
-      requiredString(input, "query"),
-      optionalInteger(input, "limit", 5, 1, 10),
-      signal
-    ), searchAvailable(searchConfig, searchApiKey)),
-    tool("image_generate", "生成图片", "local", `Generate, edit, inpaint, or vary an image with a configured image model. The result is attached to this tool call and returned as image assets.${imageModelDescription}`, {
-      model_id: { type: "string", format: "uuid", enum: imageModels.map((model) => model.id), description: "Required configured image-capable model id" },
+    }, false, async (input, signal) => {
+      const engines = services.engines().filter((engine) => engine.available);
+      if (input.action === "list_engines") return JSON.stringify({ engines: engines.map((engine, index) => ({ id: engine.id, name: engine.provider === "tavily" ? "Tavily" : "SearXNG", priority: index + 1 })) });
+      const engine = input.engine_id ? engines.find((item) => item.id === input.engine_id) : engines[0];
+      if (!engine) throw new Error("No matching enabled search engine. Use action=list_engines to see available services.");
+      return searchWeb(engine, engine.apiKey, requiredString(input, "query"), optionalInteger(input, "limit", 5, 1, 10), signal);
+    }),
+    tool("image_generate", "生成图片", "local", "Use action=list_models to list available image models and readable model_id values in recommended order. Prefer earlier models unless another fits the task better. Use action=generate (default) with prompt and optional model_id to generate, edit, inpaint, or vary images. Omit model_id to use the first available model. Results are saved as image assets.", {
+      action: { type: "string", enum: ["list_models", "generate"] },
+      model_id: stringProperty("Readable model id returned by list_models, for example openai/gpt-image-2"),
       prompt: stringProperty("Image prompt"),
       operation: { type: "string", enum: ["generate", "edit", "inpaint", "variation"] },
       reference_asset_ids: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 4 },
@@ -128,10 +125,15 @@ export async function buildServerTools(
       seed: integerProperty("Optional deterministic seed"),
       strength: { type: "number", minimum: 0, maximum: 1 },
       provider_options: { type: "object", additionalProperties: true }
-    }, true, async (input, signal, context) => {
+    }, (input) => input.action !== "list_models", async (input, signal, context) => {
+      const models = services.images().filter((model) => model.available);
+      if (input.action === "list_models") return JSON.stringify({ models: models.map(({ modelId: _internal, enabled: _enabled, available: _available, ...model }, index) => ({ ...model, model_id: model.id, priority: index + 1,
+        operations: model.protocol === "google-imagen" ? ["generate"] : model.protocol === "google-interactions" ? ["generate", "edit"] : ["generate", "edit", "inpaint", "variation"] })) });
       if (!dependencies.imageManager || !context) throw new Error("Image generation service and tool context are required");
+      const selected = input.model_id ? models.find((model) => model.id === input.model_id || model.modelId === input.model_id) : models[0];
+      if (!selected) throw new Error("No matching enabled image model. Use action=list_models to see available model_id values.");
       const parsed = imageGenerationInputSchema.safeParse({
-        modelId: input.model_id,
+        modelId: selected.modelId,
         prompt: input.prompt,
         ...(input.operation !== undefined ? { operation: input.operation } : {}),
         ...(input.reference_asset_ids !== undefined ? { referenceAssetIds: input.reference_asset_ids } : {}),
@@ -149,7 +151,7 @@ export async function buildServerTools(
       if (!parsed.success) {
         const issue = parsed.error.issues[0];
         if (issue?.path[0] === "modelId") {
-          throw new Error(`image_generate requires model_id. Choose one of: ${imageModels.map((model) => `${model.displayName} (${model.id})`).join(", ")}`);
+          throw new Error("Choose a model_id returned by action=list_models.");
         }
         throw new Error(`image_generate 参数无效：${parsed.error.issues.map((item) => `${item.path.join(".") || "input"} ${item.message}`).join("；")}`);
       }
@@ -166,7 +168,7 @@ export async function buildServerTools(
         assets: job.outputAssets,
         markdown: job.outputAssets.map((asset) => `![${asset.fileName}](${asset.url})`).join("\n")
       });
-    }, Boolean(dependencies.imageManager) && imageModels.length > 0),
+    }),
     tool("recent_chats", "最近对话", "conversation", "List recent conversation titles and update times. Use conversation_search to read matching content.", {
       limit: integerProperty("Number of conversations, 1 to 30")
     }, false, async (input) => JSON.stringify(store.recentChats(optionalInteger(input, "limit", 10, 1, 30)))),
@@ -336,7 +338,7 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   get_time_info: "读取服务端当前日期、时间、时区和时间戳。",
   eval_javascript: "在无 Node.js、文件、网络和 DOM 权限的隔离环境中执行计算。",
   fetch_url: "读取公开 HTTP/HTTPS 网页；自动阻止私网和回环地址。",
-  search_web: "通过当前 Agent 配置的搜索服务获取最新网页信息。",
+  search_web: "列出全局可用搜索引擎，或选择引擎搜索网页。",
   image_generate: "使用已配置的图片模型生成、编辑或变体图片。",
   recent_chats: "列出最近对话的标题和更新时间。",
   conversation_search: "在服务端保存的历史对话中搜索内容。",
@@ -488,7 +490,7 @@ function tool(
 
 function inferRequired(name: string): string[] {
   return ({
-    eval_javascript: ["code"], fetch_url: ["url"], browser_fetch: ["url"], search_web: ["query"], conversation_search: ["query"], image_generate: ["model_id", "prompt"],
+    eval_javascript: ["code"], fetch_url: ["url"], browser_fetch: ["url"], search_web: [], conversation_search: ["query"], image_generate: [],
     memory_tool: ["action"], workspace_read_file: ["path"], workspace_write_file: ["path", "text"],
     workspace_edit_file: ["path", "old_text", "new_text"], workspace_glob: ["pattern"],
     workspace_grep: ["query"], workspace_shell: ["command"], use_skill: ["name"],
@@ -555,11 +557,6 @@ async function runJavascript(code: string, signal: AbortSignal): Promise<string>
 }
 
 const DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
-
-function searchAvailable(config: AgentSearchConfig | undefined, apiKey: string): boolean {
-  if (!config) return false;
-  return config.provider === "tavily" ? apiKey.length > 0 : config.baseUrl.length > 0;
-}
 
 function searchEndpoint(baseUrl: string): URL {
   const endpoint = new URL(baseUrl);

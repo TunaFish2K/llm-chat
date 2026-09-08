@@ -33,6 +33,8 @@ import {
   startConversationSchema,
   toolApprovalInputSchema,
   toolSettingsInputSchema,
+  serviceSettingsInputSchema,
+  historyChangeSchema,
   type FileAssetDto,
   type GenerationEvent,
   type ModelDto
@@ -57,6 +59,8 @@ import { ImageService } from "./images";
 import { VisionService } from "./vision";
 import { ModelCatalogService } from "./model-catalog";
 import { MessageQueue } from "./message-queue";
+import { ConversationHistory } from "./conversation-history";
+import { ServiceSettings } from "./service-settings";
 import { BrowserFetchManager } from "./browser-fetch";
 import { AppTools } from "./app-tools";
 import { importSillyTavernPreset } from "./roleplay";
@@ -149,6 +153,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       assets.filter((id) => store.getFileAsset(id)?.kind === "image"));
   });
   queue.initialize();
+  const history = new ConversationHistory(store);
+  const serviceSettings = new ServiceSettings(store);
+  const historyChanges = new Set<string>();
+  const assertHistoryIdle = (id: string) => {
+    if (historyChanges.has(id)) throw new StoreError("history_busy", "正在回溯对话，请稍后重试");
+  };
   app.decorate("store", store);
   app.decorate("runner", runner);
   app.decorateRequest("authIdentity", null);
@@ -415,6 +425,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.type(exported.contentType).send(Buffer.from(exported.bytes));
   });
   app.get("/api/tools/settings", async () => store.getToolSettings());
+  app.get("/api/tools/services", async () => serviceSettings.get());
+  app.patch("/api/tools/services", async (request) => {
+    const result = serviceSettings.update(serviceSettingsInputSchema.parse(request.body));
+    eventHub.emit({ type: "resource-changed", resource: "tools" });
+    return result;
+  });
   app.patch("/api/tools/settings", async (request) => store.updateToolSettings(toolSettingsInputSchema.parse(request.body)));
   app.get<{ Querystring: { agentId?: string } }>("/api/tools/catalog", async (request) => registry.catalog(request.query.agentId));
   app.get("/api/plugins", async () => pluginManager.list());
@@ -693,6 +709,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(204).send();
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/forks", async (request, reply) => {
+    assertHistoryIdle(request.params.id);
     const value = forkConversationSchema.parse(request.body);
     const imageAssetIds = value.mode === "edit"
       ? attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image")
@@ -716,6 +733,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return store.getContextSummary(request.params.id) ?? null;
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/context/compact", async (request, reply) => {
+    assertHistoryIdle(request.params.id);
     if (store.isConversationBusy(request.params.id)) {
       throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
     }
@@ -737,11 +755,50 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return store.listMessages(request.params.id);
   });
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/history", async (request) => history.state(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/history", async (request) => {
+    const id = request.params.id;
+    const input = historyChangeSchema.parse(request.body);
+    assertHistoryIdle(id);
+    history.check(id, input.revision);
+    historyChanges.add(id);
+    history.pause(id, true);
+    queue.changed(id);
+    try {
+      for (const message of store.listMessages(id)) {
+        for (const generation of message.generations) {
+          if (["queued", "running", "waiting-approval"].includes(generation.status)) runner.cancel(generation.id);
+        }
+      }
+      for (const job of store.listImageGenerationJobs(id)) {
+        if (["queued", "running", "waiting-provider"].includes(job.status)) imageJobs.cancel(job.id);
+      }
+      const deadline = Date.now() + 5000;
+      while (runner.isConversationActive(id) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+      if (runner.isConversationActive(id)) throw new StoreError("conversation_busy", "生成尚未停止，待发送队列已暂停，请稍后重试");
+      history.change(id, input);
+    } finally {
+      historyChanges.delete(id);
+      if (!store.listQueuedMessages(id).length) history.pause(id, false);
+      queue.changed(id);
+      eventHub.emit({ type: "resource-changed", resource: "conversations", resourceId: id });
+    }
+    return history.state(id);
+  });
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/queue/resume", async (request) => {
+    assertHistoryIdle(request.params.id);
+    history.state(request.params.id);
+    history.pause(request.params.id, false);
+    queue.changed(request.params.id);
+    queue.kick(request.params.id);
+    return { ok: true };
+  });
   app.get<{ Params: { id: string } }>("/api/conversations/:id/image-generations", async (request) => {
     if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return store.listImageGenerationJobs(request.params.id);
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/image-generations", async (request, reply) => {
+    assertHistoryIdle(request.params.id);
     const input = imageGenerationInputSchema.parse(request.body);
     const job = imageJobs.create({ conversationId: request.params.id, input });
     imageJobs.start(job.id);
@@ -758,6 +815,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string } }>("/api/image-generations/:id/retry", async (request, reply) => {
     const previous = store.getImageGenerationJob(request.params.id);
     if (!previous) throw new StoreError("image_generation_not_found", "图片生成任务不存在");
+    assertHistoryIdle(previous.conversationId);
     if (previous.status !== "failed" && previous.status !== "cancelled") {
       throw new StoreError("image_generation_not_retryable", "当前图片任务不能重试");
     }
@@ -768,7 +826,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(202).send(job);
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
-    if (store.listQueuedMessages(request.params.id).some((item) => item.status !== "failed")) {
+    assertHistoryIdle(request.params.id);
+    if (!history.state(request.params.id).queuePaused && store.listQueuedMessages(request.params.id).some((item) => item.status !== "failed")) {
       throw new StoreError("conversation_busy", "已有待发送消息，请加入队列");
     }
     if (store.isConversationBusy(request.params.id)) throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
@@ -791,6 +850,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.get<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request) => store.listQueuedMessages(request.params.id));
   app.post<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request, reply) => {
+    assertHistoryIdle(request.params.id);
     const value = sendMessageSchema.parse(request.body);
     const item = store.enqueueMessage(request.params.id, value.text, attachmentIds(value));
     queue.changed(request.params.id);
@@ -812,6 +872,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     retryGenerationSchema.parse(request.body ?? {});
     const conversationId = store.conversationIdForMessage(request.params.id);
     if (!conversationId) throw new StoreError("message_not_found", "助手消息不存在");
+    assertHistoryIdle(conversationId);
     if (store.isConversationBusy(conversationId)) throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
     const result = store.createRetryGeneration(request.params.id);
     runner.start(result.generationId);
@@ -896,6 +957,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     request.raw.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
   });
   app.patch<{ Params: { id: string } }>("/api/messages/:id/active-generation", async (request) => {
+    const conversationId = store.conversationIdForMessage(request.params.id);
+    if (conversationId) assertHistoryIdle(conversationId);
     const value = z.object({ generationId: z.string().uuid() }).parse(request.body);
     if (!store.selectGeneration(request.params.id, value.generationId)) {
       throw new StoreError("generation_not_found", "生成版本不存在");

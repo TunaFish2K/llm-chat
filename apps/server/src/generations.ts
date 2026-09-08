@@ -59,11 +59,7 @@ const defaultDependencies: GenerationRunnerDependencies = {
   buildContext,
   prepareImages: async () => new Map(),
   buildTools: (store, record) => buildServerTools(store, false, {
-    workspacePath: record.agentSnapshot.workspacePath,
-    searchConfig: record.agentSnapshot.execution.search,
-    searchApiKey: record.agentSnapshot.agentId
-      ? store.getAgentSearchSecret(record.agentSnapshot.agentId, record.agentSnapshot.execution.search.provider)
-      : ""
+    workspacePath: record.agentSnapshot.workspacePath
   }),
   memoryPrompt: toolSystemPrompt,
   runtimePrompt: () => "",

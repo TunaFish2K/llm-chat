@@ -306,12 +306,16 @@ img {
   margin-block: 0.7em;
 }
 
-.markdown [data-streamdown="table-wrapper"] > div {
+.markdown-table-scroll {
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
   overflow-y: auto;
 }
+.markdown-table { display: flex; flex-direction: column; gap: 6px; }
+.markdown-table-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+.markdown-table-actions .btn { flex: 0 0 auto; }
+.table-format-menu { width: 160px; }
 
 .markdown th,
 .markdown td {

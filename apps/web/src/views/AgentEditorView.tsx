@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import type {
   AgentDto,
-  AgentSearchProvider,
   ApprovalPolicy,
   CharacterBook,
   ContextPolicy,
@@ -42,14 +41,12 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [searchApiKeyPatch, setSearchApiKeyPatch] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
     setAgent(null);
     setError(null);
     setDirty(false);
-    setSearchApiKeyPatch(undefined);
     Promise.all([endpoints.agent(agentId), endpoints.toolCatalog(agentId), endpoints.skills()])
       .then(([agentData, catalogData, skillData]) => {
         if (cancelled) return;
@@ -92,21 +89,13 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
     if (!agent) return;
     setSaving(true);
     try {
-      let updated = await endpoints.updateAgent(agent.id, {
+      const updated = await endpoints.updateAgent(agent.id, {
         card: agent.card,
         execution: agent.execution,
         userProfile: agent.userProfile,
         roleplay: agent.roleplay
       });
-      if (searchApiKeyPatch !== undefined) {
-        await endpoints.updateAgentSearchSecret(agent.id, {
-          provider: updated.execution.search.provider,
-          apiKey: searchApiKeyPatch
-        });
-        updated = await endpoints.agent(agent.id);
-      }
       setAgent(updated);
-      setSearchApiKeyPatch(undefined);
       setDirty(false);
       await refreshAgents();
       toast("success", "已保存 Agent");
@@ -183,11 +172,6 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
               agent={agent}
               mutate={mutate}
               catalog={catalog}
-              searchApiKeyPatch={searchApiKeyPatch}
-              onSearchApiKeyChange={(value) => {
-                setSearchApiKeyPatch(value);
-                setDirty(true);
-              }}
             />
           ) : null}
           {tab === "skills" ? <SkillsTab agent={agent} mutate={mutate} skills={skills} /> : null}
@@ -682,15 +666,11 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
 function ToolsTab({
   agent,
   mutate,
-  catalog,
-  searchApiKeyPatch,
-  onSearchApiKeyChange
+  catalog
 }: {
   agent: AgentDto;
   mutate: (fn: (draft: AgentDto) => void) => void;
   catalog: ToolCatalogItemDto[];
-  searchApiKeyPatch: string | undefined;
-  onSearchApiKeyChange: (value: string) => void;
 }) {
   const tools = agent.execution.tools;
 
@@ -720,58 +700,7 @@ function ToolsTab({
 
   return (
     <div>
-      <div className="card agent-search-config">
-        <h3>搜索服务</h3>
-        <div className="grid-2">
-          <Field label="搜索服务">
-            <select
-              className="select"
-              aria-label="搜索服务"
-              value={agent.execution.search.provider}
-              onChange={(event) => mutate((draft) => {
-                draft.execution.search.provider = event.target.value as AgentSearchProvider;
-              })}
-            >
-              <option value="searxng">SearXNG</option>
-              <option value="tavily">Tavily</option>
-            </select>
-          </Field>
-          <Field
-            label="搜索服务 Base URL"
-            hint={agent.execution.search.provider === "tavily" ? "留空使用 https://api.tavily.com。" : "留空则禁用网页搜索。"}
-          >
-            <input
-              className="input mono"
-              aria-label="搜索服务 Base URL"
-              value={agent.execution.search.baseUrl}
-              placeholder={agent.execution.search.provider === "tavily" ? "https://api.tavily.com" : "https://searx.example.com"}
-              onChange={(event) => mutate((draft) => {
-                draft.execution.search.baseUrl = event.target.value;
-              })}
-            />
-          </Field>
-        </div>
-        <Field
-          label="搜索 API Key"
-          hint={agent.execution.search.provider === "tavily"
-            ? agent.searchApiKeyConfigured ? "已配置；留空保持不变。" : "Tavily 必须配置 API Key。"
-            : agent.searchApiKeyConfigured ? "已配置；留空保持不变。" : "SearXNG 可选。"}
-        >
-          <div className="inline-form-row">
-            <input
-              className="input mono"
-              type="password"
-              aria-label="搜索 API Key"
-              value={searchApiKeyPatch ?? ""}
-              placeholder={agent.searchApiKeyConfigured && searchApiKeyPatch === undefined ? "已配置（输入新值以替换）" : ""}
-              onChange={(event) => onSearchApiKeyChange(event.target.value)}
-            />
-            {agent.searchApiKeyConfigured ? (
-              <button type="button" className="btn small danger" onClick={() => onSearchApiKeyChange("")}>清除</button>
-            ) : null}
-          </div>
-        </Field>
-      </div>
+      <p className="hint">搜索引擎和图片模型在全局设置中配置。此处只管理工具权限。</p>
 
       <div className="card">
         <h3>工具策略</h3>

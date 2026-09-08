@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
+import { migrateServiceSettings } from "./service-settings";
 import type { DatabaseSync as DatabaseSyncType } from "node:sqlite";
 import type {
   AgentDto,
@@ -356,7 +357,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 32) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 33) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1186,6 +1187,28 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 32;
       `);
     }
+    if (current < 33) {
+      if (!hasColumn(sqlite, "messages", "history_active")) sqlite.exec("ALTER TABLE messages ADD COLUMN history_active INTEGER NOT NULL DEFAULT 1");
+      if (!hasColumn(sqlite, "conversations", "history_revision")) sqlite.exec("ALTER TABLE conversations ADD COLUMN history_revision INTEGER NOT NULL DEFAULT 0");
+      if (!hasColumn(sqlite, "conversations", "queue_paused")) sqlite.exec("ALTER TABLE conversations ADD COLUMN queue_paused INTEGER NOT NULL DEFAULT 0");
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS global_search_engines (
+          id TEXT PRIMARY KEY, provider TEXT NOT NULL, base_url TEXT NOT NULL DEFAULT '',
+          api_key TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS image_tool_models (
+          model_id TEXT PRIMARY KEY REFERENCES models(id) ON DELETE CASCADE,
+          handle TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1, position INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS conversation_history (
+          id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          message_ids_json TEXT NOT NULL, redo INTEGER NOT NULL DEFAULT 1,
+          sequence INTEGER NOT NULL, created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_history_conversation ON conversation_history(conversation_id, sequence);
+        PRAGMA user_version = 33;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1275,6 +1298,7 @@ export class Store {
     this.migrateLegacyToolPolicy();
     this.ensureDefaultAgent(priorVersion < 19, priorVersion < 22);
     if (priorVersion < 27) this.migrateLegacySearchSettings();
+    if (priorVersion < 33) migrateServiceSettings(this);
     if (priorVersion < 21) this.migrateAppToolPolicy();
     if (priorVersion < 26) this.migrateRoleplayToolPolicy();
     if (priorVersion < 20) {
@@ -2114,6 +2138,7 @@ export class Store {
   createImageAssistantMessage(conversationId: string): string {
     return this.transaction(() => {
       if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+      this.advanceHistory(conversationId);
       const row = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?")
         .get(conversationId) as Row;
       const id = randomUUID();
@@ -2514,7 +2539,7 @@ export class Store {
 
       if (input.mode === "greeting") {
         const message = this.sqlite.prepare(
-          "SELECT id, ordinal, role, greeting_json FROM messages WHERE id = ? AND conversation_id = ?"
+          "SELECT id, ordinal, role, greeting_json FROM messages WHERE id = ? AND conversation_id = ? AND history_active = 1"
         ).get(input.messageId, sourceConversationId) as Row | undefined;
         const parsed = message?.greeting_json
           ? greetingMessageSchema.safeParse(parse(message.greeting_json, null))
@@ -2564,7 +2589,7 @@ export class Store {
       let sourceMessageOrdinal: number | null = null;
       if (input.mode === "edit") {
         const message = this.sqlite.prepare(
-          "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ?"
+          "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ? AND history_active = 1"
         ).get(input.messageId, sourceConversationId) as Row | undefined;
         if (!message || message.role !== "user") {
           throw new StoreError("message_not_found", "要编辑的用户消息不存在");
@@ -2574,7 +2599,7 @@ export class Store {
         sourceMessageOrdinal = Number(message.ordinal);
       } else if (input.throughMessageId) {
         const message = this.sqlite.prepare(
-          "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ?"
+          "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ? AND history_active = 1"
         ).get(input.throughMessageId, sourceConversationId) as Row | undefined;
         if (!message || message.role !== "assistant") {
           throw new StoreError("message_not_found", "分叉检查点不存在");
@@ -2693,7 +2718,7 @@ export class Store {
   private cloneVisibleHistory(sourceConversationId: string, targetConversationId: string, throughOrdinal: number): void {
     if (throughOrdinal <= 0) return;
     const messages = this.sqlite.prepare(`
-      SELECT * FROM messages WHERE conversation_id = ? AND ordinal <= ? ORDER BY ordinal
+      SELECT * FROM messages WHERE conversation_id = ? AND history_active = 1 AND ordinal <= ? ORDER BY ordinal
     `).all(sourceConversationId, throughOrdinal) as Row[];
     for (const message of messages) {
       const messageId = randomUUID();
@@ -2894,6 +2919,7 @@ export class Store {
 
   dispatchQueuedMessage(conversationId: string, validate: (assets: string[]) => void): GenerationCreatedDto | null {
     return this.transaction(() => {
+      if (this.sqlite.prepare("SELECT queue_paused FROM conversations WHERE id = ?").get(conversationId)?.queue_paused) return null;
       if (this.isConversationBusy(conversationId)) return null;
       const item = this.listQueuedMessages(conversationId).find((item) => item.status === "pending");
       if (!item) return null;
@@ -2918,11 +2944,12 @@ export class Store {
 
   createRetryGeneration(assistantMessageId: string): GenerationCreatedDto {
     return this.transaction(() => {
-      const message = this.sqlite.prepare("SELECT * FROM messages WHERE id = ? AND role = 'assistant'").get(assistantMessageId) as Row | undefined;
+      const message = this.sqlite.prepare("SELECT * FROM messages WHERE id = ? AND role = 'assistant' AND history_active = 1").get(assistantMessageId) as Row | undefined;
       if (!message) throw new StoreError("message_not_found", "助手消息不存在");
       const conversation = this.getConversation(String(message.conversation_id));
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
       const { model, connection, snapshot } = this.resolveGeneration(conversation, "regenerate");
+      this.advanceHistory(conversation.id);
       const max = this.sqlite.prepare("SELECT COALESCE(MAX(version), 0) AS value FROM generations WHERE assistant_message_id = ?").get(assistantMessageId) as Row;
       const generationId = randomUUID();
       this.insertGeneration(generationId, assistantMessageId, Number(max.value) + 1, connection, model, snapshot, Date.now());
@@ -2973,6 +3000,7 @@ export class Store {
     if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
     const now = Date.now();
     const max = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?").get(conversation.id) as Row;
+    this.advanceHistory(conversation.id);
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
     const generationId = randomUUID();
@@ -2999,17 +3027,23 @@ export class Store {
   selectGeneration(messageId: string, generationId: string): boolean {
     const result = this.sqlite.prepare(`
       UPDATE messages SET active_generation_id = ?
-      WHERE id = ? AND EXISTS (SELECT 1 FROM generations WHERE id = ? AND assistant_message_id = messages.id)
+      WHERE id = ? AND history_active = 1 AND EXISTS (SELECT 1 FROM generations WHERE id = ? AND assistant_message_id = messages.id)
     `).run(generationId, messageId, generationId);
     if (Number(result.changes)) {
       const conversation = this.sqlite.prepare("SELECT conversation_id FROM messages WHERE id = ?").get(messageId) as Row;
+      this.advanceHistory(String(conversation.conversation_id));
       this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(String(conversation.conversation_id));
     }
     return Number(result.changes) > 0;
   }
 
-  listMessages(conversationId: string): MessageDto[] {
-    const messages = this.sqlite.prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY ordinal").all(conversationId) as Row[];
+  advanceHistory(conversationId: string): void {
+    this.sqlite.prepare("UPDATE conversation_history SET redo = 0 WHERE conversation_id = ?").run(conversationId);
+    this.sqlite.prepare("UPDATE conversations SET history_revision = history_revision + 1 WHERE id = ?").run(conversationId);
+  }
+
+  listMessages(conversationId: string, includeInactive = false): MessageDto[] {
+    const messages = this.sqlite.prepare("SELECT * FROM messages WHERE conversation_id = ? AND (? OR history_active = 1) ORDER BY ordinal").all(conversationId, Number(includeInactive)) as Row[];
     return messages.map((message) => {
       const assistant = message.role === "assistant";
       const activeGenerationId = textOrNull(message.active_generation_id);
@@ -3294,7 +3328,7 @@ export class Store {
   }
 
   contextMessages(conversationId: string, beforeAssistantMessageId: string): ContextMessageRecord[] {
-    const target = this.sqlite.prepare("SELECT ordinal FROM messages WHERE id = ?").get(beforeAssistantMessageId) as Row | undefined;
+    const target = this.sqlite.prepare("SELECT ordinal FROM messages WHERE id = ? AND conversation_id = ? AND history_active = 1").get(beforeAssistantMessageId, conversationId) as Row | undefined;
     if (!target) return [];
     return this.contextMessagesThrough(conversationId, Number(target.ordinal) - 1);
   }
@@ -3315,7 +3349,7 @@ export class Store {
         )) AS generation_text
       FROM messages m
       LEFT JOIN generations g ON g.id = m.active_generation_id
-      WHERE m.conversation_id = ? AND m.ordinal <= ?
+      WHERE m.conversation_id = ? AND m.history_active = 1 AND m.ordinal <= ?
       ORDER BY m.ordinal
     `).all(conversationId, throughOrdinal) as Row[];
     return rows.map((row) => {
@@ -3384,7 +3418,7 @@ export class Store {
           WHERE g2.id = m.active_generation_id AND b.type IN ('text','refusal')
         ) END AS content
       FROM messages m JOIN conversations c ON c.id = m.conversation_id
-      WHERE COALESCE(CASE WHEN m.role = 'user' THEN m.text ELSE (
+      WHERE m.history_active = 1 AND COALESCE(CASE WHEN m.role = 'user' THEN m.text ELSE (
         SELECT GROUP_CONCAT(b.content, '') FROM generation_blocks b
         JOIN generations g3 ON g3.id = b.generation_id
         WHERE g3.id = m.active_generation_id AND b.type IN ('text','refusal')
@@ -3406,7 +3440,9 @@ export class Store {
 
   getLatestSummary(conversationId: string): (ContextSummaryDto & { sourceFingerprint: string }) | undefined {
     const row = this.sqlite.prepare(`
-      SELECT * FROM context_summaries WHERE conversation_id = ? ORDER BY through_ordinal DESC LIMIT 1
+      SELECT * FROM context_summaries WHERE conversation_id = ? AND through_ordinal <=
+        (SELECT COALESCE(MAX(ordinal), 0) FROM messages WHERE conversation_id = context_summaries.conversation_id AND history_active = 1)
+      ORDER BY through_ordinal DESC LIMIT 1
     `).get(conversationId) as Row | undefined;
     return row ? {
       id: String(row.id),

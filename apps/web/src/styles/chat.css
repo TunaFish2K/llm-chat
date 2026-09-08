@@ -722,7 +722,7 @@
 .composer-tool-scroll {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
   flex: 1 1 auto;
   min-width: 0;
@@ -1438,15 +1438,14 @@
   }
 
   .composer-tools {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(36px, 1fr);
-    gap: 0;
+    display: flex;
+    gap: 4px;
     width: 100%;
   }
 
   .composer-tool-scroll {
-    display: contents;
+    display: flex;
+    gap: 4px;
   }
 
   .composer-tools .composer-agent-select,
@@ -1455,11 +1454,11 @@
   .composer-tools .composer-attachment-button,
   .composer-tools .composer-more-trigger,
   .composer-tools .send-button {
-    width: 100%;
-    max-width: none;
-    min-width: 36px;
+    width: 40px;
+    max-width: 40px;
+    min-width: 40px;
     padding-inline: 0;
-    flex: none;
+    flex: 0 0 40px;
   }
 
   .composer-more-mobile {
@@ -1478,6 +1477,15 @@
 }
 
 .model-brand-icon { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; color: var(--text); }
+@media (max-width: 359px) {
+  .composer-tools, .composer-tool-scroll { gap: 3px; }
+  .composer-tools .composer-agent-select, .composer-tools .model-trigger,
+  .composer-tools .reasoning-trigger, .composer-tools .composer-attachment-button,
+  .composer-tools .composer-more-trigger, .composer-tools .send-button {
+    width: 36px; min-width: 36px; max-width: 36px; flex-basis: 36px;
+  }
+}
+.recovery-message { padding-block: 12px; border-bottom: 1px solid var(--border); }
 .model-brand-icon[data-brand="kimi"] svg path:nth-of-type(2) { fill: var(--text); }
 .reasoning-popover { z-index: 75; display: flex; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); max-width: calc(100vw - 24px); }
 .reasoning-slider { position: relative; display: flex; align-items: center; width: 24px; height: min(240px, 55dvh); touch-action: none; user-select: none; }

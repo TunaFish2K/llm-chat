@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImageGenerationManager } from "./image-generation";
 import { EventHub } from "./events";
 import { ImageService } from "./images";
-import { cleanupStores, createStore } from "./test-helpers";
+import { cleanupStores, createStore, seedModel } from "./test-helpers";
+import { ServiceSettings } from "./service-settings";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -10,6 +11,31 @@ afterEach(() => {
 });
 
 describe("ImageGenerationManager", () => {
+  it("does not attach late provider output after cancellation and enforces global disablement", async () => {
+    const store = createStore(); const { model } = seedModel(store);
+    store.updateModel(model.id, { capabilities: { ...model.capabilities, imageOutput: true }, imageProtocol: "openai-images" });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const images = new ImageService(store); await images.initialize();
+    const manager = new ImageGenerationManager(store, images, new EventHub());
+    const input = { conversationId: conversation.id, input: { modelId: model.id, prompt: "coast", operation: "generate" as const, referenceAssetIds: [], count: 1 } };
+    const services = new ServiceSettings(store);
+    services.update({ imageModels: [{ modelId: model.id, enabled: false }] });
+    expect(() => manager.create(input)).toThrow("未在全局图片工具设置中启用");
+    expect(store.listMessages(conversation.id)).toEqual([]);
+    services.update({ imageModels: [{ modelId: model.id, enabled: true }] });
+    let release!: (value: Awaited<ReturnType<ImageService["importGeneratedBytes"]>>) => void;
+    const imported = vi.spyOn(images, "importGeneratedBytes").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ b64_json: "aW1hZ2U=" }] })));
+    const job = manager.create(input); manager.start(job.id);
+    await vi.waitFor(() => expect(imported).toHaveBeenCalledOnce());
+    manager.cancel(job.id);
+    const asset = store.createFileAsset({ sha256: "c".repeat(64), fileName: "late.png", mimeType: "image/png", kind: "image", byteSize: 5, storageKey: "late" });
+    release(asset as Awaited<ReturnType<ImageService["importGeneratedBytes"]>>);
+    await manager.close();
+    expect(store.getImageGenerationJob(job.id)).toMatchObject({ status: "cancelled", outputAssets: [] });
+    expect(store.listMessages(conversation.id).at(-1)?.attachments).toEqual([]);
+  });
+
   it("persists provider output as an assistant attachment and emits terminal state", async () => {
     const store = createStore();
     const connection = store.createConnection({

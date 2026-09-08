@@ -1,4 +1,5 @@
 import { z } from "zod";
+export * from "./history-services";
 
 export const protocolSchema = z.enum([
   "openai-responses",

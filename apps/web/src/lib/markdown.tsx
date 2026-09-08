@@ -9,6 +9,7 @@ import { harden } from "rehype-harden";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
+import { MarkdownTable } from "../components/MarkdownTable";
 
 const INLINE_MATH = /\\\((.+?)\\\)/g;
 const BLOCK_MATH = /\\\[(.+?)\\\]/gs;
@@ -143,6 +144,7 @@ function rehypeSafeInlineStyles() {
 }
 
 const markdownComponents = {
+  table: MarkdownTable,
   a: SafeLink,
   img: SafeImage
 } as unknown as Components;
@@ -185,7 +187,7 @@ export const Markdown = memo(function Markdown({ text, streaming = false }: { te
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={richHtmlPlugins}
         plugins={{ cjk }}
-        controls={{ code: true, mermaid: false }}
+        controls={{ code: true, mermaid: false, table: false }}
         isAnimating={streaming}
         normalizeHtmlIndentation
         components={markdownComponents}

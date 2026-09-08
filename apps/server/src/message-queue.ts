@@ -36,6 +36,7 @@ export class MessageQueue {
 
   private async drain(conversationId: string): Promise<void> {
     while (!this.closing && this.store.getConversation(conversationId) && !this.runner.isConversationActive(conversationId)) {
+      if (this.store.sqlite.prepare("SELECT queue_paused FROM conversations WHERE id = ?").get(conversationId)?.queue_paused) return;
       const items = this.store.listQueuedMessages(conversationId);
       const dispatch = items.find((item) => item.status === "dispatching");
       if (dispatch?.generationId) {

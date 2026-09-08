@@ -34,7 +34,7 @@ describe("SettingsView", () => {
     expect(apply).toHaveBeenCalledOnce();
   });
 
-  it("shows both image generation paths in their own settings section", () => {
+  it("shows both image generation paths in their own settings section", async () => {
     const model = makeModel({
       displayName: "GPT Image 2",
       modelKey: "gpt-image-2",
@@ -46,12 +46,13 @@ describe("SettingsView", () => {
       models: [model]
     });
 
+    vi.spyOn(endpoints, "serviceSettings").mockResolvedValue({ searchEngines: [], imageModels: [{ modelId: model.id, id: "openai/gpt-image-2", name: model.displayName, connectionName: "OpenAI", enabled: true, available: true, protocol: "openai-images" }] });
     render(<SettingsView section="image-generation" />);
 
-    expect(screen.getByRole("heading", { name: "图片生成" })).toBeInTheDocument();
-    expect(screen.getByText("GPT Image 2")).toBeInTheDocument();
-    expect(screen.getByText("直接对话生图")).toBeInTheDocument();
-    expect(screen.getAllByText("可用")).toHaveLength(2);
+    expect(await screen.findByRole("heading", { name: "图片工具模型" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /GPT Image 2/ })).toBeChecked();
+    expect(screen.getByText("openai/gpt-image-2")).toBeInTheDocument();
+    expect(screen.getByText(/此处的开关不影响直接通过 Responses/)).toBeInTheDocument();
   });
 
   it("stores generation haptics in application settings", async () => {

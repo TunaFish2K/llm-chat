@@ -423,23 +423,28 @@ test.describe("会话与流式生成", () => {
 });
 
 test.describe("Agent 管理", () => {
-  test("每个 Agent 只绑定一个搜索服务并按 Agent 保存密钥", async ({ page, request }) => {
+  test("全局搜索配置保留密钥和推荐顺序，Agent 只管理权限", async ({ page, request }) => {
     const project = test.info().project.name;
     test.skip(!["chromium", "mobile-chromium"].includes(project), "Chromium 覆盖 Agent 搜索配置");
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`搜索配置-${unique()}`));
     try {
       await gotoPath(page, `/agents/${agent.id}`);
       await page.getByRole("tab", { name: "工具" }).click();
-      const searchProvider = page.getByLabel("搜索服务", { exact: true });
-      await expect(searchProvider).toHaveValue("searxng");
-      await searchProvider.selectOption("tavily");
-      await page.getByLabel("搜索 API Key").fill("tvly-e2e-secret");
-      await page.getByRole("button", { name: "保存修改" }).click();
-      await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
-
-      const saved = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
-      expect(saved.execution.search).toEqual({ provider: "tavily", baseUrl: "" });
-      expect(saved.searchApiKeyConfigured).toBe(true);
+      await expect(page.getByLabel("搜索服务", { exact: true })).toHaveCount(0);
+      await gotoPath(page, "/settings/search");
+      const tavily = page.locator(".service-list li").filter({ hasText: "Tavily" });
+      await tavily.getByRole("switch").check();
+      await tavily.locator('input[type="password"]').fill("tvly-e2e-secret");
+      await page.getByRole("button", { name: "保存配置" }).click();
+      await expect(page.getByText("已配置。留空不修改", { exact: false })).toBeVisible();
+      if (await tavily.getByRole("button", { name: "上移 tavily", exact: true }).isEnabled()) {
+        await tavily.getByRole("button", { name: "上移 tavily", exact: true }).click();
+      }
+      await expect.poll(async () => (await api(request, APP_URL, "GET", "/api/tools/services")).searchEngines[0].id).toBe("tavily");
+      await page.reload();
+      await expect(page.locator(".service-list li").first()).toContainText("Tavily");
+      const saved = await api(request, APP_URL, "GET", "/api/tools/services");
+      expect(saved.searchEngines[0]).toMatchObject({ enabled: true, hasApiKey: true, available: true });
       expect(JSON.stringify(saved)).not.toContain("tvly-e2e-secret");
       const catalog = await api(request, APP_URL, "GET", `/api/tools/catalog?agentId=${agent.id}`);
       expect(catalog.find((item) => item.name === "search_web")).toMatchObject({ available: true });
@@ -485,6 +490,19 @@ test.describe("Agent 管理", () => {
         };
       });
       expect(metrics).toEqual({ overflowX: "auto", pageFits: true, blocksDoNotOverlap: true });
+      const actions = page.getByRole("group", { name: "表格操作" });
+      expect(await actions.evaluate((element) => {
+        const rects = [...element.querySelectorAll("button")].map((button) => button.getBoundingClientRect());
+        const table = element.previousElementSibling!.getBoundingClientRect();
+        return rects.length === 3 && rects.every((rect) => Math.abs(rect.top - rects[0]!.top) < 1 && rect.top >= table.bottom);
+      })).toBe(true);
+      await actions.getByRole("button", { name: "下载", exact: true }).click();
+      const download = page.waitForEvent("download");
+      await page.getByRole("button", { name: "CSV", exact: true }).click();
+      expect((await download).suggestedFilename()).toBe("table.csv");
+      await actions.getByRole("button", { name: "放大", exact: true }).click();
+      await expect(page.getByRole("dialog").locator("table")).toBeVisible();
+      await expect(page.getByRole("group", { name: "表格操作" })).toHaveCount(1);
     } finally {
       if (agentId) await api(request, APP_URL, "DELETE", `/api/agents/${agentId}`).catch(() => {});
       await provider.close();
