@@ -56,6 +56,8 @@ import { compactConversationContext, ContextError } from "./context";
 import { ImageService } from "./images";
 import { VisionService } from "./vision";
 import { ModelCatalogService } from "./model-catalog";
+import { MessageQueue } from "./message-queue";
+import { BrowserFetchManager } from "./browser-fetch";
 import { AppTools } from "./app-tools";
 import { importSillyTavernPreset } from "./roleplay";
 import { executeRestrictedStscript } from "./stscript";
@@ -130,14 +132,23 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     store, tasks: taskManager, plugins: pluginManager, skills: skillManager, files: imageService,
     events: eventHub, balance: balanceService, catalog: modelCatalog
   });
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, codex);
+  const browser = new BrowserFetchManager();
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, codex, browser);
   const runner = new GenerationRunner(store, {
+    onSettled: (conversationId) => { queue.changed(conversationId); queue.kick(conversationId); },
     buildTools: (_currentStore, record) => registry.tools(record),
     prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
       visionService.prepare(record, model, signal, onAnalysis),
     runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId),
     imageService
   });
+  const queue = new MessageQueue(store, runner, imageService, eventHub, (conversationId, assets) => {
+    const conversation = store.getConversation(conversationId)!;
+    const resolved = store.resolveGeneration(conversation);
+    assertImageConfiguration(store, resolved.agent.id, resolved.model.id,
+      assets.filter((id) => store.getFileAsset(id)?.kind === "image"));
+  });
+  queue.initialize();
   app.decorate("store", store);
   app.decorate("runner", runner);
   app.decorateRequest("authIdentity", null);
@@ -757,6 +768,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(202).send(job);
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
+    if (store.listQueuedMessages(request.params.id).some((item) => item.status !== "failed")) {
+      throw new StoreError("conversation_busy", "已有待发送消息，请加入队列");
+    }
     if (store.isConversationBusy(request.params.id)) throw new StoreError("conversation_busy", "该会话还有生成或工具审批未完成");
     const value = sendMessageSchema.parse(request.body);
     const ids = attachmentIds(value);
@@ -773,6 +787,25 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     runner.start(result.generationId);
     return reply.code(202).send(result);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request) => store.listQueuedMessages(request.params.id));
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request, reply) => {
+    const value = sendMessageSchema.parse(request.body);
+    const item = store.enqueueMessage(request.params.id, value.text, attachmentIds(value));
+    queue.changed(request.params.id);
+    queue.kick(request.params.id);
+    return reply.code(202).send(item);
+  });
+  app.delete<{ Params: { id: string; itemId: string } }>("/api/conversations/:id/queued-messages/:itemId", async (request, reply) => {
+    store.deleteQueuedMessages(request.params.id, request.params.itemId);
+    queue.changed(request.params.id);
+    return reply.code(204).send();
+  });
+  app.delete<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request, reply) => {
+    store.deleteQueuedMessages(request.params.id);
+    queue.changed(request.params.id);
+    return reply.code(204).send();
   });
 
   app.post<{ Params: { id: string } }>("/api/messages/:id/generations", async (request, reply) => {
@@ -918,7 +951,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string } }>("/api/generations/:id/cancel", async (request) => {
     const generation = store.getGeneration(request.params.id);
     if (!generation) throw new StoreError("generation_not_found", "生成不存在");
-    return { ok: runner.cancel(request.params.id) };
+    const ok = runner.cancel(request.params.id);
+    return { ok, status: store.getGeneration(request.params.id)?.status === "stopped" ? "stopped" : ok ? "stopping" : generation.status };
   });
   app.post<{ Params: { id: string } }>("/api/tool-calls/:id/approval", async (request) => {
     const value = toolApprovalInputSchema.parse(request.body);
@@ -943,7 +977,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   if (options.serveWeb !== false) await registerWeb(app);
 
   app.addHook("onClose", async () => {
-    runner.stopAll();
+    await queue.close();
+    await runner.close();
+    await browser.close();
     await imageJobs.close();
     await taskManager.close();
     await codex.close();

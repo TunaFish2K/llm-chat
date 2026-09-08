@@ -70,6 +70,21 @@ describe("server tool catalog", () => {
     store.close();
   });
 
+  it("exposes the optional browser tool only when its runtime is available and forwards cancellation", async () => {
+    const store = createStore();
+    const absent = tool(await buildServerTools(store), "browser_fetch");
+    expect(absent.available).toBe(false);
+    await expect(absent.execute({ url: "https://example.com" }, signal())).rejects.toThrow("运行时不可用");
+    const fetch = vi.fn(async () => "rendered text");
+    const browser = { available: true, error: null, fetch } as unknown as import("./browser-fetch").BrowserFetchManager;
+    const enabled = tool(await buildServerTools(store, false, { browser }), "browser_fetch");
+    expect(enabled.definition.inputSchema.required).toEqual(["url"]);
+    const controller = new AbortController();
+    expect(await enabled.execute({ url: "https://example.com" }, controller.signal)).toBe("rendered text");
+    expect(fetch).toHaveBeenCalledWith("https://example.com", controller.signal);
+    store.close();
+  });
+
   it("validates required string arguments and clamps numeric limits", async () => {
     const store = createStore();
     const tools = await buildServerTools(store);
@@ -486,6 +501,18 @@ describe("memory, chat, skill, and large-output tools", () => {
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(statSync(join(store.dataDir, "tool_outputs")).mode & 0o777).toBe(0o700);
     chmodSync(path, 0o600);
+    store.close();
+  });
+
+  it("keeps large shell failures parseable with exit metadata and the end of stderr", async () => {
+    const store = createStore();
+    const result = JSON.parse(await persistLargeToolOutput(store, "shell-failure", JSON.stringify({
+      exitCode: 23, stdout: "x".repeat(40000), stderr: "y".repeat(40000) + "root cause", timedOut: false, cancelled: false
+    })));
+    expect(result).toMatchObject({ exitCode: 23, truncated: true, timedOut: false, cancelled: false });
+    expect(result.stderr).toHaveLength(4096);
+    expect(result.stderr).toMatch(/root cause$/);
+    expect(existsSync(result.fullOutputPath)).toBe(true);
     store.close();
   });
 });

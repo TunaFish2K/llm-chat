@@ -5,6 +5,7 @@ import type { ConnectionBalanceDto, ConnectionDto, ModelDto } from "@llm-chat/co
 import { endpoints } from "../../lib/api";
 import { navigate, routes } from "../../lib/router";
 import { INHERIT } from "./model";
+import { ModelBrandIcon } from "./ModelBrandIcon";
 
 type BalanceState = ConnectionBalanceDto | "loading" | "error";
 
@@ -74,9 +75,8 @@ export function ModelPicker({
       }}
     >
       <Popover.Trigger asChild>
-        <button type="button" className="model-trigger" disabled={disabled} aria-label="选择模型" title="选择模型">
-          <span className="model-mark">M</span>
-          <span>{effective?.displayName ?? "选择模型"}</span>
+        <button type="button" className="model-trigger" disabled={disabled} aria-label="选择模型" title={effective?.displayName ?? "选择模型"}>
+          <ModelBrandIcon model={effective} connection={connections.find((item) => item.id === effective?.connectionId)} />
           <ChevronDown size={13} aria-hidden="true" />
         </button>
       </Popover.Trigger>
@@ -145,7 +145,7 @@ export function ModelPicker({
                       setOpen(false);
                     }}
                   >
-                    <span className="model-mark">M</span>
+                    <ModelBrandIcon model={model} connection={connection} />
                     <span>
                       <strong>{model.displayName}</strong>
                       <small>{model.modelKey}</small>

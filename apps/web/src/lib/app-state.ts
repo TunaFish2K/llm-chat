@@ -301,7 +301,12 @@ export function startAppEvents(): void {
   let hasConnected = false;
   appEventsSubscription = subscribeAppEvents(
     (event) => {
-      if (event.type === "task") {
+      if (event.type === "message-queue") {
+        window.dispatchEvent(new CustomEvent("llm-chat:message-queue", { detail: event }));
+        void loadMessages(event.conversationId).then(() => {
+          if (event.generation) trackGeneration(event.conversationId, event.generation.assistantMessageId, event.generation.generationId);
+        }).catch(toastError);
+      } else if (event.type === "task") {
         void refreshTaskCounts();
       } else if (event.type === "image-generation") {
         void loadMessages(event.conversationId);
@@ -315,6 +320,7 @@ export function startAppEvents(): void {
     },
     (connected) => {
       if (connected) hasConnected = true;
+      if (connected) window.dispatchEvent(new Event("llm-chat:queue-reconnect"));
       appStore.set({
         eventsConnectionState: connected ? "connected" : hasConnected ? "reconnecting" : "connecting"
       });

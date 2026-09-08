@@ -13,6 +13,7 @@ import {
   Square,
   Wrench
 } from "lucide-react";
+import { CancelGenerationButton } from "./CancelGenerationButton";
 import type { GenerationDto, ImageGenerationJobDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, toastError, trackGeneration } from "../../lib/app-state";
@@ -24,6 +25,12 @@ import { useStore } from "../../lib/store";
 import { StatusTag } from "../ui";
 import { AgentAvatar, AssetGallery, CodeField, copyText, MessageAction } from "./atoms";
 import { activeGeneration, answerText, buildTimeline, prettyJson } from "./model";
+
+function toolStderr(output: string | null): string {
+  if (!output) return "";
+  try { const value = JSON.parse(output); return typeof value.stderr === "string" && value.stderr.trim() ? `：${value.stderr.trim().slice(-250)}` : ""; }
+  catch { return ""; }
+}
 
 export interface StreamCallbacks {
   onInspect: (target: InspectionTarget) => void;
@@ -291,13 +298,7 @@ function GenerationTimeline({
             </MessageAction>
           ) : null}
           {busy ? (
-            <MessageAction
-              label="停止生成"
-              danger
-              onClick={() => void endpoints.cancelGeneration(generation.id).catch(toastError)}
-            >
-              <Square size={14} fill="currentColor" />
-            </MessageAction>
+            <CancelGenerationButton generationId={generation.id} className="act danger" />
           ) : (
             <>
               <MessageAction label="重试" onClick={() => void retry()}>
@@ -408,6 +409,7 @@ function ToolCallDisclosure({ call, onInspect }: { call: ToolCallDto; onInspect:
       <summary>
         <Wrench size={15} aria-hidden="true" />
         <code>{call.name}</code>
+        {call.error ? <span className="tool-error-summary" title={call.error}>{call.error}{toolStderr(call.output)}</span> : null}
         <span className="grow" />
         {call.approvalState === "pending" ? <span>等待审批</span> : null}
         <StatusTag status={call.approvalState} />

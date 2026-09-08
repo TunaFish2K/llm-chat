@@ -1,10 +1,11 @@
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { executeShell } from "./shell";
+import type { BrowserFetchManager } from "./browser-fetch";
 import { lookup } from "node:dns/promises";
 import { constants } from "node:fs";
 import { access, glob, mkdir, readFile, realpath, readdir, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
 import { imageGenerationInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
@@ -15,7 +16,6 @@ import type { ImageGenerationManager } from "./image-generation";
 import type { CodexManager } from "./codex";
 import { mcpManager } from "./mcp";
 
-const execFileAsync = promisify(execFile);
 const MAX_TOOL_OUTPUT = 32 * 1024;
 const MAX_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -23,6 +23,7 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 type JsonObject = Record<string, unknown>;
 
 export interface ServerTool {
+  error?: string | null;
   definition: ProviderToolDefinition;
   label: string;
   category: ToolCatalogItemDto["category"];
@@ -44,6 +45,7 @@ export interface ToolExecutionContext {
 }
 
 export interface ToolDependencies {
+  browser?: BrowserFetchManager;
   lookup?: typeof lookup;
   taskManager?: TaskManager;
   imageService?: ImageService;
@@ -84,6 +86,15 @@ export async function buildServerTools(
   const workspaceProperty = { workspace: workspaceSelectorProperty() };
 
   const tools: ServerTool[] = [
+    {
+      ...tool("browser_fetch", "浏览器读取网页", "web", "Load a public webpage in an isolated headless Firefox browser, execute page JavaScript and return readable text. Use for pages that need a real browser. Does not solve CAPTCHAs or log in. Private addresses are blocked.", {
+        url: stringProperty("Public HTTP or HTTPS URL")
+      }, false, async (input, signal) => {
+        if (!dependencies.browser) throw new Error("浏览器运行时不可用");
+        return dependencies.browser.fetch(requiredString(input, "url"), signal);
+      }, dependencies.browser?.available ?? false),
+      error: dependencies.browser?.error ?? null
+    },
     tool("get_time_info", "当前时间", "local", "Get the server's current local date, time, timezone, UTC offset, and Unix timestamp.", {}, false,
       async () => JSON.stringify(timeInfo())),
     tool("eval_javascript", "JavaScript", "local", "Run a calculation in an isolated JavaScript context. No Node.js, filesystem, network, or DOM APIs are available.", {
@@ -441,6 +452,13 @@ export async function persistLargeToolOutput(store: Store, callId: string, outpu
   const safeName = callId.replace(/[^a-zA-Z0-9._-]/g, "_");
   const path = resolve(directory, `${safeName}.txt`);
   await writeFile(path, output, { mode: 0o600 });
+  try {
+    const result = JSON.parse(output);
+    if (typeof result?.stdout === "string" && typeof result?.stderr === "string") {
+      return JSON.stringify({ ...result, stdout: result.stdout.slice(-4096), stderr: result.stderr.slice(-4096),
+        truncated: true, fullOutputPath: path, originalCharacters: output.length });
+    }
+  } catch { /* Non-JSON tools retain their plain-text preview. */ }
   return `${output.slice(0, 4096)}\n\n[Output truncated: ${output.length} characters. Full output saved server-side at ${path}]`;
 }
 
@@ -470,7 +488,7 @@ function tool(
 
 function inferRequired(name: string): string[] {
   return ({
-    eval_javascript: ["code"], fetch_url: ["url"], search_web: ["query"], conversation_search: ["query"], image_generate: ["model_id", "prompt"],
+    eval_javascript: ["code"], fetch_url: ["url"], browser_fetch: ["url"], search_web: ["query"], conversation_search: ["query"], image_generate: ["model_id", "prompt"],
     memory_tool: ["action"], workspace_read_file: ["path"], workspace_write_file: ["path", "text"],
     workspace_edit_file: ["path", "old_text", "new_text"], workspace_glob: ["pattern"],
     workspace_grep: ["query"], workspace_shell: ["command"], use_skill: ["name"],
@@ -621,7 +639,7 @@ async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost:
   throw new Error("Too many redirects");
 }
 
-async function assertPublicUrl(url: URL, resolveHost: typeof lookup): Promise<void> {
+export async function assertPublicUrl(url: URL, resolveHost: typeof lookup): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only HTTP and HTTPS URLs are allowed");
   if (url.username || url.password) throw new Error("URLs with credentials are not allowed");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
@@ -630,12 +648,18 @@ async function assertPublicUrl(url: URL, resolveHost: typeof lookup): Promise<vo
 }
 
 function isPrivateAddress(address: string): boolean {
-  const normalized = address.toLowerCase().replace(/^::ffff:/, "");
-  if (normalized === "::1" || normalized === "::" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
-  const parts = normalized.split(".").map(Number);
-  if (parts.length !== 4 || parts.some(Number.isNaN)) return false;
+  if (isIP(address) === 6) {
+    const normalized = new URL(`http://[${address}]`).hostname.slice(1, -1);
+    // Only global unicast; reject mapped IPv4, local, multicast and transition ranges.
+    return !/^[23][0-9a-f]{3}:/.test(normalized) || /^2001:(?:0:|db8:)/.test(normalized)
+      || normalized.startsWith("2001::") || normalized.startsWith("2002:");
+  }
+  if (isIP(address) !== 4) return true;
+  const parts = address.split(".").map(Number);
   return parts[0] === 10 || parts[0] === 127 || parts[0] === 0 || (parts[0] === 169 && parts[1] === 254)
     || (parts[0] === 172 && parts[1]! >= 16 && parts[1]! <= 31) || (parts[0] === 192 && parts[1] === 168)
+    || (parts[0] === 100 && parts[1]! >= 64 && parts[1]! <= 127)
+    || (parts[0] === 198 && [18, 19].includes(parts[1]!))
     || parts[0]! >= 224;
 }
 
@@ -799,10 +823,7 @@ async function grepWorkspace(root: string, input: JsonObject): Promise<string> {
 async function runShell(root: string, input: JsonObject, signal: AbortSignal): Promise<string> {
   const cwd = await workspacePath(root, optionalString(input, "cwd") ?? ".");
   const timeout = optionalInteger(input, "timeout", 30, 1, 120) * 1_000;
-  const result = await execFileAsync("/bin/sh", ["-lc", requiredString(input, "command")], {
-    cwd, timeout, maxBuffer: 1024 * 1024, signal, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" }
-  });
-  return JSON.stringify({ exitCode: 0, stdout: result.stdout, stderr: result.stderr });
+  return executeShell(requiredString(input, "command"), cwd, timeout, signal);
 }
 
 interface SkillMetadata { name: string; description: string; directory: string; }

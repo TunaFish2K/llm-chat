@@ -13,6 +13,7 @@ import { endpoints } from "../../lib/api";
 import { toastError } from "../../lib/app-state";
 import { Button, Field, Modal, StatusTag, Toggle } from "../ui";
 import { CONTEXT_POLICIES, INHERIT, NO_MODEL, REASONING_LEVELS, withGenerationValue } from "./model";
+import { AttachmentList, AttachmentMenu, useAttachments } from "./AttachmentEditor";
 
 /** Rewrite a user message into a new branch and immediately regenerate. */
 export function EditForkDialog({
@@ -24,10 +25,11 @@ export function EditForkDialog({
   message: MessageDto;
   busy: boolean;
   onClose: () => void;
-  onSubmit: (text: string) => void;
+  onSubmit: (text: string, assetIds: string[]) => void;
 }) {
   const [text, setText] = useState(message.text ?? "");
-  const valid = text.trim().length > 0 && text.length <= 1_000_000;
+  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments(message.attachments ?? [], message.id);
+  const valid = (text.trim().length > 0 || attachments.length > 0) && text.length <= 1_000_000;
   return (
     <Modal
       title="编辑并分叉"
@@ -37,7 +39,7 @@ export function EditForkDialog({
           <Button onClick={onClose} disabled={busy}>
             取消
           </Button>
-          <Button variant="primary" onClick={() => onSubmit(text)} disabled={busy || !valid}>
+          <Button variant="primary" onClick={() => onSubmit(text, attachments.map((asset) => asset.id))} disabled={busy || uploading || !valid}>
             {busy ? "正在创建…" : "创建分支并生成"}
           </Button>
         </>
@@ -51,8 +53,13 @@ export function EditForkDialog({
           value={text}
           onChange={(event) => setText(event.target.value)}
           disabled={busy}
+          onPaste={(event) => { if (event.clipboardData.files.length) { event.preventDefault(); void uploadFiles([...event.clipboardData.files]); } }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => { event.preventDefault(); void uploadFiles([...event.dataTransfer.files]); }}
         />
       </Field>
+      <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={busy || uploading} />
+      <AttachmentMenu uploadFiles={uploadFiles} disabled={busy || attachments.length >= 8} uploading={uploading} />
       <p className="small muted">保存后会立即在新分支生成回复。原消息和原会话保持不变。</p>
     </Modal>
   );

@@ -24,6 +24,8 @@ describe("subscribeAppEvents", () => {
 
     source.emit("task", { id: 7, type: "task", taskId: "t1", task: { id: "t1", status: "running" } });
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ id: 7, taskId: "t1" }));
+    source.emit("message-queue", { id: 8, type: "message-queue", conversationId: "c1" });
+    expect(onEvent).toHaveBeenLastCalledWith({ id: 8, type: "message-queue", conversationId: "c1" });
 
     subscription.close();
     subscription.close();

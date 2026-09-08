@@ -49,7 +49,8 @@ export async function startMockProvider(options = {}) {
             clearInterval(timer);
             res.end();
           }
-        }, 30);
+        }, requests.length === 1 ? options.firstResponseDelayMs ?? 30 : 30);
+        res.once("close", () => clearInterval(timer));
       });
       return;
     }

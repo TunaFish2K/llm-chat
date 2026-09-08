@@ -15,12 +15,15 @@ import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type Server
 import type { PreparedImages } from "./vision";
 import { providerRequestContext } from "./provider-context";
 import type { ImageService } from "./images";
+import { ShellError } from "./shell";
 
 type Subscriber = (event: GenerationEvent) => void;
 const schemaValidator = new Ajv({ allErrors: true, strict: false });
 const toolValidators = new WeakMap<ServerTool, ValidateFunction>();
 
 interface LiveJob {
+  detached?: boolean;
+  cancelTimer?: ReturnType<typeof setTimeout>;
   controller: AbortController;
   subscribers: Set<Subscriber>;
   conversationId: string;
@@ -28,6 +31,7 @@ interface LiveJob {
 }
 
 export interface GenerationRunnerDependencies {
+  onSettled?: (conversationId: string) => void;
   buildContext: (
     store: Store,
     record: Parameters<typeof buildContext>[1],
@@ -101,8 +105,10 @@ export class GenerationRunner {
       // late SSE subscribers recover from the database snapshot instead,
       // so the job can be removed immediately (busy checks must not see
       // finished generations as active).
+      if (job.cancelTimer) clearTimeout(job.cancelTimer);
       this.jobs.delete(generationId);
       this.jobPromises.delete(jobPromise);
+      if (!this.closing && !job.detached) this.dependencies.onSettled?.(job.conversationId);
     });
     this.jobPromises.add(jobPromise);
     void jobPromise.catch(() => {});
@@ -121,11 +127,19 @@ export class GenerationRunner {
   cancel(generationId: string): boolean {
     const job = this.jobs.get(generationId);
     if (job) {
+      if (job.controller.signal.aborted) return true;
       job.controller.abort();
+      job.cancelTimer = setTimeout(() => {
+        job.detached = true;
+        this.store.finishGeneration(generationId, "stopped", { stopReason: "cancelled" });
+        this.emitStatus(generationId, "stopped", "cancelled");
+        this.jobs.delete(generationId);
+        if (!this.closing) this.dependencies.onSettled?.(job.conversationId);
+      }, 2000);
       return true;
     }
     const record = this.store.getGenerationRecord(generationId);
-    if (record?.status !== "waiting-approval") return false;
+    if (record?.status !== "waiting-approval" && record?.status !== "queued") return false;
     for (const call of this.store.listToolCalls(generationId).filter((item) => item.approvalState === "pending")) {
       this.store.updateToolCall(call.id, {
         approvalState: "denied",
@@ -134,18 +148,22 @@ export class GenerationRunner {
       });
     }
     this.store.finishGeneration(generationId, "stopped", { stopReason: "cancelled" });
+    if (!this.closing) this.dependencies.onSettled?.(record.conversationId);
     return true;
   }
 
   stopAll(): void {
-    for (const job of this.jobs.values()) job.controller.abort();
+    for (const id of this.jobs.keys()) this.cancel(id);
   }
 
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closing = true;
     this.stopAll();
-    this.closePromise = Promise.allSettled([...this.jobPromises]).then(() => {});
+    this.closePromise = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 2100);
+      void Promise.allSettled([...this.jobPromises]).then(() => { clearTimeout(timer); resolve(); });
+    });
     return this.closePromise;
   }
 
@@ -184,6 +202,7 @@ export class GenerationRunner {
     const flush = () => {
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = undefined;
+      if (job.detached) { pendingBlocks.clear(); return; }
       for (const [index, block] of pendingBlocks) {
         this.store.updateGenerationBlock(
           generationId,
@@ -208,6 +227,7 @@ export class GenerationRunner {
         job.controller.signal,
         (analysis) => this.emit(generationId, { type: "vision-analysis", generationId, analysis })
       );
+      job.controller.signal.throwIfAborted();
       const context = await this.dependencies.buildContext(
         this.store,
         record,
@@ -216,6 +236,7 @@ export class GenerationRunner {
         job.controller.signal,
         preparedImages
       );
+      job.controller.signal.throwIfAborted();
       this.store.setGenerationContext(generationId, context.metadata);
       const toolPolicy = record.agentSnapshot.execution.tools;
       const authorizedTools = model.capabilities.tools
@@ -223,6 +244,7 @@ export class GenerationRunner {
             tool.available && tool.definition.name !== SEARCH_TOOLS_NAME
             && (toolPolicy.overrides[tool.definition.name] ?? toolPolicy.defaultEnabled))
         : [];
+      job.controller.signal.throwIfAborted();
       const authorizedToolMap = new Map(authorizedTools.map((tool) => [tool.definition.name, tool]));
       const lazyTools = authorizedTools.filter((tool) => (toolPolicy.directOverrides?.[tool.definition.name] ?? true) === false);
       const exposedToolNames = new Set(authorizedTools
@@ -241,6 +263,7 @@ export class GenerationRunner {
       let usage = cleanUsage(this.store.getGeneration(generationId)?.usage ?? {});
       const existingCalls = this.store.listToolCalls(generationId);
       await restoreExposedTools(existingCalls, authorizedToolMap, exposeAuthorized);
+      job.controller.signal.throwIfAborted();
       let stepIndex = nextStepIndex(existingCalls);
 
       if (resuming) {
@@ -280,6 +303,7 @@ export class GenerationRunner {
           requestContext: providerRequestContext(record, `step-${stepIndex}`),
           signal: job.controller.signal
         })) {
+          job.controller.signal.throwIfAborted();
           if (event.type === "block") {
             const blockIndex = stepIndex * 1000 + event.index;
             pendingBlocks.set(blockIndex, {
@@ -311,6 +335,7 @@ export class GenerationRunner {
               `${record.modelKey}-response-${++generatedImageIndex}`,
               Buffer.from(event.dataBase64, "base64")
             );
+            job.controller.signal.throwIfAborted();
             this.store.attachImagesToMessage(record.assistantMessageId, [asset.id]);
           } else if (event.type === "provider-context") {
             providerContext = event.payload;
@@ -321,6 +346,7 @@ export class GenerationRunner {
             stopReason = event.stopReason;
           }
         }
+        job.controller.signal.throwIfAborted();
         flush();
         usage = addUsage(usage, stepUsage);
         this.store.updateGenerationUsage(generationId, usage);
@@ -345,6 +371,7 @@ export class GenerationRunner {
             : toolPolicy.approvalOverrides[call.name] ?? "default";
           const requiresApproval = override === "always"
             || (override === "default" && await (definition?.requiresApproval(args) ?? false));
+          job.controller.signal.throwIfAborted();
           const saved = this.store.upsertToolCall(generationId, call, stepIndex * 1000 + index, stepIndex, requiresApproval);
           this.emit(generationId, { type: "tool-call", generationId, toolCall: saved });
           persisted.push(saved);
@@ -360,6 +387,7 @@ export class GenerationRunner {
       }
       throw new Error(`Tool execution exceeded the Agent limit of ${maxToolRounds} model steps`);
     } catch (error) {
+      if (job.detached) return;
       flush();
       if (job.controller.signal.aborted) {
         this.store.finishGeneration(generationId, "stopped", { stopReason: "cancelled" });
@@ -385,6 +413,7 @@ export class GenerationRunner {
   ): Promise<void> {
     const generationId = record.id;
     for (const call of calls) {
+      signal.throwIfAborted();
       if (call.approvalState === "denied") {
         const updated = this.store.updateToolCall(call.id, {
           output: JSON.stringify({ error: "Tool execution denied by user" }),
@@ -398,31 +427,40 @@ export class GenerationRunner {
       this.emit(generationId, { type: "tool-call", generationId, toolCall: running });
       try {
         if (!tool) throw new Error(`Tool ${call.name} is not available`);
+        const rawOutput = await tool.execute(parseToolArguments(call.arguments), signal, {
+          conversationId: record.conversationId, generationId, toolCallId: call.id, snapshot: record.agentSnapshot
+        });
+        signal.throwIfAborted();
         const output = await this.dependencies.persistToolOutput(
           this.store,
           call.id,
-          await tool.execute(parseToolArguments(call.arguments), signal, {
-            conversationId: record.conversationId,
-            generationId,
-            toolCallId: call.id,
-            snapshot: record.agentSnapshot
-          })
+          rawOutput
         );
+        signal.throwIfAborted();
         const completed = this.store.updateToolCall(call.id, {
           approvalState: "completed", output, error: null, completedAt: Date.now()
         })!;
         this.emit(generationId, { type: "tool-call", generationId, toolCall: completed });
         if (tool.activatesTools) exposeAuthorized(await tool.activatesTools(parseToolArguments(call.arguments)));
       } catch (error) {
-        if (signal.aborted) throw error;
+        if (signal.aborted && !(error instanceof ShellError)) throw error;
+        if (!this.jobs.has(generationId)) throw error;
         const message = error instanceof Error ? error.message : "Tool execution failed";
+        const rawError = JSON.stringify({ error: message, ...(error instanceof ShellError ? error.result : {}) });
+        const output = await this.dependencies.persistToolOutput(this.store, call.id, rawError).catch(() => JSON.stringify({
+          error: message.slice(0, 4096), ...(error instanceof ShellError ? {
+            ...error.result, stdout: error.result.stdout.slice(-4096), stderr: error.result.stderr.slice(-4096), truncated: true
+          } : {})
+        }));
+        if (!this.jobs.has(generationId)) throw error;
         const failed = this.store.updateToolCall(call.id, {
           approvalState: "failed",
           error: message,
-          output: JSON.stringify({ error: message }),
+          output,
           completedAt: Date.now()
         })!;
         this.emit(generationId, { type: "tool-call", generationId, toolCall: failed });
+        if (signal.aborted) throw error;
       }
     }
   }

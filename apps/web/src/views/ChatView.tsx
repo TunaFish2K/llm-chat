@@ -332,14 +332,14 @@ export function ChatView({
           message={editingMessage}
           busy={branching}
           onClose={() => setEditingMessage(null)}
-          onSubmit={(text) => {
+          onSubmit={(text, assetIds) => {
             void (async () => {
               if (
                 await forkConversation({
                   mode: "edit",
                   messageId: editingMessage.id,
                   text,
-                  assetIds: (editingMessage.attachments ?? []).map((asset) => asset.id)
+                  assetIds
                 })
               ) {
                 setEditingMessage(null);

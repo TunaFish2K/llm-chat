@@ -356,7 +356,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 31) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 32) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1162,6 +1162,28 @@ function migrate(sqlite: DatabaseSyncType): void {
         CREATE INDEX IF NOT EXISTS idx_codex_events_session
           ON codex_events(session_id, id);
         PRAGMA user_version = 31;
+      `);
+    }
+    if (current < 32) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS queued_messages (
+          id TEXT PRIMARY KEY,
+          sequence INTEGER NOT NULL UNIQUE,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          text TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          error TEXT,
+          generation_id TEXT REFERENCES generations(id) ON DELETE SET NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_queue_conversation ON queued_messages(conversation_id, sequence);
+        CREATE TABLE IF NOT EXISTS queued_message_assets (
+          queue_id TEXT NOT NULL REFERENCES queued_messages(id) ON DELETE CASCADE,
+          asset_id TEXT NOT NULL REFERENCES file_assets(id),
+          asset_index INTEGER NOT NULL,
+          PRIMARY KEY(queue_id, asset_id)
+        );
+        PRAGMA user_version = 32;
       `);
     }
     sqlite.exec("COMMIT");
@@ -2050,6 +2072,12 @@ export class Store {
   }
 
   attachFilesToMessage(messageId: string, assetIds: string[], imageBytesLimit = 15 * 1024 * 1024): void {
+    this.validateAttachments(assetIds, imageBytesLimit);
+    const insert = this.sqlite.prepare("INSERT INTO message_file_assets (message_id, asset_id, asset_index) VALUES (?, ?, ?)");
+    assetIds.forEach((assetId, index) => insert.run(messageId, assetId, index));
+  }
+
+  validateAttachments(assetIds: string[], imageBytesLimit = 15 * 1024 * 1024): void {
     const unique = [...new Set(assetIds)];
     if (unique.length !== assetIds.length || unique.length > 8) {
       throw new StoreError("file_attachment_invalid", "每条消息最多包含 8 个不重复附件");
@@ -2063,10 +2091,6 @@ export class Store {
     if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > imageBytesLimit) {
       throw new StoreError("image_attachments_too_large", "每条消息的图片总大小不能超过 15 MiB");
     }
-    const insert = this.sqlite.prepare(`
-      INSERT INTO message_file_assets (message_id, asset_id, asset_index) VALUES (?, ?, ?)
-    `);
-    unique.forEach((assetId, index) => insert.run(messageId, assetId, index));
   }
 
   attachImagesToMessage(messageId: string, assetIds: string[]): void {
@@ -2194,6 +2218,7 @@ export class Store {
         AND NOT EXISTS (SELECT 1 FROM tool_call_file_assets t WHERE t.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM agent_file_assets r WHERE r.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM vision_analyses v WHERE v.asset_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM queued_message_assets q WHERE q.asset_id = a.id)
     `).all(before) as Row[]).map(fileAssetRecord);
   }
 
@@ -2805,7 +2830,7 @@ export class Store {
         settings,
         tools: {
           defaultEnabled: agent.execution.tools.defaultEnabled,
-          overrides: { ...agent.execution.tools.overrides, ...(conversation.executionOverrides.tools ?? {}) },
+          overrides: { browser_fetch: false, ...agent.execution.tools.overrides, ...(conversation.executionOverrides.tools ?? {}) },
           directOverrides: { ...agent.execution.tools.directOverrides },
           approvalOverrides: { ...agent.execution.tools.approvalOverrides }
         },
@@ -2828,6 +2853,66 @@ export class Store {
         : "normal";
       const resolved = this.resolveGeneration(conversation, generationKind);
       return this.insertMessageGeneration(conversation, text, resolved.snapshot, assetIds);
+    });
+  }
+
+  listQueuedMessages(conversationId: string): import("@llm-chat/contracts").QueuedMessageDto[] {
+    if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    return (this.sqlite.prepare("SELECT * FROM queued_messages WHERE conversation_id = ? ORDER BY sequence").all(conversationId) as Row[])
+      .map((row) => ({
+        id: String(row.id), conversationId, text: String(row.text),
+        status: row.status as "pending" | "dispatching" | "failed", error: textOrNull(row.error),
+        generationId: textOrNull(row.generation_id), createdAt: Number(row.created_at),
+        attachments: (this.sqlite.prepare("SELECT asset_id FROM queued_message_assets WHERE queue_id = ? ORDER BY asset_index").all(String(row.id)) as Row[])
+          .map((entry) => this.getFileAsset(String(entry.asset_id))!).filter(Boolean)
+      }));
+  }
+
+  enqueueMessage(conversationId: string, text: string, assetIds: string[]) {
+    return this.transaction(() => {
+      if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+      this.validateAttachments(assetIds);
+      const id = randomUUID();
+      this.sqlite.prepare(`INSERT INTO queued_messages(id, sequence, conversation_id, text, created_at)
+        VALUES (?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM queued_messages), ?, ?, ?)`)
+        .run(id, conversationId, text, Date.now());
+      const insert = this.sqlite.prepare("INSERT INTO queued_message_assets(queue_id, asset_id, asset_index) VALUES (?, ?, ?)");
+      assetIds.forEach((assetId, index) => insert.run(id, assetId, index));
+      this.sqlite.prepare("UPDATE conversations SET draft = '' WHERE id = ?").run(conversationId);
+      return this.listQueuedMessages(conversationId).find((item) => item.id === id)!;
+    });
+  }
+
+  deleteQueuedMessages(conversationId: string, id?: string): void {
+    if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    if (id && this.listQueuedMessages(conversationId).some((item) => item.id === id && item.status === "dispatching")) {
+      throw new StoreError("queue_dispatching", "消息已经开始发送");
+    }
+    this.sqlite.prepare("DELETE FROM queued_messages WHERE conversation_id = ? AND status != 'dispatching' AND (? IS NULL OR id = ?)")
+      .run(conversationId, id ?? null, id ?? null);
+  }
+
+  dispatchQueuedMessage(conversationId: string, validate: (assets: string[]) => void): GenerationCreatedDto | null {
+    return this.transaction(() => {
+      if (this.isConversationBusy(conversationId)) return null;
+      const item = this.listQueuedMessages(conversationId).find((item) => item.status === "pending");
+      if (!item) return null;
+      this.sqlite.exec("SAVEPOINT queue_dispatch");
+      try {
+        const ids = item.attachments.map((asset) => asset.id);
+        validate(ids);
+        const conversation = this.getConversation(conversationId)!;
+        const result = this.insertMessageGeneration(conversation, item.text, this.resolveGeneration(conversation).snapshot, ids);
+        this.sqlite.prepare("UPDATE conversations SET draft = ? WHERE id = ?").run(conversation.draft, conversationId);
+        this.sqlite.prepare("UPDATE queued_messages SET status = 'dispatching', generation_id = ? WHERE id = ?").run(result.generationId, item.id);
+        this.sqlite.exec("RELEASE queue_dispatch");
+        return result;
+      } catch (error) {
+        this.sqlite.exec("ROLLBACK TO queue_dispatch; RELEASE queue_dispatch");
+        this.sqlite.prepare("UPDATE queued_messages SET status = 'failed', error = ? WHERE id = ?")
+          .run(error instanceof Error ? error.message : "消息发送失败", item.id);
+        return null;
+      }
     });
   }
 
