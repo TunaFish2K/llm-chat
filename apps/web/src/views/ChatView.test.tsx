@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
+import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
 import {
   makeAgent,
@@ -36,13 +37,17 @@ function seedStore(messages: MessageDto[] = [], options: { draft?: string; model
 
 function messageFetch(messages: MessageDto[]) {
   return vi.fn((url: string, init?: RequestInit) => {
+    if (url.endsWith("/queue")) return Promise.resolve(json({ items: [], paused: false }));
     if (url.endsWith("/queued-messages")) return Promise.resolve(json([]));
     if (url === "/api/conversations/conv-1/messages" && (!init || init.method === "GET")) return Promise.resolve(json(messages));
     return Promise.resolve(json({ error: { code: "unexpected", message: `unexpected ${url}` } }, 500));
   });
 }
 
-beforeEach(() => window.history.pushState(null, "", "/"));
+beforeEach(() => {
+  window.history.pushState(null, "", "/");
+  vi.spyOn(endpoints, "queueState").mockResolvedValue({ items: [], paused: false });
+});
 
 describe("ChatView", () => {
   it("confirms a different Agent for existing messages and leaves the current selection untouched", async () => {
@@ -580,7 +585,7 @@ describe("ChatView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatView conversationId="conv-1" />);
 
-    await user.click(screen.getByRole("button", { name: "更多会话设置" }));
+    await user.click(screen.getByRole("button", { name: "会话操作" }));
     await user.click(await screen.findByRole("button", { name: "立即压缩上下文" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1/context/compact",

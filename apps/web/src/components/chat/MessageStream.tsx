@@ -311,9 +311,6 @@ function GenerationTimeline({
               >
                 <GitFork size={14} />
               </MessageAction>
-              <MessageAction label="回溯至此轮" onClick={() => window.dispatchEvent(new CustomEvent("llm-chat:rewind", {
-                detail: { conversationId, messageId: message.id }
-              }))}><RotateCcw size={14} /></MessageAction>
             </>
           )}
           <MessageAction label="检查生成" onClick={inspectGeneration}>

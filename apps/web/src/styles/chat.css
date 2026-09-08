@@ -1483,7 +1483,6 @@
     width: 36px; min-width: 36px; max-width: 36px; flex-basis: 36px;
   }
 }
-.recovery-message { padding-block: 12px; border-bottom: 1px solid var(--border); }
 .model-brand-icon[data-brand="kimi"] svg path:nth-of-type(2) { fill: var(--text); }
 .composer-action-group { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .composer-more-mobile[hidden] { display: none; }
@@ -1493,11 +1492,24 @@
 .composer-tools .model-brand-icon svg { color: inherit; }
 .send-button { touch-action: none; user-select: none; -webkit-touch-callout: none; }
 @media (max-width: 640px) {
-  .composer-tools { flex-wrap: wrap; row-gap: 6px; }
-  .composer-tool-scroll { flex: 1 1 224px; }
+  .composer-tools { flex-wrap: nowrap; }
+  .composer-tool-scroll { flex: 1 1 auto; }
   .composer-action-group { gap: 4px; }
   .composer-tools > .composer-tool-scroll > button { width: 40px; min-width: 40px; max-width: 40px; flex-basis: 40px; }
 }
+.composer-action-group { flex-shrink: 0; }
+.composer-tool-scroll { overflow-x: auto; scrollbar-width: none; }
+.composer-tool-scroll::-webkit-scrollbar { display: none; }
+.composer-tools[data-compact] { gap: 4px; }
+.composer-tools[data-compact] .composer-tool-scroll,
+.composer-tools[data-compact] .composer-action-group { gap: 4px; }
+.composer-tools[data-compact] .composer-tool-scroll > button,
+.composer-tools[data-compact] .composer-action-group > button { width: 40px; min-width: 40px; max-width: 40px; flex: 0 0 40px; }
+.composer-settings-trigger { position: relative; }
+.composer-settings-trigger > b { position: absolute; right: 0; top: 0; font-size: var(--text-xs); }
+.composer-settings-popover small { white-space: normal; overflow-wrap: anywhere; }
+.conversation-action-slot { display: flex; flex: 0 0 auto; }
+.conversation-action-slot:empty { display: none; }
 .reasoning-popover { z-index: 75; display: flex; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); max-width: calc(100vw - 24px); }
 .reasoning-slider { position: relative; display: flex; align-items: center; width: 24px; height: min(240px, 55dvh); touch-action: none; user-select: none; }
 .reasoning-track { position: relative; width: 4px; height: 100%; margin: auto; background: var(--border-strong); border-radius: 3px; }

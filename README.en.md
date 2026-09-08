@@ -11,7 +11,7 @@ Chat is a single-user, self-hosted web client for AI conversations. The reposito
 - Upload images and files. Generate images through Responses conversations or a separate image tool.
 - Configure Agents, character cards, context policies, fallback vision models, tool permissions, and Skills. Import and export Character Card V2 JSON and PNG files.
 - Use search, web readers, memories, files, Shell, background tasks, MCP, and Plugins. Agents can delegate coding tasks through Codex app-server.
-- Keep answer versions and conversation branches. Undo and redo change active history without creating a branch.
+- Keep answer versions and conversation branches. Edit a previous message or continue from a previous answer to create a branch.
 - Submit several queued messages during generation. The server stores the queue. Delete individual items or clear the queue.
 - Use the desktop or mobile interface, or install the PWA. The server preserves branch selections across devices.
 
@@ -96,17 +96,13 @@ The AI can discover image models with `image_generate({"action":"list_models"})`
 
 You can also select an image model directly for a Responses conversation. That path requires image output capability. Image tool switches do not affect it.
 
-### Undo, queued messages, and attachments
+### Branches, queued messages, and attachments
 
 During generation, a short press adds a message to the ordinary queue. Hold Send or the desktop Enter key for about half a second to use Steer. After the current request and tools finish, Steer takes priority before the next model request. It does not interrupt tools or bypass approvals. You can delete either kind of queued message.
 
-The composer menu contains Undo last turn (撤回上一轮), Redo (重做), and Recovery records (恢复记录). Rewind to this turn (回溯至此轮) keeps the selected whole turn and removes later turns from active history.
+The settings menu on the left contains the workspace and execution settings. Narrow layouts also move Agent selection into this menu, keeping the model and reasoning controls visible first. Attachments, Send, and Stop stay on the right. The conversation menu in the top bar contains context compression and roleplay actions.
 
-Redo restores the original messages, answer versions, and attachments. It does not call the model or execute tools again.
-
-Sending a new message after undo ends the old redo path. Recovery records still let you view and copy old content. You can restore a user message and its attachments as a draft. Restoration does not overwrite an existing draft. Editing historical messages and continuing from a branch point still create branches.
-
-Rewind pauses the queue and stops active generations and image jobs. Queued messages remain available. Select Continue sending (继续发送) to resume automatic dispatch. Rewind does not revert workspace files, Codex threads, memories, or independent background tasks.
+Editing previous messages and attachments or selecting Continue from here creates a branch. Undo, redo, and recovery records are retired. Previously hidden messages remain in the database but do not return to the chat or model context. Select Continue sending to resume a queue paused by an older version.
 
 When the context exceeds the Agent image limit, the server can replace older images with cached text descriptions. It retains the original attachments.
 

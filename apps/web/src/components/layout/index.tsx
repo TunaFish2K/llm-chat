@@ -212,7 +212,10 @@ export function MobileDrawer({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented) return;
+      // A foreground dialog owns Escape even if its window listener runs later.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

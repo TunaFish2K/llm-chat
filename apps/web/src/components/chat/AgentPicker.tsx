@@ -13,8 +13,9 @@ function AgentAvatar({ agent }: { agent: AgentSummaryDto | undefined }) {
   </span>;
 }
 
-export function AgentPicker({ agents, value, disabled, onChange }: {
+export function AgentPicker({ agents, value, disabled, onChange, menuItem = false }: {
   agents: AgentSummaryDto[]; value: string; disabled: boolean; onChange: (id: string) => void;
+  menuItem?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -25,9 +26,10 @@ export function AgentPicker({ agents, value, disabled, onChange }: {
   useEffect(() => { setOpen(false); setQuery(""); }, [value, disabled]);
   return <Popover.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
     <Popover.Trigger asChild>
-      <button type="button" className="chip composer-agent-select agent-trigger" aria-label="选择 Agent"
+      <button type="button" className={menuItem ? "agent-menu-item" : "chip composer-agent-select agent-trigger"} aria-label="选择 Agent"
         title={selected?.name ?? "选择 Agent"} disabled={disabled || !agents.length}>
         <Bot size={26} aria-hidden="true" />
+        {menuItem ? <span><strong>Agent</strong><small>{selected?.name ?? "未选择"}</small></span> : null}
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label="Agent 选择" side="top" align="start" sideOffset={10}

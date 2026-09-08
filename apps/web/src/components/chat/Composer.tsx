@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { Popover } from "radix-ui";
 import {
   FolderOpen,
@@ -31,14 +32,14 @@ import { useStore } from "../../lib/store";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
-import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson, shortPath } from "./model";
+import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson } from "./model";
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
 import { AgentPicker } from "./AgentPicker";
 import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEditor";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
-import { RecoveryDialog, useConversationHistory } from "./ConversationHistory";
+import { useComposerLayout } from "./useComposerLayout";
 import { useHoldSend } from "./useHoldSend";
 
 const DRAFT_DEBOUNCE_MS = 500;
@@ -49,6 +50,7 @@ const DRAFT_DEBOUNCE_MS = 500;
  * approval gate and messages queued for subsequent turns.
  */
 export function Composer({
+  actionsHost = null,
   conversation,
   onInspect,
   onBeforeSend,
@@ -64,6 +66,7 @@ export function Composer({
   onRoleplayStateChange = () => undefined,
   onOpenRoleplay = () => undefined
 }: {
+  actionsHost?: HTMLDivElement | null;
   conversation: ConversationDto | null;
   onInspect: (target: InspectionTarget) => void;
   onBeforeSend: () => void;
@@ -94,11 +97,11 @@ export function Composer({
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const [editingOverrides, setEditingOverrides] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const { attachments, setAttachments, uploading, uploadFiles } = useAttachments([], conversation?.id);
-  const { items: queuedMessages, reload: reloadQueue } = useMessageQueue(conversation?.id);
-  const history = useConversationHistory(conversation?.id);
+  const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedConversation = useRef<string | null>(null);
   const wasGenerating = useRef(false);
@@ -170,8 +173,8 @@ export function Composer({
     .find(({ generation }) => isGenerationActive(generation.status));
   const generating = Boolean(active && active.generation.status !== "waiting-approval");
   useEffect(() => {
-    if (conversation && !active) { void reloadQueue().catch(toastError); void history.reload().catch(toastError); }
-  }, [conversation?.id, active?.generation.id, reloadQueue, history.reload]);
+    if (conversation && !active) { void reloadQueue().catch(toastError); }
+  }, [conversation?.id, active?.generation.id, reloadQueue]);
   const pendingApprovals = messages
     .flatMap((message) =>
       message.generations.flatMap((generation) =>
@@ -332,7 +335,7 @@ export function Composer({
         await loadMessages(result.conversation.id);
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
         navigate(routes.chat(result.conversation.id));
-      } else if (active || (!history.state?.queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
+      } else if (active || (!queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
         await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
         setText(""); setAttachments([]); persistDraft("");
         await reloadQueue();
@@ -378,6 +381,7 @@ export function Composer({
     } catch (error) { toastError(error); }
   };
 
+  const toolbar = useComposerLayout(Boolean(generating && active));
   const holdSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const keyHoldSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -460,9 +464,9 @@ export function Composer({
                 </div>
               ) : null}
 
-              <div className="composer-tools">
+              <div className="composer-tools" ref={toolbar.ref} data-compact={toolbar.compact || undefined}>
                 <div className="composer-tool-scroll">
-                  <AgentPicker agents={agents} value={effectiveAgentId} disabled={controlsDisabled} onChange={chooseAgent} />
+                  {!toolbar.foldAgent ? <AgentPicker agents={agents} value={effectiveAgentId} disabled={controlsDisabled} onChange={chooseAgent} /> : null}
 
                   <ModelPicker
                     effectiveModelId={effectiveModelId}
@@ -478,55 +482,62 @@ export function Composer({
                     inherited={effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none"}
                     levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
 
-                  <button
-                    type="button"
-                    className="chip composer-inline-tool"
-                    onClick={() => setPickingWorkspace(true)}
-                    disabled={controlsDisabled}
-                    aria-label="选择工作目录"
-                    title={workspace ?? "选择工作目录"}
-                  >
-                    <FolderOpen size={16} aria-hidden="true" />
-                    <span>{workspace ? shortPath(workspace) : "目录"}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="chip composer-inline-tool"
-                    onClick={() => setEditingOverrides(true)}
-                    disabled={controlsDisabled}
-                    aria-label="高级执行设置"
-                    title="高级执行设置"
-                  >
-                    <Settings2 size={16} aria-hidden="true" />
-                    {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
-                  </button>
+                  <Popover.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
+                    <Popover.Trigger asChild><button type="button" className="chip composer-settings-trigger"
+                      aria-label="低频设置" title="低频设置" disabled={controlsDisabled}>
+                      <Settings2 size={26} />
+                      {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
+                    </button></Popover.Trigger>
+                    <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}>
+                      {toolbar.foldAgent ? <AgentPicker menuItem agents={agents} value={effectiveAgentId} disabled={controlsDisabled}
+                        onChange={(id) => { setSettingsOpen(false); chooseAgent(id); }} /> : null}
+                      <button type="button" aria-label="选择工作目录" onClick={() => { setSettingsOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
+                        <FolderOpen size={18} /><span><strong>工作目录</strong><small>{workspace ?? "未选择"}</small></span>
+                      </button>
+                      <button type="button" aria-label="高级执行设置" onClick={() => { setSettingsOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
+                        <Settings2 size={18} /><span><strong>高级执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
+                      </button>
+                    </Popover.Content></Popover.Portal>
+                  </Popover.Root>
 
                 </div>
                 <div className="composer-action-group">
                   <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
-                  <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
+
+                {generating && active ? (
+<CancelGenerationButton generationId={active.generation.id} className="send-button stop" />
+                ) : null}
+                  <button
+                    type="button"
+                    className="send-button"
+                    onPointerDown={(event) => { if (event.button !== 0) return; event.currentTarget.setPointerCapture?.(event.pointerId); holdSend.start(true); }}
+                    onPointerUp={(event) => { const box = event.currentTarget.getBoundingClientRect();
+                      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) holdSend.cancel(); else holdSend.finish(); }}
+                    onPointerCancel={holdSend.cancel}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onClick={(event) => { if (event.detail === 0) void sendMessage(); }}
+                    disabled={sendDisabled}
+                    aria-label={active ? "加入队列" : "发送"}
+                    title={active ? "点击加入轮末队列；长按 Steer，在下次模型请求前发送" : "发送；长按可在生成期间 Steer"}
+                  >
+                    <Send size={18} />
+                  </button>
+                </div>
+              </div>
+            </>
+        </div>
+        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} paused={queuePaused} />
+
+      </div>
+
+      {actionsHost && conversation ? createPortal((<Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
                     <Popover.Trigger asChild>
-                      <button type="button" className="chip composer-more-trigger" aria-label="更多会话设置" title="更多">
+                      <button type="button" className="icon-button" aria-label="会话操作" title="更多">
                         <MoreHorizontal size={17} aria-hidden="true" />
                       </button>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="composer-more-popover" side="top" align="end" sideOffset={10}>
-                        {conversation ? <>
-                          <button type="button" disabled={history.busy || !history.state?.canUndo} onClick={() => { setMoreOpen(false); void history.perform("undo"); }}>撤回上一轮</button>
-                          <button type="button" disabled={history.busy || !history.state?.canRedo} onClick={() => { setMoreOpen(false); void history.perform("redo"); }}>重做</button>
-                          <button type="button" onClick={() => { setMoreOpen(false); history.setOpen(true); }}>恢复记录</button>
-                        </> : null}
-                        <div className="composer-more-mobile" hidden>
-                          <button type="button" aria-label="选择工作目录" onClick={() => { setMoreOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
-                            <FolderOpen size={16} aria-hidden="true" />
-                            <span><strong>工作目录</strong><small>{workspace ? shortPath(workspace) : "未选择"}</small></span>
-                          </button>
-                          <button type="button" aria-label="高级执行设置" onClick={() => { setMoreOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
-                            <Settings2 size={16} aria-hidden="true" />
-                            <span><strong>执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
-                          </button>
-                        </div>
+                      <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10}>
                         {roleplayAvailable ? (
                           <button type="button" aria-label="角色会话设置" onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
                             <Drama size={16} aria-hidden="true" />
@@ -551,35 +562,7 @@ export function Composer({
                         </button>
                       </Popover.Content>
                     </Popover.Portal>
-                  </Popover.Root>
-                {generating && active ? (
-<CancelGenerationButton generationId={active.generation.id} className="send-button stop" />
-                ) : null}
-                  <button
-                    type="button"
-                    className="send-button"
-                    onPointerDown={(event) => { if (event.button !== 0) return; event.currentTarget.setPointerCapture?.(event.pointerId); holdSend.start(true); }}
-                    onPointerUp={(event) => { const box = event.currentTarget.getBoundingClientRect();
-                      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) holdSend.cancel(); else holdSend.finish(); }}
-                    onPointerCancel={holdSend.cancel}
-                    onContextMenu={(event) => event.preventDefault()}
-                    onClick={(event) => { if (event.detail === 0) void sendMessage(); }}
-                    disabled={sendDisabled}
-                    aria-label={active ? "加入队列" : "发送"}
-                    title={active ? "点击加入轮末队列；长按 Steer，在下次模型请求前发送" : "发送；长按可在生成期间 Steer"}
-                  >
-                    <Send size={18} />
-                  </button>
-                </div>
-              </div>
-            </>
-        </div>
-        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} paused={history.state?.queuePaused ?? false} />
-        {history.open && history.state ? <RecoveryDialog state={history.state} onClose={() => history.setOpen(false)} onRestore={(message) => {
-          if (text.trim() || attachments.length) { toast("info", "请先发送或清空当前草稿，再恢复旧消息"); return; }
-          setText(message.text ?? ""); persistDraft(message.text ?? ""); setAttachments(message.attachments); history.setOpen(false);
-        }} /> : null}
-      </div>
+                  </Popover.Root>), actionsHost) : null}
 
       {pickingWorkspace ? (
         <DirectoryPicker

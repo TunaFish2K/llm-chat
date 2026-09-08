@@ -2146,7 +2146,6 @@ export class Store {
   createImageAssistantMessage(conversationId: string): string {
     return this.transaction(() => {
       if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
-      this.advanceHistory(conversationId);
       const row = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?")
         .get(conversationId) as Row;
       const id = randomUUID();
@@ -2964,7 +2963,6 @@ export class Store {
       const conversation = this.getConversation(String(message.conversation_id));
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
       const { model, connection, snapshot } = this.resolveGeneration(conversation, "regenerate");
-      this.advanceHistory(conversation.id);
       const max = this.sqlite.prepare("SELECT COALESCE(MAX(version), 0) AS value FROM generations WHERE assistant_message_id = ?").get(assistantMessageId) as Row;
       const generationId = randomUUID();
       this.insertGeneration(generationId, assistantMessageId, Number(max.value) + 1, connection, model, snapshot, Date.now());
@@ -3015,7 +3013,6 @@ export class Store {
     if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
     const now = Date.now();
     const max = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?").get(conversation.id) as Row;
-    this.advanceHistory(conversation.id);
     const userMessageId = randomUUID();
     const assistantMessageId = randomUUID();
     const generationId = randomUUID();
@@ -3046,15 +3043,20 @@ export class Store {
     `).run(generationId, messageId, generationId);
     if (Number(result.changes)) {
       const conversation = this.sqlite.prepare("SELECT conversation_id FROM messages WHERE id = ?").get(messageId) as Row;
-      this.advanceHistory(String(conversation.conversation_id));
       this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(String(conversation.conversation_id));
     }
     return Number(result.changes) > 0;
   }
 
-  advanceHistory(conversationId: string): void {
-    this.sqlite.prepare("UPDATE conversation_history SET redo = 0 WHERE conversation_id = ?").run(conversationId);
-    this.sqlite.prepare("UPDATE conversations SET history_revision = history_revision + 1 WHERE id = ?").run(conversationId);
+  isQueuePaused(conversationId: string): boolean {
+    const row = this.sqlite.prepare("SELECT queue_paused FROM conversations WHERE id = ?").get(conversationId);
+    if (!row) throw new StoreError("conversation_not_found", "会话不存在");
+    return Boolean(row.queue_paused);
+  }
+
+  resumeQueue(conversationId: string): void {
+    this.isQueuePaused(conversationId);
+    this.sqlite.prepare("UPDATE conversations SET queue_paused = 0 WHERE id = ?").run(conversationId);
   }
 
   listMessages(conversationId: string, includeInactive = false): MessageDto[] {

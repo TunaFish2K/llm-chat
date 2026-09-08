@@ -75,6 +75,7 @@ export function ChatView({
   const [editingMessage, setEditingMessage] = useState<MessageDto | null>(null);
   const [branching, setBranching] = useState(false);
   const [compacting, setCompacting] = useState(false);
+  const [actionsHost, setActionsHost] = useState<HTMLDivElement | null>(null);
   const [newGreetingIndex, setNewGreetingIndex] = useState(0);
   const [previewAgentId, setPreviewAgentId] = useState<string | null>(null);
   const [roleplayOpen, setRoleplayOpen] = useState(false);
@@ -224,6 +225,7 @@ export function ChatView({
         onToggleInspector={onToggleInspector}
         onViewChange={onViewChange}
         runningTasks={runningTasks}
+        actionsRef={setActionsHost}
       />
 
       <div className="chat-scroll-shell">
@@ -286,6 +288,7 @@ export function ChatView({
             ) : null}
       </div>
       <Composer
+        actionsHost={actionsHost}
         conversation={conversation}
         onInspect={onInspect}
         onBeforeSend={() => scroller.toBottom()}

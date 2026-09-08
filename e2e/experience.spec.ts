@@ -79,6 +79,30 @@ test("搜索标题和正文并高亮，通过菜单管理会话", async ({ page,
     const dialog = page.getByRole("dialog", { name: "搜索会话" });
     await dialog.getByRole("searchbox").fill("灯塔");
     await expect(dialog.locator("mark")).toHaveText("灯塔");
+    const searchButton = page.getByRole("button", { name: "搜索会话", exact: true });
+    const sidebarScroll = page.locator(".conversation-scroll:visible");
+    const previousScroll = await sidebarScroll.evaluate(element => element.scrollTop);
+    await page.keyboard.down("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(searchButton).toBeFocused();
+    await page.keyboard.down("Escape"); // Auto-repeat must not dismiss the drawer.
+    await page.keyboard.up("Escape");
+    await expect(searchButton).toBeVisible();
+    expect(await sidebarScroll.evaluate(element => element.scrollTop)).toBe(previousScroll);
+    await searchButton.click();
+    await dialog.getByRole("searchbox").fill("灯塔");
+    await expect(dialog.locator("mark")).toHaveText("灯塔");
+    await dialog.locator(".conversation-search-result").focus();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    if (test.info().project.name === "mobile-chromium") {
+      await expect(page.locator(".drawer-panel")).toHaveCount(1);
+      await page.keyboard.press("Escape");
+      await expect(page.locator(".drawer-panel")).toHaveCount(0);
+      await openDrawerIfNeeded(page);
+    }
+    await searchButton.click();
+    await dialog.getByRole("searchbox").fill("灯塔");
     await dialog.locator(".conversation-search-result").click();
     await expect(page).toHaveURL(new RegExp(`/c/${id}$`));
     await openDrawerIfNeeded(page);
