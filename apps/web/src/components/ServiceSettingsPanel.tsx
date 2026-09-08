@@ -59,7 +59,7 @@ export function ServiceSettingsPanel({ kind }: { kind: "search" | "image" }) {
           }} /><button className="btn small" onClick={() => setKeys({ ...keys, [item.id]: "" })}>清除</button></div>
           {keys[item.id] === "" ? <small>保存后清除密钥</small> : null}
         </Field>
-      </div> : <><code>{item.id}</code>{!item.available && item.enabled ? <p className="hint">请确认模型已启用，并配置图片协议。</p> : null}</>}
+      </div> : <><code className="service-model-id">{item.id}</code>{!item.available && item.enabled ? <p className="hint">请确认模型已启用，并配置图片协议。</p> : null}</>}
     </li>)}</ol></fieldset>
     <button className="btn primary" disabled={busy} onClick={() => void save(input())}>{busy ? "正在保存…" : "保存配置"}</button>
   </div>;

@@ -357,7 +357,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 33) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 34) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1209,6 +1209,12 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 33;
       `);
     }
+    if (current < 34) {
+      if (!hasColumn(sqlite, "app_settings", "accent_color")) sqlite.exec("ALTER TABLE app_settings ADD COLUMN accent_color TEXT");
+      if (!hasColumn(sqlite, "app_settings", "amoled")) sqlite.exec("ALTER TABLE app_settings ADD COLUMN amoled INTEGER NOT NULL DEFAULT 0");
+      if (!hasColumn(sqlite, "queued_messages", "mode")) sqlite.exec("ALTER TABLE queued_messages ADD COLUMN mode TEXT NOT NULL DEFAULT 'queue'");
+      sqlite.exec("PRAGMA user_version = 34");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1514,7 +1520,9 @@ export class Store {
       uiPreferences: {
         sidebarCollapsed: Boolean(row.sidebar_collapsed),
         reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"],
-        generationHaptics: Boolean(row.generation_haptics)
+        generationHaptics: Boolean(row.generation_haptics),
+        accentColor: textOrNull(row.accent_color),
+        amoled: Boolean(row.amoled)
       },
       lastWorkspacePath: textOrNull(row.last_workspace_path)
     };
@@ -1531,18 +1539,18 @@ export class Store {
       defaultAgentId: patch.defaultAgentId ?? current.defaultAgentId,
       lastAgentId: patch.lastAgentId ?? current.lastAgentId,
       userProfile: patch.userProfile ?? current.userProfile,
-      uiPreferences: patch.uiPreferences ?? current.uiPreferences,
+      uiPreferences: { ...current.uiPreferences, ...patch.uiPreferences },
       lastWorkspacePath: patch.lastWorkspacePath === undefined ? current.lastWorkspacePath : patch.lastWorkspacePath
     };
     this.sqlite.prepare(`
       UPDATE app_settings SET default_model_id = ?, default_context_policy = ?, theme = ?, default_system_prompt = ?, reasoning_effort = ?,
         default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
-        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?
+        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?, accent_color = ?, amoled = ?
       WHERE id = 1
     `).run(next.defaultModelId, next.defaultContextPolicy, next.theme, next.defaultSystemPrompt, next.reasoningEffort,
       next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
       next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy,
-      next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath);
+      next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath, next.uiPreferences.accentColor ?? null, Number(next.uiPreferences.amoled ?? false));
     if (patch.defaultSystemPrompt !== undefined || patch.userProfile !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries").run();
     }
@@ -2883,9 +2891,10 @@ export class Store {
 
   listQueuedMessages(conversationId: string): import("@llm-chat/contracts").QueuedMessageDto[] {
     if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
-    return (this.sqlite.prepare("SELECT * FROM queued_messages WHERE conversation_id = ? ORDER BY sequence").all(conversationId) as Row[])
+    return (this.sqlite.prepare("SELECT * FROM queued_messages WHERE conversation_id = ? ORDER BY CASE WHEN mode = 'steer' THEN 0 ELSE 1 END, sequence").all(conversationId) as Row[])
       .map((row) => ({
         id: String(row.id), conversationId, text: String(row.text),
+        mode: row.mode === "steer" ? "steer" : "queue",
         status: row.status as "pending" | "dispatching" | "failed", error: textOrNull(row.error),
         generationId: textOrNull(row.generation_id), createdAt: Number(row.created_at),
         attachments: (this.sqlite.prepare("SELECT asset_id FROM queued_message_assets WHERE queue_id = ? ORDER BY asset_index").all(String(row.id)) as Row[])
@@ -2893,7 +2902,7 @@ export class Store {
       }));
   }
 
-  enqueueMessage(conversationId: string, text: string, assetIds: string[]) {
+  enqueueMessage(conversationId: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") {
     return this.transaction(() => {
       if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
       this.validateAttachments(assetIds);
@@ -2903,6 +2912,7 @@ export class Store {
         .run(id, conversationId, text, Date.now());
       const insert = this.sqlite.prepare("INSERT INTO queued_message_assets(queue_id, asset_id, asset_index) VALUES (?, ?, ?)");
       assetIds.forEach((assetId, index) => insert.run(id, assetId, index));
+      this.sqlite.prepare("UPDATE queued_messages SET mode = ? WHERE id = ?").run(mode, id);
       this.sqlite.prepare("UPDATE conversations SET draft = '' WHERE id = ?").run(conversationId);
       return this.listQueuedMessages(conversationId).find((item) => item.id === id)!;
     });
@@ -2915,6 +2925,11 @@ export class Store {
     }
     this.sqlite.prepare("DELETE FROM queued_messages WHERE conversation_id = ? AND status != 'dispatching' AND (? IS NULL OR id = ?)")
       .run(conversationId, id ?? null, id ?? null);
+  }
+
+  hasPendingSteer(conversationId: string): boolean {
+    return Boolean(this.sqlite.prepare(`SELECT 1 FROM queued_messages q JOIN conversations c ON c.id = q.conversation_id
+      WHERE q.conversation_id = ? AND q.mode = 'steer' AND q.status = 'pending' AND c.queue_paused = 0 LIMIT 1`).get(conversationId));
   }
 
   dispatchQueuedMessage(conversationId: string, validate: (assets: string[]) => void): GenerationCreatedDto | null {

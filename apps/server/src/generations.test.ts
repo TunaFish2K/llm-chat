@@ -19,6 +19,28 @@ afterEach(() => {
 });
 
 describe("GenerationRunner lifecycle", () => {
+  it("hands off to steer before the next API call, after completing tools, ahead of ordinary queue items", async () => {
+    const store = createStore(); const generation = seedGeneration(store);
+    const gate = deferred<void>();
+    const execute = vi.fn(async () => { await gate.promise; return "finished tool"; });
+    const stream = vi.fn(() => events([toolCall("call", "work", "{}"), { type: "complete", stopReason: "tool_calls" }]));
+    const runner = makeRunner(store, { buildTools: async () => [serverTool("work", execute)], stream });
+    runner.start(generation.generationId);
+    await until(() => execute.mock.calls.length > 0);
+    store.enqueueMessage(generation.conversationId, "ordinary", []);
+    store.enqueueMessage(generation.conversationId, "change direction", [], "steer");
+    expect(store.getGeneration(generation.generationId)?.status).toBe("running");
+    gate.resolve();
+    const result = await terminal(store, generation.generationId);
+    expect(result).toMatchObject({ status: "completed", stopReason: "steered" });
+    expect(result.toolCalls[0]?.output).toBe("finished tool");
+    expect(stream).toHaveBeenCalledTimes(1);
+    const next = store.dispatchQueuedMessage(generation.conversationId, () => {});
+    expect(store.listMessages(generation.conversationId).find((message) => message.id === next?.userMessageId)?.text).toBe("change direction");
+    expect(store.allContextMessages(generation.conversationId)).toEqual(expect.arrayContaining([expect.objectContaining({ text: "change direction" })]));
+    expect(store.listQueuedMessages(generation.conversationId).some((item) => item.text === "ordinary" && item.status === "pending")).toBe(true);
+  });
+
   it("guards unknown and terminal generations and starts an active generation only once", async () => {
     const store = createStore();
     const first = seedGeneration(store);

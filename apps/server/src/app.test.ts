@@ -18,6 +18,23 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("searches active message text and empty conversation titles, escapes wildcards and rejects oversized queries", async () => {
+    const app = await testApp(); const model = await createApiModel(app);
+    const started = app.store.startConversation({ text: "正文 needle 100%", modelId: model.id, contextPolicy: "full" });
+    app.store.finishGeneration(started.generation.generationId, "completed", {});
+    app.store.updateConversation(started.conversation.id, { title: "正文命中" });
+    const title = app.store.createConversation({ title: "needle title", systemPrompt: "" });
+    const response = (await app.inject({ method: "GET", url: "/api/conversations/search?query=needle" })).json();
+    expect(response.map((item: { conversationId: string }) => item.conversationId)).toEqual([title.id, started.conversation.id]);
+    expect(response[1].snippet).toContain("needle");
+    expect((await app.inject({ method: "GET", url: "/api/conversations/search?query=%25" })).json()).toHaveLength(1);
+    const path = `/api/conversations/${started.conversation.id}/history`;
+    const history = (await app.inject({ method: "GET", url: path })).json();
+    await app.inject({ method: "POST", url: path, payload: { action: "undo", revision: history.revision } });
+    expect((await app.inject({ method: "GET", url: "/api/conversations/search?query=needle" })).json()).toHaveLength(1);
+    expect((await app.inject({ method: "GET", url: `/api/conversations/search?query=${"x".repeat(201)}` })).statusCode).toBe(400);
+  });
+
   it("cancels before undo, pauses queued messages, and redoes without a provider request", async () => {
     const app = await testApp(); const model = await createApiModel(app);
     const started = app.store.startConversation({ text: "original", modelId: model.id, contextPolicy: "full" });

@@ -65,7 +65,7 @@ export function ConversationHeader({
 
   return (
     <header className="conversation-header">
-      <button
+      {mobile ? <button
         type="button"
         className="icon-button shell-control"
         onClick={onToggleSidebar}
@@ -73,7 +73,7 @@ export function ConversationHeader({
         title={mobile ? "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
       >
         {mobile ? <Menu size={20} /> : sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-      </button>
+      </button> : null}
 
       <div className="conversation-heading">
         {editing ? (

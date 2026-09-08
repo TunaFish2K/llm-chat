@@ -259,7 +259,7 @@ describe("SettingsView", () => {
 
     const addConnection = screen.getByRole("button", { name: "新建连接" });
     expect(addConnection).toBeEnabled();
-    expect(screen.getByRole("button", { name: "手动添加模型" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "手动添加模型" })).not.toBeInTheDocument();
 
     await user.click(addConnection);
     const dialog = screen.getByRole("dialog", { name: "新建连接" });

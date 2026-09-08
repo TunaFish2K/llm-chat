@@ -1,5 +1,5 @@
 import { createServer, request as httpRequest } from "node:http";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { APP_URL } from "./helpers.mjs";
 
 async function controlled(page: Page) {

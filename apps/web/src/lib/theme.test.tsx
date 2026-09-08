@@ -4,6 +4,18 @@ import { makeSettings } from "../../test/fixtures";
 import { THEME_COLORS, useTheme } from "./theme";
 
 describe("useTheme", () => {
+  it("applies a custom accent and limits pure black to dark mode", () => {
+    const settings = makeSettings({ theme: "dark", uiPreferences: { ...makeSettings().uiPreferences, accentColor: "#018EEE", amoled: true } });
+    const { rerender } = renderHook(({ value }) => useTheme(value), { initialProps: { value: settings } });
+    expect(document.documentElement.dataset.amoled).toBe("true");
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#018EEE");
+    expect(document.documentElement.style.getPropertyValue("--text-invert")).toBe("#000000");
+    rerender({ value: { ...settings, theme: "light" } });
+    expect(document.documentElement.dataset.amoled).toBe("false");
+    rerender({ value: { ...settings, uiPreferences: { ...settings.uiPreferences, accentColor: null } } });
+    expect(document.documentElement.style.getPropertyValue("--accent")).toBe("");
+  });
+
   it("keeps the document and browser chrome color in sync with the selected theme", () => {
     const meta = document.createElement("meta");
     meta.name = "theme-color";

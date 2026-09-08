@@ -39,9 +39,9 @@ describe("WorkspaceSidebar", () => {
       />
     );
 
-    expect(screen.getByTitle("正在连接事件流")).toHaveTextContent("连接中");
+    expect(screen.queryByTitle("正在连接事件流")).not.toBeInTheDocument();
     act(() => appStore.set({ eventsConnectionState: "reconnecting" }));
-    expect(screen.getByTitle("事件流断开，正在重连")).toHaveTextContent("重连中");
+    expect(screen.queryByTitle("事件流断开，正在重连")).not.toBeInTheDocument();
     view.unmount();
   });
 
@@ -104,7 +104,7 @@ describe("WorkspaceSidebar", () => {
     expect(screen.getByRole("link", { name: "Agent" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "设置" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "安装到设备" })).toBeInTheDocument();
-    expect(screen.getByLabelText("事件流已连接")).toBeInTheDocument();
+    expect(screen.queryByLabelText("事件流已连接")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "展开会话栏" }));
     expect(onToggleCompact).toHaveBeenCalledOnce();

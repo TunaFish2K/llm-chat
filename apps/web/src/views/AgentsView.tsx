@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AgentInput } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { appStore, refreshAgents, toast, toastError } from "../lib/app-state";
@@ -46,6 +46,7 @@ export function defaultAgentInput(name: string): AgentInput {
   };
 }
 
+let listPosition = { query: "", page: 1 };
 export function AgentsView() {
   const agents = useStore(appStore, (s) => s.agents);
   const models = useStore(appStore, (s) => s.models);
@@ -54,6 +55,15 @@ export function AgentsView() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState(listPosition.query);
+  const [page, setPage] = useState(listPosition.page);
+  const filtered = agents.filter((agent) => `${agent.name}\n${agent.description}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const pages = Math.max(1, Math.ceil(filtered.length / 12));
+  const currentPage = Math.min(page, pages);
+  const visible = filtered.slice((currentPage - 1) * 12, currentPage * 12);
+  useEffect(() => { if (!window.matchMedia("(pointer: coarse)").matches) searchInput.current?.focus(); }, []);
+  useEffect(() => { listPosition = { query, page: currentPage }; }, [query, currentPage]);
 
   const create = async () => {
     if (!newName.trim()) return;
@@ -133,11 +143,13 @@ export function AgentsView() {
         </div>
       </div>
       <div className="panel-scroll">
-        <div className="panel-inner">
+        <div className="panel-inner agent-directory">
+          <input ref={searchInput} className="input" type="search" aria-label="搜索 Agent 列表" placeholder="搜索 Agent 名称或描述" value={query}
+            onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
           {agents.length === 0 ? (
             <EmptyState title="还没有 Agent" hint="新建一个 Agent 或导入 Character Card（JSON / PNG）。" />
           ) : (
-            agents.map((agent) => (
+            visible.map((agent) => (
               <div key={agent.id} className="list-row agent-list-row">
                 <a
                   className="agent-card-main"
@@ -188,6 +200,10 @@ export function AgentsView() {
               </div>
             ))
           )}
+          {agents.length > 0 && !filtered.length ? <p className="hint">没有匹配的 Agent。</p> : null}
+          <nav className="list-pagination" aria-label="Agent 分页"><span>{filtered.length} 个 Agent · {currentPage} / {pages}</span>
+            <button className="btn small" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</button>
+            <button className="btn small" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>下一页</button></nav>
         </div>
       </div>
       {creating ? (

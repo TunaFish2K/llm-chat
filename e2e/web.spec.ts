@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "./fixtures";
 import { agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
@@ -40,7 +40,7 @@ test.describe("应用外壳", () => {
     await page.goto(APP_URL);
     await openDrawerIfNeeded(page);
     await expect(page.locator(".sidebar-brand")).toHaveText(/Chat/);
-    await expect(page.getByTitle("事件流已连接")).toBeVisible({ timeout: 2_000 });
+    await expect(page.getByTitle("事件流已连接")).toHaveCount(0);
     await expect(page.getByRole("link", { name: "后台任务" })).toHaveCount(0);
 
     await gotoPath(page, "/agents");
@@ -244,12 +244,16 @@ test.describe("会话与流式生成", () => {
         await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
         await page.getByRole("button", { name: "打开导航" }).click();
         const drawer = page.locator(".drawer-panel");
+        await drawer.click({ trial: true, position: { x: 20, y: 20 } });
         const box = await drawer.boundingBox();
         if (!box) throw new Error("导航抽屉没有尺寸");
-        await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.55);
-        await page.mouse.down();
-        await page.mouse.move(box.x + 8, box.y + box.height * 0.55, { steps: 5 });
-        await page.mouse.up();
+        const touch = await page.context().newCDPSession(page);
+        const startX = box.x + box.width * 0.8, endX = box.x + 8, y = box.y + box.height * 0.55;
+        await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: startX, y }] });
+        for (let step = 1; step <= 5; step++) {
+          await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: startX + (endX - startX) * step / 5, y }] });
+        }
+        await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
         await expect(drawer).toHaveCount(0);
       }
       await page.goto(`${APP_URL}/`);
@@ -280,7 +284,8 @@ test.describe("会话与流式生成", () => {
       await openDrawerIfNeeded(page);
       const item = page.locator(".conversation-row").first();
       await item.hover();
-      await item.getByRole("button", { name: /重命名/ }).click();
+      await item.getByRole("button", { name: /会话操作/ }).click();
+      await page.getByRole("button", { name: /重命名/ }).click();
       const title = `长标题-${"标题".repeat(88)}-${unique()}`;
       await page.getByRole("textbox", { name: "会话标题" }).fill(title);
       await page.getByRole("button", { name: "保存" }).click();
@@ -326,7 +331,8 @@ test.describe("会话与流式生成", () => {
       await openDrawerIfNeeded(page);
       const renamed = page.locator(".conversation-row", { hasText: title });
       await renamed.hover();
-      await renamed.getByRole("button", { name: /删除/ }).click();
+      await renamed.getByRole("button", { name: /会话操作/ }).click();
+      await page.getByRole("button", { name: /删除 长标题/ }).click();
       await page.locator(".modal").getByRole("button", { name: "删除", exact: true }).click();
       await openDrawerIfNeeded(page);
       await expect(page.locator(".conversation-row", { hasText: title })).toHaveCount(0);

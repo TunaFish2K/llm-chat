@@ -116,3 +116,12 @@ html[data-theme="light"] {
 
   --user-bubble: #ffffff;
 }
+html[data-theme="dark"][data-amoled="true"] {
+  --bg: #000000;
+  --bg-deep: #000000;
+  --surface-1: #000000;
+  --surface-inset: #000000;
+  --surface-2: #090909;
+  --surface-3: #141414;
+  --user-bubble: #111111;
+}

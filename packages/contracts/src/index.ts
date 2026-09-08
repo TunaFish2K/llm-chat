@@ -674,7 +674,9 @@ export const appSettingsSchema = z.object({
   uiPreferences: z.object({
     sidebarCollapsed: z.boolean(),
     reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"]),
-    generationHaptics: z.boolean().default(true)
+    generationHaptics: z.boolean().default(true),
+    accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
+    amoled: z.boolean().optional()
   }),
   lastWorkspacePath: z.string().max(4096).nullable().default(null)
 });
@@ -904,6 +906,7 @@ export interface MessageDto {
 }
 
 export interface QueuedMessageDto {
+  mode?: "queue" | "steer";
   id: string;
   conversationId: string;
   text: string;
