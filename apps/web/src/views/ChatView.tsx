@@ -289,6 +289,7 @@ export function ChatView({
       </div>
       <Composer
         actionsHost={actionsHost}
+        mobile={mobile}
         conversation={conversation}
         onInspect={onInspect}
         onBeforeSend={() => scroller.toBottom()}
