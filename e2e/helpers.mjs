@@ -78,6 +78,6 @@ export async function openDrawerIfNeeded(page) {
 }
 
 export async function gotoPath(page, path) {
-  await page.goto(path);
+  await page.goto(path, { waitUntil: "domcontentloaded" });
   await expect(page.locator(".app-frame")).toBeVisible();
 }

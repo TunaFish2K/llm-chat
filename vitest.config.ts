@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath } from "node:url";
 
 const criticalCoverageThreshold = {
   statements: 90,
@@ -22,6 +23,7 @@ export default defineConfig({
         }
       },
       {
+        resolve: { alias: { "virtual:pwa-register": fileURLToPath(new URL("./apps/web/test/pwa-register.ts", import.meta.url)) } },
         test: {
           name: "web",
           environment: "jsdom",

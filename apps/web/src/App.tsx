@@ -178,7 +178,8 @@ export function App() {
         </MobileDrawer>
       ) : null}
 
-      <ToastStack toasts={state.toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate} />
+      <ToastStack toasts={state.toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
+        updating={["checking", "downloading", "applying"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
     </AppFrame>
   );
 }

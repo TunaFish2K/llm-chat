@@ -275,20 +275,24 @@ export function MobileDrawer({
 export function ToastStack({
   toasts,
   updateAvailable,
-  onApplyUpdate
+  onApplyUpdate,
+  updating = false,
+  updateError
 }: {
   toasts: Toast[];
   updateAvailable: boolean;
   onApplyUpdate: () => void;
+  updating?: boolean;
+  updateError?: string | null;
 }) {
   return (
     <div className="toast-stack" aria-live="polite">
       {updateAvailable ? (
         <div className="toast info">
           <RefreshCw size={16} aria-hidden="true" />
-          <span>新版本已准备好</span>
-          <Button variant="primary" size="sm" onClick={onApplyUpdate}>
-            更新
+          <span role={updateError ? "alert" : "status"}>{updateError ?? (updating ? "正在启用新版本…" : "新版本已准备好")}</span>
+          <Button variant="primary" size="sm" onClick={onApplyUpdate} disabled={updating}>
+            更新并刷新
           </Button>
         </div>
       ) : null}
