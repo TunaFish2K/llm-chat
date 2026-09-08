@@ -1222,6 +1222,13 @@ button.trajectory-step {
   flex: 1 1 auto;
   overflow-y: auto;
 }
+.service-list { list-style: none; padding: 0; margin-block: 16px; }
+.service-list > li { padding-block: 12px; border-bottom: 1px solid var(--border); }
+.service-heading, .service-order { display: flex; align-items: center; gap: 6px; }
+.service-heading { justify-content: space-between; margin-bottom: 10px; }
+.service-heading > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.service-order { flex: 0 0 auto; }
+.service-list code { overflow-wrap: anywhere; }
 
 .panel-inner {
   width: min(100%, 1050px);
@@ -1352,3 +1359,4 @@ button.trajectory-step {
   .codex-panel-toolbar .btn { width: auto; }
   .codex-session-meta .mono { max-width: 100%; overflow-wrap: anywhere; }
 }
+.service-fields { border: 0; padding: 0; margin: 0; min-width: 0; }

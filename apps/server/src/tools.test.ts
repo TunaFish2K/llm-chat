@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 import { ImageService } from "./images";
+import { ServiceSettings } from "./service-settings";
 import { buildServerTools, persistLargeToolOutput, type ServerTool, toolCatalog, toolSystemPrompt } from "./tools";
 
 afterEach(() => {
@@ -15,12 +16,12 @@ const signal = () => new AbortController().signal;
 const tool = (tools: ServerTool[], name: string) => tools.find((item) => item.definition.name === name)!;
 
 describe("server tool catalog", () => {
-  it("only exposes image_generate when an enabled image model is configured", async () => {
+  it("lists readable image models and allows discovery with no configured model", async () => {
     const store = createStore();
     const { model } = seedModel(store);
     const imageManager = { createAndWait: vi.fn() } as never;
     const unavailable = await buildServerTools(store, true, { imageManager });
-    expect(tool(unavailable, "image_generate").available).toBe(false);
+    expect(JSON.parse(await tool(unavailable, "image_generate").execute({ action: "list_models" }, signal()))).toEqual({ models: [] });
 
     store.updateModel(model.id, {
       imageProtocol: "openai-images",
@@ -28,13 +29,11 @@ describe("server tool catalog", () => {
     });
     const available = await buildServerTools(store, true, { imageManager });
     expect(tool(available, "image_generate")).toMatchObject({ available: true });
-    expect(tool(available, "image_generate").definition.inputSchema.properties).toMatchObject({
-      model_id: { enum: [model.id] }
-    });
-    expect(tool(available, "image_generate").definition.inputSchema.required).toEqual(["model_id", "prompt"]);
+    expect(JSON.parse(await tool(available, "image_generate").execute({ action: "list_models" }, signal())).models[0].model_id).toBe("mock/mock-model");
+    expect(tool(available, "image_generate").definition.inputSchema.required).toEqual([]);
     await expect(tool(available, "image_generate").execute(
-      { prompt: "a coastal sunset" }, signal(), {} as never
-    )).rejects.toThrow(`image_generate requires model_id`);
+      { model_id: "missing", prompt: "a coastal sunset" }, signal(), {} as never
+    )).rejects.toThrow("No matching enabled image model");
     store.close();
   });
 
@@ -43,7 +42,7 @@ describe("server tool catalog", () => {
     store.updateToolSettings({ enabled: { get_time_info: false }, workspaceShellEnabled: false });
     const enabled = await buildServerTools(store);
     expect(enabled.some((entry) => entry.definition.name === "get_time_info")).toBe(true);
-    expect(tool(enabled, "search_web").available).toBe(false);
+    expect(tool(enabled, "search_web").available).toBe(true);
     expect(tool(enabled, "workspace_shell").available).toBe(true);
     expect(tool(enabled, "workspace_shell").requiresApproval({ command: "pwd" })).toBe(true);
     expect(tool(enabled, "workspace_write_file").definition.inputSchema).toMatchObject({
@@ -395,9 +394,8 @@ describe("fetch and search tools", () => {
 
   it("builds SearXNG requests with auth and maps limited results and errors", async () => {
     const store = createStore();
-    const search = tool(await buildServerTools(store, false, {
-      searchConfig: { provider: "searxng", baseUrl: "https://search.test" }, searchApiKey: "token"
-    }), "search_web");
+    new ServiceSettings(store).update({ searchEngines: [{ id: "searxng", provider: "searxng", enabled: true, baseUrl: "https://search.test", apiKey: "token" }] });
+    const search = tool(await buildServerTools(store), "search_web");
     const fetchMock = vi.fn(async (_url: URL | string, _init?: RequestInit) => Response.json({ results: [
       { title: "One", url: "https://one.test", content: "first" },
       { title: "Two" }, { title: "Three" }
@@ -413,18 +411,16 @@ describe("fetch and search tools", () => {
     expect(init?.headers).toMatchObject({ authorization: "Bearer token" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response("no", { status: 429 })));
     await expect(search.execute({ query: "x" }, signal())).rejects.toThrow("HTTP 429");
-    const unavailable = tool(await buildServerTools(store, true, {
-      searchConfig: { provider: "searxng", baseUrl: "" }, searchApiKey: ""
-    }), "search_web");
-    await expect(unavailable.execute({ query: "x" }, signal())).rejects.toThrow("not configured");
+    new ServiceSettings(store).update({ searchEngines: [{ id: "searxng", provider: "searxng", enabled: false, baseUrl: "" }] });
+    const unavailable = tool(await buildServerTools(store, true), "search_web");
+    await expect(unavailable.execute({ query: "x" }, signal())).rejects.toThrow("No matching enabled search engine");
     store.close();
   });
 
   it("builds Tavily requests and maps results", async () => {
     const store = createStore();
-    const search = tool(await buildServerTools(store, false, {
-      searchConfig: { provider: "tavily", baseUrl: "" }, searchApiKey: "tvly-secret"
-    }), "search_web");
+    new ServiceSettings(store).update({ searchEngines: [{ id: "tavily", provider: "tavily", enabled: true, baseUrl: "", apiKey: "tvly-secret" }] });
+    const search = tool(await buildServerTools(store), "search_web");
     const fetchMock = vi.fn(async (_url: URL | string, _init?: RequestInit) => Response.json({ results: [
       { title: "Tavily result", url: "https://one.test", content: "snippet" }
     ] }));

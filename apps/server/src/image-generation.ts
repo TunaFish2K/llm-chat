@@ -10,6 +10,7 @@ import {
 import { Store, StoreError } from "./database";
 import { EventHub } from "./events";
 import { ImageService } from "./images";
+import { ServiceSettings } from "./service-settings";
 
 type CreateImageGenerationInput = {
   conversationId: string;
@@ -42,6 +43,9 @@ export class ImageGenerationManager {
     if (!model?.enabled) throw new StoreError("image_model_not_found", "图片模型不存在或已停用");
     if (!model.capabilities.imageOutput || !model.imageProtocol) {
       throw new StoreError("image_model_unsupported", "所选模型不支持图片生成");
+    }
+    if (!new ServiceSettings(this.store).images().some((item) => item.modelId === model.id && item.available)) {
+      throw new StoreError("image_model_disabled", "此图片模型未在全局图片工具设置中启用");
     }
     const connection = this.store.getConnection(model.connectionId);
     if (!connection) throw new StoreError("connection_not_found", "模型连接不存在");
@@ -123,6 +127,7 @@ export class ImageGenerationManager {
       }
       this.assertInputsBelongToConversation(job.conversationId, input);
       const request = await this.requestFor(job, input, connection, controller.signal);
+      controller.signal.throwIfAborted();
       const adapter = imageAdapter(job.imageProtocol);
       this.update(jobId, { status: "running", progress: 0.05, startedAt: job.startedAt ?? Date.now() });
 
@@ -222,7 +227,7 @@ export class ImageGenerationManager {
   private async complete(jobId: string, result: ImageGenerationCompleted): Promise<void> {
     if (!result.images.length) throw new ProviderError("image_response_invalid", "图片服务没有返回图片");
     const job = this.store.getImageGenerationJob(jobId);
-    if (!job) return;
+    if (!job || isTerminal(job.status)) return;
     const assets = [];
     for (const [index, image] of result.images.slice(0, 4).entries()) {
       const extension = image.mimeType === "image/jpeg" ? "jpg" : image.mimeType.slice("image/".length);
@@ -236,6 +241,7 @@ export class ImageGenerationManager {
           : null);
       if (!bytes) throw new ProviderError("image_response_invalid", "图片结果缺少数据或 URL");
       assets.push(await this.images.importGeneratedBytes(`${job.modelKey}-${index + 1}.${extension}`, bytes));
+      this.controllers.get(jobId)?.signal.throwIfAborted();
     }
     const updated = this.store.attachImageJobOutputs(jobId, assets.map((asset) => asset.id));
     if (!updated) return;
@@ -251,6 +257,8 @@ export class ImageGenerationManager {
   }
 
   private update(jobId: string, patch: Parameters<Store["updateImageGenerationJob"]>[1]): ImageGenerationJobDto | undefined {
+    const current = this.store.getImageGenerationJob(jobId);
+    if (!current || isTerminal(current.status)) return undefined;
     const updated = this.store.updateImageGenerationJob(jobId, patch);
     if (updated) this.emit(updated);
     return updated;

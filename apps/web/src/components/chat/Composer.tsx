@@ -38,6 +38,7 @@ import { AgentPicker } from "./AgentPicker";
 import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEditor";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
+import { RecoveryDialog, useConversationHistory } from "./ConversationHistory";
 
 const DRAFT_DEBOUNCE_MS = 500;
 
@@ -96,6 +97,7 @@ export function Composer({
   const [sending, setSending] = useState(false);
   const { attachments, setAttachments, uploading, uploadFiles } = useAttachments([], conversation?.id);
   const { items: queuedMessages, reload: reloadQueue } = useMessageQueue(conversation?.id);
+  const history = useConversationHistory(conversation?.id);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedConversation = useRef<string | null>(null);
   const wasGenerating = useRef(false);
@@ -166,6 +168,9 @@ export function Composer({
     .flatMap((message) => message.generations.map((generation) => ({ message, generation })))
     .find(({ generation }) => isGenerationActive(generation.status));
   const generating = Boolean(active && active.generation.status !== "waiting-approval");
+  useEffect(() => {
+    if (conversation && !active) { void reloadQueue().catch(toastError); void history.reload().catch(toastError); }
+  }, [conversation?.id, active?.generation.id, reloadQueue, history.reload]);
   const pendingApprovals = messages
     .flatMap((message) =>
       message.generations.flatMap((generation) =>
@@ -326,7 +331,7 @@ export function Composer({
         await loadMessages(result.conversation.id);
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
         navigate(routes.chat(result.conversation.id));
-      } else if (active || queuedMessages.some((item) => item.status !== "failed")) {
+      } else if (active || (!history.state?.queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
         await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id));
         setText(""); setAttachments([]); persistDraft("");
         await reloadQueue();
@@ -500,6 +505,11 @@ export function Composer({
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content className="composer-more-popover" side="top" align="end" sideOffset={10}>
+                        {conversation ? <>
+                          <button type="button" disabled={history.busy || !history.state?.canUndo} onClick={() => { setMoreOpen(false); void history.perform("undo"); }}>撤回上一轮</button>
+                          <button type="button" disabled={history.busy || !history.state?.canRedo} onClick={() => { setMoreOpen(false); void history.perform("redo"); }}>重做</button>
+                          <button type="button" onClick={() => { setMoreOpen(false); history.setOpen(true); }}>恢复记录</button>
+                        </> : null}
                         <div className="composer-more-mobile">
                           <button type="button" aria-label="选择工作目录" onClick={() => { setMoreOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
                             <FolderOpen size={16} aria-hidden="true" />
@@ -553,7 +563,11 @@ export function Composer({
               </div>
             </>
         </div>
-        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} />
+        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} paused={history.state?.queuePaused ?? false} />
+        {history.open && history.state ? <RecoveryDialog state={history.state} onClose={() => history.setOpen(false)} onRestore={(message) => {
+          if (text.trim() || attachments.length) { toast("info", "请先发送或清空当前草稿，再恢复旧消息"); return; }
+          setText(message.text ?? ""); persistDraft(message.text ?? ""); setAttachments(message.attachments); history.setOpen(false);
+        }} /> : null}
         <p className="composer-hint">Enter 发送 · Shift+Enter 换行</p>
       </div>
 

@@ -445,6 +445,7 @@
 
 /* The mobile app bar already names the screen, so the page title steps aside. */
 @media (max-width: 767px) {
+  .settings-page-title { display: none; }
   .page-header.mobile-redundant-title > h2,
   .page-header.mobile-redundant-title > .page-title > h2 {
     display: none;

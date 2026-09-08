@@ -18,6 +18,31 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("cancels before undo, pauses queued messages, and redoes without a provider request", async () => {
+    const app = await testApp(); const model = await createApiModel(app);
+    const started = app.store.startConversation({ text: "original", modelId: model.id, contextPolicy: "full" });
+    const id = started.conversation.id;
+    app.store.setGenerationWaitingApproval(started.generation.generationId);
+    await app.inject({ method: "POST", url: `/api/conversations/${id}/queued-messages`, payload: { text: "waiting" } });
+    const historyPath = `/api/conversations/${id}/history`;
+    const initial = (await app.inject({ method: "GET", url: historyPath })).json();
+    const undone = await app.inject({ method: "POST", url: historyPath, payload: { action: "undo", revision: initial.revision } });
+    expect(undone.statusCode).toBe(200);
+    expect(undone.json()).toMatchObject({ canRedo: true, queuePaused: true });
+    expect(app.store.getGeneration(started.generation.generationId)?.status).toBe("stopped");
+    expect(app.store.listMessages(id)).toEqual([]);
+    expect(app.store.listQueuedMessages(id)).toHaveLength(1);
+    const stale = await app.inject({ method: "POST", url: historyPath, payload: { action: "redo", revision: initial.revision } });
+    expect(stale.json()).toMatchObject({ error: { code: "history_conflict" } });
+    const redone = await app.inject({ method: "POST", url: historyPath, payload: { action: "redo", revision: undone.json().revision } });
+    expect(redone.statusCode).toBe(200);
+    expect(app.store.listMessages(id).map((message) => message.id)).toContain(started.generation.assistantMessageId);
+    expect(app.store.getGeneration(started.generation.generationId)?.status).toBe("stopped");
+    await app.inject({ method: "DELETE", url: `/api/conversations/${id}/queued-messages` });
+    expect((await app.inject({ method: "POST", url: `/api/conversations/${id}/queue/resume` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: historyPath })).json().queuePaused).toBe(false);
+  });
+
   it("persists queued attachments and supports scoped deletion while a generation is waiting", async () => {
     const app = await testApp();
     const model = await createApiModel(app);

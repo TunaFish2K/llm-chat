@@ -2,6 +2,7 @@
   "name": "@llm-chat/providers",
   "version": "0.1.0",
   "private": true,
+  "license": "Unlicense",
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {

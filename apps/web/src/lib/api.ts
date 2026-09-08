@@ -191,6 +191,11 @@ export interface McpTestResult {
 }
 
 export const endpoints = {
+  serviceSettings: () => api.get<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services"),
+  updateServiceSettings: (input: import("@llm-chat/contracts").ServiceSettingsInput) => api.patch<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services", input),
+  conversationHistory: (id: string) => api.get<import("@llm-chat/contracts").ConversationHistoryDto>(`/api/conversations/${id}/history`),
+  changeHistory: (id: string, input: import("@llm-chat/contracts").HistoryChangeInput) => api.post<import("@llm-chat/contracts").ConversationHistoryDto>(`/api/conversations/${id}/history`, input),
+  resumeQueue: (id: string) => api.post<{ ok: true }>(`/api/conversations/${id}/queue/resume`, {}),
   queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`),
   enqueueMessage: (id: string, text: string, assetIds: string[]) => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds }),
   deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`),

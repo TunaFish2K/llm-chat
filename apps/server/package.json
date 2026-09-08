@@ -2,6 +2,7 @@
   "name": "@llm-chat/server",
   "version": "0.1.0",
   "private": true,
+  "license": "Unlicense",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts --config ../../config.development.json",
