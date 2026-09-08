@@ -36,6 +36,7 @@ function seedStore(messages: MessageDto[] = [], options: { draft?: string; model
 
 function messageFetch(messages: MessageDto[]) {
   return vi.fn((url: string, init?: RequestInit) => {
+    if (url.endsWith("/queued-messages")) return Promise.resolve(json([]));
     if (url === "/api/conversations/conv-1/messages" && (!init || init.method === "GET")) return Promise.resolve(json(messages));
     return Promise.resolve(json({ error: { code: "unexpected", message: `unexpected ${url}` } }, 500));
   });
@@ -588,7 +589,9 @@ describe("ChatView", () => {
 
     await user.click(screen.getByRole("button", { name: "选择模型" }));
     await user.click(await screen.findByRole("button", { name: /Claude 测试/ }));
-    await user.selectOptions(screen.getByLabelText("推理档位"), "high");
+    await user.click(screen.getByRole("button", { name: /^推理档位：/ }));
+    await user.click(screen.getByRole("button", { name: "high" }));
+    await user.keyboard("{Escape}");
     await user.type(screen.getByLabelText("输入消息"), "第一条消息");
     await user.click(screen.getByRole("button", { name: "发送" }));
 

@@ -13,6 +13,7 @@
 - 支持 JPEG、PNG、WebP 和 GIF 图片输入。模型可声明原生图片能力；普通文本模型可由 Agent 配置备用识图模型，识图说明、用量和缓存命中会随生成记录。
 - 工作区图片可通过工具导入为内容寻址的永久资源。资源 URL 包含 SHA-256，并使用不可变浏览器缓存；公网 Markdown 图片通过服务端安全代理加载。
 - 内置时间、隔离 JavaScript、网页读取、SearXNG/Tavily 搜索、历史对话、长期记忆、Skills、会话工作目录和后台任务工具。
+- 生成中可以连续提交待发送消息，并删除其中几条或全部。队列按会话分支保存在服务端；当前生成结束后逐条发送，取消或失败后也会继续。历史消息编辑可增删附件，保存到新分支。
 - 支持隔离的 ESM 工具 Plugin。Plugin 使用内容寻址修订，并可在运行时安装、卸载和手动重载。
 - 支持 pipe 和 PTY 后台任务。Agent 可以监控完整 CLI harness，并在终端提示出现时代表用户审批或拒绝。
 - 支持远程 MCP Streamable HTTP，并兼容旧 SSE 传输。
@@ -156,6 +157,9 @@ Agent 修改后，选择该 Agent 的会话会在下一次生成时读取新配�
 打开 Agent 的“工具”与“Skill”页管理搜索服务、启用状态、直接性、三态审批策略和后台资源额度。每个 Agent 只能选择一个搜索服务：SearXNG 或 Tavily；搜索 API Key 只通过服务端保存。打开“设置”管理全局工具、Plugins、Skills 和 MCP。全局 Skill 页不删除来源目录；删除或卸载应交给对应的外部包管理器。
 
 - 搜索工具按 Agent 配置调用 SearXNG JSON 接口或 Tavily `/search` 接口。SearXNG 需要填写服务地址；Tavily 使用 `https://api.tavily.com` 作为默认地址并需要 API Key。配置完成后工具才会注入模型。
+- `browser_fetch` 使用无头 Firefox 执行网页 JavaScript 后提取文字，不需要正在运行的图形桌面。先以服务运行用户执行 `pnpm --filter @llm-chat/server exec playwright-core install firefox`，再在 Agent 的工具页显式启用“浏览器读取网页”；缺少系统依赖时运行 `playwright-core install-deps firefox`。普通 `fetch_url` 保留原行为。
+- 浏览器读取每次创建独立上下文，不保留登录或 Cookie。最多同时运行 2 次，每次最长 30 秒，单资源上限 2 MiB、资源总量上限 16 MiB、返回文字上限 32 Ki 字符；不加载图片、媒体、字体或 WebSocket，不提交表单，也不处理验证码。请求逐次校验公网地址并固定 DNS 结果。
+- 取消生成会中止前台工具。Shell 子进程先收到 SIGTERM，一秒后仍未退出则收到 SIGKILL；独立后台任务不受影响。失败命令保留退出码、标准输出、标准错误、超时与取消标记，折叠工具卡片也显示错误摘要。Shell 每路输出最多保留末尾 1 Mi 字符，截断会明确标记；较长的捕获结果保存到服务端文件，卡片保留尾部预览和文件路径。
 - `coding-supervisor` Skill 优先通过 Codex app-server 管理编码任务；如果 Codex 不可用，回退到通用后台任务。任务页可以发现并接管已有 thread、发送任务、查看结构化事件、处理审批和中断 turn。
 - Codex 默认使用 `server-workspace` 策略。仅在服务端设置 `LLM_CHAT_CODEX_PROFILE=trusted-local-yolo` 时，`trusted-local-yolo` 选项才会生效；部署到其他服务器时应保留默认策略。`LLM_CHAT_CODEX_BIN` 和 `LLM_CHAT_CODEX_SOCKET` 可覆盖 Codex 可执行文件与已有 app-server socket。
 - 新会话可以不绑定工作目录，也可以从服务端目录浏览器选择任意现有可访问目录。旧会话迁移到 `dataDir/workspace`。

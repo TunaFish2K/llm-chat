@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ModelBrandIcon } from "../components/chat/ModelBrandIcon";
 import { Bot, Plus } from "lucide-react";
 import type {
   ConnectionDto,
@@ -187,6 +188,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                           <tr key={model.id}>
                             <td className="connection-model-summary" data-label="模型">
                               <div className="list-row-title">
+                                <ModelBrandIcon model={model} connection={connection} />
                                 <span>{model.displayName}</span>
                                 {model.catalogManaged ? <span className="tag ok">自动维护</span> : null}
                               </div>

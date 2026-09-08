@@ -902,6 +902,17 @@ export interface MessageDto {
   createdAt: number;
 }
 
+export interface QueuedMessageDto {
+  id: string;
+  conversationId: string;
+  text: string;
+  attachments: FileAssetDto[];
+  status: "pending" | "dispatching" | "failed";
+  error: string | null;
+  createdAt: number;
+  generationId: string | null;
+}
+
 const messageTextSchema = z.string().trim().max(1_000_000).default("");
 const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
 const fileAssetIdsSchema = z.array(z.string().uuid()).max(8);
@@ -1229,6 +1240,7 @@ export interface DirectoryListingDto {
 }
 
 export type AppEvent =
+  | { id: number; type: "message-queue"; conversationId: string; generation?: GenerationCreatedDto }
   | { id: number; type: "task"; taskId: string; task: BackgroundTaskDto }
   | { id: number; type: "task-output"; taskId: string; cursor: number }
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }

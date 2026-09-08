@@ -18,6 +18,28 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("persists queued attachments and supports scoped deletion while a generation is waiting", async () => {
+    const app = await testApp();
+    const model = await createApiModel(app);
+    const started = app.store.startConversation({ text: "first", modelId: model.id, contextPolicy: "full" });
+    app.store.setGenerationWaitingApproval(started.generation.generationId);
+    const path = `/api/conversations/${started.conversation.id}/queued-messages`;
+    const asset = app.store.createFileAsset({ sha256: "a".repeat(64), fileName: "a.txt", mimeType: "text/plain", kind: "file", byteSize: 1, storageKey: "test" });
+    const a = await app.inject({ method: "POST", url: path, payload: { text: "", assetIds: [asset.id] } });
+    expect(a.statusCode).toBe(202);
+    expect(a.json()).toMatchObject({ status: "pending", attachments: [{ id: asset.id }] });
+    const b = await app.inject({ method: "POST", url: path, payload: { text: "b" } });
+    expect((await app.inject({ method: "POST", url: path, payload: { text: "" } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: `/api/conversations/${started.conversation.id}/messages`, payload: { text: "bypass" } })).json())
+      .toMatchObject({ error: { code: "conversation_busy" } });
+    expect((await app.inject({ method: "DELETE", url: `${path}/${b.json().id}` })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: path })).json()).toHaveLength(1);
+    expect((await app.inject({ method: "DELETE", url: path })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: path })).json()).toEqual([]);
+    expect((await app.inject({ method: "GET", url: "/api/conversations/missing/queued-messages" })).statusCode).toBe(404);
+    expect((await app.inject({ method: "POST", url: `/api/generations/${started.generation.generationId}/cancel` })).json()).toEqual({ ok: true, status: "stopped" });
+  });
+
   it("serves immutable image assets through SHA-256 cache URLs", async () => {
     const app = await testApp();
     const dataBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -681,7 +703,7 @@ describe("server API", () => {
 
     expect((await app.inject({ method: "POST", url: "/api/generations/missing/cancel" })).statusCode).toBe(404);
     const cancel = vi.spyOn(app.runner, "cancel").mockReturnValue(true);
-    expect((await app.inject({ method: "POST", url: `/api/generations/${generationId}/cancel` })).json()).toEqual({ ok: true });
+    expect((await app.inject({ method: "POST", url: `/api/generations/${generationId}/cancel` })).json()).toEqual({ ok: true, status: "stopping" });
     expect(cancel).toHaveBeenCalledWith(generationId);
 
     expect((await app.inject({ method: "POST", url: "/api/tool-calls/missing/approval", payload: { approved: true } })).statusCode).toBe(404);

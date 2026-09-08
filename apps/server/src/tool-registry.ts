@@ -10,6 +10,7 @@ import type { ImageService } from "./images";
 import type { AppTools } from "./app-tools";
 import type { ImageGenerationManager } from "./image-generation";
 import type { CodexManager } from "./codex";
+import type { BrowserFetchManager } from "./browser-fetch";
 
 export const SEARCH_TOOLS_NAME = "search_tools";
 
@@ -84,7 +85,8 @@ export class ToolRegistry {
     private readonly images?: ImageService,
     private readonly appTools?: AppTools,
     private readonly imageJobs?: ImageGenerationManager,
-    private readonly codex?: CodexManager
+    private readonly codex?: CodexManager,
+    private readonly browser?: BrowserFetchManager
   ) {}
 
   async tools(
@@ -100,6 +102,7 @@ export class ToolRegistry {
     }
     const builtins = (await buildServerTools(this.store, true, {
       taskManager: this.tasks,
+      ...(this.browser ? { browser: this.browser } : {}),
       ...(this.images ? { imageService: this.images } : {}),
       ...(this.imageJobs ? { imageManager: this.imageJobs } : {}),
       ...(this.codex ? { codexManager: this.codex } : {}),
@@ -116,7 +119,7 @@ export class ToolRegistry {
     const all = [...builtins, this.skills.tool(record), ...management, ...await this.plugins.tools(record)];
     const policy = record?.agentSnapshot.execution.tools;
     return all.filter((tool) => (includeUnavailable || tool.available)
-      && (!policy || (policy.overrides[tool.definition.name] ?? policy.defaultEnabled)));
+      && (!policy || (policy.overrides[tool.definition.name] ?? (tool.definition.name === "browser_fetch" ? false : policy.defaultEnabled))));
   }
 
   async catalog(agentId?: string): Promise<ToolCatalogItemDto[]> {
@@ -129,6 +132,7 @@ export class ToolRegistry {
       name: entry.definition.name, label: entry.label, description: entry.definition.description,
       category: entry.category, requiresApproval: await entry.requiresApproval({}), available: entry.available,
       approvalMode: "dynamic", sourceKind: entry.sourceKind ?? (entry.category === "mcp" ? "mcp" : "builtin"),
+      ...(entry.error ? { error: entry.error, operationalState: "error" as const } : {}),
       ...(entry.sourceId ? { sourceId: entry.sourceId } : {}), ...(entry.sourceName ? { sourceName: entry.sourceName } : {}),
       ...(entry.revision ? { revision: entry.revision } : {})
     })));

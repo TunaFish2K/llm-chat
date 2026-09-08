@@ -4,8 +4,6 @@ import {
   Bot,
   ChevronDown,
   FolderOpen,
-  FilePlus2,
-  FileText,
   Drama,
   Gauge,
   ImagePlus,
@@ -14,7 +12,6 @@ import {
   MoreHorizontal,
   Send,
   Settings2,
-  Square,
   Zap,
   Wrench,
   X
@@ -25,37 +22,32 @@ import type {
   ConversationRoleplayState,
   AgentDto,
   GenerationDto,
-  FileAssetDto,
   MessageDto,
   ReasoningEffort,
   ToolCallDto
 } from "@llm-chat/contracts";
-import { endpoints } from "../../lib/api";
+import { ApiRequestError, endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
 import { navigate, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
-import { fileToBase64 } from "../../lib/format";
 import { Field, Modal } from "../../lib/ui";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
 import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson, shortPath } from "./model";
+import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
+import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEditor";
+import { ReasoningPicker } from "./ReasoningPicker";
+import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
 
-const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const MAX_IMAGES = 4;
-const MAX_ATTACHMENTS = 8;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_TOTAL_IMAGE_BYTES = 15 * 1024 * 1024;
-const MAX_FILE_BYTES = 64 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 128 * 1024 * 1024;
 const DRAFT_DEBOUNCE_MS = 500;
 
 /**
  * The composer owns everything about the *next* turn: what to say, which Agent
  * and model answer it, per-conversation overrides, image attachments, and the
- * approval gate that replaces the input while a tool waits for a decision.
+ * approval gate and messages queued for subsequent turns.
  */
 export function Composer({
   conversation,
@@ -105,13 +97,12 @@ export function Composer({
   const [moreOpen, setMoreOpen] = useState(false);
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [attachments, setAttachments] = useState<FileAssetDto[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments([], conversation?.id);
+  const { items: queuedMessages, reload: reloadQueue } = useMessageQueue(conversation?.id);
   const [imageSubmitting, setImageSubmitting] = useState(false);
   const [imagePromptOpen, setImagePromptOpen] = useState(false);
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageModelId, setImageModelId] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedConversation = useRef<string | null>(null);
   const wasGenerating = useRef(false);
@@ -162,8 +153,8 @@ export function Composer({
     ?? imageModels[0];
   const reasoning = overrides.reasoningEffort ?? effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none";
   const advertisedReasoning = effectiveModel?.catalogMetadata?.reasoningEfforts ?? [];
-  const reasoningLevels = advertisedReasoning.length > 0
-    ? [...new Set([...advertisedReasoning, ...(overrides.reasoningEffort ? [overrides.reasoningEffort] : [])])]
+  const reasoningLevels: ReasoningEffort[] = effectiveModel && !effectiveModel.capabilities.reasoning ? ["none"] : advertisedReasoning.length > 0
+    ? advertisedReasoning
     : REASONING_LEVELS;
   const workspace = conversation?.workspacePath ?? newWorkspace;
   const greetings = effectiveAgent && settings ? greetingOptions(effectiveAgent, settings) : [];
@@ -296,71 +287,9 @@ export function Composer({
     }
   };
 
-  /** Validate locally first: type, per-file size, total size, and slot count. */
-  const uploadFiles = async (files: File[]) => {
-    if (!files.length || uploading) return;
-    const slots = Math.max(0, MAX_ATTACHMENTS - attachments.length);
-    if (!slots) {
-      toast("error", `每条消息最多附加 ${MAX_ATTACHMENTS} 个文件`);
-      return;
-    }
-    const selected = files.slice(0, slots);
-    if (files.length > slots) toast("info", `只会添加前 ${slots} 个文件`);
-    let totalBytes = attachments.reduce((sum, asset) => sum + asset.byteSize, 0);
-    let imageBytes = attachments.filter((asset) => asset.kind === "image").reduce((sum, asset) => sum + asset.byteSize, 0);
-    let imageCount = attachments.filter((asset) => asset.kind === "image").length;
-    const accepted: File[] = [];
-    for (const file of selected) {
-      const image = ACCEPTED_IMAGE_TYPES.has(file.type);
-      if (image && file.size > MAX_IMAGE_BYTES) {
-        toast("error", `${file.name || "图片"} 超过 5 MiB`);
-        continue;
-      }
-      if (!image && file.size > MAX_FILE_BYTES) {
-        toast("error", `${file.name || "文件"} 超过 64 MiB`);
-        continue;
-      }
-      if (image && imageCount >= MAX_IMAGES) {
-        toast("error", `每条消息最多附加 ${MAX_IMAGES} 张图片`);
-        continue;
-      }
-      if (image && imageBytes + file.size > MAX_TOTAL_IMAGE_BYTES) {
-        toast("error", "图片总大小不能超过 15 MiB");
-        continue;
-      }
-      if (totalBytes + file.size > MAX_TOTAL_BYTES) {
-        toast("error", "附件总大小不能超过 128 MiB");
-        continue;
-      }
-      totalBytes += file.size;
-      if (image) { imageBytes += file.size; imageCount += 1; }
-      accepted.push(file);
-    }
-    if (!accepted.length) return;
-    setUploading(true);
-    try {
-      const uploaded: FileAssetDto[] = [];
-      for (const file of accepted) {
-        const asset = ACCEPTED_IMAGE_TYPES.has(file.type)
-          ? await endpoints.uploadImage(file.name || `pasted-image-${Date.now()}.png`, await fileToBase64(file))
-          : await endpoints.uploadFile(file);
-        uploaded.push({ ...asset, kind: asset.kind ?? (asset.mimeType.startsWith("image/") ? "image" : "file") });
-      }
-      setAttachments((current) => {
-        const next = [...current];
-        for (const asset of uploaded) if (!next.some((item) => item.id === asset.id)) next.push(asset);
-        return next.slice(0, MAX_ATTACHMENTS);
-      });
-    } catch (error) {
-      toastError(error);
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const sendMessage = async (overrideText?: string) => {
     let content = (overrideText ?? text).trim();
-    if ((!content && !attachments.length) || sending || uploading || generating || pendingApprovals.length) return;
+    if ((!content && !attachments.length) || sending || uploading) return;
     if (!effectiveAgent) {
       toast("error", "请先选择一个 Agent");
       return;
@@ -374,6 +303,7 @@ export function Composer({
       return;
     }
     onBeforeSend();
+    if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
     setSending(true);
     try {
       if (conversation && roleplayAgent && roleplayState && quickReplies.some((reply) =>
@@ -406,13 +336,23 @@ export function Composer({
         await loadMessages(result.conversation.id);
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
         navigate(routes.chat(result.conversation.id));
+      } else if (active || queuedMessages.some((item) => item.status !== "failed")) {
+        await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id));
+        setText(""); setAttachments([]); persistDraft("");
+        await reloadQueue();
       } else {
-        const result = await endpoints.sendMessage(conversation.id, content, attachments.map((asset) => asset.id));
+        const result = await endpoints.sendMessage(conversation.id, content, attachments.map((asset) => asset.id)).catch(async (error) => {
+          if (!(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
+          // Another device may have started a turn since this client's last snapshot.
+          await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id));
+          await reloadQueue();
+          return null;
+        });
         setText("");
         setAttachments([]);
         persistDraft("");
         await loadMessages(conversation.id);
-        trackGeneration(conversation.id, result.assistantMessageId, result.generationId);
+        if (result) trackGeneration(conversation.id, result.assistantMessageId, result.generationId);
         await refreshConversations();
       }
     } catch (error) {
@@ -495,7 +435,7 @@ export function Composer({
             const files = [...event.dataTransfer.files];
             if (files.length) {
               event.preventDefault();
-              void uploadFiles(files);
+              if (!sending && !uploading) void uploadFiles(files);
             }
           }}
         >
@@ -506,17 +446,17 @@ export function Composer({
               count={pendingApprovals.length}
               onInspect={onInspect}
             />
-          ) : (
+          ) : null}
             <>
               <textarea
                 className="composer-input"
                 aria-label="输入消息"
                 placeholder={
-                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : generating ? "生成进行中…" : "输入消息"
+                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : generating ? "输入下一条消息，加入队列" : "输入消息"
                 }
                 value={text}
                 rows={2}
-                disabled={generating}
+                disabled={sending}
                 onChange={(event) => {
                   setText(event.target.value);
                   persistDraft(event.target.value);
@@ -531,24 +471,7 @@ export function Composer({
                 }}
               />
 
-              {attachments.length ? (
-                <div className="composer-attachments" aria-label="待发送附件">
-                  {attachments.map((asset) => (
-                    <div key={asset.id} className="attachment-chip">
-                      {asset.kind === "image" ? <img src={asset.url} alt={asset.fileName} /> : <FileText size={20} aria-hidden="true" />}
-                      <span>{asset.fileName}</span>
-                      <button
-                        type="button"
-                        onClick={() => setAttachments((current) => current.filter((item) => item.id !== asset.id))}
-                        aria-label={`移除 ${asset.fileName}`}
-                        title="移除附件"
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
+              <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={uploading || sending} />
               {attachments.some((asset) => asset.kind === "image") && !imageConfigured ? (
                 <p className="composer-warning">当前模型不支持图片，Agent 也未配置备用识图模型。</p>
               ) : null}
@@ -591,44 +514,10 @@ export function Composer({
                     onChange={chooseModel}
                   />
 
-                  <label className="chip chip-select composer-inline-tool composer-reasoning-select">
-                    <Gauge size={15} aria-hidden="true" />
-                    <select
-                      aria-label="推理档位"
-                      value={overrides.reasoningEffort ?? INHERIT}
-                      disabled={controlsDisabled}
-                      onChange={(event) => chooseReasoning(event.target.value)}
-                    >
-                      <option value={INHERIT}>跟随 Agent · {reasoning}</option>
-                      {reasoningLevels.map((level) => (
-                        <option key={level} value={level}>
-                          {level}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown size={13} aria-hidden="true" />
-                  </label>
-
-                  <input
-                    ref={fileInputRef}
-                    className="sr-only"
-                    type="file"
-                    multiple
-                    onChange={(event) => {
-                      void uploadFiles(Array.from(event.target.files ?? []));
-                      event.target.value = "";
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="chip composer-attachment-button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={controlsDisabled || uploading || attachments.length >= MAX_ATTACHMENTS}
-                    aria-label="添加附件"
-                    title="添加附件"
-                  >
-                    {uploading ? <LoaderCircle className="spin" size={16} /> : <FilePlus2 size={16} />}
-                  </button>
+                  <ReasoningPicker value={overrides.reasoningEffort ?? INHERIT} effective={reasoning}
+                    inherited={effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none"}
+                    levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
+                  <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
                   <button
                     type="button"
                     className="chip composer-attachment-button"
@@ -675,19 +564,6 @@ export function Composer({
                     <Popover.Portal>
                       <Popover.Content className="composer-more-popover" side="top" align="end" sideOffset={10}>
                         <div className="composer-more-mobile">
-                          <label className="composer-menu-field">
-                            <span><Gauge size={15} aria-hidden="true" />推理档位</span>
-                            <select
-                              className="select"
-                              aria-label="更多菜单中的推理档位"
-                              value={overrides.reasoningEffort ?? INHERIT}
-                              disabled={controlsDisabled}
-                              onChange={(event) => chooseReasoning(event.target.value)}
-                            >
-                              <option value={INHERIT}>跟随 Agent · {reasoning}</option>
-                              {reasoningLevels.map((level) => <option key={level} value={level}>{level}</option>)}
-                            </select>
-                          </label>
                           <button type="button" aria-label="选择工作目录" onClick={() => { setMoreOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
                             <FolderOpen size={16} aria-hidden="true" />
                             <span><strong>工作目录</strong><small>{workspace ? shortPath(workspace) : "未选择"}</small></span>
@@ -725,29 +601,22 @@ export function Composer({
                 </div>
 
                 {generating && active ? (
-                  <button
-                    type="button"
-                    className="send-button stop"
-                    onClick={() => void endpoints.cancelGeneration(active.generation.id).catch(toastError)}
-                    aria-label="停止生成"
-                  >
-                    <Square size={17} fill="currentColor" />
-                  </button>
-                ) : (
+<CancelGenerationButton generationId={active.generation.id} className="send-button stop" />
+                ) : null}
                   <button
                     type="button"
                     className="send-button"
                     onClick={() => void sendMessage()}
                     disabled={sendDisabled}
-                    aria-label="发送"
+                    aria-label={active ? "加入队列" : "发送"}
+                    title={active ? "本轮结束后按顺序发送" : "发送"}
                   >
                     <Send size={18} />
                   </button>
-                )}
               </div>
             </>
-          )}
         </div>
+        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} />
         <p className="composer-hint">Enter 发送 · Shift+Enter 换行</p>
       </div>
 

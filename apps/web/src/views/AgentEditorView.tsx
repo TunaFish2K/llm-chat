@@ -799,6 +799,7 @@ function ToolsTab({
                 <td>
                   <div>{tool.label}</div>
                   <div className="small muted mono">{tool.name}</div>
+                  {tool.name === "browser_fetch" ? <div className="small muted">默认关闭；需显式启用。{tool.error ?? ""}</div> : null}
                 </td>
                 <td data-label="启用">
                   <PolicySelector

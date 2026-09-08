@@ -12,6 +12,9 @@ const memoryStorage: Storage = {
   setItem: (key, value) => { storageValues.set(key, String(value)); }
 };
 Object.defineProperty(window, "localStorage", { configurable: true, value: memoryStorage });
+Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, writable: true, value: class {
+  observe() {} unobserve() {} disconnect() {}
+} });
 
 // jsdom does not implement EventSource or matchMedia; provide stable stubs.
 class FakeEventSource {

@@ -9,6 +9,7 @@ import { GenerationRunner, type GenerationRunnerDependencies } from "./generatio
 import type { ImageService } from "./images";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 import type { ServerTool } from "./tools";
+import { ShellError } from "./shell";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -590,6 +591,26 @@ describe("GenerationRunner tools and approval", () => {
 });
 
 describe("GenerationRunner errors and cancellation", () => {
+  it.each([false, true])("preserves shell failure details even when output persistence fails: %s", async (diskFailure) => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const shell = serverTool("shell", async () => { throw new ShellError({
+      exitCode: 9, signal: null, stdout: "x".repeat(40000), stderr: "root cause", timedOut: false, cancelled: false, truncated: false
+    }, "command failed"); });
+    let step = 0;
+    const runner = makeRunner(store, {
+      buildTools: async () => [shell],
+      ...(diskFailure ? { persistToolOutput: async () => { throw new Error("disk full"); } } : {}),
+      stream: () => events(step++ === 0 ? [toolCall("shell-error", "shell", "{}")] : [{ type: "complete", stopReason: "stop" }])
+    });
+    runner.start(generation.generationId);
+    await terminal(store, generation.generationId);
+    expect(store.getToolCall("shell-error")).toMatchObject({ approvalState: "failed", error: "command failed" });
+    expect(JSON.parse(store.getToolCall("shell-error")!.output!)).toMatchObject({
+      error: "command failed", exitCode: 9, stderr: "root cause", timedOut: false, cancelled: false, truncated: true
+    });
+    await runner.close();
+  });
   it.each([
     [new ProviderError("provider_down", "provider failed"), "provider_down", "provider failed"],
     [new ContextError("context_bad", "context failed"), "context_bad", "context failed"],
@@ -703,6 +724,44 @@ describe("GenerationRunner errors and cancellation", () => {
     runner.stopAll();
     expect((await terminal(store, first.generationId)).status).toBe("stopped");
     expect((await terminal(store, second.generationId)).status).toBe("stopped");
+  });
+
+  it.each(["context", "tools", "stream", "tool"] as const)("fences a late %s result after the cancellation deadline", async (stage) => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const gate = deferred<void>();
+    const entered = vi.fn();
+    const pause = async () => { entered(); await gate.promise; };
+    const onSettled = vi.fn();
+    const slowTool = serverTool("slow", async () => { await pause(); return "late tool output"; });
+    const runner = makeRunner(store, {
+      onSettled,
+      ...(stage === "context" ? { buildContext: async () => { await pause(); return {
+        systemPrompt: "", messages: [], metadata: { policy: "full" as const, omittedMessages: 0, estimatedInputTokens: 0, summaryUsed: false }
+      }; } } : {}),
+      buildTools: async () => { if (stage === "tools") await pause(); return [slowTool]; },
+      stream: () => (async function* () {
+        if (stage === "tool") { yield toolCall("late-call", "slow", "{}"); return; }
+        if (stage === "stream") await pause();
+        yield block(0, "late provider output", true);
+        yield { type: "complete", stopReason: "stop" } satisfies ProviderEvent;
+      })()
+    });
+    runner.start(generation.generationId);
+    await until(() => entered.mock.calls.length === 1);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    expect(runner.cancel(generation.generationId)).toBe(true);
+    expect(runner.cancel(generation.generationId)).toBe(true);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(store.getGeneration(generation.generationId)?.status).toBe("stopped");
+    expect(runner.isConversationActive(generation.conversationId)).toBe(false);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    const stopped = store.getGeneration(generation.generationId);
+    gate.resolve();
+    await turn(); await turn();
+    expect(store.getGeneration(generation.generationId)).toEqual(stopped);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    await runner.close();
   });
 
   it("closes idempotently, aborts a blocked provider, and rejects new starts", async () => {

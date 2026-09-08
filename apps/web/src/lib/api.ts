@@ -191,6 +191,9 @@ export interface McpTestResult {
 }
 
 export const endpoints = {
+  queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`),
+  enqueueMessage: (id: string, text: string, assetIds: string[]) => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds }),
+  deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`),
   login: (password: string) => api.post<{ ok: true }>("/api/auth/login", { password }),
   logout: () => api.post<undefined>("/api/auth/logout"),
   changePassword: (password: string) =>
@@ -329,7 +332,7 @@ export const endpoints = {
   selectGeneration: (messageId: string, generationId: string) =>
     api.patch<{ ok: true }>(`/api/messages/${messageId}/active-generation`, { generationId }),
   cancelGeneration: (generationId: string) =>
-    api.post<{ ok: boolean }>(`/api/generations/${generationId}/cancel`),
+    api.post<{ ok: boolean; status: GenerationDto["status"] | "stopping" }>(`/api/generations/${generationId}/cancel`),
   generation: (id: string) => api.get<GenerationDto>(`/api/generations/${id}`),
   resolveToolCall: (toolCallId: string, approved: boolean, reason?: string) =>
     api.post<{ toolCall: unknown; generationId: string; resumed: boolean }>(
