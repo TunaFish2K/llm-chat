@@ -1433,9 +1433,7 @@
     padding-inline: var(--space-3);
   }
 
-  .composer-tool-scroll > .composer-inline-tool {
-    display: none;
-  }
+  .composer-tool-scroll > .composer-inline-tool { display: inline-flex; }
 
   .composer-tools {
     display: flex;
@@ -1487,6 +1485,19 @@
 }
 .recovery-message { padding-block: 12px; border-bottom: 1px solid var(--border); }
 .model-brand-icon[data-brand="kimi"] svg path:nth-of-type(2) { fill: var(--text); }
+.composer-action-group { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.composer-more-mobile[hidden] { display: none; }
+.composer-tools > .composer-tool-scroll > button { width: 44px; min-width: 44px; max-width: 44px; padding: 0; flex: 0 0 44px; justify-content: center; }
+.composer-inline-tool > span { display: none; }
+.composer-tools svg { color: var(--accent); }
+.composer-tools .model-brand-icon svg { color: inherit; }
+.send-button { touch-action: none; user-select: none; -webkit-touch-callout: none; }
+@media (max-width: 640px) {
+  .composer-tools { flex-wrap: wrap; row-gap: 6px; }
+  .composer-tool-scroll { flex: 1 1 224px; }
+  .composer-action-group { gap: 4px; }
+  .composer-tools > .composer-tool-scroll > button { width: 40px; min-width: 40px; max-width: 40px; flex-basis: 40px; }
+}
 .reasoning-popover { z-index: 75; display: flex; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); max-width: calc(100vw - 24px); }
 .reasoning-slider { position: relative; display: flex; align-items: center; width: 24px; height: min(240px, 55dvh); touch-action: none; user-select: none; }
 .reasoning-track { position: relative; width: 4px; height: 100%; margin: auto; background: var(--border-strong); border-radius: 3px; }

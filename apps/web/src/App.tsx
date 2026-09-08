@@ -27,6 +27,7 @@ import { ChatView } from "./views/ChatView";
 import { InspectorPanel } from "./views/InspectorPanel";
 import { LoginView } from "./views/LoginView";
 import { WorkspaceSidebar } from "./views/WorkspaceSidebar";
+import { QuickTour } from "./components/QuickTour";
 
 const AgentsView = lazy(() => import("./views/AgentsView").then((module) => ({ default: module.AgentsView })));
 const AgentEditorView = lazy(() =>
@@ -178,6 +179,7 @@ export function App() {
         </MobileDrawer>
       ) : null}
 
+      <QuickTour />
       <ToastStack toasts={state.toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
         updating={["checking", "downloading", "applying"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
     </AppFrame>

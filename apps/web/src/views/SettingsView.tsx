@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Maximize2 } from "lucide-react";
 import type {
   AppSettings,
@@ -11,6 +11,7 @@ import type {
   ToolSettingsDto
 } from "@llm-chat/contracts";
 import { endpoints, type MemoryDto as MemoryItem } from "../lib/api";
+import { AccentPicker } from "../components/AccentPicker";
 import {
   appStore,
   refreshSettings,
@@ -19,7 +20,7 @@ import {
 } from "../lib/app-state";
 import { formatTime } from "../lib/format";
 import {
-  generationHapticsSupported
+  generationHapticsSupported, setGenerationHapticsEnabled
 } from "../lib/haptics";
 import { linkClick, routes } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -141,15 +142,25 @@ function GeneralSection() {
   const models = useStore(appStore, (s) => s.models);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const hapticsSupported = generationHapticsSupported();
+  const patchSequence = useRef(Promise.resolve());
+  const patchVersion = useRef(0);
 
   if (!settings) return <LoadingState />;
 
   const patch = (value: Partial<AppSettings>) => {
-    endpoints
-      .updateSettings(value)
-      .then(() => refreshSettings())
-      .then(() => toast("success", "设置已保存"))
-      .catch(toastError);
+    const revision = ++patchVersion.current;
+    const current = appStore.get().settings ?? settings;
+    appStore.set({ settings: { ...current, ...value } });
+    if (value.uiPreferences) setGenerationHapticsEnabled(value.uiPreferences.generationHaptics);
+    patchSequence.current = patchSequence.current.then(async () => {
+      await endpoints.updateSettings(value);
+      if (revision !== patchVersion.current) return;
+      const saved = await endpoints.settings();
+      if (revision === patchVersion.current) {
+        appStore.set({ settings: saved }); setGenerationHapticsEnabled(saved.uiPreferences.generationHaptics);
+        toast("success", "设置已保存");
+      }
+    }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
   };
 
   return (
@@ -168,6 +179,9 @@ function GeneralSection() {
             <option value="dark">深色</option>
           </select>
         </Field>
+        <AccentPicker value={settings.uiPreferences.accentColor ?? null} onChange={(accentColor) => patch({ uiPreferences: { ...settings.uiPreferences, accentColor } })} />
+        <label className="checkbox-row"><input type="checkbox" checked={settings.uiPreferences.amoled ?? false}
+          onChange={(event) => patch({ uiPreferences: { ...settings.uiPreferences, amoled: event.target.checked } })} />深色模式使用纯黑背景</label>
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -186,9 +200,9 @@ function GeneralSection() {
               uiPreferences: { ...settings.uiPreferences, generationHaptics: event.target.checked }
             })}
           />
-          <span className="checkbox-copy">
+          <span className="haptics-label">
             <span>生成时振动</span>
-            {!hapticsSupported ? <small>当前浏览器不支持振动</small> : null}
+            {!hapticsSupported ? <small className="unsupported-hint">当前浏览器不支持振动</small> : null}
           </span>
         </label>
         <Field label="推理块折叠策略">
@@ -214,6 +228,8 @@ function GeneralSection() {
       </div>
 
       <AppUpdateCard />
+      <div className="card"><h3>快速教程</h3><p className="hint">教程观看状态只保存在当前浏览器，不同步到其他设备。</p>
+        <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</button></div>
 
       <div className="card">
         <h3>默认生成</h3>
@@ -1076,7 +1092,7 @@ function McpSection() {
   return (
     <div>
       <div className="card">
-        <h3>
+        <h3 className="section-heading-actions">
           MCP 服务
           <button className="btn small primary" onClick={() => setEditing("new")}>
             添加服务

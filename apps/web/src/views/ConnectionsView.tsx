@@ -31,6 +31,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
   const [editingConnection, setEditingConnection] = useState<ConnectionDto | "new" | null>(null);
   const [deletingConnection, setDeletingConnection] = useState<ConnectionDto | null>(null);
   const [editingModel, setEditingModel] = useState<ModelDto | "new" | null>(null);
+  const [newModelConnection, setNewModelConnection] = useState<string>();
   const [deletingModel, setDeletingModel] = useState<ModelDto | null>(null);
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const [busy, setBusy] = useState(false);
@@ -93,10 +94,6 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
 
   const actions = (
     <div className={embedded ? "connection-actions" : "actions"}>
-      <button className="btn" onClick={() => setEditingModel("new")} disabled={connections.length === 0}>
-        <Bot size={15} aria-hidden="true" />
-        手动添加模型
-      </button>
       <button className="btn primary" onClick={() => setEditingConnection("new")}>
         <Plus size={15} aria-hidden="true" />
         新建连接
@@ -128,6 +125,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       <span className="tag">{connection.protocol}</span>
                     </h3>
                     <div className="list-row-actions">
+                      <button className="btn small" onClick={() => { setNewModelConnection(connection.id); setEditingModel("new"); }}>手动添加模型</button>
                       <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>
                         测试连接
                       </button>
@@ -243,6 +241,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
       {editingModel ? (
         <ModelEditor
           model={editingModel === "new" ? null : editingModel}
+          {...(newModelConnection ? { initialConnectionId: newModelConnection } : {})}
           onClose={() => setEditingModel(null)}
         />
       ) : null}
@@ -545,9 +544,9 @@ const CAPABILITY_LABELS: Array<[BooleanModelCapability, string]> = [
   ["manualThinking", "手动思考"]
 ];
 
-function ModelEditor({ model, onClose }: { model: ModelDto | null; onClose: () => void }) {
+function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto | null; onClose: () => void; initialConnectionId?: string }) {
   const connections = useStore(appStore, (s) => s.connections);
-  const [connectionId, setConnectionId] = useState(model?.connectionId ?? connections[0]?.id ?? "");
+  const [connectionId, setConnectionId] = useState(model?.connectionId ?? initialConnectionId ?? connections[0]?.id ?? "");
   const [modelKey, setModelKey] = useState(model?.modelKey ?? "");
   const [displayName, setDisplayName] = useState(model?.displayName ?? "");
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");

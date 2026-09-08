@@ -1360,3 +1360,19 @@ button.trajectory-step {
   .codex-session-meta .mono { max-width: 100%; overflow-wrap: anywhere; }
 }
 .service-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.haptics-label { display: flex; flex-direction: column; gap: 4px; font-size: inherit; line-height: inherit; }
+.unsupported-hint { color: var(--warn); font-size: var(--text-xs); }
+.service-model-id { display: block; margin-top: 6px; }
+.section-heading-actions, .connection-actions, .list-pagination { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.agent-directory { display: flex; flex-direction: column; gap: 12px; }
+.agent-directory .list-row { margin: 0; border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; }
+.list-pagination { font-size: var(--text-sm); }
+.accent-presets { display: flex; gap: 10px; flex-wrap: wrap; margin-block: 8px; }
+.accent-swatch { display: inline-block; width: 30px; height: 30px; flex: 0 0 30px; border-radius: 50%; border: 2px solid var(--border-strong); }
+.accent-swatch[aria-pressed="true"] { outline: 2px solid var(--text); outline-offset: 3px; }
+.hsv-square { position: relative; height: 160px; max-width: 300px; margin: 12px 8px; touch-action: none; background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent); }
+.hsv-square > span { position: absolute; width: 14px; height: 14px; border: 2px solid white; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 1px #000; pointer-events: none; }
+.hsv-channel { display: flex; align-items: center; gap: 12px; margin-block: 10px; max-width: 320px; }
+.hsv-channel input { flex: 1; accent-color: var(--accent); min-width: 0; }
+.quick-tour { padding-block: 12px; line-height: 1.8; }
+.quick-tour h3 { margin-block: 16px 8px; }

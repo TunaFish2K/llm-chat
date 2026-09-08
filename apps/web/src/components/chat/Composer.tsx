@@ -39,6 +39,7 @@ import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEdit
 import { ReasoningPicker } from "./ReasoningPicker";
 import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
 import { RecoveryDialog, useConversationHistory } from "./ConversationHistory";
+import { useHoldSend } from "./useHoldSend";
 
 const DRAFT_DEBOUNCE_MS = 500;
 
@@ -282,7 +283,7 @@ export function Composer({
     }
   };
 
-  const sendMessage = async (overrideText?: string) => {
+  const sendMessage = async (overrideText?: string, steer = false) => {
     let content = (overrideText ?? text).trim();
     if ((!content && !attachments.length) || sending || uploading) return;
     if (!effectiveAgent) {
@@ -332,14 +333,14 @@ export function Composer({
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
         navigate(routes.chat(result.conversation.id));
       } else if (active || (!history.state?.queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
-        await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id));
+        await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
         setText(""); setAttachments([]); persistDraft("");
         await reloadQueue();
       } else {
         const result = await endpoints.sendMessage(conversation.id, content, attachments.map((asset) => asset.id)).catch(async (error) => {
           if (!(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
           // Another device may have started a turn since this client's last snapshot.
-          await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id));
+          await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
           await reloadQueue();
           return null;
         });
@@ -377,10 +378,12 @@ export function Composer({
     } catch (error) { toastError(error); }
   };
 
+  const holdSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
+  const keyHoldSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      void sendMessage();
+      if (!event.repeat) keyHoldSend.start();
     }
   };
 
@@ -422,7 +425,7 @@ export function Composer({
                 className="composer-input"
                 aria-label="输入消息"
                 placeholder={
-                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : generating ? "输入下一条消息，加入队列" : "输入消息"
+                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : "Enter 发送 · Shift+Enter 换行 · 长按发送 / Enter 使用 Steer"
                 }
                 value={text}
                 rows={2}
@@ -432,6 +435,8 @@ export function Composer({
                   persistDraft(event.target.value);
                 }}
                 onKeyDown={onKeyDown}
+                onKeyUp={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) keyHoldSend.finish(); }}
+                onBlur={keyHoldSend.cancel}
                 onPaste={(event) => {
                   const files = [...event.clipboardData.files];
                   if (files.length) {
@@ -472,7 +477,6 @@ export function Composer({
                   <ReasoningPicker value={overrides.reasoningEffort ?? INHERIT} effective={reasoning}
                     inherited={effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none"}
                     levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
-                  <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
 
                   <button
                     type="button"
@@ -497,6 +501,9 @@ export function Composer({
                     {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
                   </button>
 
+                </div>
+                <div className="composer-action-group">
+                  <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
                   <Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
                     <Popover.Trigger asChild>
                       <button type="button" className="chip composer-more-trigger" aria-label="更多会话设置" title="更多">
@@ -510,7 +517,7 @@ export function Composer({
                           <button type="button" disabled={history.busy || !history.state?.canRedo} onClick={() => { setMoreOpen(false); void history.perform("redo"); }}>重做</button>
                           <button type="button" onClick={() => { setMoreOpen(false); history.setOpen(true); }}>恢复记录</button>
                         </> : null}
-                        <div className="composer-more-mobile">
+                        <div className="composer-more-mobile" hidden>
                           <button type="button" aria-label="选择工作目录" onClick={() => { setMoreOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
                             <FolderOpen size={16} aria-hidden="true" />
                             <span><strong>工作目录</strong><small>{workspace ? shortPath(workspace) : "未选择"}</small></span>
@@ -545,21 +552,25 @@ export function Composer({
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>
-                </div>
-
                 {generating && active ? (
 <CancelGenerationButton generationId={active.generation.id} className="send-button stop" />
                 ) : null}
                   <button
                     type="button"
                     className="send-button"
-                    onClick={() => void sendMessage()}
+                    onPointerDown={(event) => { if (event.button !== 0) return; event.currentTarget.setPointerCapture?.(event.pointerId); holdSend.start(true); }}
+                    onPointerUp={(event) => { const box = event.currentTarget.getBoundingClientRect();
+                      if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) holdSend.cancel(); else holdSend.finish(); }}
+                    onPointerCancel={holdSend.cancel}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onClick={(event) => { if (event.detail === 0) void sendMessage(); }}
                     disabled={sendDisabled}
                     aria-label={active ? "加入队列" : "发送"}
-                    title={active ? "本轮结束后按顺序发送" : "发送"}
+                    title={active ? "点击加入轮末队列；长按 Steer，在下次模型请求前发送" : "发送；长按可在生成期间 Steer"}
                   >
                     <Send size={18} />
                   </button>
+                </div>
               </div>
             </>
         </div>
@@ -568,7 +579,6 @@ export function Composer({
           if (text.trim() || attachments.length) { toast("info", "请先发送或清空当前草稿，再恢复旧消息"); return; }
           setText(message.text ?? ""); persistDraft(message.text ?? ""); setAttachments(message.attachments); history.setOpen(false);
         }} /> : null}
-        <p className="composer-hint">Enter 发送 · Shift+Enter 换行</p>
       </div>
 
       {pickingWorkspace ? (

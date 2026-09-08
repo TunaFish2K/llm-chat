@@ -215,11 +215,12 @@ async function handleGenerationEvent(
   if (event.type === "block-delta") {
     const blocks = [...next.blocks];
     const index = blocks.findIndex((block) => block.id === event.block.id);
+    const contentChanged = index < 0 ? Boolean(event.block.content) : blocks[index]!.content !== event.block.content;
     if (index >= 0) blocks[index] = event.block;
     else blocks.push(event.block);
     blocks.sort((a, b) => a.index - b.index);
     next.blocks = blocks;
-    scheduleGenerationHaptic();
+    if (contentChanged && isGenerationActive(generation.status)) scheduleGenerationHaptic();
   } else if (event.type === "usage") {
     next.usage = event.usage;
   } else if (event.type === "tool-call") {

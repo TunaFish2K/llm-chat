@@ -51,7 +51,7 @@ export function MessageQueueList({ conversationId, items, reload, paused = false
     {paused ? <div className="row"><span>回溯后已暂停自动发送</span><button className="btn small" onClick={() => void endpoints.resumeQueue(conversationId).then(reload).catch(toastError)}>继续发送</button></div> : null}
     <header><span>待发送 · {items.length}</span><button type="button" className="icon-button" aria-label="清空待发送消息" onClick={() => void remove()}><Trash2 size={15} /></button></header>
     <ol>{items.map((item) => <li key={item.id}>
-      <div><p>{item.text || "附件消息"}</p>{item.attachments.length ? <small>{item.attachments.length} 个附件</small> : null}
+      <div><p>{item.mode === "steer" ? <span className="tag accent">Steer · 下次请求</span> : null}{item.text || "附件消息"}</p>{item.attachments.length ? <small>{item.attachments.length} 个附件</small> : null}
         {item.status === "dispatching" ? <small>正在发送</small> : item.error ? <small role="alert">{item.error}</small> : null}</div>
       <button type="button" className="icon-button" disabled={item.status === "dispatching"} aria-label={`删除待发送消息 ${item.text || "附件消息"}`} onClick={() => void remove(item.id)}><X size={15} /></button>
     </li>)}</ol>

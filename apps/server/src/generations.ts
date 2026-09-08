@@ -280,6 +280,11 @@ export class GenerationRunner {
       const maxToolRounds = record.agentSnapshot.execution.maxToolRounds;
       for (; maxToolRounds === null || stepIndex < maxToolRounds; stepIndex += 1) {
         job.controller.signal.throwIfAborted();
+        if (stepIndex > 0 && this.store.hasPendingSteer(record.conversationId)) {
+          this.store.finishGeneration(generationId, "completed", { stopReason: "steered" });
+          this.emitStatus(generationId, "completed", "steered");
+          return;
+        }
         const stepToolMap = exposedToolMap();
         const calls: Array<{ id: string; name: string; arguments: string }> = [];
         let providerContext: unknown;
@@ -380,6 +385,11 @@ export class GenerationRunner {
         await this.executeTools(record, persisted, stepToolMap, exposeAuthorized, job.controller.signal);
         job.controller.signal.throwIfAborted();
         messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
+        if (this.store.hasPendingSteer(record.conversationId)) {
+          this.store.finishGeneration(generationId, "completed", { stopReason: "steered" });
+          this.emitStatus(generationId, "completed", "steered");
+          return;
+        }
       }
       throw new Error(`Tool execution exceeded the Agent limit of ${maxToolRounds} model steps`);
     } catch (error) {

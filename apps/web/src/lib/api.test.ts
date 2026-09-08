@@ -146,6 +146,7 @@ describe("api client", () => {
       () => endpoints.importRoleplayPreset("agent", "preset.json", "e30="),
       () => endpoints.toolSettings(),
       () => endpoints.serviceSettings(),
+      () => endpoints.searchConversations("text & title"),
       () => endpoints.updateServiceSettings(value),
       () => endpoints.conversationHistory("conversation"),
       () => endpoints.changeHistory("conversation", value),

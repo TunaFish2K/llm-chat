@@ -755,6 +755,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
     return store.listMessages(request.params.id);
   });
+  app.get<{ Querystring: { query?: string } }>("/api/conversations/search", async (request) => {
+    const query = z.string().trim().max(200).parse(request.query.query ?? "");
+    if (!query) return [];
+    const matches = new Map(store.searchChats(query, 500).map((item) => [item.conversationId, { ...item, titleMatch: item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase()) }]));
+    for (const conversation of store.listConversations()) {
+      if (conversation.forkedFrom || !conversation.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())) continue;
+      const id = conversation.activeBranchId ?? conversation.id;
+      const previous = matches.get(id);
+      matches.set(id, { conversationId: id, title: conversation.title, snippet: previous?.snippet ?? "", updatedAt: conversation.updatedAt, titleMatch: true });
+    }
+    return [...matches.values()].sort((a, b) => Number(b.titleMatch) - Number(a.titleMatch) || b.updatedAt - a.updatedAt || a.conversationId.localeCompare(b.conversationId)).slice(0, 50);
+  });
   app.get<{ Params: { id: string } }>("/api/conversations/:id/history", async (request) => history.state(request.params.id));
   app.post<{ Params: { id: string } }>("/api/conversations/:id/history", async (request) => {
     const id = request.params.id;
@@ -852,7 +864,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request, reply) => {
     assertHistoryIdle(request.params.id);
     const value = sendMessageSchema.parse(request.body);
-    const item = store.enqueueMessage(request.params.id, value.text, attachmentIds(value));
+    const { mode } = z.object({ mode: z.enum(["queue", "steer"]).default("queue") }).parse(request.body);
+    const item = store.enqueueMessage(request.params.id, value.text, attachmentIds(value), mode);
     queue.changed(request.params.id);
     queue.kick(request.params.id);
     return reply.code(202).send(item);

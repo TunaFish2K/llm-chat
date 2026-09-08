@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
@@ -52,15 +52,14 @@ async function checkToolbar(page: Page) {
     expect(button.border).toBe(0);
     expect(button.x).toBeGreaterThanOrEqual(geometry.left);
     expect(button.right).toBeLessThanOrEqual(geometry.right + 0.1);
-    expect(button.y).toBe(geometry.buttons[0]!.y);
-    if (index) {
+    if (index && button.y === geometry.buttons[index - 1]!.y) {
       expect(button.x).toBeGreaterThanOrEqual(geometry.buttons[index - 1]!.right - 0.1);
       expect(button.iconX - geometry.buttons[index - 1]!.iconRight).toBeGreaterThanOrEqual(12);
     }
   }
 }
 
-test("工具栏大图标在宽窄屏和生成中保持单排，品牌色适配主题", async ({ page, request }) => {
+test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌色适配主题", async ({ page, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 60_000 });
   const fixture = await setup(request, provider.baseUrl);
   try {

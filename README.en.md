@@ -98,6 +98,8 @@ You can also select an image model directly for a Responses conversation. That p
 
 ### Undo, queued messages, and attachments
 
+During generation, a short press adds a message to the ordinary queue. Hold Send or the desktop Enter key for about half a second to use Steer. After the current request and tools finish, Steer takes priority before the next model request. It does not interrupt tools or bypass approvals. You can delete either kind of queued message.
+
 The composer menu contains Undo last turn (撤回上一轮), Redo (重做), and Recovery records (恢复记录). Rewind to this turn (回溯至此轮) keeps the selected whole turn and removes later turns from active history.
 
 Redo restores the original messages, answer versions, and attachments. It does not call the model or execute tools again.
@@ -123,6 +125,10 @@ The Codex integration manages threads, tasks, approvals, and interrupts through 
 At startup, the server discovers direct subdirectories of the service user's `~/.agents/skills`. Agents load enabled Skills when needed. Plugins are trusted local code. Their subprocesses do not restrict host permissions. File and Shell tools use the conversation workspace from the generation snapshot.
 
 ### Updates and backups
+
+The first visit shows a short tutorial that you can skip. Replay it under Settings → General. Only this browser stores tutorial completion in localStorage. This flag does not synchronize. The server still stores conversations and authentication data.
+
+General settings include preset accents, a custom HSV picker, and pure black backgrounds for dark mode. The blue preset is `#018EEE`. Supported browsers request an 8ms pulse after streaming content changes settle for 50ms.
 
 Settings → General → Application update (设置 → 通用 → 应用更新) checks the frontend version for this device. Select Update and refresh (更新并刷新) when the update is ready. This action does not fetch source code or update the server.
 

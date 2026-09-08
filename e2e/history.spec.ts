@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
