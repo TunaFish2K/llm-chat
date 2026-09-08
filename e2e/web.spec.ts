@@ -97,7 +97,7 @@ test.describe("应用外壳", () => {
 
     const rail = page.locator(".workspace-sidebar[data-compact]");
     await expect(rail).toBeVisible();
-    await expect(rail).toHaveCSS("width", "56px");
+    await expect(rail).toHaveCSS("width", "64px");
     await expect(page.getByRole("navigation", { name: "最近会话" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
 
@@ -211,7 +211,7 @@ test.describe("会话与流式生成", () => {
       // Pick the dedicated agent in the composer.
       await page.getByLabel("选择 Agent", { exact: true }).click();
       await page.getByRole("button", { name: agent.name, exact: true }).click();
-      await expect(page.getByLabel("选择 Agent", { exact: true })).toContainText(agent.name);
+      await expect(page.getByLabel("选择 Agent", { exact: true })).toHaveAttribute("title", agent.name);
       await page.getByLabel("输入消息").fill("你好，测试一下");
       await page.getByRole("button", { name: "发送", exact: true }).click();
 
@@ -412,7 +412,7 @@ test.describe("会话与流式生成", () => {
       await page.goto(APP_URL);
       await page.getByLabel("选择 Agent", { exact: true }).click();
       await page.getByRole("button", { name: agent.name, exact: true }).click();
-      await expect(page.getByLabel("选择 Agent", { exact: true })).toContainText(agent.name);
+      await expect(page.getByLabel("选择 Agent", { exact: true })).toHaveAttribute("title", agent.name);
       await expect(page.getByLabel("输入消息")).toHaveAttribute("placeholder", "请先选择模型");
       await page.getByLabel("输入消息").fill("没有模型会怎样");
       await expect(page.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
@@ -472,6 +472,7 @@ test.describe("Agent 管理", () => {
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const table = page.locator(".markdown table").last();
       await expect(table).toBeVisible();
+      await expect(page.getByText("已完成", { exact: true })).toBeVisible();
       const metrics = await table.evaluate((element) => {
         const wrapper = element.closest('[data-streamdown="table-wrapper"]');
         const scroller = element.parentElement;
@@ -741,6 +742,6 @@ test.describe("设置分区", () => {
     await page.getByLabel("名称").fill("bad name!");
     await page.getByLabel("URL").fill("https://example.com/mcp");
     await page.getByRole("button", { name: "保存" }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "添加 MCP 服务" }).getByRole("alert")).toHaveText("请求参数无效");
   });
 });

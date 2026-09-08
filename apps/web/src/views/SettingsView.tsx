@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Maximize2 } from "lucide-react";
 import type {
   AppSettings,
@@ -28,6 +28,7 @@ import { ConnectionsView } from "./ConnectionsView";
 import { DirectoryPicker } from "../components/DirectoryPicker";
 import { OverflowText } from "../components/OverflowText";
 import { ExpandableTextarea } from "../components/ExpandableTextarea";
+import { applyUpdate, checkForUpdates, getPwaState, subscribePwa } from "../lib/pwa";
 
 const SECTIONS: Array<[string, string]> = [
   ["general", "通用"],
@@ -155,6 +156,33 @@ function ImageGenerationSection() {
 
 /* ---------- general ---------- */
 
+function AppUpdateCard() {
+  const pwa = useSyncExternalStore(subscribePwa, getPwaState);
+  const busy = ["checking", "downloading", "applying"].includes(pwa.updateStatus);
+  const status = {
+    idle: "检查此设备上的应用是否有新版本。",
+    checking: "正在检查更新…",
+    downloading: "正在下载新版本…",
+    current: "已是最新版本",
+    ready: "新版本已准备好，更新后将刷新当前页面。",
+    applying: "正在启用新版本…",
+    error: pwa.updateError ?? "更新失败，请重试"
+  }[pwa.updateStatus];
+  return <div className="card" aria-label="应用更新">
+    <h3>应用更新</h3>
+    {pwa.supported ? <>
+      <p className="hint" role={pwa.updateStatus === "error" ? "alert" : "status"}>{status}</p>
+      <div className="row">
+        <button type="button" className="btn" disabled={busy} onClick={() => void checkForUpdates()}>检查更新</button>
+        {pwa.updateAvailable ? <button type="button" className="btn primary" disabled={busy} onClick={() => void applyUpdate()}>更新并刷新</button> : null}
+      </div>
+    </> : <>
+      <p className="hint">当前浏览器不支持应用更新，可以刷新页面获取服务器上的版本。</p>
+      <button type="button" className="btn" onClick={() => window.location.reload()}>刷新页面</button>
+    </>}
+  </div>;
+}
+
 function GeneralSection() {
   const settings = useStore(appStore, (s) => s.settings);
   const agents = useStore(appStore, (s) => s.agents);
@@ -232,6 +260,8 @@ function GeneralSection() {
           </select>
         </Field>
       </div>
+
+      <AppUpdateCard />
 
       <div className="card">
         <h3>默认生成</h3>

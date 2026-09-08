@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
@@ -11,7 +11,7 @@ async function setup(request: APIRequestContext, baseUrl: string) {
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`controls-${Date.now()}`, model.id));
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
-  return { conversation, cleanup: async () => {
+  return { conversation, model, cleanup: async () => {
     const conversations = await api(request, APP_URL, "GET", "/api/conversations");
     for (const item of conversations.filter((item: { agentId: string }) => item.agentId === agent.id)) {
       await api(request, APP_URL, "DELETE", `/api/conversations/${item.id}/queued-messages`);
@@ -19,7 +19,7 @@ async function setup(request: APIRequestContext, baseUrl: string) {
       for (const message of messages) for (const generation of message.generations) {
         if (["queued", "running", "waiting-approval"].includes(generation.status)) {
           await api(request, APP_URL, "POST", `/api/generations/${generation.id}/cancel`);
-          await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/generations/${generation.id}`)).status).toBe("stopped");
+          await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/generations/${generation.id}`)).status).toMatch(/^(stopped|completed|failed)$/);
         }
       }
       await api(request, APP_URL, "DELETE", `/api/conversations/${item.id}`);
@@ -28,6 +28,87 @@ async function setup(request: APIRequestContext, baseUrl: string) {
     await api(request, APP_URL, "DELETE", `/api/connections/${connection.id}`);
   } };
 }
+
+async function checkToolbar(page: Page) {
+  const geometry = await page.locator(".composer-tools").evaluate((toolbar) => {
+    const rect = toolbar.getBoundingClientRect();
+    const buttons = [...toolbar.querySelectorAll("button")].filter((button) => button.getClientRects().length).map((button) => {
+      const box = button.getBoundingClientRect();
+      const icon = button.querySelector("svg")!.getBoundingClientRect();
+      const style = getComputedStyle(button);
+      return { x: box.x, y: box.y, right: box.right, width: box.width, height: box.height,
+        iconX: icon.x, iconRight: icon.right, iconWidth: icon.width, iconHeight: icon.height,
+        background: style.backgroundColor, border: parseFloat(style.borderTopWidth) };
+    });
+    return { left: rect.left, right: rect.right, buttons, fits: toolbar.scrollWidth <= toolbar.clientWidth };
+  });
+  expect(geometry.fits).toBe(true);
+  for (const [index, button] of geometry.buttons.entries()) {
+    expect(button.height).toBe(44);
+    expect(button.width).toBeGreaterThanOrEqual(36);
+    expect(button.iconWidth).toBe(26);
+    expect(button.iconHeight).toBe(26);
+    expect(button.background).toBe("rgba(0, 0, 0, 0)");
+    expect(button.border).toBe(0);
+    expect(button.x).toBeGreaterThanOrEqual(geometry.left);
+    expect(button.right).toBeLessThanOrEqual(geometry.right + 0.1);
+    expect(button.y).toBe(geometry.buttons[0]!.y);
+    if (index) {
+      expect(button.x).toBeGreaterThanOrEqual(geometry.buttons[index - 1]!.right - 0.1);
+      expect(button.iconX - geometry.buttons[index - 1]!.iconRight).toBeGreaterThanOrEqual(12);
+    }
+  }
+}
+
+test("工具栏大图标在宽窄屏和生成中保持单排，品牌色适配主题", async ({ page, request }) => {
+  const provider = await startMockProvider({ firstResponseDelayMs: 60_000 });
+  const fixture = await setup(request, provider.baseUrl);
+  try {
+    await api(request, APP_URL, "PATCH", `/api/models/${fixture.model.id}`, { displayName: "DeepSeek 工具栏测试" });
+    await api(request, APP_URL, "PATCH", `/api/conversations/${fixture.conversation.id}`, { executionOverrides: { reasoningEffort: "none" } });
+    await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
+    const brand = page.getByRole("button", { name: "选择模型" }).locator(".model-brand-icon");
+    await expect(brand.locator('path[fill="#4D6BFE"]')).toHaveCount(1);
+    await expect(page.locator(".composer-tools .lucide-chevron-down")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "选择 Agent", exact: true })).toHaveText("");
+    for (const generating of [false, true]) {
+      if (generating) {
+        await page.getByLabel("输入消息").fill("保持生成以验证工具栏");
+        await page.getByRole("button", { name: "发送", exact: true }).click();
+        await expect(page.locator(".composer-tools").getByRole("button", { name: "停止生成" })).toBeVisible();
+      }
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+        for (const width of [320, 390, 640, 1440]) {
+          await page.setViewportSize({ width, height: 844 });
+          await expect(() => checkToolbar(page)).toPass({ timeout: 3000 });
+          const badge = page.locator('.composer-tools .composer-inline-tool > b:visible');
+          if (await badge.count()) {
+            const bounds = await badge.evaluate((element) => {
+              const box = element.getBoundingClientRect(), parent = element.parentElement!.getBoundingClientRect();
+              return { fits: box.left >= parent.left && box.right <= parent.right && box.top >= parent.top && box.bottom <= parent.bottom };
+            });
+            expect(bounds.fits).toBe(true);
+          }
+          if (test.info().project.name === "mobile-chromium" && width <= 390) {
+            await page.screenshot({ path: test.info().outputPath(`toolbar-${width}-${theme}-${generating ? "generating" : "idle"}.png`) });
+          }
+        }
+      }
+    }
+    await page.locator(".composer-tools").getByRole("button", { name: "停止生成" }).click();
+    await expect(page.locator(".composer-tools").getByRole("button", { name: "停止生成" })).toHaveCount(0);
+    await api(request, APP_URL, "PATCH", `/api/models/${fixture.model.id}`, { displayName: "Kimi 工具栏测试" });
+    await page.reload();
+    await expect(brand).toHaveAttribute("data-brand", "kimi");
+    for (const theme of ["light", "dark"]) {
+      await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+      await expect(brand.locator('path[fill="#1783FF"]')).toHaveCSS("fill", "rgb(23, 131, 255)");
+      expect(await brand.locator("path").nth(1).evaluate((element) => getComputedStyle(element).fill))
+        .toBe(await brand.evaluate((element) => getComputedStyle(element).color));
+    }
+  } finally { await fixture.cleanup(); await provider.close(); }
+});
 
 test("生成中排队、跨设备同步、删除与取消后继续", async ({ page, browser, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 5000 });

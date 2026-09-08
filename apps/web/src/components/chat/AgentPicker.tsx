@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Popover } from "radix-ui";
-import { Bot, Check, ChevronDown, Search, X } from "lucide-react";
+import { Bot, Check, Search, X } from "lucide-react";
 import type { AgentSummaryDto } from "@llm-chat/contracts";
 
 function AgentAvatar({ agent }: { agent: AgentSummaryDto | undefined }) {
@@ -27,8 +27,7 @@ export function AgentPicker({ agents, value, disabled, onChange }: {
     <Popover.Trigger asChild>
       <button type="button" className="chip composer-agent-select agent-trigger" aria-label="选择 Agent"
         title={selected?.name ?? "选择 Agent"} disabled={disabled || !agents.length}>
-        <AgentAvatar agent={selected} /><span className="agent-trigger-name">{selected?.name ?? "选择 Agent"}</span>
-        <ChevronDown size={13} aria-hidden="true" />
+        <Bot size={26} aria-hidden="true" />
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label="Agent 选择" side="top" align="start" sideOffset={10}

@@ -2,9 +2,12 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "../lib/api";
+import * as pwa from "../lib/pwa";
 import { appStore } from "../lib/app-state";
 import { SettingsView } from "./SettingsView";
 import { makeAgent, makeConnection, makeModel, makeSettings } from "../../test/fixtures";
+
+vi.mock("virtual:pwa-register", () => ({ registerSW: vi.fn() }));
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -16,6 +19,19 @@ describe("SettingsView", () => {
     render(<SettingsView section="general" />);
     expect(screen.getByLabelText("主题")).toHaveValue("dark");
     expect(screen.getByLabelText("默认推理档位")).toHaveValue("medium");
+    expect(screen.getByRole("button", { name: "刷新页面" })).toBeInTheDocument();
+  });
+
+  it("requires an explicit click to apply a prepared application update", async () => {
+    const snapshot = { ...pwa.getPwaState(), supported: true, updateAvailable: true, updateStatus: "ready" as const };
+    vi.spyOn(pwa, "getPwaState").mockReturnValue(snapshot);
+    const apply = vi.spyOn(pwa, "applyUpdate").mockResolvedValue();
+    appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
+    render(<SettingsView section="general" />);
+    expect(screen.getByRole("status")).toHaveTextContent("新版本已准备好");
+    expect(apply).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole("button", { name: "更新并刷新" }));
+    expect(apply).toHaveBeenCalledOnce();
   });
 
   it("shows both image generation paths in their own settings section", () => {

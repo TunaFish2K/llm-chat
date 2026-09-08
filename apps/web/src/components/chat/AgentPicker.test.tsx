@@ -36,12 +36,15 @@ it("does not summon the mobile keyboard and closes with Escape", async () => {
   expect(trigger).toHaveFocus();
 });
 
-it("retries an updated avatar after an earlier image failure", () => {
+it("retries an updated menu avatar after an earlier image failure", async () => {
   const agent = makeAgent({ hasAvatar: true, updatedAt: 1 });
   const { rerender } = render(<AgentPicker agents={[agent]} value={agent.id} disabled={false} onChange={() => {}} />);
   const trigger = screen.getByRole("button", { name: "选择 Agent" });
-  fireEvent.error(trigger.querySelector("img")!);
   expect(trigger.querySelector("img")).toBeNull();
+  await userEvent.setup().click(trigger);
+  const option = screen.getByRole("button", { name: agent.name });
+  fireEvent.error(option.querySelector("img")!);
+  expect(option.querySelector("img")).toBeNull();
   rerender(<AgentPicker agents={[{ ...agent, updatedAt: 2 }]} value={agent.id} disabled={false} onChange={() => {}} />);
-  expect(trigger.querySelector("img")).toHaveAttribute("src", `/api/agents/${agent.id}/avatar?t=2`);
+  expect(option.querySelector("img")).toHaveAttribute("src", `/api/agents/${agent.id}/avatar?t=2`);
 });

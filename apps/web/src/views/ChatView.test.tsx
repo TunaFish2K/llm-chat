@@ -71,12 +71,12 @@ describe("ChatView", () => {
     await user.click(screen.getByRole("button", { name: "第二助手" }));
     expect(screen.getByRole("dialog", { name: "切换 Agent" })).toHaveTextContent("覆盖将全部清除");
     await user.click(screen.getByRole("button", { name: "取消" }));
-    expect(trigger).toHaveTextContent("测试助手");
+    expect(trigger).toHaveAttribute("title", "测试助手");
     expect(patch).not.toHaveBeenCalled();
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "第二助手" }));
     await user.click(screen.getByRole("button", { name: "切换" }));
-    await waitFor(() => expect(trigger).toHaveTextContent("第二助手"));
+    await waitFor(() => expect(trigger).toHaveAttribute("title", "第二助手"));
     expect(patch).toHaveBeenCalledExactlyOnceWith({ agentId: "second" });
     expect(screen.getByText("保留历史")).toBeInTheDocument();
   });

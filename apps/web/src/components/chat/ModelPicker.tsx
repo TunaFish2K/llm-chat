@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Popover } from "radix-ui";
-import { Bot, Check, ChevronDown, RefreshCw, Search, Settings2, X } from "lucide-react";
+import { Bot, Check, RefreshCw, Search, Settings2, X } from "lucide-react";
 import type { ConnectionBalanceDto, ConnectionDto, ModelDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { navigate, routes } from "../../lib/router";
@@ -77,7 +77,6 @@ export function ModelPicker({
       <Popover.Trigger asChild>
         <button type="button" className="model-trigger" disabled={disabled} aria-label="选择模型" title={effective?.displayName ?? "选择模型"}>
           <ModelBrandIcon model={effective} connection={connections.find((item) => item.id === effective?.connectionId)} />
-          <ChevronDown size={13} aria-hidden="true" />
         </button>
       </Popover.Trigger>
       <Popover.Portal>
