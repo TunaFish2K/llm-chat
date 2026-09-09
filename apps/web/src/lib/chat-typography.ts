@@ -1,10 +1,12 @@
 import { useLayoutEffect } from "react";
+import { initializeTypography, typographyStore } from "./local-typography";
+import { useStore } from "./store";
 import type { AppSettings } from "@llm-chat/contracts";
 
 export function useChatTypography(settings: AppSettings | null): void {
-  const size = settings?.uiPreferences.chatFontSize ?? 13.5;
-  const spacing = settings?.uiPreferences.chatLetterSpacing ?? 0;
-  const height = settings?.uiPreferences.chatLineHeight ?? 1.55;
+  const values = useStore(typographyStore, (state) => state.values);
+  useLayoutEffect(() => { initializeTypography(settings?.uiPreferences); }, [settings]);
+  const { chatFontSize: size, chatLetterSpacing: spacing, chatLineHeight: height } = values;
   useLayoutEffect(() => {
     window.dispatchEvent(new Event("llm-chat:before-typography"));
     const style = document.documentElement.style;

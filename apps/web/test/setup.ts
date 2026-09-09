@@ -1,3 +1,5 @@
+import { typographyStore, CHAT_TYPOGRAPHY_DEFAULTS } from "../src/lib/local-typography";
+import { setConversationSource } from "../src/lib/conversation-lifecycle";
 import { offlineStore } from "../src/lib/offline-history";
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
@@ -77,6 +79,8 @@ if (!window.matchMedia) {
 afterEach(() => {
   offlineStore.set({ offline: false });
   cleanup();
+  typographyStore.set({ values: { ...CHAT_TYPOGRAPHY_DEFAULTS }, initialized: false, saved: true });
+  setConversationSource(crypto.randomUUID());
   memoryStorage.clear();
   tabStorage.clear();
   vi.unstubAllGlobals();

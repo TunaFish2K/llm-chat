@@ -53,6 +53,11 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
       const db = await new Promise<IDBDatabase>((resolve) => { const req = indexedDB.open("llm-chat-history", 1); req.onsuccess = () => resolve(req.result); });
       return new Promise<boolean>((resolve) => { const req = db.transaction("conversations").objectStore("conversations").get(id); req.onsuccess = () => { resolve(!req.result); db.close(); }; });
     }, first.conversation.id)).toBe(true);
+    // The deleted and surviving conversations share this image.
+    await expect.poll(() => cold.evaluate(async (url) => {
+      const key = (await caches.keys()).find((key) => key.startsWith("llm-chat-history-images-"));
+      return Boolean(key && await (await caches.open(key)).match(url));
+    }, image.url)).toBe(true);
     await page.getByRole("button", { name: "清除本机记录并关闭" }).click();
     await expect(page.getByLabel("离线记录", { exact: true })).toContainText("已保存 0 / 0");
     await expect.poll(() => cold.evaluate(async () => (await caches.keys()).filter((key) => key.startsWith("llm-chat-history-images-")).length)).toBe(0);

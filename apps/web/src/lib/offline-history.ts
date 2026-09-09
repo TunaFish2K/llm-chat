@@ -1,3 +1,5 @@
+import { conversationDeleted, deletedConversationIds, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
+import { draftImageUrls } from "./composer-drafts";
 import type { MessageDto, OfflineConversationDto, OfflineManifestDto } from "@llm-chat/contracts";
 import { createStore } from "./store";
 import { OFFLINE_IMAGES_PREFIX, offlineConversations, offlineRead, offlineWrite, readOfflineManifest, resetOfflineDb, type OfflineControl } from "./offline-db";
@@ -30,6 +32,11 @@ export function isOffline(): boolean { return offlineStore.get().offline; }
 async function fetchJson<T>(path: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), cache: "no-store" });
   if (response.status === 401) { window.dispatchEvent(new Event("llm-chat:offline-auth-required")); throw new Error("请重新登录"); }
+  if (response.status === 404) {
+    const body = await response.clone().json().catch(() => null);
+    const id = path.match(/^\/api\/offline\/conversations\/([^/]+)/)?.[1];
+    if (id && body?.error?.code === "conversation_not_found") markConversationsDeleted([id]);
+  }
   if (!response.ok) throw new Error(`同步失败（HTTP ${response.status}）`);
   return response.json() as Promise<T>;
 }
@@ -73,8 +80,8 @@ export function historyImageUrls(messages: MessageDto[]): string[] {
 async function updateStats(): Promise<void> {
   const manifest = await readOfflineManifest();
   const snapshots = await offlineConversations();
-  const valid = snapshots.filter((item) => item.sourceId === manifest?.sourceId);
-  const ids = new Set(manifest?.conversations.map((item) => item.id));
+  const valid = snapshots.filter((item) => item.sourceId === manifest?.sourceId && !conversationDeleted(item.conversation.id));
+  const ids = new Set(manifest?.conversations.filter((item) => !conversationDeleted(item.id)).map((item) => item.id));
   let bytes = new Blob([JSON.stringify(manifest ?? {}), ...valid.map((item) => JSON.stringify(item))]).size;
   const control = await offlineRead<OfflineControl>("meta", "control");
   if (control?.authorized && control.enabled && manifest && typeof caches !== "undefined") {
@@ -93,8 +100,14 @@ export function syncOfflineHistory(): Promise<void> {
   run = (async () => {
     offlineStore.set({ syncing: true, error: "", imagesMissing: 0 });
     try {
+      const revision = deletionRevision();
+      const requestedId = location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null;
+      const knownSnapshots = typeof indexedDB !== "undefined" && enabledPreference() ? await offlineConversations() : [];
       const manifest = await fetchJson<OfflineManifestDto>("/api/offline/manifest", signal);
       signal.throwIfAborted();
+      setConversationSource(manifest.sourceId);
+      if (revision === deletionRevision()) window.dispatchEvent(new CustomEvent("llm-chat:conversation-manifest", { detail: { conversations: manifest.conversations, currentId: requestedId, knownIds: knownSnapshots.filter((item) => item.sourceId === manifest.sourceId).map((item) => item.conversation.id) } }));
+      manifest.conversations = manifest.conversations.filter((item) => !conversationDeleted(item.id));
       if (!enabledPreference()) {
         const wasOffline = isOffline();
         offlineStore.set({ offline: false });
@@ -105,8 +118,9 @@ export function syncOfflineHistory(): Promise<void> {
       signal.throwIfAborted();
       const old = new Map((await offlineConversations()).map((item) => [item.conversation.id, item]));
       const ids = new Set(manifest.conversations.map((item) => item.id));
+      if (revision === deletionRevision()) markConversationsDeleted(knownSnapshots.filter((item) => item.sourceId === manifest.sourceId && !ids.has(item.conversation.id)).map((item) => item.conversation.id));
       if (!await offlineWrite(control.epoch, (tx) => {
-        tx.objectStore("meta").put(manifest, "manifest");
+        tx.objectStore("meta").put({ ...manifest, conversations: manifest.conversations.filter((item) => !conversationDeleted(item.id)) }, "manifest");
         for (const id of old.keys()) if (!ids.has(id)) tx.objectStore("conversations").delete(id);
       })) return;
       const wasOffline = isOffline();
@@ -114,24 +128,27 @@ export function syncOfflineHistory(): Promise<void> {
       if (wasOffline) window.dispatchEvent(new Event("llm-chat:offline-reconnected"));
       const currentId = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
       const queue = [...manifest.conversations].sort((a, b) => Number(b.id === currentId) - Number(a.id === currentId) || b.updatedAt - a.updatedAt);
-      const urls = new Set<string>();
+      const urls = new Set<string>(draftImageUrls());
       let completed = 0;
       const worker = async () => {
         while (queue.length) {
           signal.throwIfAborted();
           const conversation = queue.shift()!;
+          if (conversationDeleted(conversation.id)) continue;
           let snapshot = old.get(conversation.id);
           if (!snapshot || snapshot.revision !== conversation.cacheRevision || snapshot.sourceId !== manifest.sourceId) {
             try {
               snapshot = await fetchJson<OfflineConversationDto>(`/api/offline/conversations/${conversation.id}`, signal);
               if (snapshot.sourceId !== manifest.sourceId) throw new Error("数据来源已改变，请重新同步");
-              if (!await offlineWrite(control.epoch, (tx) => tx.objectStore("conversations").put(snapshot!))) return;
+              if (!await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversation.id)) tx.objectStore("conversations").put(snapshot!); })) return;
             } catch (error) {
               if (signal.aborted) throw error;
+              if (conversationDeleted(conversation.id)) continue;
               if (snapshot) historyImageUrls(snapshot.messages).forEach((url) => urls.add(url));
               failure(error); continue;
             }
           }
+          if (conversationDeleted(conversation.id)) continue;
           historyImageUrls(snapshot.messages).forEach((url) => urls.add(url));
           completed += 1;
           offlineStore.set({ synced: completed });
@@ -141,6 +158,7 @@ export function syncOfflineHistory(): Promise<void> {
       signal.throwIfAborted();
       if (typeof caches !== "undefined") {
         const cache = await caches.open(OFFLINE_IMAGES_PREFIX + control.epoch);
+        draftImageUrls().forEach((url) => urls.add(url));
         for (const request of await cache.keys()) if (!urls.has(new URL(request.url).pathname + new URL(request.url).search)) await cache.delete(request);
         for (const url of urls) {
           signal.throwIfAborted();
@@ -160,6 +178,7 @@ export function syncOfflineHistory(): Promise<void> {
         }
       }
       if (!offlineStore.get().error) await offlineWrite(control.epoch, (tx) => tx.objectStore("meta").put(Date.now(), "lastSync"));
+      await removeDeletedOfflineHistory();
       await updateStats();
     } catch (error) {
       if (!signal.aborted) { if (error instanceof TypeError || navigator.onLine === false) markOffline(); failure(error); }
@@ -215,7 +234,7 @@ export function initOfflineHistory(): void {
 }
 
 export function persistOfflineMessages(id: string, messages: MessageDto[], immediate = false): void {
-  if (typeof indexedDB === "undefined" || !enabledPreference() || isOffline()) return;
+  if (conversationDeleted(id) || typeof indexedDB === "undefined" || !enabledPreference() || isOffline()) return;
   pendingMessages.set(id, messages);
   if (persistTimer && !immediate) return;
   clearTimeout(persistTimer);
@@ -224,9 +243,10 @@ export function persistOfflineMessages(id: string, messages: MessageDto[], immed
     if (!control?.authorized || !control.enabled) { pendingMessages.clear(); return; }
     const pending = [...pendingMessages]; pendingMessages.clear();
     for (const [conversationId, content] of pending) {
+      if (conversationDeleted(conversationId)) continue;
       const old = await offlineRead<OfflineConversationDto>("conversations", conversationId);
       if (!old) { if (run) syncAgain = true; else void syncOfflineHistory(); }
-      if (old) await offlineWrite(control.epoch, (tx) => tx.objectStore("conversations").put({ ...old, messages: content, revision: -1 }));
+      if (old) await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversationId)) tx.objectStore("conversations").put({ ...old, messages: content, revision: -1 }); });
     }
   })().catch(failure); }, immediate ? 0 : 500);
 }
@@ -234,11 +254,12 @@ export function persistOfflineMessages(id: string, messages: MessageDto[], immed
 export async function offlineRequest(path: string): Promise<unknown> {
   const manifest = await readOfflineManifest();
   if (!manifest) throw new Error("本机尚未保存离线记录，请联网后同步");
+  manifest.conversations = manifest.conversations.filter((item) => !conversationDeleted(item.id));
   const url = new URL(path, location.origin);
   const route = url.pathname;
   if (route === "/api/bootstrap") {
     const id = url.searchParams.get("conversationId");
-    const snapshot = id ? await offlineRead<OfflineConversationDto>("conversations", id) : undefined;
+    const snapshot = id && !conversationDeleted(id) ? await offlineRead<OfflineConversationDto>("conversations", id) : undefined;
     return { ...manifest, ...(snapshot ? { messages: snapshot.messages } : {}) };
   }
   if (route === "/api/settings") return manifest.settings;
@@ -271,10 +292,39 @@ export async function offlineRequest(path: string): Promise<unknown> {
   const messageMatch = route.match(/^\/api\/conversations\/([^/]+)\/messages$/);
   if (messageMatch) {
     const snapshot = await offlineRead<OfflineConversationDto>("conversations", messageMatch[1]!);
-    if (snapshot?.sourceId === manifest.sourceId) return snapshot.messages;
+    if (snapshot?.sourceId === manifest.sourceId && !conversationDeleted(messageMatch[1]!)) return snapshot.messages;
     throw new Error("此会话尚未完成离线同步，请联网后再试");
   }
   if (/\/queue$/.test(route)) return { items: [], paused: true };
   if (/\/queued-messages$/.test(route) || route === "/api/background-tasks") return [];
   throw new Error("此内容需要联网查看");
 }
+
+/** Read and delete in one transaction so a stale manifest cannot overwrite newer cache metadata. */
+export async function removeDeletedOfflineHistory(): Promise<void> {
+  if (typeof indexedDB === "undefined" || !deletedConversationIds().length) return;
+  const control = await offlineRead<OfflineControl>("meta", "control");
+  if (!control?.authorized || !control.enabled) return;
+  await offlineWrite(control.epoch, (tx) => {
+    const request = tx.objectStore("meta").get("manifest");
+    request.onsuccess = () => {
+      const manifest = request.result as OfflineManifestDto | undefined;
+      if (manifest) tx.objectStore("meta").put({ ...manifest, conversations: manifest.conversations.filter((item) => !conversationDeleted(item.id)) }, "manifest");
+    };
+    for (const id of deletedConversationIds()) { pendingMessages.delete(id); tx.objectStore("conversations").delete(id); }
+  });
+  if (typeof caches !== "undefined") {
+    const snapshots = await offlineConversations();
+    const urls = new Set([...draftImageUrls(), ...snapshots.filter((item) => !conversationDeleted(item.conversation.id)).flatMap((item) => historyImageUrls(item.messages))]);
+    const cache = await caches.open(OFFLINE_IMAGES_PREFIX + control.epoch);
+    for (const request of await cache.keys()) {
+      const url = new URL(request.url);
+      if (!urls.has(url.pathname + url.search)) await cache.delete(request);
+    }
+  }
+}
+window.addEventListener("llm-chat:conversations-deleted", () => {
+  if (typeof indexedDB === "undefined") return;
+  // Let the synchronous app handler preserve attachments before cache collection.
+  void Promise.resolve().then(removeDeletedOfflineHistory).then(updateStats).catch(failure);
+});

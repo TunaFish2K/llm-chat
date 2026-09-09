@@ -234,7 +234,9 @@ function GeneralSection() {
         </Field>
       </div>
 
+      </fieldset>
       <div className="card"><h3>聊天排版</h3><ChatTypographySettings preview /></div>
+      <fieldset disabled={offline} className="offline-settings-fields">
       <AppUpdateCard />
       <div className="card"><h3>快速教程</h3><p className="hint">教程观看状态只保存在当前浏览器，不同步到其他设备。</p>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</button></div>

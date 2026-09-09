@@ -238,7 +238,7 @@ test("附件菜单、灯泡滑条与历史附件编辑分叉", async ({ page, re
   } finally { await fixture.cleanup(); await provider.close(); }
 });
 
-test("聊天排版在松手前更新，悬浮预览不阻止聊天并同步到其他设备", async ({ page, browser, request }) => {
+test("聊天排版实时预览且仅在同一浏览器同步，离线可调整", async ({ page, browser, request }) => {
   const provider = await startMockProvider();
   const fixture = await setup(request, provider.baseUrl);
   const original = await api(request, APP_URL, "GET", "/api/settings");
@@ -250,7 +250,12 @@ test("聊天排版在松手前更新，悬浮预览不阻止聊天并同步到�
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
     await page.getByLabel("输入消息").fill("保留这份草稿\nHello, typography preview");
-    const second = await other.newPage();
+    const independent = await other.newPage();
+    await independent.goto(`${APP_URL}/settings/general`);
+    const independentSize = independent.getByRole("slider", { name: "字号", exact: true });
+    await expect(independentSize).toBeVisible();
+    const originalSize = await independentSize.inputValue();
+    const second = await page.context().newPage();
     await second.goto(`${APP_URL}/settings/general`);
     await expect(second.getByRole("slider", { name: "字号", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "低频设置" }).click();
@@ -277,19 +282,17 @@ test("聊天排版在松手前更新，悬浮预览不阻止聊天并同步到�
     await expect(second.getByRole("slider", { name: "字号", exact: true })).toHaveValue(String(value));
     await expect(second.locator('.chat-typography-preview .msg').first()).toHaveCSS("font-size", `${value}px`);
     const lineHeight = page.getByRole("slider", { name: "行间距", exact: true });
-    let failSave = true;
-    await page.route("**/api/settings", async (route) => {
-      if (route.request().method() === "PATCH" && failSave) await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "offline" }) });
-      else await route.continue();
+    let typographyWrites = 0;
+    page.on("request", (request) => {
+      if (request.method() === "PATCH" && request.url().endsWith("/api/settings") &&
+          /chatFontSize|chatLineHeight|chatLetterSpacing/.test(request.postData() ?? "")) typographyWrites++;
     });
     await lineHeight.focus();
     await lineHeight.press("ArrowRight");
-    await expect(page.getByRole("alert").filter({ hasText: "未保存" })).toBeVisible();
     await expect(page.getByLabel("输入消息")).toHaveCSS("line-height", `${value * 1.6}px`);
-    failSave = false;
-    await page.getByRole("button", { name: "重试", exact: true }).last().click();
     await expect(second.getByRole("slider", { name: "行间距", exact: true })).toHaveValue("1.6");
-    await page.unroute("**/api/settings");
+    await expect(independentSize).toHaveValue(originalSize);
+    expect(typographyWrites).toBe(0);
     await page.getByLabel("输入消息").click();
     await page.getByLabel("输入消息").press("End");
     await page.getByLabel("输入消息").press("!");
@@ -308,8 +311,13 @@ test("聊天排版在松手前更新，悬浮预览不阻止聊天并同步到�
     await spacing.focus();
     await spacing.press("ArrowRight");
     await expect(page.getByLabel("输入消息")).toHaveCSS("letter-spacing", `${value * .01}px`);
+    await page.context().setOffline(true);
+    await expect(second.getByRole("slider", { name: "字号", exact: true })).toBeEnabled();
     await second.getByRole("button", { name: "恢复默认" }).click();
     await expect(page.getByLabel("输入消息")).toHaveCSS("font-size", "13.5px");
+    expect(typographyWrites).toBe(0);
+    await page.context().setOffline(false);
+    await second.close();
   } finally {
     await other.close();
     await api(request, APP_URL, "PATCH", "/api/settings", { uiPreferences: original.uiPreferences });
@@ -363,4 +371,53 @@ test("排版调整保留历史段落位置，悬浮面板打开时仍能滚动�
     await api(request, APP_URL, "PATCH", "/api/settings", { uiPreferences: original.uiPreferences });
     await fixture.cleanup(); await provider.close();
   }
+});
+
+test("远端删除只提示一次并清理离线记录，保留冲突草稿", async ({ page, request }) => {
+  const provider = await startMockProvider();
+  const fixture = await setup(request, provider.baseUrl);
+  const id = fixture.conversation.id;
+  try {
+    await page.goto(APP_URL);
+    await page.getByLabel("输入消息").fill("原来的新会话草稿");
+    await page.goto(`${APP_URL}/c/${id}`);
+    await page.getByLabel("输入消息").fill("被删除会话的草稿");
+    await expect.poll(() => page.evaluate(async (id) => {
+      const db = await new Promise<IDBDatabase>((resolve) => { const r = indexedDB.open("llm-chat-history"); r.onsuccess = () => resolve(r.result); });
+      try { return await new Promise<boolean>((resolve) => { const r = db.transaction("conversations").objectStore("conversations").get(id); r.onsuccess = () => resolve(Boolean(r.result)); }); }
+      finally { db.close(); }
+    }, id)).toBe(true);
+    await page.evaluate(() => {
+      (window as any).__deletedToasts = 0;
+      new MutationObserver((mutations) => {
+        for (const m of mutations) for (const node of m.addedNodes) {
+          if (node instanceof Element && node.matches(".toast") && node.textContent?.includes("会话已删除")) (window as any).__deletedToasts++;
+        }
+      }).observe(document.body, { subtree: true, childList: true });
+    });
+    await api(request, APP_URL, "DELETE", `/api/conversations/${id}`);
+    await expect(page).toHaveURL(APP_URL + "/");
+    await expect(page.getByLabel("输入消息")).toHaveValue("被删除会话的草稿");
+    await expect(page.getByText("会话已删除", { exact: true })).toHaveCount(1);
+    await page.getByRole("button", { name: "切换保留的草稿" }).click();
+    await expect(page.getByLabel("输入消息")).toHaveValue("原来的新会话草稿");
+    await page.getByRole("button", { name: "切换保留的草稿" }).click();
+    await expect(page.getByLabel("输入消息")).toHaveValue("被删除会话的草稿");
+    await expect.poll(() => page.evaluate(async (id) => {
+      const db = await new Promise<IDBDatabase>((resolve) => { const r = indexedDB.open("llm-chat-history"); r.onsuccess = () => resolve(r.result); });
+      try {
+        const read = (store: string, key: string) => new Promise<any>((resolve) => { const r = db.transaction(store).objectStore(store).get(key); r.onsuccess = () => resolve(r.result); });
+        return !(await read("conversations", id)) && !(await read("meta", "manifest"))?.conversations.some((c: any) => c.id === id);
+      } finally { db.close(); }
+    }, id)).toBe(true);
+    await page.evaluate(() => { window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online")); });
+    await expect.poll(() => page.evaluate(() => (window as any).__deletedToasts)).toBe(1);
+    await page.goto(`${APP_URL}/c/${id}`);
+    await expect(page).toHaveURL(APP_URL + "/");
+    await expect(page.getByText("会话已删除", { exact: true })).toHaveCount(0);
+    await page.context().setOffline(true);
+    await page.reload();
+    await expect(page.getByLabel("输入消息")).toHaveValue("被删除会话的草稿");
+    await page.context().setOffline(false);
+  } finally { await fixture.cleanup(); await provider.close(); }
 });

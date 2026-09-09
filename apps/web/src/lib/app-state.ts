@@ -1,3 +1,7 @@
+import { saveTypography } from "./local-typography";
+import { conversationDeleted, deletionRevision, markConversationsDeleted } from "./conversation-lifecycle";
+import { preserveDeletedDraft, removeComposerDraft } from "./composer-drafts";
+import { replaceRoute } from "./router";
 import { resolveConversationRoot } from "./conversation-tree";
 import { clearOfflineHistory, isOffline, offlineStore, persistOfflineMessages } from "./offline-history";
 import type {
@@ -62,6 +66,7 @@ export function toast(kind: Toast["kind"], text: string): void {
 }
 
 export function toastError(error: unknown): void {
+  if (error instanceof Error && "code" in error && ["conversation_not_found", "conversation_deleted_local"].includes(String(error.code))) return;
   if (isOffline() && error instanceof Error && /网络|联网|fetch|同步/.test(error.message)) return;
   toast("error", error instanceof Error ? error.message : String(error));
 }
@@ -69,7 +74,11 @@ export function toastError(error: unknown): void {
 export async function bootstrap(conversationId?: string, background = false): Promise<void> {
   if (!background) appStore.set({ auth: "loading", bootError: null });
   try {
+    const knownIds = appStore.get().conversations.map((item) => item.id);
     const data = await endpoints.bootstrap(conversationId);
+    if (!isOffline()) reconcileConversations(data.conversations, conversationId ?? null, knownIds);
+    data.conversations = data.conversations.filter((item) => !conversationDeleted(item.id));
+    if (conversationId && conversationDeleted(conversationId)) { delete data.messages; replaceRoute("/"); }
     setGenerationHapticsEnabled(data.settings.uiPreferences.generationHaptics);
     const normalizedMessages = data.messages ? normalizeMessages(data.messages) : undefined;
     const bootMessages = conversationId && normalizedMessages ? { [conversationId]: normalizedMessages } : {};
@@ -106,9 +115,27 @@ export function browseOfflineBranch(id: string): void {
   appStore.set({ conversations: conversations.map((item) => resolveConversationRoot(item, conversations).id === root ? { ...item, activeBranchId: id } : item) });
 }
 
+let conversationsReadSequence = 0;
+export function reconcileConversations(
+  conversations: ConversationDto[],
+  currentId: string | null = location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null,
+  knownIds = appStore.get().conversations.map((item) => item.id)
+): void {
+  const ids = new Set(conversations.map((item) => item.id));
+  const missing = knownIds.filter((id) => !ids.has(id));
+  if (currentId && !ids.has(currentId)) missing.push(currentId);
+  markConversationsDeleted(missing);
+  if (currentId && conversationDeleted(currentId)) replaceRoute("/");
+}
 export async function refreshConversations(): Promise<void> {
+  const sequence = ++conversationsReadSequence;
+  const revision = deletionRevision();
+  const knownIds = appStore.get().conversations.map((item) => item.id);
+  const currentId = location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null;
   const conversations = await endpoints.conversations();
-  appStore.set({ conversations });
+  if (sequence !== conversationsReadSequence) return;
+  if (!isOffline() && revision === deletionRevision()) reconcileConversations(conversations, currentId, knownIds);
+  appStore.set({ conversations: conversations.filter((item) => !conversationDeleted(item.id)) });
 }
 
 export async function refreshAgents(): Promise<void> {
@@ -137,6 +164,11 @@ export function acceptSettings(settings: AppSettings): void {
 }
 
 export function updateUiPreferences(patch: Partial<UiPreferences>): void {
+  const { chatFontSize, chatLetterSpacing, chatLineHeight, ...shared } = patch;
+  const typography = Object.fromEntries(Object.entries({ chatFontSize, chatLetterSpacing, chatLineHeight }).filter(([, value]) => value !== undefined));
+  if (Object.keys(typography).length) saveTypography(typography);
+  patch = shared;
+  if (!Object.keys(patch).length) return;
   const settings = appStore.get().settings;
   if (!settings) return;
   const revision = ++preferenceRevision;
@@ -184,7 +216,9 @@ export async function refreshSettings(): Promise<void> {
 }
 
 export async function loadMessages(conversationId: string): Promise<MessageDto[]> {
+  if (conversationDeleted(conversationId)) return [];
   const messages = normalizeMessages(await endpoints.messages(conversationId));
+  if (conversationDeleted(conversationId)) return [];
   appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: messages } }));
   persistOfflineMessages(conversationId, messages, true);
   for (const message of messages) {
@@ -220,6 +254,7 @@ function normalizeAsset(asset: FileAssetDto): FileAssetDto {
 }
 
 export function upsertMessage(conversationId: string, message: MessageDto): void {
+  if (conversationDeleted(conversationId)) return;
   const normalized = normalizeMessages([message])[0]!;
   appStore.set((state) => {
     const list = state.messages[conversationId] ?? [];
@@ -237,6 +272,7 @@ const generationStreams = new Map<string, Subscription>();
 const generationOwners = new Map<string, { conversationId: string; messageId: string }>();
 
 export function trackGeneration(conversationId: string, messageId: string, generationId: string): void {
+  if (conversationDeleted(conversationId)) return;
   generationOwners.set(generationId, { conversationId, messageId });
   ensureGenerationStream(generationId);
 }
@@ -345,6 +381,7 @@ function findMessage(conversationId: string, messageId: string): MessageDto | un
 }
 
 function applyGeneration(conversationId: string, messageId: string, generation: GenerationDto): void {
+  if (conversationDeleted(conversationId)) return;
   appStore.set((state) => {
     const list = state.messages[conversationId];
     if (!list) return {};
@@ -388,16 +425,17 @@ export function startAppEvents(): void {
       } else if (event.type === "task") {
         void refreshTaskCounts();
       } else if (event.type === "image-generation") {
-        void loadMessages(event.conversationId);
+        void loadMessages(event.conversationId).catch(toastError);
       } else if (event.type === "resource-changed") {
         if (event.resource === "agents") void refreshAgents();
-        if (event.resource === "conversations") void refreshConversations();
+        if (event.resource === "conversations") void refreshConversations().catch(toastError);
         if (event.resource === "settings") void refreshSettings();
         if (event.resource === "connections" || event.resource === "models") void refreshConnectionsAndModels();
         window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: event }));
       }
     },
     (connected) => {
+      if (connected) void refreshConversations().catch(toastError);
       if (connected && hasConnected) void refreshSettings().catch(toastError);
       if (connected) hasConnected = true;
       if (connected) window.dispatchEvent(new Event("llm-chat:queue-reconnect"));
@@ -413,7 +451,7 @@ export async function refreshTaskCounts(): Promise<void> {
     const tasks = await api.get<Array<{ conversationId: string; status: string }>>("/api/background-tasks?scope=all");
     const runningTasksByConversation: Record<string, number> = {};
     for (const task of tasks) {
-      if (!["queued", "starting", "running"].includes(task.status)) continue;
+      if (conversationDeleted(task.conversationId) || !["queued", "starting", "running"].includes(task.status)) continue;
       runningTasksByConversation[task.conversationId] = (runningTasksByConversation[task.conversationId] ?? 0) + 1;
     }
     appStore.set({ runningTasksByConversation });
@@ -432,3 +470,51 @@ export function initAuthGate(): void {
   window.addEventListener("llm-chat:offline-auth-required", requireAuth);
   offlineStore.subscribe(() => { if (isOffline()) stopAppEvents(); });
 }
+
+// All deletion signals converge here before routing or accepting another response.
+window.addEventListener("llm-chat:conversations-deleted", (event) => {
+  const { ids, local } = (event as CustomEvent<{ ids: string[]; local: boolean }>).detail;
+  const removed = new Set(ids);
+  const state = appStore.get();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of state.conversations) {
+      if (item.forkedFrom && removed.has(item.forkedFrom.conversationId) && !removed.has(item.id)) {
+        removed.add(item.id); changed = true;
+      }
+    }
+  }
+  const currentId = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
+  if (currentId && removed.has(currentId)) {
+    preserveDeletedDraft(currentId);
+    replaceRoute("/");
+    if (!local) toast("info", "会话已删除");
+  }
+  for (const id of removed) removeComposerDraft(id);
+  for (const [id, owner] of generationOwners) {
+    if (removed.has(owner.conversationId)) { closeGenerationStream(id); generationOwners.delete(id); }
+  }
+  appStore.set({
+    conversations: state.conversations.filter((item) => !removed.has(item.id)),
+    messages: Object.fromEntries(Object.entries(state.messages).filter(([id]) => !removed.has(id))),
+    runningTasksByConversation: Object.fromEntries(Object.entries(state.runningTasksByConversation).filter(([id]) => !removed.has(id)))
+  });
+  markConversationsDeleted([...removed], local);
+});
+window.addEventListener("llm-chat:conversation-manifest", (event) => {
+  const { conversations, knownIds, currentId } = (event as CustomEvent<{ conversations: ConversationDto[]; knownIds: string[]; currentId: string | null }>).detail;
+  reconcileConversations(conversations, currentId, knownIds);
+});
+window.addEventListener("llm-chat:conversation-missing", (event) => {
+  const path = (event as CustomEvent<{ path: string }>).detail.path;
+  const messageId = path.match(/^\/api\/messages\/([^/]+)/)?.[1];
+  const generationId = path.match(/^\/api\/generations\/([^/]+)/)?.[1];
+  const id = generationId ? generationOwners.get(generationId)?.conversationId
+    : Object.entries(appStore.get().messages).find(([, messages]) => messages.some((message) => message.id === messageId))?.[0];
+  if (id) markConversationsDeleted([id]);
+});
+window.addEventListener("popstate", () => {
+  const id = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
+  if (id && conversationDeleted(id)) replaceRoute("/");
+});

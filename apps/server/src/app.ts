@@ -723,6 +723,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       throw new StoreError("conversation_image_tasks_active", "请先停止该会话的图片任务，再删除会话");
     }
     if (!store.deleteConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
+    eventHub.emit({ type: "resource-changed", resource: "conversations", resourceId: request.params.id });
     await imageService.scheduleAttachmentWorkspaceCleanup(request.params.id);
     return reply.code(204).send();
   });

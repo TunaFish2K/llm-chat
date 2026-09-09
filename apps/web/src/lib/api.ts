@@ -1,3 +1,4 @@
+import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
 import { isOffline, markOffline, offlineRequest } from "./offline-history";
 import type {
   AgentDto,
@@ -74,6 +75,21 @@ function emitAuthRequired(): void {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const conversationId = /^\/api\/conversations\/([\da-f-]{36})(?:[/?]|$)/i.exec(path)?.[1];
+  if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
+  const deleting = method === "DELETE" && /^\/api\/conversations\/[\da-f-]{36}$/i.test(path);
+  if (deleting && conversationId) localDeletions.add(conversationId);
+  const controller = new AbortController();
+  const untrack = conversationId ? trackConversationRequest(conversationId, controller) : () => {};
+  try {
+    const result = await performRequest<T>(method, path, body, controller.signal, conversationId, deleting);
+    if (!deleting && conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
+    return result;
+  }
+  finally { untrack(); if (deleting && conversationId) localDeletions.delete(conversationId); }
+}
+
+async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, conversationId?: string, deleting = false): Promise<T> {
   if (method !== "GET" && method !== "HEAD" && (isOffline() || navigator.onLine === false) && path !== "/api/auth/login" && path !== "/api/auth/logout") {
     throw new ApiRequestError(0, "offline_readonly", "当前离线，此操作需要联网");
   }
@@ -88,7 +104,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     response = await fetch(path, {
       method,
-      ...(method === "GET" ? { signal: AbortSignal.timeout(15_000) } : {}),
+      signal: method === "GET" ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : signal,
       credentials: "same-origin",
       headers: {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -97,6 +113,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       body: body !== undefined ? JSON.stringify(body) : null
     });
   } catch (error) {
+    if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
     if (method === "GET") {
       markOffline();
       try { return await offlineRequest(path) as T; } catch { /* Preserve the request error when no snapshot is available. */ }
@@ -120,7 +137,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     if (serverCode === "authentication_required") emitAuthRequired();
     throw new ApiRequestError(401, serverCode, serverMessage);
   }
-  if (response.status === 204) return undefined as T;
+  if (response.status === 204) {
+    if (deleting && conversationId) markConversationsDeleted([conversationId], true);
+    return undefined as T;
+  }
   const text = await response.text();
   let data: unknown = undefined;
   if (text) {
@@ -132,6 +152,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (!response.ok) {
     const error = (data as { error?: { code?: string; message?: string; details?: unknown } } | undefined)?.error;
+    if (response.status === 404 && error?.code === "conversation_not_found") {
+      if (conversationId) markConversationsDeleted([conversationId]);
+      else window.dispatchEvent(new CustomEvent("llm-chat:conversation-missing", { detail: { path } }));
+    }
     throw new ApiRequestError(
       response.status,
       error?.code ?? "request_failed",
@@ -139,6 +163,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       error?.details
     );
   }
+  if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
   return data as T;
 }
 
