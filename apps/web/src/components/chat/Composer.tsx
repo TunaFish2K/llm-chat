@@ -459,7 +459,7 @@ export function Composer({
                 className="composer-input"
                 aria-label="输入消息"
                 placeholder={
-                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : mobile ? "长按发送以使用 Steer" : "Enter 发送 · Shift+Enter 换行 · 长按发送 / Enter 使用 Steer"
+                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : "请输入"
                 }
                 value={text}
                 rows={2}
