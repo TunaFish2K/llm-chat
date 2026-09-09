@@ -941,3 +941,57 @@ async function until(predicate: () => boolean): Promise<void> {
 function turn(): Promise<void> {
   return new Promise((resolvePromise) => setImmediate(resolvePromise));
 }
+
+it.each([false, true])("snapshots Markdown separately from model output; formatter failure=%s", async (broken) => {
+  const store = createStore(); const generation = seedGeneration(store);
+  const execute = vi.fn(async () => "raw output");
+  let step = 0;
+  const requests: GenerateRequest[] = [];
+  const runner = makeRunner(store, {
+    buildTools: async () => [{ ...serverTool("formatted", execute),
+      formatArguments: () => ({ summary: "ARG MARKDOWN", detail: "**input**" }),
+      formatResult: () => { if (broken) throw Error("formatter broken"); return { summary: "RESULT MARKDOWN", detail: "**output**" }; }
+    }],
+    stream: (_protocol, request) => {
+      requests.push(request);
+      return events(step++ === 0 ? [toolCall("formatted-call", "formatted", "{}"), { type: "complete", stopReason: "tool_calls" }] : [{ type: "complete", stopReason: "stop" }]);
+    }
+  });
+  runner.start(generation.generationId);
+  const result = await terminal(store, generation.generationId);
+  expect(result.status).toBe("completed");
+  expect(result.toolCalls[0]).toMatchObject({ output: "raw output", approvalState: "completed", presentation: { arguments: { summary: "ARG MARKDOWN" } } });
+  expect(result.toolCalls[0]?.presentation?.result?.summary).toBe(broken ? undefined : "RESULT MARKDOWN");
+  expect(JSON.stringify(requests)).not.toContain("MARKDOWN");
+  expect(execute).toHaveBeenCalledTimes(1);
+});
+
+it("saves argument Markdown before approval without executing the tool", async () => {
+  const store = createStore(); const generation = seedGeneration(store);
+  const execute = vi.fn(async () => "raw");
+  const runner = makeRunner(store, {
+    buildTools: async () => [{ ...serverTool("approve-format", execute, true), formatArguments: () => ({ summary: "Approval summary" }) }],
+    stream: () => events([toolCall("approval-format-call", "approve-format", "{}")])
+  });
+  runner.start(generation.generationId);
+  const pending = await inactiveWithStatus(runner, store, generation, "waiting-approval");
+  expect(pending.toolCalls[0]).toMatchObject({ approvalState: "pending", presentation: { arguments: { summary: "Approval summary" } } });
+  expect(execute).not.toHaveBeenCalled();
+});
+
+it("persists execution before formatting and ignores late presentation after cancellation", async () => {
+  const store = createStore(); const generation = seedGeneration(store);
+  const gate = deferred<import("@llm-chat/contracts").ToolMarkdown>();
+  const runner = makeRunner(store, {
+    buildTools: async () => [{ ...serverTool("format-delay", async () => "saved result"), formatResult: () => gate.promise }],
+    stream: () => events([toolCall("format-delay-call", "format-delay", "{}")])
+  });
+  runner.start(generation.generationId);
+  await until(() => store.getToolCall("format-delay-call")?.approvalState === "completed");
+  const completedAt = store.getToolCall("format-delay-call")!.completedAt;
+  runner.cancel(generation.generationId);
+  gate.resolve({ detail: "late formatting" });
+  await terminal(store, generation.generationId);
+  expect(store.getToolCall("format-delay-call")).toMatchObject({ output: "saved result", approvalState: "completed", completedAt });
+  expect(store.getToolCall("format-delay-call")?.presentation?.result).toBeUndefined();
+});

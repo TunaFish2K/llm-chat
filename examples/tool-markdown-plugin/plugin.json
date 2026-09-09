@@ -1,0 +1,8 @@
+{
+  "id": "markdown-example",
+  "name": "Markdown 展示示例",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "index.mjs",
+  "description": "演示工具参数和结果的缩略与详细 Markdown。"
+}

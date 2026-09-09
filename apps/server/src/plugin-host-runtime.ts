@@ -1,6 +1,7 @@
+import { normalizeToolMarkdown, type ToolFormatters } from "./tool-presentation";
 export type JsonObject = Record<string, unknown>;
 
-export type ToolSpec = {
+export type ToolSpec = ToolFormatters & {
   name: string;
   label?: string;
   description: string;
@@ -23,6 +24,8 @@ type HostRequest = {
   tool?: string;
   input?: JsonObject;
   context?: JsonObject;
+  output?: string | null;
+  error?: string | null;
 };
 
 export function createPluginRegistry(config: JsonObject, secrets: JsonObject): {
@@ -35,6 +38,9 @@ export function createPluginRegistry(config: JsonObject, secrets: JsonObject): {
     registerTool(spec: ToolSpec) {
       if (!spec || typeof spec !== "object" || !/^[A-Za-z0-9_-]+$/.test(spec.name) || typeof spec.execute !== "function") {
         throw new Error("Invalid tool registration");
+      }
+      for (const key of ["formatArguments", "formatResult"] as const) {
+        if (spec[key] !== undefined && typeof spec[key] !== "function") throw new Error(`Invalid tool formatter: ${key}`);
       }
       if (tools.has(spec.name)) throw new Error(`Duplicate tool name: ${spec.name}`);
       tools.set(spec.name, spec);
@@ -50,6 +56,8 @@ export function describePluginTools(tools: PluginTools): Array<Record<string, un
     description: tool.description,
     category: tool.category ?? "plugin",
     inputSchema: tool.inputSchema,
+    ...(tool.formatArguments ? { formatArguments: true } : {}),
+    ...(tool.formatResult ? { formatResult: true } : {}),
     approvalMode: typeof tool.requiresApproval === "function" ? "dynamic" : tool.requiresApproval ? "always" : "never"
   }));
 }
@@ -70,6 +78,12 @@ export async function handlePluginLine(tools: PluginTools, line: string): Promis
         ? await tool.requiresApproval(message.input ?? {})
         : Boolean(tool.requiresApproval);
       return { id: message.id, ok: true, result: Boolean(result) };
+    }
+    if (message.type === "format-arguments" || message.type === "format-result") {
+      const result = message.type === "format-arguments"
+        ? await tool.formatArguments?.(message.input ?? {})
+        : await tool.formatResult?.({ input: message.input ?? {}, output: message.output ?? null, error: message.error ?? null });
+      return { id: message.id, ok: true, result: normalizeToolMarkdown(result) ?? null };
     }
     if (message.type === "execute") {
       const result = await tool.execute(message.input ?? {}, message.context ?? {});

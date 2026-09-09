@@ -19,7 +19,8 @@ describe("PluginManager", () => {
     writeFileSync(resolve(source, "index.mjs"), `export function register(api) {
       api.registerTool({ name: "echo", description: "echo", inputSchema: {
         type: "object", properties: { value: { type: "string" } }, required: ["value"]
-      }, requiresApproval: input => input.value === "approve", execute: input => ({ echoed: input.value, configured: Boolean(api.config.token) }) });
+      }, formatArguments: input => ({ summary: input.value, detail: "**argument**" }),
+      formatResult: ({ output }) => ({ summary: "done", detail: output }), requiresApproval: input => input.value === "approve", execute: input => ({ echoed: input.value, configured: Boolean(api.config.token) }) });
     }`);
     const manager = new PluginManager(store, new EventHub());
     const installed = await manager.install(source);
@@ -30,6 +31,8 @@ describe("PluginManager", () => {
     const tool = (await manager.tools()).find((item) => item.definition.name === "plugin__sample__echo")!;
     await expect(tool.requiresApproval({ value: "approve" })).resolves.toBe(true);
     await expect(tool.execute({ value: "hello" }, new AbortController().signal)).resolves.toBe('{"echoed":"hello","configured":true}');
+    await expect(tool.formatArguments!({ value: "hello" })).resolves.toMatchObject({ summary: "hello" });
+    await expect(tool.formatResult!({ input: {}, output: "raw result", error: null })).resolves.toMatchObject({ detail: "raw result" });
     expect(JSON.stringify(manager.list())).not.toContain('"token":"secret"');
     manager.close();
   }, 20_000);

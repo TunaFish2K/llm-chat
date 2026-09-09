@@ -1,3 +1,4 @@
+import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 import { useState, type ReactNode } from "react";
 import {
   ChevronDown,
@@ -24,8 +25,8 @@ import type { InspectionTarget } from "../../lib/inspection";
 import { Markdown } from "../../lib/markdown";
 import { useStore } from "../../lib/store";
 import { StatusTag } from "../ui";
-import { AssetGallery, CodeField, copyText, MessageAction } from "./atoms";
-import { activeGeneration, answerText, groupTimeline, prettyJson, type ProcessEntry } from "./model";
+import { AssetGallery, copyText, MessageAction } from "./atoms";
+import { activeGeneration, answerText, groupTimeline, type ProcessEntry } from "./model";
 
 function toolStderr(output: string | null): string {
   if (!output) return "";
@@ -403,7 +404,8 @@ function ToolCallDisclosure({ call, onInspect }: { call: ToolCallDto; onInspect:
     <details className="tool-call" data-state={call.approvalState}>
       <summary>
         <Wrench size={15} aria-hidden="true" />
-        <code>{call.name}</code>
+        <code className="tool-call-name" title={call.name}>{call.name}</code>
+        <ToolCallSummary call={call} />
         {call.error ? <span className="tool-error-summary" title={call.error}>{call.error}{toolStderr(call.output)}</span> : null}
         <span className="grow" />
         {call.approvalState === "pending" ? <span>等待审批</span> : null}
@@ -423,9 +425,7 @@ function ToolCallDisclosure({ call, onInspect }: { call: ToolCallDto; onInspect:
         <ChevronDown className="chev" size={14} aria-hidden="true" />
       </summary>
       <div className="tool-call-details">
-        <CodeField label="参数" value={prettyJson(call.arguments)} />
-        {call.output ? <CodeField label="输出" value={prettyJson(call.output)} /> : null}
-        {call.error ? <CodeField label="错误" value={call.error} danger /> : null}
+        <ToolCallContent key={call.id} call={call} />
         {call.artifacts.length ? <AssetGallery assets={call.artifacts} /> : null}
       </div>
     </details>

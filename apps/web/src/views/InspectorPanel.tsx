@@ -1,3 +1,4 @@
+import { ToolCallContent } from "../components/chat/ToolPresentation";
 import { useEffect, useState, type ReactNode } from "react";
 import type { BackgroundTaskEventDto, ContextSummaryDto, ConversationDto, MessageDto } from "@llm-chat/contracts";
 import { Bot, ExternalLink, Gauge, GitFork, Minimize2, Settings2, TerminalSquare, Wrench, X } from "lucide-react";
@@ -133,9 +134,7 @@ export function InspectorPanel({
               <Definition label="开始" value={tool.startedAt ? formatTime(tool.startedAt) : "—"} />
               <Definition label="完成" value={tool.completedAt ? formatTime(tool.completedAt) : "—"} />
             </InspectorSection>
-            <CodeSection title="参数" value={pretty(tool.arguments)} />
-            {tool.output ? <CodeSection title="输出" value={pretty(tool.output)} /> : null}
-            {tool.error ? <CodeSection title="错误" value={tool.error} danger /> : null}
+            <ToolCallContent key={tool.id} call={tool} />
             {tool.artifacts.length ? <JsonSection title="图片产物" value={tool.artifacts} /> : null}
           </>
         ) : null}
@@ -186,8 +185,4 @@ function CodeSection({ title, value, danger }: { title: string; value: string; d
 function TaskEvents({ events }: { events: BackgroundTaskEventDto[] }) {
   if (!events.length) return null;
   return <section className="inspector-section"><h3>事件</h3><ol className="event-list">{events.map((event) => <li key={event.id}><time>{formatTime(event.createdAt)}</time><span>{event.type}</span><small>{event.reason ?? ""}</small></li>)}</ol></section>;
-}
-
-function pretty(raw: string): string {
-  try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
 }

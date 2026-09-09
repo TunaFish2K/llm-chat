@@ -1,3 +1,4 @@
+import { normalizeToolMarkdown } from "./tool-presentation";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
@@ -13,7 +14,7 @@ import type { ServerTool } from "./tools";
 
 type Row = Record<string, unknown>;
 type JsonObject = Record<string, unknown>;
-type HostTool = { name: string; label: string; description: string; category: string; inputSchema: Record<string, unknown>; approvalMode: "always" | "never" | "dynamic" };
+type HostTool = { formatArguments?: boolean; formatResult?: boolean; name: string; label: string; description: string; category: string; inputSchema: Record<string, unknown>; approvalMode: "always" | "never" | "dynamic" };
 type HostMessage = { id?: string; type: string; tools?: HostTool[]; ok?: boolean; result?: unknown; error?: string };
 
 class PluginHost {
@@ -64,14 +65,14 @@ class PluginHost {
     return this.ready;
   }
 
-  async request(type: "approval" | "execute", tool: string, input: JsonObject, context: JsonObject = {}): Promise<unknown> {
+  async request(type: "approval" | "execute" | "format-arguments" | "format-result", tool: string, input: JsonObject, context: JsonObject = {}, presentation: { output?: string | null; error?: string | null } = {}): Promise<unknown> {
     await this.start();
     if (!this.child || this.child.exitCode !== null) throw new Error("Plugin host is not running");
     const id = randomUUID();
     return new Promise((resolveRequest, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Plugin call timed out")); }, 120_000);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Plugin call timed out")); }, type.startsWith("format-") ? 1000 : 120_000);
       this.pending.set(id, { resolve: resolveRequest, reject, timer });
-      this.child!.stdin.write(`${JSON.stringify({ id, type, tool, input, context })}\n`);
+      this.child!.stdin.write(`${JSON.stringify({ id, type, tool, input, context, ...presentation })}\n`);
     });
   }
 
@@ -232,6 +233,8 @@ export class PluginManager {
           definition: { name: canonical, description: remote.description, inputSchema: remote.inputSchema },
           label: `${manifest.name} / ${remote.label}`, category: "plugin", available: true,
           sourceKind: "plugin", sourceId: plugin.id, sourceName: manifest.name, revision,
+          ...(remote.formatArguments ? { formatArguments: async (input: JsonObject) => normalizeToolMarkdown(await (await this.host(plugin.id, revision)).request("format-arguments", remote.name, input)) ?? {} } : {}),
+          ...(remote.formatResult ? { formatResult: async ({ input, output, error }: import("@llm-chat/contracts").ToolResultFormatInput) => normalizeToolMarkdown(await (await this.host(plugin.id, revision)).request("format-result", remote.name, input, {}, { output, error })) ?? {} } : {}),
           requiresApproval: async (input) => {
             if (remote.approvalMode === "always") return true;
             if (remote.approvalMode === "never") return false;
