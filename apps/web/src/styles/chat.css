@@ -982,11 +982,6 @@
   cursor: not-allowed;
 }
 
-.send-button.stop {
-  background: var(--err);
-  color: #fff;
-}
-
 .composer-tools .chip,
 .composer-tools .model-trigger,
 .composer-tools .send-button {
@@ -1073,16 +1068,6 @@
 .composer-tools .send-button,
 .composer-tools .send-button:hover:not(:disabled) {
   color: var(--accent);
-}
-
-.composer-tools .send-button.stop {
-  background: transparent;
-  color: var(--err);
-}
-
-.composer-tools .send-button.stop:hover:not(:disabled) {
-  background: transparent;
-  color: var(--err);
 }
 
 .composer-attachments {
@@ -1587,3 +1572,39 @@
 .markdown-inline { display: inline; white-space: nowrap; font-size: inherit; }
 .markdown-inline :is(p, div, pre, span, code) { display: inline; white-space: nowrap; font-size: inherit; padding: 0; margin: 0; }
 .markdown-inline :is(img, table, button, svg) { display: none; }
+
+.composer-input-area { position: relative; min-width: 0; }
+.composer-input-area .composer-input { display: block; padding-inline-end: 52px; }
+.composer-stop-button { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--err); cursor: pointer; }
+.composer-stop-button:hover:not(:disabled) { background: var(--surface-2); }
+.composer-stop-button:disabled { opacity: .5; cursor: wait; }
+.chat-thread { --text-xs: var(--chat-size-11, 11px); --text-sm: var(--chat-size-12, 12px); }
+.chat-thread .msg, .composer-input { font-size: var(--chat-font-size, 13.5px); line-height: var(--chat-line-height, 1.55); letter-spacing: var(--chat-letter-spacing, 0em); }
+.chat-thread :is(.markdown, .process-reasoning > div, .tool-call-details, pre) { line-height: var(--chat-line-height, 1.55); }
+.chat-thread :is(pre, code, kbd, samp) { letter-spacing: 0; }
+.chat-thread .markdown h1 { font-size: var(--chat-size-20, 20px); }
+.chat-thread .markdown h2 { font-size: var(--chat-size-18, 18px); }
+.chat-thread .markdown h3 { font-size: var(--chat-size-16, 16px); }
+.chat-thread .markdown h4 { font-size: var(--chat-size-14, 14px); }
+.chat-thread :is(.process-disclosure > summary, .process-reasoning > div, .process-steps .tool-call > summary, .process-error, .tool-presentation .markdown) { font-size: var(--chat-size-12, 12px); }
+.chat-thread :is(.reply-metadata, .tool-presentation > button, .tool-markdown-summary) { font-size: var(--chat-size-11, 11px); }
+.chat-thread .stream-actions { letter-spacing: normal; }
+.chat-typography-settings { padding: 8px; min-width: 0; }
+.chat-typography-controls { display: grid; gap: 8px; align-content: start; }
+.chat-typography-control { display: grid; gap: 0; }
+.chat-typography-control > span { display: flex; justify-content: space-between; gap: 12px; }
+.chat-typography-control output { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chat-typography-control input { width: 100%; height: 36px; margin: 0; accent-color: var(--accent); touch-action: none; }
+.chat-typography-save { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: var(--text-xs); color: var(--text-muted); }
+.chat-typography-save [role="alert"] { color: var(--err); }
+.chat-typography-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.composer-settings-popover .chat-typography-heading button, .composer-settings-popover .chat-typography-save button { width: auto; min-height: 34px; padding: 4px 8px; flex: 0 0 auto; }
+.composer-settings-popover { max-height: min(420px, var(--radix-popover-content-available-height)); overflow-y: auto; }
+.chat-typography-preview { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); max-height: 280px; overflow: auto; }
+.chat-typography-preview .chat-thread { padding: 0; gap: 8px; }
+.chat-typography-preview .composer-input { border-top: 1px solid var(--border); margin-top: 8px; min-height: 0; max-height: none; padding: 8px 0 0; }
+.chat-typography-settings.with-preview { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(0, 1.4fr); gap: 16px; }
+@media (max-width: 640px) { .chat-typography-settings.with-preview { grid-template-columns: minmax(0, 1fr); gap: 8px; } .chat-typography-preview { max-height: 190px; } }
+
+.chat-thread .reply-metadata { max-width: 100%; }
+.chat-thread .markdown :is(h1, h2, h3, h4) { letter-spacing: inherit; }

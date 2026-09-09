@@ -32,7 +32,7 @@ describe("SettingsView", () => {
     const apply = vi.spyOn(pwa, "applyUpdate").mockResolvedValue();
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
-    expect(screen.getByRole("status")).toHaveTextContent("新版本已准备好");
+    expect(within(screen.getByLabelText("应用更新")).getByRole("status")).toHaveTextContent("新版本已准备好");
     expect(apply).not.toHaveBeenCalled();
     await userEvent.setup().click(screen.getByRole("button", { name: "更新并刷新" }));
     expect(apply).toHaveBeenCalledOnce();
@@ -76,9 +76,7 @@ describe("SettingsView", () => {
       "/api/settings",
       expect.objectContaining({
         method: "PATCH",
-        body: JSON.stringify({
-          uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: false }
-        })
+        body: JSON.stringify({ uiPreferences: { generationHaptics: false } })
       })
     ));
   });

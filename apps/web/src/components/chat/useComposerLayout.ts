@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 
-export function useComposerLayout(generating: boolean) {
+export function useComposerLayout() {
   const ref = useRef<HTMLDivElement>(null);
   const [layout, setLayout] = useState({ foldAgent: false, compact: false });
   useLayoutEffect(() => {
@@ -10,7 +10,7 @@ export function useComposerLayout(generating: boolean) {
     const measure = () => {
       const width = element.clientWidth;
       if (!width) return;
-      const count = generating ? 7 : 6;
+      const count = 6;
       const size = media.matches ? 40 : 44;
       const gap = media.matches ? 4 : 10;
       const foldAgent = count * size + (count - 1) * gap > width;
@@ -24,6 +24,6 @@ export function useComposerLayout(generating: boolean) {
     media.addEventListener("change", measure);
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); media.removeEventListener("change", measure); window.removeEventListener("resize", measure); };
-  }, [generating]);
+  }, []);
   return { ref, ...layout };
 }

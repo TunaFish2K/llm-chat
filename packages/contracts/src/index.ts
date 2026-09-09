@@ -676,7 +676,10 @@ export const appSettingsSchema = z.object({
     reasoningCollapsePolicy: z.enum(["always-collapsed", "collapse-on-answer", "never-auto-collapse"]),
     generationHaptics: z.boolean().default(true),
     accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).nullable().optional(),
-    amoled: z.boolean().optional()
+    amoled: z.boolean().optional(),
+    chatFontSize: z.number().min(12).max(24).optional(),
+    chatLetterSpacing: z.number().min(0).max(0.15).optional(),
+    chatLineHeight: z.number().min(1.2).max(2.4).optional()
   }),
   lastWorkspacePath: z.string().max(4096).nullable().default(null)
 });
@@ -686,8 +689,13 @@ export const appSettingsUpdateSchema = z.preprocess((value, ctx) => {
     ctx.addIssue({ code: "custom", message: "生成配置已移至 Agent，请通过 Agent 配置接口修改。" });
   }
   return value;
-}, appSettingsSchema.partial());
+}, appSettingsSchema.partial().extend({
+  // Patch schemas must not insert read defaults into unrelated updates.
+  lastWorkspacePath: appSettingsSchema.shape.lastWorkspacePath.unwrap().optional(),
+  uiPreferences: appSettingsSchema.shape.uiPreferences.partial().extend({ generationHaptics: z.boolean().optional() }).optional()
+}));
 export type AppSettings = z.infer<typeof appSettingsSchema>;
+export type AppSettingsUpdate = z.output<typeof appSettingsUpdateSchema>;
 
 export const conversationInputSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),

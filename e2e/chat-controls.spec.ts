@@ -92,17 +92,24 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(page.locator(".composer-tools").getByRole("button", { name: "选择 Agent", exact: true })).toBeVisible();
     }
+    const idlePositions = new Map<number, unknown>();
     for (const generating of [false, true]) {
       if (generating) {
         await page.getByLabel("输入消息").fill("保持生成以验证工具栏");
         await page.getByRole("button", { name: "发送", exact: true }).click();
-        await expect(page.locator(".composer-tools").getByRole("button", { name: "停止生成" })).toBeVisible();
+        await expect(page.locator(".composer").getByRole("button", { name: "停止生成" })).toBeVisible();
       }
       for (const theme of ["light", "dark"]) {
         await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
         for (const width of [320, 390, 640, 1440]) {
           await page.setViewportSize({ width, height: 844 });
           await expect(() => checkToolbar(page)).toPass({ timeout: 3000 });
+          const positions = await page.locator(".composer-tools").evaluate((toolbar) => [...toolbar.querySelectorAll("button")].filter((button) => button.getClientRects().length).map((button) => {
+            const box = button.getBoundingClientRect();
+            return { x: box.x, width: box.width, y: box.y - toolbar.getBoundingClientRect().y };
+          }));
+          if (!generating) idlePositions.set(width, positions);
+          else expect(positions).toEqual(idlePositions.get(width));
           const badge = page.locator('.composer-tools .composer-settings-trigger > b:visible');
           if (await badge.count()) {
             const bounds = await badge.evaluate((element) => {
@@ -117,8 +124,21 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
         }
       }
     }
-    await page.locator(".composer-tools").getByRole("button", { name: "停止生成" }).click();
-    await expect(page.locator(".composer-tools").getByRole("button", { name: "停止生成" })).toHaveCount(0);
+    await page.setViewportSize({ width: 320, height: 844 });
+    const stop = page.locator(".composer").getByRole("button", { name: "停止生成" });
+    await expect(stop).toHaveCSS("width", "44px");
+    await expect(stop).toHaveCSS("height", "44px");
+    let releaseCancel!: () => void;
+    const cancellation = new Promise<void>((resolve) => { releaseCancel = resolve; });
+    await page.route("**/api/generations/*/cancel", async (route) => { await cancellation; await route.continue(); });
+    await stop.click();
+    try {
+      await expect(page.locator(".composer").getByRole("button", { name: "正在取消" })).toBeDisabled();
+      await checkToolbar(page);
+      await expect(page.locator(".composer-tools").getByRole("button", { name: "添加附件" })).toBeVisible();
+    } finally { releaseCancel(); }
+    await expect(page.locator(".composer-stop-button")).toHaveCount(0);
+    await page.unroute("**/api/generations/*/cancel");
     await api(request, APP_URL, "PATCH", `/api/models/${fixture.model.id}`, { displayName: "Kimi 工具栏测试" });
     await page.reload();
     await expect(brand).toHaveAttribute("data-brand", "kimi");
@@ -216,4 +236,131 @@ test("附件菜单、灯泡滑条与历史附件编辑分叉", async ({ page, re
     expect(original[0].attachments.map((asset: { fileName: string }) => asset.fileName)).toEqual(["original.txt"]);
     expect(fork[0].attachments.map((asset: { fileName: string }) => asset.fileName)).toEqual(["replacement.txt"]);
   } finally { await fixture.cleanup(); await provider.close(); }
+});
+
+test("聊天排版在松手前更新，悬浮预览不阻止聊天并同步到其他设备", async ({ page, browser, request }) => {
+  const provider = await startMockProvider();
+  const fixture = await setup(request, provider.baseUrl);
+  const original = await api(request, APP_URL, "GET", "/api/settings");
+  const other = await browser.newContext();
+  await other.addInitScript(() => localStorage.setItem("llm-chat.quick-tour.v1", "seen"));
+  try {
+    await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
+    await page.getByLabel("输入消息").fill("排版测试");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
+    await page.getByLabel("输入消息").fill("保留这份草稿\nHello, typography preview");
+    const second = await other.newPage();
+    await second.goto(`${APP_URL}/settings/general`);
+    await expect(second.getByRole("slider", { name: "字号", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "低频设置" }).click();
+    await page.getByRole("button", { name: /聊天排版/ }).click();
+    const size = page.getByRole("slider", { name: "字号", exact: true });
+    const bounds = (await size.boundingBox())!;
+    const touch = test.info().project.name === "mobile-chromium" ? await page.context().newCDPSession(page) : null;
+    if (touch) {
+      const current = Number(await size.inputValue());
+      const x = bounds.x + 8 + (bounds.width - 16) * (current - 12) / 12;
+      await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y: bounds.y + bounds.height / 2 }] });
+      await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: bounds.x + bounds.width * .8, y: bounds.y + bounds.height / 2 }] });
+    } else {
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(bounds.x + bounds.width * .8, bounds.y + bounds.height / 2, { steps: 4 });
+    }
+    const value = Number(await size.inputValue());
+    expect(value).toBeGreaterThan(18);
+    await expect(page.getByLabel("输入消息")).toHaveCSS("font-size", `${value}px`);
+    await expect(page.locator('.chat-thread .msg[data-role="assistant"]').last()).toHaveCSS("font-size", `${value}px`);
+    if (touch) { await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }); await touch.detach(); }
+    else await page.mouse.up();
+    await expect(second.getByRole("slider", { name: "字号", exact: true })).toHaveValue(String(value));
+    await expect(second.locator('.chat-typography-preview .msg').first()).toHaveCSS("font-size", `${value}px`);
+    const lineHeight = page.getByRole("slider", { name: "行间距", exact: true });
+    let failSave = true;
+    await page.route("**/api/settings", async (route) => {
+      if (route.request().method() === "PATCH" && failSave) await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "offline" }) });
+      else await route.continue();
+    });
+    await lineHeight.focus();
+    await lineHeight.press("ArrowRight");
+    await expect(page.getByRole("alert").filter({ hasText: "未保存" })).toBeVisible();
+    await expect(page.getByLabel("输入消息")).toHaveCSS("line-height", `${value * 1.6}px`);
+    failSave = false;
+    await page.getByRole("button", { name: "重试", exact: true }).last().click();
+    await expect(second.getByRole("slider", { name: "行间距", exact: true })).toHaveValue("1.6");
+    await page.unroute("**/api/settings");
+    await page.getByLabel("输入消息").click();
+    await page.getByLabel("输入消息").press("End");
+    await page.getByLabel("输入消息").press("!");
+    await expect(size).toBeVisible();
+    await expect(page.getByLabel("输入消息")).toHaveValue(/保留这份草稿/);
+    await expect(page.locator('.modal-backdrop:visible')).toHaveCount(0);
+    const panel = (await page.locator('.composer-settings-popover').boundingBox())!;
+    expect(panel.x).toBeGreaterThanOrEqual(0);
+    expect(panel.x + panel.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await page.screenshot({ path: test.info().outputPath("typography-floating-preview.png") });
+    await page.getByRole("button", { name: "关闭排版面板" }).click();
+    await page.reload();
+    await expect(page.getByLabel("输入消息")).toHaveCSS("font-size", `${value}px`);
+    await expect(page.getByLabel("输入消息")).toHaveValue(/保留这份草稿/);
+    const spacing = second.getByRole("slider", { name: "字间距", exact: true });
+    await spacing.focus();
+    await spacing.press("ArrowRight");
+    await expect(page.getByLabel("输入消息")).toHaveCSS("letter-spacing", `${value * .01}px`);
+    await second.getByRole("button", { name: "恢复默认" }).click();
+    await expect(page.getByLabel("输入消息")).toHaveCSS("font-size", "13.5px");
+  } finally {
+    await other.close();
+    await api(request, APP_URL, "PATCH", "/api/settings", { uiPreferences: original.uiPreferences });
+    await fixture.cleanup(); await provider.close();
+  }
+});
+
+test("排版调整保留历史段落位置，悬浮面板打开时仍能滚动聊天", async ({ page, request }) => {
+  const paragraphs = Array.from({ length: 60 }, (_, index) => `第 ${index + 1} 段：这是一段用于检查阅读位置的文字。Typography should preserve the paragraph being read.`);
+  const provider = await startMockProvider({ responseText: paragraphs.join("\n\n") });
+  const fixture = await setup(request, provider.baseUrl);
+  const original = await api(request, APP_URL, "GET", "/api/settings");
+  try {
+    await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
+    await page.getByLabel("输入消息").fill("长回复");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.getByText(paragraphs[59]!, { exact: true })).toBeAttached();
+    await expect(page.locator(".composer-stop-button")).toHaveCount(0);
+    const scroller = page.getByLabel("消息列表", { exact: true });
+    await scroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await page.getByRole("button", { name: "低频设置" }).click();
+    await page.getByRole("button", { name: /聊天排版/ }).click();
+    const size = page.getByRole("slider", { name: "字号", exact: true });
+    await size.focus();
+    await size.press("ArrowRight");
+    await expect.poll(() => scroller.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(2);
+    const paragraph = page.getByText(paragraphs[20]!, { exact: true });
+    await paragraph.evaluate((element) => {
+      const container = element.closest('.chat-scroll')!;
+      container.scrollTop += element.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    });
+    await expect(page.getByRole("button", { name: "回到最新消息" })).toBeVisible();
+    const before = (await paragraph.boundingBox())!.y;
+    await size.focus();
+    await size.press("ArrowRight");
+    await expect.poll(async () => Math.abs((await paragraph.boundingBox())!.y - before)).toBeLessThan(2);
+    const scrollBefore = await scroller.evaluate((element) => element.scrollTop);
+    const bounds = (await scroller.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width - 10, bounds.y + 20);
+    await page.mouse.wheel(0, -120);
+    await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeLessThan(scrollBefore);
+    await expect(size).toBeVisible();
+    await size.focus();
+    await size.press("End");
+    await page.getByRole("slider", { name: "字间距", exact: true }).focus();
+    await page.getByRole("slider", { name: "字间距", exact: true }).press("End");
+    expect(await scroller.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(size).toHaveCount(0);
+  } finally {
+    await api(request, APP_URL, "PATCH", "/api/settings", { uiPreferences: original.uiPreferences });
+    await fixture.cleanup(); await provider.close();
+  }
 });

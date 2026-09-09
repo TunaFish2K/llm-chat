@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MIGRATION_V1, resolveManualThinkingBudget, Store } from "./database";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
+import { appSettingsUpdateSchema } from "@llm-chat/contracts";
 import { defaultRoleplayConfig } from "./roleplay";
 
 const dirs: string[] = [];
@@ -15,6 +16,36 @@ afterEach(() => {
 });
 
 describe("Store", () => {
+  it("merges typography patches without resetting unrelated preferences", () => {
+    const store = createStore();
+    store.updateSettings({ lastWorkspacePath: "/tmp/preserve-workspace", uiPreferences: { generationHaptics: false, accentColor: "#018EEE" } });
+    const patch = appSettingsUpdateSchema.parse({ uiPreferences: { chatFontSize: 18 } });
+    expect(patch).toEqual({ uiPreferences: { chatFontSize: 18 } });
+    store.updateSettings(patch);
+    store.updateSettings({ uiPreferences: { chatLetterSpacing: 0.08, chatLineHeight: 1.9 } });
+    store.updateSettings({ theme: "light" });
+    expect(store.getSettings().uiPreferences).toMatchObject({ chatFontSize: 18, chatLetterSpacing: 0.08, chatLineHeight: 1.9, generationHaptics: false, accentColor: "#018EEE" });
+    expect(store.getSettings().lastWorkspacePath).toBe("/tmp/preserve-workspace");
+    for (const values of [{ chatFontSize: 30 }, { chatLetterSpacing: -1 }, { chatLineHeight: 0 }]) {
+      expect(appSettingsUpdateSchema.safeParse({ uiPreferences: values }).success).toBe(false);
+    }
+  });
+
+  it("upgrades typography from schema 37 and persists it across reopening", () => {
+    const store = createStore();
+    store.updateSettings({ uiPreferences: { generationHaptics: false } });
+    const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
+    store.sqlite.exec("ALTER TABLE app_settings DROP COLUMN chat_font_size; ALTER TABLE app_settings DROP COLUMN chat_letter_spacing; ALTER TABLE app_settings DROP COLUMN chat_line_height; PRAGMA user_version = 37;");
+    store.close();
+    const upgraded = new Store(path);
+    expect(upgraded.getSettings().uiPreferences).toMatchObject({ chatFontSize: 13.5, chatLetterSpacing: 0, chatLineHeight: 1.55, generationHaptics: false });
+    upgraded.updateSettings({ uiPreferences: { chatFontSize: 20 } });
+    upgraded.close();
+    const reopened = new Store(path);
+    expect(reopened.getSettings().uiPreferences.chatFontSize).toBe(20);
+    reopened.close();
+  });
+
   it("stores Agent-scoped roleplay state and clones it with a conversation branch", () => {
     const store = createStore();
     const agentId = store.getSettings().defaultAgentId;
@@ -408,7 +439,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(37);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(38);
     migrated.close();
   });
 
@@ -489,7 +520,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(37);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(38);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getAgent(store.getSettings().defaultAgentId)?.execution.reasoningEffort).toBe("none");
@@ -519,7 +550,7 @@ describe("Store", () => {
 
     const migrated = new Store(path);
     expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(37);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(38);
     migrated.close();
   });
 
@@ -567,7 +598,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(37);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(38);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -603,7 +634,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(37);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(38);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -1036,7 +1067,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(37);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(38);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

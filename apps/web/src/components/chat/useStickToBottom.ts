@@ -66,5 +66,34 @@ export function useStickToBottom(deps: readonly unknown[], enabled: boolean): St
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, ...deps]);
 
+  useEffect(() => {
+    let anchor: Element | undefined;
+    let anchorTop = 0;
+    let wasFollowing = false;
+    const before = () => {
+      const element = ref.current;
+      if (!enabled || !element) return;
+      wasFollowing = following.current;
+      const top = element.getBoundingClientRect().top;
+      anchor = [...element.querySelectorAll(".msg-bubble, .markdown :is(p, li, h1, h2, h3, h4, pre, table), .process-reasoning > div, .reply-footer")].find((item) => item.getClientRects().length && item.getBoundingClientRect().bottom > top);
+      anchorTop = anchor?.getBoundingClientRect().top ?? 0;
+    };
+    const after = () => {
+      const element = ref.current;
+      if (!enabled || !element) return;
+      if (wasFollowing) toBottom();
+      else if (anchor?.isConnected) {
+        element.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+        previousScrollTop.current = element.scrollTop;
+      }
+    };
+    window.addEventListener("llm-chat:before-typography", before);
+    window.addEventListener("llm-chat:after-typography", after);
+    return () => {
+      window.removeEventListener("llm-chat:before-typography", before);
+      window.removeEventListener("llm-chat:after-typography", after);
+    };
+  }, [enabled, toBottom]);
+
   return { ref, detached, onScroll, toBottom, reset };
 }
