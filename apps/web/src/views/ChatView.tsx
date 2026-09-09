@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AgentDto, ConversationRoleplayState, ForkConversationInput, MessageDto } from "@llm-chat/contracts";
 import { readComposerDraft } from "../lib/composer-drafts";
@@ -21,7 +21,7 @@ import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
 import { BranchSwitchers, MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
 import { conversationBranchGroups, greetingBranchContext, resolveConversationRoot } from "../lib/conversation-tree";
-import { greetingOptions } from "../components/chat/model";
+import { greetingOptions, userReplyTargets } from "../components/chat/model";
 import { EditForkDialog } from "../components/chat/dialogs";
 import { RoleplayConversationDialog } from "../components/chat/RoleplayConversationDialog";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
@@ -75,6 +75,9 @@ export function ChatView({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [editingMessage, setEditingMessage] = useState<MessageDto | null>(null);
   const [branching, setBranching] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const retryPending = useRef(false);
+  const retryTargets = useMemo(() => userReplyTargets(messages ?? []), [messages]);
   const [compacting, setCompacting] = useState(false);
   const [actionsHost, setActionsHost] = useState<HTMLDivElement | null>(null);
   const [newGreetingIndex, setNewGreetingIndex] = useState(() => readComposerDraft(conversationId ?? null)?.greetingIndex ?? 0);
@@ -91,6 +94,22 @@ export function ChatView({
     () => conversation ? conversationBranchGroups(conversation, conversations) : [],
     [conversation, conversations]
   );
+
+  const retryAnswer = async (assistantMessageId: string) => {
+    if (!conversationId || busy || branching || retryPending.current) return;
+    retryPending.current = true;
+    setRetrying(true);
+    try {
+      const result = await endpoints.retryGeneration(assistantMessageId);
+      trackGeneration(conversationId, result.assistantMessageId, result.generationId);
+      await loadMessages(conversationId);
+    } catch (error) {
+      toastError(error);
+    } finally {
+      retryPending.current = false;
+      setRetrying(false);
+    }
+  };
 
   const readMessages = (id: string) => {
     setLoadError(null);
@@ -263,14 +282,16 @@ export function ChatView({
                       key={message.id}
                       conversationId={conversationId}
                       message={message}
+                      retryTargetId={retryTargets.get(message.id)}
                       branchGroups={branchGroups.filter((group) => group.messageOrdinal === message.ordinal)}
                       callbacks={{
                         onInspect,
                         onEdit: setEditingMessage,
+                        onRetry: (id) => void retryAnswer(id),
                         onContinue: continueFrom,
                         onGreetingFork: switchGreeting,
                         onBranchChange: (id) => void switchBranch(id),
-                        branching: branching || busy
+                        branching: branching || busy || retrying
                       }}
                     />
                   ))

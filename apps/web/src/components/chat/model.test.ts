@@ -3,6 +3,7 @@ import type { ToolCallDto } from "@llm-chat/contracts";
 import { makeGeneration, makeMessage } from "../../../test/fixtures";
 import {
   activeGeneration,
+  userReplyTargets,
   answerText,
   buildTimeline,
   groupTimeline,
@@ -92,5 +93,16 @@ describe("chat model helpers", () => {
     expect(prettyJson("plain text")).toBe("plain text");
     expect(shortPath("/home/tuna/Documents")).toBe("Documents");
     expect(shortPath("/")).toBe("/");
+  });
+});
+
+describe("user reply targets", () => {
+  it("selects the first generated answer in each turn without crossing users or choosing greetings", () => {
+    const user = (id: string) => makeMessage({ id, role: "user", generations: [] });
+    const reply = (id: string) => makeMessage({ id, generations: [makeGeneration()] });
+    expect([...userReplyTargets([
+      makeMessage({ id: "greeting", generations: [] }), user("first"), reply("first-answer"), reply("continued"),
+      user("unanswered"), user("last"), makeMessage({ id: "image", generations: [] }), reply("last-answer"), user("pending")
+    ])]).toEqual([["first", "first-answer"], ["last", "last-answer"]]);
   });
 });

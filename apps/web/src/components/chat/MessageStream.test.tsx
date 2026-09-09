@@ -4,7 +4,7 @@ import { MessageItem, type StreamCallbacks } from "./MessageStream";
 import { makeGeneration, makeMessage, makeSettings } from "../../../test/fixtures";
 import { appStore } from "../../lib/app-state";
 
-const callbacks: StreamCallbacks = { onInspect: vi.fn(), onEdit: vi.fn(), onContinue: vi.fn(), onGreetingFork: vi.fn(), onBranchChange: vi.fn(), branching: false };
+const callbacks: StreamCallbacks = { onInspect: vi.fn(), onEdit: vi.fn(), onRetry: vi.fn(), onContinue: vi.fn(), onGreetingFork: vi.fn(), onBranchChange: vi.fn(), branching: false };
 const reasoning = { id: "reasoning", stepIndex: 0, index: 0, type: "reasoning" as const, content: "Consider the question", complete: false };
 const answer = { id: "answer", stepIndex: 1, index: 0, type: "text" as const, content: "The answer", complete: false };
 
@@ -20,7 +20,7 @@ describe("reply processing disclosure", () => {
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
     rerender(reply({ ...generation, blocks: [{ ...reasoning, complete: true }, answer] }));
     expect(container.querySelector(".process-disclosure")).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("处理完成"));
+    fireEvent.click(screen.getByText("推理过程"));
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
     rerender(reply({ ...generation, status: "completed", completedAt: 10, blocks: [{ ...reasoning, complete: true }, { ...answer, content: "The answer continues", complete: true }] }));
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
@@ -42,4 +42,17 @@ describe("reply processing disclosure", () => {
     expect(screen.getByText("处理已停止")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("Command failed");
   });
+});
+
+it("disables a user retry without an answer and sends the resolved answer id when available", () => {
+  const message = makeMessage({ role: "user", text: "Retry this turn", generations: [] });
+  const onRetry = vi.fn();
+  const renderUser = (retryTargetId?: string, branching = false) => <MessageItem conversationId="conv-1" message={message} retryTargetId={retryTargetId} callbacks={{ ...callbacks, onRetry, branching }} />;
+  const { rerender } = render(renderUser());
+  expect(screen.getByRole("button", { name: "重试回答" })).toBeDisabled();
+  rerender(renderUser("answer-1"));
+  fireEvent.click(screen.getByRole("button", { name: "重试回答" }));
+  expect(onRetry).toHaveBeenCalledWith("answer-1");
+  rerender(renderUser("answer-1", true));
+  expect(screen.getByRole("button", { name: "重试回答" })).toBeDisabled();
 });

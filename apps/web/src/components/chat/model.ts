@@ -132,3 +132,17 @@ export function withGenerationValue(
   else delete output.generation;
   return output;
 }
+
+/** Resolve each user turn without crossing the next user message. */
+export function userReplyTargets(messages: MessageDto[]): Map<string, string> {
+  const targets = new Map<string, string>();
+  let userId: string | undefined;
+  for (const message of messages) {
+    if (message.role === "user") userId = message.id;
+    else if (userId && message.generations.length > 0) {
+      targets.set(userId, message.id);
+      userId = undefined;
+    }
+  }
+  return targets;
+}
