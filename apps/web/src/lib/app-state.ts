@@ -319,7 +319,8 @@ async function handleGenerationEvent(
   const next: GenerationDto = { ...generation };
   if (event.type === "block-delta") {
     const blocks = [...next.blocks];
-    const index = blocks.findIndex((block) => block.id === event.block.id);
+    // Stream IDs are synthetic; persisted snapshots use database IDs.
+    const index = blocks.findIndex((block) => block.index === event.block.index && block.stepIndex === event.block.stepIndex);
     const contentChanged = index < 0 ? Boolean(event.block.content) : blocks[index]!.content !== event.block.content;
     if (index >= 0) blocks[index] = event.block;
     else blocks.push(event.block);

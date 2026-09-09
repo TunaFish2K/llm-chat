@@ -258,10 +258,11 @@ export function ChatView({
               className="chat-scroll"
               ref={scroller.ref}
               onScroll={scroller.onScroll}
+              data-following-bottom={!scroller.detached || undefined}
               aria-live="polite"
               aria-label="消息列表"
             >
-              <div className="chat-thread">
+              <div className="chat-thread" ref={scroller.contentRef}>
                 <div className="root-branch-controls">
                   <BranchSwitchers
                     groups={branchGroups.filter((group) => group.messageOrdinal === null)}

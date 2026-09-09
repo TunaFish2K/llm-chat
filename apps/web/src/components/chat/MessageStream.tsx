@@ -1,3 +1,4 @@
+import { useStickToBottom } from "./useStickToBottom";
 import { isOffline, offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 import { useState, type ReactNode } from "react";
@@ -214,14 +215,17 @@ function GenerationTimeline({
 
       {timeline.map((item) => {
         if (item.kind === "process") {
-          return <ProcessGroup key={`${generation.id}:${item.id}`} entries={item.entries} busy={busy} status={generation.status}
+          const first = item.entries[0]!;
+          const key = first.kind === "block" ? `block:${first.block.stepIndex}:${first.block.index}` : `tool:${first.call.id}`;
+          return <ProcessGroup key={`${generation.id}:${key}`} entries={item.entries} busy={busy} status={generation.status}
             autoOpen={collapsePolicy === "never-auto-collapse" || (collapsePolicy === "collapse-on-answer" && !item.followedByAnswer && busy)}
             onInspect={(toolCallId) => callbacks.onInspect({ kind: "tool", messageId: message.id, generationId: generation.id, toolCallId })} />;
         }
         const { block } = item;
+        const blockKey = `${generation.id}:block:${block.stepIndex}:${block.index}`;
         if (block.type === "refusal") {
           return (
-            <div className="refusal-block" role="alert" key={block.id}>
+            <div className="refusal-block" role="alert" key={blockKey}>
               <strong>模型拒绝回答</strong>
               <p>{block.content}</p>
             </div>
@@ -229,12 +233,12 @@ function GenerationTimeline({
         }
         if (block.type === "unsupported") {
           return (
-            <div className="unsupported-block" key={block.id}>
+            <div className="unsupported-block" key={blockKey}>
               不支持的内容块：{block.content}
             </div>
           );
         }
-        return <Markdown key={block.id} text={block.content} streaming={!block.complete} />;
+        return <Markdown key={blockKey} text={block.content} streaming={!block.complete} />;
       })}
 
       {!busy && !generation.error && generation.status !== "completed" ? <div role="status"><StatusTag status={generation.status} /></div> : null}
@@ -338,12 +342,21 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect }: {
       <div className="process-steps">
         {entries.map((entry) => entry.kind === "tool"
           ? <ToolCallDisclosure key={entry.call.id} call={entry.call} onInspect={() => onInspect(entry.call.id)} />
-          : <div className="process-reasoning" key={entry.block.id}><div>{entry.block.content}</div></div>)}
+          : <ReasoningContent key={`block:${entry.block.stepIndex}:${entry.block.index}`} content={entry.block.content} open={open} busy={busy} />)}
       </div>
     </details>
     {!open ? tools.filter((call) => call.error).map((call) => <div key={call.id} className="process-error" role="alert">
       <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{call.error}{toolStderr(call.output)}
     </div>) : null}
+  </div>;
+}
+
+function ReasoningContent({ content, open, busy }: { content: string; open: boolean; busy: boolean }) {
+  const scroll = useStickToBottom([content], open, { initialFollowing: busy, preservePosition: true });
+  return <div className="process-reasoning">
+    <div ref={scroll.ref} onScroll={scroll.onScroll} data-following-bottom={!scroll.detached || undefined} tabIndex={0} role="region" aria-label="推理内容">
+      <div ref={scroll.contentRef}>{content}</div>
+    </div>
   </div>;
 }
 
