@@ -1,3 +1,4 @@
+import { offlineStore } from "../../lib/offline-history";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { Popover } from "radix-ui";
@@ -114,6 +115,7 @@ export function Composer({
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const [editingOverrides, setEditingOverrides] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const offline = useStore(offlineStore, (state) => state.offline);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [typographyOpen, setTypographyOpen] = useState(false);
   const inputAreaRef = useRef<HTMLDivElement>(null);
@@ -182,7 +184,7 @@ export function Composer({
   const active = messages
     .flatMap((message) => message.generations.map((generation) => ({ message, generation })))
     .find(({ generation }) => isGenerationActive(generation.status));
-  const generating = Boolean(active && active.generation.status !== "waiting-approval");
+  const generating = !offline && Boolean(active && active.generation.status !== "waiting-approval");
   useEffect(() => {
     if (conversation && !active) { void reloadQueue().catch(toastError); }
   }, [conversation?.id, active?.generation.id, reloadQueue]);
@@ -410,8 +412,8 @@ export function Composer({
     }
   };
 
-  const controlsDisabled = generating || sending || savingOverrides;
-  const sendDisabled =
+  const controlsDisabled = offline || generating || sending || savingOverrides;
+  const sendDisabled = offline ||
     sending || savingOverrides ||
     uploading ||
     (!text.trim() && !attachments.length) ||
@@ -435,7 +437,7 @@ export function Composer({
             }
           }}
         >
-          {pendingApprovals.length && conversation ? (
+          {!offline && pendingApprovals.length && conversation ? (
             <ApprovalCard
               conversationId={conversation.id}
               item={pendingApprovals[0]!}
@@ -517,7 +519,7 @@ export function Composer({
                       {typographyOpen ? <>
                         <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>返回</button><strong>聊天排版</strong>
                           <button type="button" aria-label="关闭排版面板" onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
-                        <ChatTypographySettings />
+                        <fieldset disabled={offline} className="offline-settings-fields"><ChatTypographySettings /></fieldset>
                       </> : <>
                       <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>聊天排版</strong><small>字号、字间距与行间距</small></span></button>
                       {toolbar.foldAgent ? <AgentPicker menuItem agents={agents} value={effectiveAgentId} disabled={controlsDisabled}
@@ -534,7 +536,7 @@ export function Composer({
 
                 </div>
                 <div className="composer-action-group">
-                  <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
+                  <AttachmentMenu uploadFiles={uploadFiles} disabled={offline || sending || attachments.length >= 8} uploading={uploading} />
 
                   <button
                     type="button"

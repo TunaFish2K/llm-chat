@@ -1,3 +1,4 @@
+import { isOffline, offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 import { useState, type ReactNode } from "react";
 import {
@@ -180,12 +181,17 @@ function GenerationTimeline({
 }) {
   const settings = useStore(appStore, (state) => state.settings);
   const collapsePolicy = settings?.uiPreferences.reasoningCollapsePolicy ?? "collapse-on-answer";
-  const busy = isGenerationActive(generation.status);
+  const offline = useStore(offlineStore, (state) => state.offline);
+  const busy = !offline && isGenerationActive(generation.status);
   const timeline = groupTimeline(generation);
   const answer = answerText(generation);
   const versionIndex = message.generations.findIndex((item) => item.id === generation.id);
 
   const selectVersion = async (id: string) => {
+    if (isOffline()) {
+      appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: (state.messages[conversationId] ?? []).map((item) => item.id === message.id ? { ...item, activeGenerationId: id, generatedModel: null } : item) } }));
+      return;
+    }
     try {
       await endpoints.selectGeneration(message.id, id);
       await loadMessages(conversationId);
@@ -243,6 +249,7 @@ function GenerationTimeline({
         <p className="muted small">停止原因：{generation.stopReason}</p>
       ) : null}
 
+      {offline && isGenerationActive(generation.status) ? <p className="hint">截至上次同步，生成状态尚未更新</p> : null}
       <MessageFooter busy={busy} liveAction={busy ? <CancelGenerationButton generationId={generation.id} className="act danger" /> : null}
         metadata={<>
           <span className="reply-identity" title={`${generation.generatedAgent?.name ?? "助手"} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>

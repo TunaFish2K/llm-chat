@@ -1,3 +1,5 @@
+import { resolveConversationRoot } from "./conversation-tree";
+import { clearOfflineHistory, isOffline, offlineStore, persistOfflineMessages } from "./offline-history";
 import type {
   AgentSummaryDto,
   AppSettings,
@@ -60,11 +62,12 @@ export function toast(kind: Toast["kind"], text: string): void {
 }
 
 export function toastError(error: unknown): void {
+  if (isOffline() && error instanceof Error && /网络|联网|fetch|同步/.test(error.message)) return;
   toast("error", error instanceof Error ? error.message : String(error));
 }
 
-export async function bootstrap(conversationId?: string): Promise<void> {
-  appStore.set({ auth: "loading", bootError: null });
+export async function bootstrap(conversationId?: string, background = false): Promise<void> {
+  if (!background) appStore.set({ auth: "loading", bootError: null });
   try {
     const data = await endpoints.bootstrap(conversationId);
     setGenerationHapticsEnabled(data.settings.uiPreferences.generationHaptics);
@@ -77,7 +80,7 @@ export async function bootstrap(conversationId?: string): Promise<void> {
       connections: data.connections,
       models: data.models,
       conversations: data.conversations,
-      ...(conversationId && normalizedMessages ? { messages: bootMessages } : {})
+      ...(conversationId && normalizedMessages ? { messages: background ? { ...appStore.get().messages, ...bootMessages } : bootMessages } : {})
     });
     if (conversationId && normalizedMessages) {
       for (const message of normalizedMessages) {
@@ -91,8 +94,16 @@ export async function bootstrap(conversationId?: string): Promise<void> {
       appStore.set({ auth: "required" });
       return;
     }
-    appStore.set({ auth: "loading", bootError: error instanceof Error ? error.message : "加载失败" });
+    if (!background) appStore.set({ auth: "loading", bootError: error instanceof Error ? error.message : "加载失败" });
   }
+}
+
+export function browseOfflineBranch(id: string): void {
+  const conversations = appStore.get().conversations;
+  const target = conversations.find((item) => item.id === id);
+  if (!target) return;
+  const root = resolveConversationRoot(target, conversations).id;
+  appStore.set({ conversations: conversations.map((item) => resolveConversationRoot(item, conversations).id === root ? { ...item, activeBranchId: id } : item) });
 }
 
 export async function refreshConversations(): Promise<void> {
@@ -175,6 +186,7 @@ export async function refreshSettings(): Promise<void> {
 export async function loadMessages(conversationId: string): Promise<MessageDto[]> {
   const messages = normalizeMessages(await endpoints.messages(conversationId));
   appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: messages } }));
+  persistOfflineMessages(conversationId, messages, true);
   for (const message of messages) {
     for (const generation of message.generations) {
       if (isGenerationActive(generation.status)) trackGeneration(conversationId, message.id, generation.id);
@@ -235,6 +247,7 @@ export function restartGenerationTracking(conversationId: string, messageId: str
 }
 
 export function ensureGenerationStream(generationId: string): void {
+  if (isOffline()) return;
   if (generationStreams.has(generationId)) return;
   const subscription = subscribeGeneration(
     generationId,
@@ -349,11 +362,20 @@ function applyGeneration(conversationId: string, messageId: string, generation: 
       }
     };
   });
+  const messages = appStore.get().messages[conversationId];
+  if (messages) persistOfflineMessages(conversationId, messages, !isGenerationActive(generation.status));
 }
 
 let appEventsSubscription: Subscription | null = null;
 
+export function stopAppEvents(): void {
+  appEventsSubscription?.close(); appEventsSubscription = null;
+  for (const stream of generationStreams.values()) stream.close();
+  generationStreams.clear();
+}
+
 export function startAppEvents(): void {
+  if (isOffline()) return;
   if (appEventsSubscription) return;
   let hasConnected = false;
   appEventsSubscription = subscribeAppEvents(
@@ -401,7 +423,12 @@ export async function refreshTaskCounts(): Promise<void> {
 }
 
 export function initAuthGate(): void {
-  onAuthRequired(() => {
-    appStore.set({ auth: "required" });
-  });
+  const requireAuth = (event?: Event) => {
+    stopAppEvents();
+    void clearOfflineHistory({ logout: true, broadcast: !(event instanceof CustomEvent && event.detail?.remote) }).catch(() => {});
+    appStore.set({ auth: "required", messages: {}, conversations: [] });
+  };
+  onAuthRequired(requireAuth);
+  window.addEventListener("llm-chat:offline-auth-required", requireAuth);
+  offlineStore.subscribe(() => { if (isOffline()) stopAppEvents(); });
 }

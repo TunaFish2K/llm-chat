@@ -1,3 +1,5 @@
+import { initOfflineHistory, isOffline } from "./lib/offline-history";
+import { OfflineBanner } from "./components/OfflineHistorySettings";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { dismissBackLayer, parentRoute, requestMobileBack, useMobileBackGesture } from "./lib/mobile-navigation";
@@ -83,9 +85,18 @@ export function App() {
 
   useEffect(() => {
     if (state.auth !== "ready") return;
+    initOfflineHistory();
     startAppEvents();
     void refreshTaskCounts();
   }, [state.auth]);
+
+  useEffect(() => {
+    const reconnect = () => void bootstrap(location.pathname.match(/^\/c\/([^/]+)/)?.[1], true).then(() => { startAppEvents(); });
+    const cleared = () => { if (isOffline()) void bootstrap(); };
+    window.addEventListener("llm-chat:offline-reconnected", reconnect);
+    window.addEventListener("llm-chat:offline-cleared", cleared);
+    return () => { window.removeEventListener("llm-chat:offline-reconnected", reconnect); window.removeEventListener("llm-chat:offline-cleared", cleared); };
+  }, []);
 
   /* The stored sidebar preference applies once, then the session owns it. */
   useEffect(() => {
@@ -145,6 +156,7 @@ export function App() {
       ) : null}
 
       <main className="workspace-main">
+        <OfflineBanner />
         {route.name !== "chat" ? (
           <MobileAppBar
             title={routeTitle(route, state.conversations, state.agents)}

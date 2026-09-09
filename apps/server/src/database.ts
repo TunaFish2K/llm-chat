@@ -1,3 +1,4 @@
+import { migrateOfflineHistory } from "./offline-history";
 import { legacyToolPresentation } from "./tool-presentation";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
@@ -359,7 +360,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 38) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 39) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1243,6 +1244,10 @@ function migrate(sqlite: DatabaseSyncType): void {
         if (!hasColumn(sqlite, "app_settings", name)) sqlite.exec(`ALTER TABLE app_settings ADD COLUMN ${name} REAL NOT NULL DEFAULT ${value}`);
       }
       sqlite.exec("PRAGMA user_version = 38;");
+    }
+    if (current < 39) {
+      migrateOfflineHistory(sqlite);
+      sqlite.exec("PRAGMA user_version = 39;");
     }
     sqlite.exec("COMMIT");
   } catch (error) {

@@ -1,3 +1,4 @@
+import { offlineStore } from "../lib/offline-history";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ConversationDto } from "@llm-chat/contracts";
 import {
@@ -42,6 +43,8 @@ export function WorkspaceSidebar({
   pwa: PwaState;
   onInstall: () => void;
 }) {
+  const offline = useStore(offlineStore, (state) => state.offline);
+  const cachedIds = useStore(offlineStore, (state) => state.cachedIds);
   const conversations = useStore(appStore, (state) => state.conversations);
   const [searchOpen, setSearchOpen] = useState(false);
   const sidebar = useRef<HTMLElement>(null);
@@ -179,13 +182,13 @@ export function WorkspaceSidebar({
                         onClick={linkClick(routes.chat(conversation.activeBranchId ?? conversation.id))}
                       >
                         <span>{conversation.title || "未命名会话"}</span>
-                        <small>{formatTime(conversation.updatedAt)}</small>
+                        <small>{offline && !cachedIds.includes(conversation.activeBranchId ?? conversation.id) ? "尚未下载" : formatTime(conversation.updatedAt)}</small>
                       </a>
                       <div className="conversation-actions">
                         <ConversationPopover><Popover.Trigger asChild><button className="icon-button" aria-label={`会话操作 ${conversation.title}`}><MoreHorizontal size={16} /></button></Popover.Trigger>
                           <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4}>
-                            <Popover.Close asChild><button aria-label={`重命名 ${conversation.title}`} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />修改标题</button></Popover.Close>
-                            <Popover.Close asChild><button className="danger-quiet" aria-label={`删除 ${conversation.title}`} onClick={() => setDeleting(conversation)}><Trash2 size={14} />删除会话</button></Popover.Close>
+                            <Popover.Close asChild><button disabled={offline} aria-label={`重命名 ${conversation.title}`} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />修改标题</button></Popover.Close>
+                            <Popover.Close asChild><button disabled={offline} className="danger-quiet" aria-label={`删除 ${conversation.title}`} onClick={() => setDeleting(conversation)}><Trash2 size={14} />删除会话</button></Popover.Close>
                           </Popover.Content></Popover.Portal>
                         </ConversationPopover>
                       </div>

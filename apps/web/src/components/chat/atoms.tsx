@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { offlineStore } from "../../lib/offline-history";
+import { useStore } from "../../lib/store";
 /** Small shared pieces of the conversation surface. */
 import type { ReactNode } from "react";
 import { Download, FileText } from "lucide-react";
@@ -29,6 +32,14 @@ export function AgentAvatar({
   );
 }
 
+export function OfflineAwareImage({ src, alt, ...props }: React.ComponentProps<"img">) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  const offline = useStore(offlineStore, (state) => state.offline);
+  if (failed && offline) return <span className="image-unavailable">{alt || "图片"} · 尚未下载，联网后可查看</span>;
+  return <img {...props} src={src} alt={alt} onLoad={() => setFailed(false)} onError={() => setFailed(true)} />;
+}
+
 /** Images always open through the server-issued URL, never a data: blob. */
 export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
   return (
@@ -41,7 +52,7 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
           rel="noopener noreferrer"
           title={`${asset.fileName} · ${formatBytes(asset.byteSize)}`}
         >
-          <img src={asset.url} alt={asset.fileName} loading="lazy" decoding="async" />
+          <OfflineAwareImage src={asset.url} alt={asset.fileName} loading="lazy" decoding="async" />
         </a>
       ))}
     </div>
@@ -49,6 +60,7 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
 }
 
 export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
+  const offline = useStore(offlineStore, (state) => state.offline);
   const images = assets.filter((asset): asset is ImageAssetDto => asset.kind === "image");
   const files = assets.filter((asset) => asset.kind === "file");
   return (
@@ -57,9 +69,9 @@ export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
       {files.length ? (
         <div className="message-files">
           {files.map((asset) => (
-            <a key={asset.id} className="message-file" href={asset.url} download={asset.fileName}>
+            <a key={asset.id} className="message-file" href={offline ? undefined : asset.url} aria-disabled={offline} download={asset.fileName}>
               <FileText size={18} aria-hidden="true" />
-              <span><strong>{asset.fileName}</strong><small>{formatBytes(asset.byteSize)}</small></span>
+              <span><strong>{asset.fileName}</strong><small>{offline ? "联网后可下载 · " : ""}{formatBytes(asset.byteSize)}</small></span>
               <Download size={16} aria-hidden="true" />
             </a>
           ))}
