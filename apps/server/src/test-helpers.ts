@@ -38,6 +38,11 @@ export function seedModel(store: Store) {
     enabled: true
   };
   const model = store.createModel(input);
-  store.updateSettings({ defaultModelId: model.id });
+  updateDefaultAgentExecution(store, { modelId: model.id });
   return { connection, model, settings };
+}
+
+export function updateDefaultAgentExecution(store: Store, patch: Partial<import("@llm-chat/contracts").AgentExecutionConfig>) {
+  const agent = store.getAgent(store.getSettings().defaultAgentId)!;
+  return store.updateAgent(agent.id, { execution: { ...agent.execution, ...patch } })!;
 }

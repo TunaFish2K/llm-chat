@@ -846,3 +846,23 @@
 .conversation-search-result[data-selected], .conversation-search-result:hover { background: var(--accent-soft); border-color: var(--accent-line); }
 .conversation-search-result span { color: var(--text-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .conversation-search-result mark { color: var(--accent); background: var(--accent-soft); }
+
+.mobile-back-feedback {
+  position: fixed;
+  top: 45%;
+  left: 0;
+  z-index: 120;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
+  pointer-events: none;
+  opacity: 0;
+  transition: transform var(--dur-fast), opacity var(--dur-fast);
+}
+.mobile-back-feedback[data-active] { opacity: 1; transition: none; }
+.mobile-back-feedback[data-ready] { color: var(--accent); }

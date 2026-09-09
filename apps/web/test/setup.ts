@@ -12,6 +12,17 @@ const memoryStorage: Storage = {
   setItem: (key, value) => { storageValues.set(key, String(value)); }
 };
 Object.defineProperty(window, "localStorage", { configurable: true, value: memoryStorage });
+const tabValues = new Map<string, string>();
+const tabStorage: Storage = {
+  get length() { return tabValues.size; },
+  clear: () => tabValues.clear(),
+  getItem: (key) => tabValues.get(key) ?? null,
+  key: (index) => [...tabValues.keys()][index] ?? null,
+  removeItem: (key) => { tabValues.delete(key); },
+  setItem: (key, value) => { tabValues.set(key, String(value)); }
+};
+Object.defineProperty(window, "sessionStorage", { configurable: true, value: tabStorage });
+
 Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, writable: true, value: class {
   observe() {} unobserve() {} disconnect() {}
 } });
@@ -65,6 +76,7 @@ if (!window.matchMedia) {
 afterEach(() => {
   cleanup();
   memoryStorage.clear();
+  tabStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   FakeEventSource.instances.length = 0;

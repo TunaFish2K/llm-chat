@@ -160,8 +160,8 @@ describe("contract schemas", () => {
 
   it("validates app, conversation, send, start, retry, and patch inputs", () => {
     const app = {
-      defaultModelId: null, defaultContextPolicy: "trim", theme: "system", defaultSystemPrompt: "",
-      reasoningEffort: "none", defaultAgentId: uuid, lastAgentId: uuid,
+      theme: "system",
+      defaultAgentId: uuid, lastAgentId: uuid,
       userProfile: { displayName: "User", description: "" },
       uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
       lastWorkspacePath: null

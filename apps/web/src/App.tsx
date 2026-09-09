@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { ArrowLeft } from "lucide-react";
+import { dismissBackLayer, parentRoute, requestMobileBack, useMobileBackGesture } from "./lib/mobile-navigation";
 import { endpoints } from "./lib/api";
-import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents } from "./lib/app-state";
+import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents, toast } from "./lib/app-state";
 import type { InspectionTarget } from "./lib/inspection";
 import { applyUpdate, getPwaState, initPwa, promptInstall, subscribePwa } from "./lib/pwa";
 import { navigate, replaceRoute, routes, useRoute, type Route } from "./lib/router";
@@ -48,6 +50,19 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspection, setInspection] = useState<InspectionTarget | null>(null);
+  const back = () => {
+    if (dismissBackLayer()) return;
+    const parent = parentRoute(route);
+    if (parent) navigate(parent);
+    else setNavDrawer(true);
+  };
+  const backOffset = useMobileBackGesture(mobile && state.auth === "ready", back);
+  useEffect(() => {
+    if (!mobile) return;
+    window.addEventListener("llm-chat:back", back);
+    return () => window.removeEventListener("llm-chat:back", back);
+  }, [mobile, route]);
+
   const [leftWidth, setLeftWidth] = useStoredNumber("llm-chat.sidebar-width", 276, LEFT_MIN, LEFT_MAX);
   const [rightWidth, setRightWidth] = useStoredNumber("llm-chat.inspector-width", 360, RIGHT_MIN, RIGHT_MAX);
   const [pwa, setPwa] = useState(getPwaState());
@@ -56,10 +71,12 @@ export function App() {
 
   useEffect(() => {
     initAuthGate();
+    const draftWarning = () => toast("error", "无法保存本地草稿，刷新后可能丢失未发送内容");
+    window.addEventListener("llm-chat:draft-storage-unavailable", draftWarning);
     const unsubscribePwa = subscribePwa(setPwa);
     initPwa();
     void bootstrap(initialConversation.current);
-    return unsubscribePwa;
+    return () => { unsubscribePwa(); window.removeEventListener("llm-chat:draft-storage-unavailable", draftWarning); };
   }, []);
 
   useEffect(() => {
@@ -130,6 +147,7 @@ export function App() {
           <MobileAppBar
             title={routeTitle(route, state.conversations, state.agents)}
             onOpenNav={() => setNavDrawer(true)}
+            onBack={parentRoute(route) ? requestMobileBack : undefined}
             onOpenInspector={null}
           />
         ) : null}
@@ -167,6 +185,7 @@ export function App() {
         <MobileDrawer side="left" closeLabel="关闭导航" onClose={() => setNavDrawer(false)}>
           <WorkspaceSidebar
             route={route}
+            onClose={() => setNavDrawer(false)}
             compact={false}
             pwa={pwa}
             onInstall={() => void promptInstall()}
@@ -179,6 +198,8 @@ export function App() {
         </MobileDrawer>
       ) : null}
 
+      {mobile ? <div className="mobile-back-feedback" aria-hidden="true" data-active={backOffset > 0 || undefined}
+        data-ready={backOffset >= 64 || undefined} style={{ transform: `translateX(${backOffset - 44}px)` }}><ArrowLeft size={20} /></div> : null}
       <QuickTour />
       <ToastStack toasts={state.toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
         updating={["checking", "downloading", "applying"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
@@ -220,6 +241,7 @@ function RouteView({
   if (route.name === "tasks") return <LegacyTaskRedirect taskId={route.taskId} />;
   return (
     <ChatView
+      key={route.conversationId ?? "new"}
       conversationId={route.conversationId}
       view={route.view}
       taskId={route.taskId}

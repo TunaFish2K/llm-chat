@@ -1,3 +1,4 @@
+import { useBackLayer } from "../../lib/mobile-navigation";
 import { useState } from "react";
 import { Popover, Slider } from "radix-ui";
 import { Lightbulb } from "lucide-react";
@@ -8,6 +9,7 @@ export function ReasoningPicker({ value, effective, inherited, levels, disabled,
   value: string; effective: ReasoningEffort; inherited: ReasoningEffort; levels: ReasoningEffort[]; disabled: boolean; onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  useBackLayer(open, () => setOpen(false));
   const options = [INHERIT, ...REASONING_LEVELS.filter((level) => levels.includes(level))];
   const index = Math.max(0, options.indexOf(value));
   const [preview, setPreview] = useState(index);

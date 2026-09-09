@@ -67,6 +67,26 @@ export function buildTimeline(generation: GenerationDto): TimelineEntry[] {
   );
 }
 
+export type ProcessEntry = TimelineEntry;
+export type DisplayTimelineEntry = Extract<TimelineEntry, { kind: "block" }> | { kind: "process"; id: string; entries: ProcessEntry[]; followedByAnswer: boolean };
+
+/** Group adjacent processing steps without moving prose across tool calls. */
+export function groupTimeline(generation: GenerationDto): DisplayTimelineEntry[] {
+  const result: DisplayTimelineEntry[] = [];
+  for (const entry of buildTimeline(generation)) {
+    if (entry.kind === "tool" || entry.block.type === "reasoning") {
+      const previous = result.at(-1);
+      if (previous?.kind === "process") previous.entries.push(entry);
+      else result.push({ kind: "process", id: entry.kind === "tool" ? entry.call.id : entry.block.id, entries: [entry], followedByAnswer: false });
+    } else {
+      const previous = result.at(-1);
+      if (previous?.kind === "process" && entry.block.type === "text" && entry.block.content.trim()) previous.followedByAnswer = true;
+      result.push(entry);
+    }
+  }
+  return result;
+}
+
 /** The generation a message currently displays — the pinned one, else the newest. */
 export function activeGeneration(message: MessageDto): GenerationDto | null {
   return message.generations.find((item) => item.id === message.activeGenerationId) ?? message.generations.at(-1) ?? null;

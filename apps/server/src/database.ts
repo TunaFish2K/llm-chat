@@ -357,7 +357,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 34) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 36) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1215,6 +1215,23 @@ function migrate(sqlite: DatabaseSyncType): void {
       if (!hasColumn(sqlite, "queued_messages", "mode")) sqlite.exec("ALTER TABLE queued_messages ADD COLUMN mode TEXT NOT NULL DEFAULT 'queue'");
       sqlite.exec("PRAGMA user_version = 34");
     }
+    if (current < 35) {
+      if (!hasColumn(sqlite, "agents", "last_selected_model_id")) {
+        sqlite.exec("ALTER TABLE agents ADD COLUMN last_selected_model_id TEXT REFERENCES models(id) ON DELETE SET NULL");
+      }
+      sqlite.exec("PRAGMA user_version = 35");
+    }
+    if (current < 36) {
+      const settings = sqlite.prepare("SELECT default_system_prompt FROM app_settings WHERE id = 1").get() as Row;
+      const update = sqlite.prepare("UPDATE agents SET execution_json = ?, revision = revision + 1 WHERE id = ?");
+      for (const row of sqlite.prepare("SELECT id, execution_json FROM agents").all() as Row[]) {
+        const execution = parse<Record<string, unknown>>(row.execution_json, {});
+        if (!Object.hasOwn(execution, "baseSystemPrompt")) {
+          update.run(json({ ...execution, baseSystemPrompt: String(settings.default_system_prompt) }), String(row.id));
+        }
+      }
+      sqlite.exec("PRAGMA user_version = 36");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1354,6 +1371,7 @@ export class Store {
       const enabledModel = modelId ? this.getModel(modelId) : undefined;
       const card = defaultAgentCard();
       const execution: AgentExecutionConfig = {
+        baseSystemPrompt: String(settings.default_system_prompt),
         modelId: enabledModel?.enabled ? enabledModel.id : null,
         visionModelId: null,
         contextPolicy: settings.default_context_policy as ContextPolicy,
@@ -1506,11 +1524,7 @@ export class Store {
   getSettings(): AppSettings {
     const row = this.sqlite.prepare("SELECT * FROM app_settings WHERE id = 1").get() as Row;
     return {
-      defaultModelId: textOrNull(row.default_model_id),
-      defaultContextPolicy: row.default_context_policy as ContextPolicy,
       theme: row.theme as AppSettings["theme"],
-      defaultSystemPrompt: String(row.default_system_prompt),
-      reasoningEffort: reasoningEffortSchema.parse(row.reasoning_effort),
       defaultAgentId: String(row.default_agent_id),
       lastAgentId: String(row.last_agent_id),
       userProfile: {
@@ -1531,11 +1545,7 @@ export class Store {
   updateSettings(patch: OptionalInput<AppSettings>): AppSettings {
     const current = this.getSettings();
     const next: AppSettings = {
-      defaultModelId: patch.defaultModelId === undefined ? current.defaultModelId : patch.defaultModelId,
-      defaultContextPolicy: patch.defaultContextPolicy ?? current.defaultContextPolicy,
       theme: patch.theme ?? current.theme,
-      defaultSystemPrompt: patch.defaultSystemPrompt ?? current.defaultSystemPrompt,
-      reasoningEffort: patch.reasoningEffort ?? current.reasoningEffort,
       defaultAgentId: patch.defaultAgentId ?? current.defaultAgentId,
       lastAgentId: patch.lastAgentId ?? current.lastAgentId,
       userProfile: patch.userProfile ?? current.userProfile,
@@ -1543,15 +1553,15 @@ export class Store {
       lastWorkspacePath: patch.lastWorkspacePath === undefined ? current.lastWorkspacePath : patch.lastWorkspacePath
     };
     this.sqlite.prepare(`
-      UPDATE app_settings SET default_model_id = ?, default_context_policy = ?, theme = ?, default_system_prompt = ?, reasoning_effort = ?,
+      UPDATE app_settings SET theme = ?,
         default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
         sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?, accent_color = ?, amoled = ?
       WHERE id = 1
-    `).run(next.defaultModelId, next.defaultContextPolicy, next.theme, next.defaultSystemPrompt, next.reasoningEffort,
+    `).run(next.theme,
       next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
       next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy,
       next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath, next.uiPreferences.accentColor ?? null, Number(next.uiPreferences.amoled ?? false));
-    if (patch.defaultSystemPrompt !== undefined || patch.userProfile !== undefined) {
+    if (patch.userProfile !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries").run();
     }
     return next;
@@ -1575,7 +1585,7 @@ export class Store {
   createAgent(input: AgentInput, avatarPng?: Uint8Array): AgentDto {
     const parsed = {
       card: characterCardV2Schema.parse(input.card),
-      execution: agentExecutionConfigSchema.parse(input.execution),
+      execution: agentExecutionConfigSchema.parse({ ...input.execution, baseSystemPrompt: input.execution.baseSystemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT }),
       userProfile: agentUserProfileOverrideSchema.parse(input.userProfile),
       roleplay: input.roleplay
         ? ensureRoleplayDefaults(agentRoleplayConfigSchema.parse(input.roleplay))
@@ -1609,7 +1619,10 @@ export class Store {
     const current = this.getAgent(id);
     if (!current) return undefined;
     const card = characterCardV2Schema.parse(patch.card ?? current.card);
-    const execution = agentExecutionConfigSchema.parse(patch.execution ?? current.execution);
+    const execution = agentExecutionConfigSchema.parse({
+      ...(patch.execution ?? current.execution),
+      baseSystemPrompt: patch.execution?.baseSystemPrompt ?? current.execution.baseSystemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT
+    });
     const userProfile = agentUserProfileOverrideSchema.parse(patch.userProfile ?? current.userProfile);
     const roleplay = ensureRoleplayDefaults(agentRoleplayConfigSchema.parse(patch.roleplay ?? current.roleplay));
     this.validateAgentModels(execution);
@@ -1754,6 +1767,24 @@ export class Store {
       INSERT INTO conversation_agent_roleplay_states (conversation_id, agent_id, state_json, updated_at)
       SELECT ?, agent_id, state_json, ? FROM conversation_agent_roleplay_states WHERE conversation_id = ?
     `).run(targetConversationId, Date.now(), sourceConversationId);
+  }
+
+  rememberAgentModel(id: string, modelId: string): AgentDto {
+    if (!this.getAgent(id)) throw new StoreError("agent_not_found", "Agent 不存在");
+    this.validateAgentModel(modelId);
+    this.sqlite.prepare("UPDATE agents SET last_selected_model_id = ? WHERE id = ?").run(modelId, id);
+    return this.getAgent(id)!;
+  }
+
+  newConversationOverrides(agentId: string, input: ConversationExecutionOverrides = {}): ConversationExecutionOverrides {
+    const agent = this.getAgent(agentId);
+    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    const overrides = conversationExecutionOverridesSchema.parse(input);
+    if (!Object.hasOwn(overrides, "modelId") && !agent.execution.modelId && agent.lastSelectedModelId) {
+      const model = this.getModel(agent.lastSelectedModelId);
+      if (model?.enabled) overrides.modelId = model.id;
+    }
+    return overrides;
   }
 
   private validateAgentModel(modelId: string | null): void {
@@ -2383,11 +2414,8 @@ export class Store {
     const agent = this.getAgent(agentId);
     if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
     const overrides = conversationExecutionOverridesSchema.parse("agentId" in input
-      ? input.executionOverrides ?? {}
-      : {
-          modelId: this.getSettings().defaultModelId,
-          contextPolicy: input.contextPolicy
-        });
+      ? this.newConversationOverrides(agentId, input.executionOverrides)
+      : this.newConversationOverrides(agentId, { contextPolicy: input.contextPolicy }));
     const modelId = effectiveModelId(agent.execution, overrides);
     if (modelId) this.validateAgentModel(modelId);
     const contextPolicy = overrides.contextPolicy ?? agent.execution.contextPolicy;
@@ -2431,8 +2459,7 @@ export class Store {
           ? input.executionOverrides
           : {
               modelId: input.modelId,
-              contextPolicy: input.contextPolicy,
-              reasoningEffort: this.getSettings().reasoningEffort
+              contextPolicy: input.contextPolicy
             },
         workspacePath: "workspacePath" in input ? input.workspacePath : null
       });
@@ -2473,42 +2500,47 @@ export class Store {
   updateConversation(id: string, patch: OptionalInput<Pick<ConversationDto,
     "title" | "agentId" | "executionOverrides" | "draft" | "modelId" | "contextPolicy" | "systemPrompt" | "workspacePath"
   >>): ConversationDto | undefined {
-    const current = this.getConversation(id);
-    if (!current) return undefined;
-    const switchingAgent = patch.agentId !== undefined && patch.agentId !== current.agentId;
-    const agentId = patch.agentId === undefined ? current.agentId : patch.agentId;
-    const agent = agentId ? this.getAgent(agentId) : undefined;
-    if (agentId && !agent) throw new StoreError("agent_not_found", "Agent 不存在");
-    const legacyOverrides: ConversationExecutionOverrides = {
-      ...current.executionOverrides,
-      ...(patch.modelId !== undefined ? { modelId: patch.modelId } : {}),
-      ...(patch.contextPolicy !== undefined ? { contextPolicy: patch.contextPolicy } : {})
-    };
-    if (patch.modelId !== undefined && patch.modelId !== null) this.validateAgentModel(patch.modelId);
-    const executionOverrides = switchingAgent
-      ? conversationExecutionOverridesSchema.parse({})
-      : conversationExecutionOverridesSchema.parse(patch.executionOverrides ?? legacyOverrides);
-    const modelId = agent ? effectiveModelId(agent.execution, executionOverrides) : null;
-    const contextPolicy = executionOverrides.contextPolicy ?? agent?.execution.contextPolicy ?? current.contextPolicy;
-    const next = {
-      title: patch.title ?? current.title,
-      agentId,
-      executionOverrides,
-      contextPolicy,
-      modelId,
-      draft: patch.draft ?? current.draft,
-      workspacePath: patch.workspacePath === undefined ? current.workspacePath : patch.workspacePath
-    };
-    this.sqlite.prepare(`
-      UPDATE conversations SET title = ?, system_prompt = ?, agent_id = ?, execution_overrides_json = ?, context_policy = ?, model_id = ?,
-        draft = ?, workspace_path = ?, updated_at = ? WHERE id = ?
-    `).run(next.title, patch.systemPrompt ?? current.systemPrompt, next.agentId, json(next.executionOverrides), next.contextPolicy,
-      next.modelId, next.draft, next.workspacePath, Date.now(), id);
-    if (switchingAgent || patch.executionOverrides !== undefined) {
-      this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(id);
-    }
-    if (switchingAgent && next.agentId) this.sqlite.prepare("UPDATE app_settings SET last_agent_id = ? WHERE id = 1").run(next.agentId);
-    return this.getConversation(id);
+    return this.transaction(() => {
+      const current = this.getConversation(id);
+      if (!current) return undefined;
+      const switchingAgent = patch.agentId !== undefined && patch.agentId !== current.agentId;
+      const agentId = patch.agentId === undefined ? current.agentId : patch.agentId;
+      const agent = agentId ? this.getAgent(agentId) : undefined;
+      if (agentId && !agent) throw new StoreError("agent_not_found", "Agent 不存在");
+      const legacyOverrides: ConversationExecutionOverrides = {
+        ...current.executionOverrides,
+        ...(patch.modelId !== undefined ? { modelId: patch.modelId } : {}),
+        ...(patch.contextPolicy !== undefined ? { contextPolicy: patch.contextPolicy } : {})
+      };
+      if (patch.modelId !== undefined && patch.modelId !== null) this.validateAgentModel(patch.modelId);
+      const executionOverrides = switchingAgent
+        ? conversationExecutionOverridesSchema.parse({})
+        : conversationExecutionOverridesSchema.parse(patch.executionOverrides ?? legacyOverrides);
+      const modelId = agent ? effectiveModelId(agent.execution, executionOverrides) : null;
+      const selectedModel = !switchingAgent && modelId && (patch.modelId !== undefined ||
+        (patch.executionOverrides?.modelId !== undefined && patch.executionOverrides.modelId !== current.executionOverrides.modelId));
+      if (selectedModel && agentId) this.rememberAgentModel(agentId, modelId);
+      const contextPolicy = executionOverrides.contextPolicy ?? agent?.execution.contextPolicy ?? current.contextPolicy;
+      const next = {
+        title: patch.title ?? current.title,
+        agentId,
+        executionOverrides,
+        contextPolicy,
+        modelId,
+        draft: patch.draft ?? current.draft,
+        workspacePath: patch.workspacePath === undefined ? current.workspacePath : patch.workspacePath
+      };
+      this.sqlite.prepare(`
+        UPDATE conversations SET title = ?, system_prompt = ?, agent_id = ?, execution_overrides_json = ?, context_policy = ?, model_id = ?,
+          draft = ?, workspace_path = ?, updated_at = ? WHERE id = ?
+      `).run(next.title, patch.systemPrompt ?? current.systemPrompt, next.agentId, json(next.executionOverrides), next.contextPolicy,
+        next.modelId, next.draft, next.workspacePath, Date.now(), id);
+      if (switchingAgent || patch.executionOverrides !== undefined || patch.modelId !== undefined) {
+        this.sqlite.prepare("DELETE FROM context_summaries WHERE conversation_id = ?").run(id);
+      }
+      if (switchingAgent && next.agentId) this.sqlite.prepare("UPDATE app_settings SET last_agent_id = ? WHERE id = 1").run(next.agentId);
+      return this.getConversation(id);
+    });
   }
 
   deleteConversation(id: string): boolean {
@@ -2838,14 +2870,13 @@ export class Store {
       conversation.executionOverrides.generation
     );
     const settings = buildEffectiveSettings(model, connection.protocol, effort, generation);
-    const appSettings = this.getSettings();
     const snapshot: AgentSnapshot = {
       agentId: agent.id,
       name: agent.name,
       revision: agent.revision,
       card: agent.card,
       userProfile: this.resolvedUserProfile(agent),
-      baseSystemPrompt: appSettings.defaultSystemPrompt,
+      baseSystemPrompt: agent.execution.baseSystemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT,
       roleplay: agent.roleplay,
       roleplayState,
       generationKind,
@@ -3125,7 +3156,7 @@ export class Store {
       revision: currentAgent?.revision ?? Number(row.agent_revision ?? 1),
       card: currentAgent?.card ?? defaultAgentCard(),
       userProfile: currentAgent ? this.resolvedUserProfile(currentAgent) : this.getSettings().userProfile,
-      baseSystemPrompt: this.getSettings().defaultSystemPrompt,
+      baseSystemPrompt: String((this.sqlite.prepare("SELECT default_system_prompt FROM app_settings WHERE id = 1").get() as Row).default_system_prompt),
       roleplay: currentAgent?.roleplay ?? defaultRoleplayConfig(false),
       roleplayState: currentAgent && conversation
         ? this.getConversationRoleplayState(conversation.id)
@@ -3716,6 +3747,7 @@ function agentSummaryDto(row: Row, searchApiKeyConfigured = false): AgentSummary
     protected: Boolean(row.protected), revision: Number(row.revision),
     hasAvatar: row.avatar_png !== null && row.avatar_png !== undefined,
     modelId: execution.modelId, execution,
+    lastSelectedModelId: textOrNull(row.last_selected_model_id),
     searchApiKeyConfigured,
     userProfile: agentUserProfileOverrideSchema.parse(parse(row.user_profile_json, {})),
     firstMessage: card.data.first_mes, alternateGreetings: card.data.alternate_greetings,

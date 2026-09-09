@@ -61,6 +61,7 @@ export function useRoute(): Route {
 
 export function navigate(path: string): void {
   if (window.location.pathname === path) return;
+  if (!window.dispatchEvent(new CustomEvent("llm-chat:before-navigate", { cancelable: true, detail: { path } }))) return;
   window.history.pushState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }

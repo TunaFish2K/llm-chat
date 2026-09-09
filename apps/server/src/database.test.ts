@@ -1,3 +1,4 @@
+import { updateDefaultAgentExecution } from "./test-helpers";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -243,7 +244,7 @@ describe("Store", () => {
   it("starts a conversation and its first generation atomically", () => {
     const store = createStore();
     const { model } = seedModel(store);
-    store.updateSettings({ defaultSystemPrompt: "server system", defaultContextPolicy: "full" });
+    updateDefaultAgentExecution(store, { baseSystemPrompt: "server system", contextPolicy: "full" });
 
     const started = store.startConversation({
       text: "  第一条消息  ",
@@ -407,7 +408,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(34);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(36);
     migrated.close();
   });
 
@@ -488,10 +489,10 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(34);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(36);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getConnection("connection")?.providerId).toBe("custom");
-    expect(store.getSettings().reasoningEffort).toBe("none");
+    expect(store.getAgent(store.getSettings().defaultAgentId)?.execution.reasoningEffort).toBe("none");
     expect(store.getModel("model")?.capabilities.tools).toBe(true);
     const columns = (store.sqlite.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>)
       .map((column) => column.name);
@@ -518,7 +519,7 @@ describe("Store", () => {
 
     const migrated = new Store(path);
     expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(34);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(36);
     migrated.close();
   });
 
@@ -544,7 +545,7 @@ describe("Store", () => {
       defaultSettings: { common: { maxOutputTokens: 256, stopSequences: [] }, protocol: {} },
       enabled: true
     });
-    store.updateSettings({ defaultModelId: model.id });
+    updateDefaultAgentExecution(store, { modelId: model.id });
     const started = store.startConversation({ text: "legacy", modelId: model.id });
     store.sqlite.prepare("UPDATE generations SET usage_json = ? WHERE id = ?")
       .run('{"inputTokens":7,"cachedInputTokens":5,"outputTokens":3,"totalTokens":10}', started.generation.generationId);
@@ -566,7 +567,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(34);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(36);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -602,7 +603,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(34);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(36);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -640,15 +641,15 @@ describe("Store", () => {
       capabilities: { ...model.capabilities, reasoning: true },
       defaultSettings: { common: { maxOutputTokens: 128, stopSequences: [] }, protocol: {} }
     });
-    store.updateSettings({ reasoningEffort: "high" });
-    const started = store.startConversation({ text: "hi", modelId: model.id });
+    updateDefaultAgentExecution(store, { reasoningEffort: "high" });
+    const started = store.startConversation({ text: "hi", agentId: store.getSettings().defaultAgentId, greetingIndex: 0, executionOverrides: { modelId: model.id, reasoningEffort: "high" } });
     expect(store.getGeneration(started.generation.generationId)?.settings.reasoningEffort).toBe("high");
 
-    store.updateSettings({ reasoningEffort: "xhigh" });
+    updateDefaultAgentExecution(store, { reasoningEffort: "xhigh" });
     const second = store.createMessageGeneration(started.conversation.id, "继续");
     expect(store.getGeneration(second.generationId)?.settings.reasoningEffort).toBe("high");
 
-    store.updateSettings({ reasoningEffort: "max" });
+    updateDefaultAgentExecution(store, { reasoningEffort: "max" });
     const retry = store.createRetryGeneration(second.assistantMessageId);
     expect(store.getGeneration(retry.generationId)?.settings.reasoningEffort).toBe("high");
     expect(store.getGeneration(started.generation.generationId)?.settings.reasoningEffort).toBe("high");
@@ -658,7 +659,7 @@ describe("Store", () => {
   it("rejects reasoning effort atomically when the model lacks reasoning capability", () => {
     const store = createStore();
     const { model } = seedModel(store); // seedModel has reasoning: false
-    store.updateSettings({ reasoningEffort: "high" });
+    updateDefaultAgentExecution(store, { reasoningEffort: "high" });
     expect(() => store.startConversation({ text: "hi", modelId: model.id }))
       .toThrow(/不支持推理/);
     expect(store.listConversations()).toHaveLength(0);
@@ -680,11 +681,11 @@ describe("Store", () => {
       defaultSettings: { common: { maxOutputTokens: 1024, stopSequences: [] }, protocol: {} },
       enabled: true
     });
-    store.updateSettings({ reasoningEffort: "low" });
+    updateDefaultAgentExecution(store, { reasoningEffort: "low" });
     expect(() => store.startConversation({ text: "hi", modelId: model.id }))
       .toThrow(/输出上限过低/);
     expect(store.listConversations()).toHaveLength(0);
-    store.updateSettings({ reasoningEffort: "none" });
+    updateDefaultAgentExecution(store, { reasoningEffort: "none" });
     const ok = store.startConversation({ text: "hi", modelId: model.id });
     expect(ok.generation.generationId).toBeTruthy();
     store.close();
@@ -707,7 +708,7 @@ describe("Store", () => {
       defaultSettings: { common: { maxOutputTokens: 1024, stopSequences: [] }, protocol: { thinkingBudgetTokens: 1024 } },
       enabled: true
     });
-    store.updateSettings({ reasoningEffort: "low" });
+    updateDefaultAgentExecution(store, { reasoningEffort: "low" });
     expect(() => store.startConversation({ text: "hi", modelId: model.id }))
       .toThrow(/输出上限过低/);
     expect(store.listConversations()).toHaveLength(0);
@@ -796,11 +797,11 @@ describe("Store", () => {
     expect(store.updateModel("missing", { enabled: false })).toBeUndefined();
     expect(store.updateModel(model.id, { contextWindow: null, modelKey: "renamed" }))
       .toMatchObject({ contextWindow: null, modelKey: "renamed" });
-    store.updateSettings({ defaultModelId: model.id });
+    updateDefaultAgentExecution(store, { modelId: model.id });
     expect(store.deleteConnection("missing")).toBe(false);
     expect(store.deleteConnection(first.id)).toBe(true);
     expect(store.getModel(model.id)).toBeUndefined();
-    expect(store.getSettings().defaultModelId).toBeNull();
+    expect(store.getSettings()).not.toHaveProperty("defaultModelId");
     expect(store.deleteConnection(second.id)).toBe(true);
     store.close();
   });
@@ -1035,7 +1036,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(34);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(36);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

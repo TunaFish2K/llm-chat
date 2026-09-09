@@ -175,11 +175,7 @@ describe("application management tools", () => {
     expect(emptyConversation.title).toBe("新对话");
 
     await expect(invoke("app_settings", { action: "update", input: { defaultModelId: missing } }))
-      .rejects.toMatchObject({ code: "model_not_found" });
-    store.updateModel(seeded.model.id, { enabled: false });
-    await expect(invoke("app_settings", { action: "update", input: { defaultModelId: seeded.model.id } }))
-      .rejects.toMatchObject({ code: "model_disabled" });
-    store.updateModel(seeded.model.id, { enabled: true });
+      .rejects.toThrow(/生成配置已移至 Agent/);
     await expect(invoke("app_settings", { action: "invalid" })).rejects.toMatchObject({ code: "app_tool_action_invalid" });
 
     const connectionInput = { name: "Managed", protocol: "openai-chat", baseUrl: "https://managed.test/v1" };

@@ -1,5 +1,7 @@
+import { requestMobileBack } from "../../lib/mobile-navigation";
 import { useEffect, useState, type RefCallback } from "react";
 import {
+  ArrowLeft,
   ListTree,
   Menu,
   PanelLeftClose,
@@ -70,11 +72,11 @@ export function ConversationHeader({
       {mobile ? <button
         type="button"
         className="icon-button shell-control"
-        onClick={onToggleSidebar}
-        aria-label={mobile ? "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
-        title={mobile ? "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
+        onClick={view !== "chat" ? requestMobileBack : onToggleSidebar}
+        aria-label={mobile ? view !== "chat" ? "返回上一级" : "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
+        title={mobile ? view !== "chat" ? "返回上一级" : "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
       >
-        {mobile ? <Menu size={20} /> : sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+        {mobile ? view !== "chat" ? <ArrowLeft size={20} /> : <Menu size={20} /> : sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
       </button> : null}
 
       <div className="conversation-heading">

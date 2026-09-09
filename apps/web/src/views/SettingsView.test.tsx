@@ -18,7 +18,11 @@ describe("SettingsView", () => {
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
     expect(screen.getByLabelText("主题")).toHaveValue("dark");
-    expect(screen.getByLabelText("默认推理档位")).toHaveValue("medium");
+    expect(screen.queryByLabelText("默认推理档位")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("默认模型")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("默认上下文策略")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("默认系统提示")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "编辑此 Agent" })).toHaveAttribute("href", "/agents/agent-1");
     expect(screen.getByRole("button", { name: "刷新页面" })).toBeInTheDocument();
   });
 

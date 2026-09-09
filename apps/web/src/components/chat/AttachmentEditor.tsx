@@ -1,3 +1,4 @@
+import { useBackLayer } from "../../lib/mobile-navigation";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Popover } from "radix-ui";
 import { FilePlus2, FileText, ImagePlus, LoaderCircle, Paperclip, X } from "lucide-react";
@@ -52,6 +53,7 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false }: {
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
+  useBackLayer(open, () => setOpen(false));
   return <>
     <input hidden aria-label="上传文件" ref={fileInput} type="file" multiple onChange={(event) => {
       void uploadFiles(Array.from(event.target.files ?? [])); event.target.value = "";

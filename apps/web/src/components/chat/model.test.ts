@@ -5,6 +5,7 @@ import {
   activeGeneration,
   answerText,
   buildTimeline,
+  groupTimeline,
   prettyJson,
   shortPath,
   withGenerationValue
@@ -39,6 +40,20 @@ describe("chat model helpers", () => {
 
     expect(buildTimeline(generation).map((entry) => `${entry.kind}:${entry.kind === "block" ? entry.block.id : entry.call.id}`))
       .toEqual(["block:b1", "tool:t1", "block:b2", "tool:t2"]);
+  });
+
+  it("groups consecutive processing steps but keeps text and refusals in order", () => {
+    const grouped = groupTimeline(makeGeneration({
+      blocks: [
+        { id: "r1", stepIndex: 0, index: 0, type: "reasoning", content: "think", complete: true },
+        { id: "a1", stepIndex: 1, index: 0, type: "text", content: "progress", complete: true },
+        { id: "r2", stepIndex: 2, index: 0, type: "reasoning", content: "think again", complete: true },
+        { id: "no", stepIndex: 3, index: 0, type: "refusal", content: "refused", complete: true }
+      ], toolCalls: [toolCall("t1", 0, 0), toolCall("t2", 2, 0)]
+    }));
+    expect(grouped.map((item) => item.kind === "process" ? [item.id, item.entries.length, item.followedByAnswer] : item.block.id))
+      .toEqual([["r1", 2, true], "a1", ["r2", 2, false], "no"]);
+    expect(groupTimeline(makeGeneration())).toEqual([]);
   });
 
   it("uses the pinned generation and falls back to the newest generation", () => {

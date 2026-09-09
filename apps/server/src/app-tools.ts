@@ -3,7 +3,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import {
   agentInputSchema,
   agentRoleplayConfigSchema,
-  appSettingsSchema,
+  appSettingsUpdateSchema,
   connectionInputSchema,
   connectionInputPatchSchema,
   conversationExecutionOverridesSchema,
@@ -58,7 +58,7 @@ export class AppTools {
         ["list", "get", "create", "update", "import", "export", "set_avatar", "remove_avatar", "delete"], (input, signal, context) => this.agents(input, signal, context)),
       this.tool("app_conversations", "会话管理", "List, inspect, create, update, delete, fork without generation, or select an existing response version. This tool never starts model generation or context summarization.",
         ["list", "get", "create", "update", "delete", "fork", "select_generation"], (input, _signal, context) => this.conversations(input, context)),
-      this.tool("app_settings", "应用设置", "Read or update non-secret llm-chat settings. Login credentials are never available.",
+      this.tool("app_settings", "应用设置", "Read or update non-secret llm-chat settings. Generation settings belong to app_agents execution, including baseSystemPrompt. Login credentials are never available.",
         ["get", "update"], (input) => this.settings(input)),
       this.tool("app_connections", "连接管理", "Manage non-secret connection fields, test a connection, query balance, or discover models. API keys and secret headers cannot be read or written.",
         ["list", "get", "create", "update", "test", "balance", "discover_models", "delete"], (input, signal) => this.connections(input, signal)),
@@ -223,12 +223,7 @@ export class AppTools {
     const action = string(input, "action");
     if (action === "get") return json(this.deps.store.getSettings());
     if (action === "update") {
-      const patch = appSettingsSchema.partial().parse(object(input));
-      if (patch.defaultModelId) {
-        const model = this.deps.store.getModel(patch.defaultModelId);
-        if (!model) throw new StoreError("model_not_found", "默认模型不存在");
-        if (!model.enabled) throw new StoreError("model_disabled", "默认模型已停用");
-      }
+      const patch = appSettingsUpdateSchema.parse(object(input));
       for (const agentId of [patch.defaultAgentId, patch.lastAgentId]) {
         if (agentId && !this.deps.store.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
       }

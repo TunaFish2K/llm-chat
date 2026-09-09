@@ -394,3 +394,13 @@ img {
 .markdown small {
   color: var(--text-muted);
 }
+
+/* Keep the Android browser's vertical pull-to-refresh chain available. */
+@media (max-width: 767px) {
+  html, body {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-x: none;
+    overscroll-behavior-y: auto;
+  }
+}

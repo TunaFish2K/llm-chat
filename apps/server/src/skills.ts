@@ -77,6 +77,8 @@ Use the \`app_*\` tools when the user asks you to inspect or change llm-chat its
 
 Read the relevant current state before changing it. Apply only the fields the user asked to change, then read the result back when verification matters. Do not claim success until the management tool returns successfully.
 
+Model defaults, context policy, reasoning effort, and baseSystemPrompt belong to an Agent execution configuration. Use \`app_agents\` to edit them; \`app_settings\` only selects the default Agent and manages application-wide preferences. Read the Agent first and preserve its other execution fields.
+
 For Character Cards, prefer \`app_agents\` import with a current-conversation attachment when the user supplied a card file or image. Public URLs and workspace files are alternatives only when the user identifies them. Preserve card data that the user did not ask to replace.
 
 Use \`app_roleplay\` for Agent-owned presets, personas, lorebooks, safe regex, quick replies, and current-conversation roleplay state. Roleplay changes must remain scoped to the selected Agent or conversation. The restricted script action can only change roleplay state and draft text; it cannot run JavaScript, shell commands, or network requests. Read the script audit log when verification matters.

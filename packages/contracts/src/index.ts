@@ -593,6 +593,7 @@ export interface AgentSearchSecretDto {
 }
 
 export const agentExecutionConfigSchema = z.object({
+  baseSystemPrompt: z.string().max(100_000).optional(),
   modelId: z.string().min(1).max(200).nullable(),
   visionModelId: z.string().min(1).max(200).nullable().default(null),
   contextPolicy: contextPolicySchema,
@@ -621,6 +622,8 @@ export const agentInputSchema = z.object({
 });
 export type AgentInput = z.infer<typeof agentInputSchema>;
 
+export const agentModelSelectionSchema = z.object({ modelId: z.string().uuid() });
+
 export interface AgentSummaryDto {
   id: string;
   name: string;
@@ -630,6 +633,7 @@ export interface AgentSummaryDto {
   hasAvatar: boolean;
   modelId: string | null;
   execution: AgentExecutionConfig;
+  lastSelectedModelId: string | null;
   searchApiKeyConfigured: boolean;
   userProfile: AgentUserProfileOverride;
   firstMessage: string;
@@ -660,11 +664,7 @@ export const conversationExecutionOverridesSchema = z.object({
 export type ConversationExecutionOverrides = z.infer<typeof conversationExecutionOverridesSchema>;
 
 export const appSettingsSchema = z.object({
-  defaultModelId: z.string().uuid().nullable(),
-  defaultContextPolicy: contextPolicySchema,
   theme: z.enum(["system", "light", "dark"]),
-  defaultSystemPrompt: z.string().max(100_000),
-  reasoningEffort: reasoningEffortSchema,
   defaultAgentId: z.string().uuid(),
   lastAgentId: z.string().uuid(),
   userProfile: z.object({
@@ -680,6 +680,13 @@ export const appSettingsSchema = z.object({
   }),
   lastWorkspacePath: z.string().max(4096).nullable().default(null)
 });
+export const appSettingsUpdateSchema = z.preprocess((value, ctx) => {
+  if (value && typeof value === "object" && ["defaultModelId", "defaultContextPolicy", "reasoningEffort", "defaultSystemPrompt"]
+    .some((key) => Object.hasOwn(value, key))) {
+    ctx.addIssue({ code: "custom", message: "生成配置已移至 Agent，请通过 Agent 配置接口修改。" });
+  }
+  return value;
+}, appSettingsSchema.partial());
 export type AppSettings = z.infer<typeof appSettingsSchema>;
 
 export const conversationInputSchema = z.object({
@@ -961,6 +968,7 @@ export const forkConversationSchema = z.discriminatedUnion("mode", [
 export type ForkConversationInput = z.input<typeof forkConversationSchema>;
 
 export const patchConversationSchema = z.object({
+  modelId: z.string().min(1).max(200).nullable().optional(),
   title: z.string().trim().min(1).max(200).optional(),
   agentId: z.string().uuid().nullable().optional(),
   executionOverrides: conversationExecutionOverridesSchema.optional(),

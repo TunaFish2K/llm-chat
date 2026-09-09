@@ -41,6 +41,18 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   const [skills, setSkills] = useState<SkillDto[]>([]);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [leavePath, setLeavePath] = useState<string | null>(null);
+  const allowLeave = useRef(false);
+  useEffect(() => {
+    const guard = (event: Event) => {
+      if (!dirty || allowLeave.current) return;
+      event.preventDefault();
+      setLeavePath((event as CustomEvent<{ path: string }>).detail.path);
+    };
+    window.addEventListener("llm-chat:before-navigate", guard);
+    return () => window.removeEventListener("llm-chat:before-navigate", guard);
+  }, [dirty]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -178,6 +190,13 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
           {tab === "user" ? <UserProfileTab agent={agent} mutate={mutate} /> : null}
         </div>
       </div>
+      {leavePath ? <ConfirmModal title="放弃未保存的修改？" message="当前 Agent 的修改尚未保存。" confirmLabel="放弃修改"
+        onClose={() => setLeavePath(null)} onConfirm={() => {
+          allowLeave.current = true;
+          navigate(leavePath);
+          allowLeave.current = false;
+          setLeavePath(null);
+        }} /> : null}
     </>
   );
 }
@@ -302,7 +321,11 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           onChange={(value) => setField("mes_example", value)}
         />
       </Field>
-      <Field label="系统提示">
+      <Field label="基础系统提示" hint="只用于此 Agent。角色卡系统提示留空时使用此内容。">
+        <ExpandableTextarea label="基础系统提示" value={agent.execution.baseSystemPrompt ?? ""}
+          onChange={(value) => mutate((draft) => { draft.execution.baseSystemPrompt = value; })} />
+      </Field>
+      <Field label="系统提示" hint="角色卡系统提示覆盖基础提示；使用 {{original}} 引用此 Agent 的基础提示。">
         <ExpandableTextarea
           label="系统提示"
           value={data.system_prompt}
@@ -498,14 +521,14 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
     <div>
       <div className="card">
         <h3>模型与推理</h3>
-        <Field label="模型" hint="留空使用应用默认模型。">
+        <Field label="模型" hint="留空时，新对话沿用此 Agent 最近选择的模型。">
           <select
             className="select"
             aria-label="模型"
             value={execution.modelId ?? ""}
             onChange={(event) => setExecution({ modelId: event.target.value || null })}
           >
-            <option value="">（应用默认）</option>
+            <option value="">（不设默认模型）</option>
             {models.map((model) => (
               <option key={model.id} value={model.id} disabled={!model.enabled}>
                 {model.displayName}（{model.modelKey}）

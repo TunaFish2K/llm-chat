@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { Popover } from "radix-ui";
 import {
@@ -24,8 +24,10 @@ import type {
   ReasoningEffort,
   ToolCallDto
 } from "@llm-chat/contracts";
+import { useBackLayer } from "../../lib/mobile-navigation";
+import { readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
 import { ApiRequestError, endpoints } from "../../lib/api";
-import { appStore, isGenerationActive, loadMessages, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
+import { appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
 import { navigate, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
@@ -42,7 +44,6 @@ import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
 import { useComposerLayout } from "./useComposerLayout";
 import { useHoldSend } from "./useHoldSend";
 
-const DRAFT_DEBOUNCE_MS = 500;
 
 /**
  * The composer owns everything about the *next* turn: what to say, which Agent
@@ -92,50 +93,55 @@ export function Composer({
     conversation ? state.messages[conversation.id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES
   );
 
-  const [text, setText] = useState("");
-  const [newAgentId, setNewAgentId] = useState<string | null>(null);
-  const [newOverrides, setNewOverrides] = useState<ConversationExecutionOverrides>({});
-  const [newWorkspace, setNewWorkspace] = useState<string | null>(null);
+  const [initialDraft] = useState(() => readComposerDraft(conversation?.id ?? null));
+  const fallbackAgent =
+    agents.find((agent) => agent.id === settings?.lastAgentId) ??
+    agents.find((agent) => agent.id === settings?.defaultAgentId) ?? agents[0];
+  const initialOverrides = (agentId: string | null, overrides: ConversationExecutionOverrides = {}) => {
+    const agent = agents.find((item) => item.id === agentId) ?? fallbackAgent;
+    const remembered = models.find((item) => item.id === agent?.lastSelectedModelId && item.enabled &&
+      connections.some((connection) => connection.id === item.connectionId));
+    return !Object.hasOwn(overrides, "modelId") && !agent?.execution.modelId && remembered
+      ? { ...overrides, modelId: remembered.id } : overrides;
+  };
+  const explicitNewModel = useRef(Boolean(initialDraft && Object.hasOwn(initialDraft.overrides, "modelId")));
+  const [text, setText] = useState(initialDraft?.text ?? conversation?.draft ?? "");
+  const [newAgentId, setNewAgentId] = useState<string | null>(initialDraft?.agentId ?? null);
+  const [newOverrides, setNewOverrides] = useState<ConversationExecutionOverrides>(() =>
+    initialOverrides(initialDraft?.agentId ?? null, initialDraft?.overrides));
+  const [newWorkspace, setNewWorkspace] = useState<string | null>(initialDraft ? initialDraft.workspace : settings?.lastWorkspacePath ?? null);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const [editingOverrides, setEditingOverrides] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useBackLayer(moreOpen, () => setMoreOpen(false));
+  useBackLayer(settingsOpen, () => setSettingsOpen(false));
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments([], conversation?.id);
+  const [savingOverrides, setSavingOverrides] = useState(false);
+  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments(initialDraft?.attachments ?? [], conversation?.id);
   const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
-  const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const loadedConversation = useRef<string | null>(null);
   const wasGenerating = useRef(false);
   const currentDraft = useRef("");
   const isNew = !conversation;
 
-  useEffect(() => {
-    if (conversation) {
-      if (loadedConversation.current !== conversation.id) {
-        loadedConversation.current = conversation.id;
-        setText(conversation.draft);
-        setAttachments([]);
-      }
-      return;
-    }
-    loadedConversation.current = null;
-    setText("");
-    setAttachments([]);
-    setNewAgentId(null);
-    setNewOverrides({});
-    setNewWorkspace(settings?.lastWorkspacePath ?? null);
-    onGreetingIndexChange(0);
-    onPreviewAgentChange(null);
-  }, [conversation?.id]);
-
-  /* Effective execution context — conversation wins, then local pre-send state. */
-  const fallbackAgent =
-    agents.find((agent) => agent.id === settings?.lastAgentId) ??
-    agents.find((agent) => agent.id === settings?.defaultAgentId) ??
-    agents[0];
   const effectiveAgentId = conversation?.agentId ?? newAgentId ?? fallbackAgent?.id ?? "";
   const effectiveAgent = agents.find((agent) => agent.id === effectiveAgentId);
+  useLayoutEffect(() => {
+    const savedOverrides = { ...newOverrides };
+    if (!text && !attachments.length && !explicitNewModel.current) delete savedOverrides.modelId;
+    writeComposerDraft(conversation?.id ?? null, {
+      text, attachments, agentId: effectiveAgentId || null, overrides: savedOverrides,
+      workspace: newWorkspace, greetingIndex
+    });
+  }, [conversation?.id, text, attachments, effectiveAgentId, newOverrides, newWorkspace, greetingIndex]);
+  useEffect(() => {
+    if (conversation && initialDraft && initialDraft.text !== conversation.draft) {
+      scheduleServerDraft(conversation.id, initialDraft.text);
+    }
+    return () => { if (conversation) void flushServerDraft(conversation.id).catch(() => undefined); };
+  }, [conversation?.id]);
+
   const overrides = conversation?.executionOverrides ?? newOverrides;
   const explicitModel = Object.hasOwn(overrides, "modelId") ? overrides.modelId : undefined;
   const effectiveModelId =
@@ -148,7 +154,7 @@ export function Composer({
   const imageConfigured = Boolean(
     effectiveModel?.capabilities.imageInput || (visionModel?.enabled && visionModel.capabilities.imageInput)
   );
-  const reasoning = overrides.reasoningEffort ?? effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none";
+  const reasoning = overrides.reasoningEffort ?? effectiveAgent?.execution.reasoningEffort ?? "none";
   const advertisedReasoning = effectiveModel?.catalogMetadata?.reasoningEfforts ?? [];
   const reasoningLevels: ReasoningEffort[] = effectiveModel && !effectiveModel.capabilities.reasoning ? ["none"] : advertisedReasoning.length > 0
     ? advertisedReasoning
@@ -208,49 +214,52 @@ export function Composer({
       .catch(toastError);
   }, [active?.generation.id, conversation?.id]);
 
-  /** Drafts are stored server-side, but only after the reader pauses typing. */
   const persistDraft = (value: string) => {
-    if (!conversation) return;
-    if (draftTimer.current) clearTimeout(draftTimer.current);
-    draftTimer.current = setTimeout(() => {
-      void endpoints.updateConversation(conversation.id, { draft: value }).catch(() => undefined);
-    }, DRAFT_DEBOUNCE_MS);
+    if (conversation) scheduleServerDraft(conversation.id, value);
   };
 
-  const saveOverrides = async (next: ConversationExecutionOverrides, message?: string) => {
+  const saveOverrides = async (next: ConversationExecutionOverrides, message?: string, explicitSelection = false) => {
+    setSavingOverrides(true);
     if (!conversation) {
-      setNewOverrides(next);
-      if (message) toast("success", message);
-      return;
+      if (explicitSelection || next.modelId !== overrides.modelId) explicitNewModel.current = Object.hasOwn(next, "modelId");
+      setNewOverrides(initialOverrides(effectiveAgentId, next));
     }
+    const remember = typeof next.modelId === "string" && (explicitSelection || next.modelId !== overrides.modelId);
     try {
-      await endpoints.updateConversation(conversation.id, { executionOverrides: next });
-      await refreshConversations();
+      await serializeModelSelection(effectiveAgentId, async () => {
+        if (conversation) {
+          await endpoints.updateConversation(conversation.id, explicitSelection && typeof next.modelId === "string"
+            ? { modelId: next.modelId } : { executionOverrides: next });
+          await refreshConversations();
+        } else if (remember) await endpoints.selectAgentModel(effectiveAgentId, next.modelId!);
+        if (remember) await refreshAgents();
+      });
       if (message) toast("success", message);
     } catch (error) {
       toastError(error);
       throw error;
-    }
+    } finally { setSavingOverrides(false); }
   };
 
   const chooseModel = (value: string) => {
     const next = { ...overrides };
     if (value === INHERIT) delete next.modelId;
     else next.modelId = value;
-    void saveOverrides(next);
+    void saveOverrides(next, undefined, true).catch(() => undefined);
   };
 
   const chooseReasoning = (value: string) => {
     const next = { ...overrides };
     if (value === INHERIT) delete next.reasoningEffort;
     else next.reasoningEffort = value as ReasoningEffort;
-    void saveOverrides(next);
+    void saveOverrides(next).catch(() => undefined);
   };
 
   const applyAgent = async (agentId: string) => {
     if (!conversation) {
+      explicitNewModel.current = false;
       setNewAgentId(agentId);
-      setNewOverrides({});
+      setNewOverrides(initialOverrides(agentId));
       const selected = agents.find((item) => item.id === agentId);
       const firstGreeting = selected && settings ? greetingOptions(selected, settings)[0]?.sourceIndex ?? 0 : 0;
       onGreetingIndexChange(firstGreeting);
@@ -290,7 +299,7 @@ export function Composer({
 
   const sendMessage = async (overrideText?: string, steer = false) => {
     let content = (overrideText ?? text).trim();
-    if ((!content && !attachments.length) || sending || uploading) return;
+    if ((!content && !attachments.length) || sending || uploading || savingOverrides) return;
     if (!effectiveAgent) {
       toast("error", "请先选择一个 Agent");
       return;
@@ -304,9 +313,9 @@ export function Composer({
       return;
     }
     onBeforeSend();
-    if (draftTimer.current) { clearTimeout(draftTimer.current); draftTimer.current = null; }
     setSending(true);
     try {
+      if (conversation) await flushServerDraft(conversation.id);
       if (conversation && roleplayAgent && roleplayState && quickReplies.some((reply) =>
         reply.mode === "script" && reply.autoTriggers.includes("before_send")
       )) {
@@ -327,12 +336,17 @@ export function Composer({
           executionOverrides: newOverrides,
           workspacePath: newWorkspace
         });
+        setText("");
+        setAttachments([]);
+        explicitNewModel.current = false;
+        setNewOverrides({});
+        setNewAgentId(null);
+        onGreetingIndexChange(0);
+        appStore.set((state) => ({ settings: state.settings ? { ...state.settings, lastAgentId: effectiveAgent.id } : null }));
         if (effectiveAgent.roleplayEnabled) {
           await endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "" })
             .catch(() => undefined);
         }
-        setText("");
-        setAttachments([]);
         await refreshConversations();
         await loadMessages(result.conversation.id);
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
@@ -346,12 +360,12 @@ export function Composer({
           if (!(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
           // Another device may have started a turn since this client's last snapshot.
           await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
-          await reloadQueue();
           return null;
         });
         setText("");
         setAttachments([]);
         persistDraft("");
+        if (!result) await reloadQueue();
         await loadMessages(conversation.id);
         if (result) trackGeneration(conversation.id, result.assistantMessageId, result.generationId);
         await refreshConversations();
@@ -393,9 +407,9 @@ export function Composer({
     }
   };
 
-  const controlsDisabled = generating || sending;
+  const controlsDisabled = generating || sending || savingOverrides;
   const sendDisabled =
-    sending ||
+    sending || savingOverrides ||
     uploading ||
     (!text.trim() && !attachments.length) ||
     !effectiveAgent ||
@@ -481,7 +495,7 @@ export function Composer({
                   />
 
                   <ReasoningPicker value={overrides.reasoningEffort ?? INHERIT} effective={reasoning}
-                    inherited={effectiveAgent?.execution.reasoningEffort ?? settings?.reasoningEffort ?? "none"}
+                    inherited={effectiveAgent?.execution.reasoningEffort ?? "none"}
                     levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
 
                   <Popover.Root open={settingsOpen} onOpenChange={setSettingsOpen}>

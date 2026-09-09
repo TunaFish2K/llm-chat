@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { useBackLayer } from "./mobile-navigation";
 import { X } from "lucide-react";
 
 export function Spinner({ label = "加载中" }: { label?: string }) {
@@ -103,6 +104,7 @@ export function Modal({
   wide?: boolean;
   fullscreen?: boolean;
 }) {
+  useBackLayer(true, onClose);
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   useEffect(() => {

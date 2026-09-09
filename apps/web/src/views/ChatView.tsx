@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AgentDto, ConversationRoleplayState, ForkConversationInput, MessageDto } from "@llm-chat/contracts";
+import { readComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
 import {
   appStore,
@@ -76,8 +77,8 @@ export function ChatView({
   const [branching, setBranching] = useState(false);
   const [compacting, setCompacting] = useState(false);
   const [actionsHost, setActionsHost] = useState<HTMLDivElement | null>(null);
-  const [newGreetingIndex, setNewGreetingIndex] = useState(0);
-  const [previewAgentId, setPreviewAgentId] = useState<string | null>(null);
+  const [newGreetingIndex, setNewGreetingIndex] = useState(() => readComposerDraft(conversationId ?? null)?.greetingIndex ?? 0);
+  const [previewAgentId, setPreviewAgentId] = useState<string | null>(() => readComposerDraft(conversationId ?? null)?.agentId ?? null);
   const [roleplayOpen, setRoleplayOpen] = useState(false);
   const [roleplaySession, setRoleplaySession] = useState<{ agent: AgentDto; state: ConversationRoleplayState } | null>(null);
   const scroller = useStickToBottom([messages], view === "chat");
@@ -98,8 +99,9 @@ export function ChatView({
 
   useEffect(() => {
     setLoadError(null);
-    setNewGreetingIndex(0);
-    setPreviewAgentId(null);
+    const draft = readComposerDraft(conversationId ?? null);
+    setNewGreetingIndex(draft?.greetingIndex ?? 0);
+    setPreviewAgentId(draft?.agentId ?? null);
     scroller.reset();
     if (!conversationId) return;
     let active = true;
@@ -288,6 +290,7 @@ export function ChatView({
             ) : null}
       </div>
       <Composer
+        key={conversationId ?? "new"}
         actionsHost={actionsHost}
         mobile={mobile}
         conversation={conversation}

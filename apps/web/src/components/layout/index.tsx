@@ -4,7 +4,8 @@
  * or Agents — it only arranges regions and reports geometry back to `App`.
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { Menu, PanelRightOpen, RefreshCw } from "lucide-react";
+import { useBackLayer } from "../../lib/mobile-navigation";
+import { ArrowLeft, Menu, PanelRightOpen, RefreshCw } from "lucide-react";
 import type { ConversationDto } from "@llm-chat/contracts";
 import type { Toast } from "../../lib/app-state";
 import { resolveConversationRoot } from "../../lib/conversation-tree";
@@ -169,16 +170,18 @@ export function ResizeHandle({
 export function MobileAppBar({
   title,
   onOpenNav,
-  onOpenInspector
+  onOpenInspector,
+  onBack
 }: {
   title: string;
   onOpenNav: () => void;
   onOpenInspector: (() => void) | null;
+  onBack?: (() => void) | undefined;
 }) {
   return (
     <header className="mobile-appbar">
-      <IconButton label="打开导航" onClick={onOpenNav}>
-        <Menu size={20} />
+      <IconButton label={onBack ? "返回上一级" : "打开导航"} onClick={onBack ?? onOpenNav}>
+        {onBack ? <ArrowLeft size={20} /> : <Menu size={20} />}
       </IconButton>
       <strong role="heading" aria-level={2}>
         {title}
@@ -205,6 +208,7 @@ export function MobileDrawer({
   onClose: () => void;
   children: ReactNode;
 }) {
+  useBackLayer(true, onClose, 10);
   const panelRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; at: number; dragging: boolean } | null>(null);
   const [dragOffset, setDragOffset] = useState(0);

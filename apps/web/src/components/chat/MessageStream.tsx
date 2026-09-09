@@ -1,3 +1,6 @@
+import { useState, type ReactNode } from "react";
+import { Popover } from "radix-ui";
+import { useBackLayer } from "../../lib/mobile-navigation";
 import {
   ChevronDown,
   ChevronLeft,
@@ -5,6 +8,7 @@ import {
   Clipboard,
   Copy,
   Gauge,
+  MoreHorizontal,
   GitFork,
   LoaderCircle,
   Pencil,
@@ -18,13 +22,13 @@ import type { GenerationDto, ImageGenerationJobDto, MessageDto, ToolCallDto } fr
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, toastError, trackGeneration } from "../../lib/app-state";
 import type { ConversationBranchGroup } from "../../lib/conversation-tree";
-import { formatCachedTokens, formatTime, formatTokens } from "../../lib/format";
+import { formatTime, formatTokens } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
 import { Markdown } from "../../lib/markdown";
 import { useStore } from "../../lib/store";
 import { StatusTag } from "../ui";
-import { AgentAvatar, AssetGallery, CodeField, copyText, MessageAction } from "./atoms";
-import { activeGeneration, answerText, buildTimeline, prettyJson } from "./model";
+import { AssetGallery, CodeField, copyText, MessageAction } from "./atoms";
+import { activeGeneration, answerText, groupTimeline, prettyJson, type ProcessEntry } from "./model";
 
 function toolStderr(output: string | null): string {
   if (!output) return "";
@@ -54,20 +58,17 @@ export function MessageItem({
   branchGroups?: ConversationBranchGroup[];
   callbacks: StreamCallbacks;
 }) {
-  const agents = useStore(appStore, (state) => state.agents);
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
   const imageJob = message.imageGenerationJob ?? null;
   const generation = message.role === "assistant" ? activeGeneration(message) : null;
   const generatedAgent = message.greeting?.agent ?? generation?.generatedAgent;
-  const agent = agents.find((item) => item.id === generatedAgent?.agentId);
 
   if (message.role === "user") {
     return (
       <article className="msg" data-role="user">
         {attachments.length ? <AssetGallery assets={attachments} /> : null}
         {message.text ? <div className="msg-bubble">{message.text}</div> : null}
-        <div className="msg-actions">
-          <time>{formatTime(message.createdAt)}</time>
+        <MessageFooter metadata={<time>{formatTime(message.createdAt)}</time>}>
           <MessageAction label="复制消息" onClick={() => void copyText(message.text ?? "")}>
             <Copy size={14} />
           </MessageAction>
@@ -75,28 +76,13 @@ export function MessageItem({
             <Pencil size={14} />
           </MessageAction>
           <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
-        </div>
+        </MessageFooter>
       </article>
     );
   }
 
   return (
-    <article className="msg" data-role="assistant">
-      <div className="msg-head">
-        <AgentAvatar agent={agent} label={generatedAgent?.name ?? "AI"} />
-        <div className="msg-identity">
-          <strong>{generatedAgent?.name ?? "助手"}</strong>
-          <span>
-            {message.greeting
-              ? "开场白"
-              : message.generatedModel
-              ? `${message.generatedModel.connectionName} / ${message.generatedModel.displayName}`
-              : "历史回复"}
-          </span>
-        </div>
-        <time>{formatTime(message.createdAt)}</time>
-        {generation ? <StatusTag status={generation.status} /> : null}
-      </div>
+    <article className="msg" data-role="assistant" aria-label={generatedAgent?.name ?? "助手回复"}>
       {attachments.length ? <AssetGallery assets={attachments} /> : null}
       {generation ? (
         <GenerationTimeline
@@ -109,9 +95,8 @@ export function MessageItem({
       ) : message.text ? (
         <>
           <Markdown text={message.text} />
-          {(message.greeting && message.greeting.variants.length > 1) || branchGroups.length ? (
-            <footer className="stream-footer greeting-footer">
-              <div className="stream-actions">
+          <MessageFooter metadata={<span>{generatedAgent?.name ?? "助手"} · {message.greeting ? "开场白" : "历史回复"} · {formatTime(message.createdAt)}</span>}>
+              <MessageAction label="复制回答" onClick={() => void copyText(message.text ?? "")}><Clipboard size={14} /></MessageAction>
                 {message.greeting && message.greeting.variants.length > 1 ? (
                   <VersionSwitcher
                     label="开场白切换"
@@ -122,9 +107,7 @@ export function MessageItem({
                   />
                 ) : null}
                 <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
-              </div>
-            </footer>
-          ) : null}
+          </MessageFooter>
         </>
       ) : attachments.length ? null : imageJob ? (
         <ImageGenerationStatus conversationId={conversationId} job={imageJob} />
@@ -191,9 +174,8 @@ function GenerationTimeline({
 }) {
   const settings = useStore(appStore, (state) => state.settings);
   const collapsePolicy = settings?.uiPreferences.reasoningCollapsePolicy ?? "collapse-on-answer";
-  const hasAnswer = generation.blocks.some((block) => block.type === "text" && block.content.trim());
   const busy = isGenerationActive(generation.status);
-  const timeline = buildTimeline(generation);
+  const timeline = groupTimeline(generation);
   const answer = answerText(generation);
   const versionIndex = message.generations.findIndex((item) => item.id === generation.id);
 
@@ -229,39 +211,12 @@ function GenerationTimeline({
       ) : null}
 
       {timeline.map((item) => {
-        if (item.kind === "tool") {
-          return (
-            <ToolCallDisclosure
-              key={item.call.id}
-              call={item.call}
-              onInspect={() =>
-                callbacks.onInspect({
-                  kind: "tool",
-                  messageId: message.id,
-                  generationId: generation.id,
-                  toolCallId: item.call.id
-                })
-              }
-            />
-          );
+        if (item.kind === "process") {
+          return <ProcessGroup key={`${generation.id}:${item.id}`} entries={item.entries} busy={busy} status={generation.status}
+            autoOpen={collapsePolicy === "never-auto-collapse" || (collapsePolicy === "collapse-on-answer" && !item.followedByAnswer && busy)}
+            onInspect={(toolCallId) => callbacks.onInspect({ kind: "tool", messageId: message.id, generationId: generation.id, toolCallId })} />;
         }
         const { block } = item;
-        if (block.type === "reasoning") {
-          const open =
-            collapsePolicy === "never-auto-collapse" ||
-            (collapsePolicy === "collapse-on-answer" && !hasAnswer && !generation.completedAt);
-          return (
-            <details className="reasoning-block" key={block.id} open={open}>
-              <summary>
-                <Gauge size={14} aria-hidden="true" />
-                {block.complete ? "推理过程" : "正在推理"}
-                <span className="grow" />
-                <ChevronDown className="chev" size={14} aria-hidden="true" />
-              </summary>
-              <div>{block.content}</div>
-            </details>
-          );
-        }
         if (block.type === "refusal") {
           return (
             <div className="refusal-block" role="alert" key={block.id}>
@@ -280,6 +235,8 @@ function GenerationTimeline({
         return <Markdown key={block.id} text={block.content} streaming={!block.complete} />;
       })}
 
+      {!busy && !generation.error && generation.status !== "completed" ? <div role="status"><StatusTag status={generation.status} /></div> : null}
+      {!busy && !timeline.length && !generation.error && generation.status === "completed" ? <p className="small muted">（无生成内容）</p> : null}
       {generation.error ? (
         <div className="refusal-block" role="alert">
           <strong>生成失败（{generation.error.code}）</strong>
@@ -290,16 +247,24 @@ function GenerationTimeline({
         <p className="muted small">停止原因：{generation.stopReason}</p>
       ) : null}
 
-      <footer className="stream-footer">
-        <div className="stream-actions">
+      <MessageFooter busy={busy} liveAction={busy ? <CancelGenerationButton generationId={generation.id} className="act danger" /> : null}
+        metadata={<>
+          <span className="reply-identity" title={`${generation.generatedAgent?.name ?? "助手"} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>
+            {generation.generatedAgent?.name ?? "助手"} · {message.generatedModel?.connectionName ?? generation.connectionName} / {message.generatedModel?.displayName ?? generation.modelKey}
+          </span>
+          <button type="button" className="usage-summary" aria-label="查看生成用量" onClick={inspectGeneration}>
+            {generation.usage.inputTokens !== undefined ? <span>↑ {formatTokens(generation.usage.inputTokens)}</span> : null}
+            {generation.usage.outputTokens !== undefined ? <span>↓ {formatTokens(generation.usage.outputTokens)}</span> : null}
+            {generation.completedAt ? <span>{(Math.max(0, generation.completedAt - generation.createdAt) / 1000).toFixed(1)} s</span> : null}
+          </button>
+          <time className="reply-timestamp">{formatTime(message.createdAt)}</time>
+        </>}>
           {answer ? (
             <MessageAction label="复制回答" onClick={() => void copyText(answer)}>
               <Clipboard size={14} />
             </MessageAction>
           ) : null}
-          {busy ? (
-            <CancelGenerationButton generationId={generation.id} className="act danger" />
-          ) : (
+          {!busy ? (
             <>
               <MessageAction label="重试" onClick={() => void retry()}>
                 <RotateCcw size={14} />
@@ -312,7 +277,7 @@ function GenerationTimeline({
                 <GitFork size={14} />
               </MessageAction>
             </>
-          )}
+          ) : null}
           <MessageAction label="检查生成" onClick={inspectGeneration}>
             <Settings2 size={14} />
           </MessageAction>
@@ -328,20 +293,64 @@ function GenerationTimeline({
             />
           ) : null}
           <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
-        </div>
-
-        <button type="button" className="usage-summary" onClick={inspectGeneration}>
-          {generation.usage.inputTokens !== undefined ? <span>↑ {formatTokens(generation.usage.inputTokens)}</span> : null}
-          {generation.usage.outputTokens !== undefined ? <span>↓ {formatTokens(generation.usage.outputTokens)}</span> : null}
-          {generation.usage.totalTokens !== undefined ? <span>合计 {formatTokens(generation.usage.totalTokens)}</span> : null}
-          {generation.usage.cachedInputTokens !== undefined ? (
-            <span>缓存 {formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens).replace(" tokens", "")}</span>
-          ) : null}
-          {generation.completedAt ? <span>{Math.max(0, generation.completedAt - generation.createdAt)} ms</span> : null}
-        </button>
-      </footer>
+      </MessageFooter>
     </div>
   );
+}
+
+function MessageFooter({ metadata, children, liveAction, busy = false }: {
+  metadata: ReactNode; children: ReactNode; liveAction?: ReactNode; busy?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  useBackLayer(open, () => setOpen(false));
+  return <footer className="reply-footer" data-open={open || undefined}>
+    <div className="reply-inline">
+      <div className="reply-metadata">{metadata}</div>
+      <div className="stream-actions">{children}</div>
+    </div>
+    {busy ? <div className="reply-live-action">{liveAction}</div> : null}
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild><button className="act reply-more" aria-label="消息更多操作"><MoreHorizontal size={16} /></button></Popover.Trigger>
+      <Popover.Portal><Popover.Content className="reply-popover" side="top" align="start" sideOffset={6} collisionPadding={12} aria-label="消息详情与操作" onClick={(event) => {
+          if ((event.target as HTMLElement).closest("button") && !(event.target as HTMLElement).closest(".version-switch")) setOpen(false);
+        }}>
+        <div className="reply-metadata">{metadata}</div>
+        <div className="stream-actions">{children}</div>
+      </Popover.Content></Popover.Portal>
+    </Popover.Root>
+  </footer>;
+}
+
+function ProcessGroup({ entries, busy, status, autoOpen, onInspect }: {
+  entries: ProcessEntry[]; busy: boolean; status: GenerationDto["status"]; autoOpen: boolean; onInspect: (id: string) => void;
+}) {
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const open = manualOpen ?? autoOpen;
+  const tools = entries.flatMap((entry) => entry.kind === "tool" ? [entry.call] : []);
+  const pending = tools.find((call) => call.approvalState === "pending");
+  const activeTool = tools.find((call) => !call.completedAt && !call.error && call.approvalState !== "denied");
+  const thinking = entries.some((entry) => entry.kind === "block" && !entry.block.complete);
+  const active = busy && Boolean(pending || activeTool || thinking);
+  const incomplete = thinking || Boolean(activeTool);
+  const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? "处理失败" : "处理已停止") : pending ? "等待审批" : activeTool && busy ? `正在调用 ${activeTool.name}` : active ? "正在推理" : "处理完成";
+  return <div className="process-group">
+    <details className="process-disclosure" open={open}>
+      <summary onClick={(event) => { event.preventDefault(); setManualOpen(!open); }}>
+        {active ? <LoaderCircle size={13} className="spin" /> : <Gauge size={13} />}
+        <span role={active ? "status" : undefined}>{label}</span>
+        {tools.length ? <span className="process-count">{tools.length} 次工具调用</span> : null}
+        <ChevronDown size={13} className="chev" />
+      </summary>
+      <div className="process-steps">
+        {entries.map((entry) => entry.kind === "tool"
+          ? <ToolCallDisclosure key={entry.call.id} call={entry.call} onInspect={() => onInspect(entry.call.id)} />
+          : <div className="process-reasoning" key={entry.block.id}><span className="small muted">推理过程</span><div>{entry.block.content}</div></div>)}
+      </div>
+    </details>
+    {!open ? tools.filter((call) => call.error).map((call) => <div key={call.id} className="process-error" role="alert">
+      <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{call.error}{toolStderr(call.output)}
+    </div>) : null}
+  </div>;
 }
 
 export function VersionSwitcher({

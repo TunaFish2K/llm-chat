@@ -2,6 +2,7 @@ import { useContext, useRef, useState, type ComponentProps } from "react";
 import { Clipboard, Download, Maximize2 } from "lucide-react";
 import { Popover } from "radix-ui";
 import { StreamdownContext, extractTableDataFromElement, tableDataToCSV, tableDataToMarkdown, tableDataToTSV } from "streamdown";
+import { useBackLayer } from "../lib/mobile-navigation";
 import { Modal } from "../lib/ui";
 import { toast, toastError } from "../lib/app-state";
 
@@ -11,6 +12,7 @@ export function MarkdownTable({ children, node: _node, ...props }: ComponentProp
   const { isAnimating } = useContext(StreamdownContext);
   const [expanded, setExpanded] = useState(false);
   const [menu, setMenu] = useState<"copy" | "download" | null>(null);
+  useBackLayer(menu !== null, () => setMenu(null), expanded ? 40 : 20);
   const exportTable = async (format: Format, download: boolean) => {
     if (!table.current) return;
     try {
