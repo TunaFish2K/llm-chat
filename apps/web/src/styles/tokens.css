@@ -1,3 +1,13 @@
+/* Limit the preferred color font to emoji ranges, preserving normal digits and letters. */
+@font-face {
+  font-family: "Chat Color Emoji";
+  src: local("Apple Color Emoji"), local("Segoe UI Emoji"), local("Noto Color Emoji");
+  ascent-override: 90%;
+  descent-override: 22%;
+  line-gap-override: 0%;
+  unicode-range: U+200D, U+203C, U+2049, U+2122, U+2139, U+2194-2199, U+21A9-21AA, U+231A-231B, U+2328, U+23CF, U+23E9-23F3, U+23F8-23FA, U+24C2, U+25AA-25AB, U+25B6, U+25C0, U+25FB-25FE, U+2600-27BF, U+2934-2935, U+2B05-2B07, U+2B1B-2B1C, U+2B50, U+2B55, U+3030, U+303D, U+3297, U+3299, U+FE0F, U+1F000-1FAFF;
+}
+
 /*
  * Design tokens for the Chat console.
  * Dark is the default surface; light is a cool neutral variant. Both themes are
@@ -7,8 +17,8 @@
 :root {
   color-scheme: dark;
 
-  --font-sans: "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace, "Noto Sans Mono CJK SC", monospace;
+  --font-sans: "Chat Color Emoji", "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Chat Color Emoji", "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace, "Noto Sans Mono CJK SC", monospace;
 
   --text-xs: 11px;
   --text-sm: 12.5px;

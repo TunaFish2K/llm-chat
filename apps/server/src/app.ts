@@ -111,6 +111,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       }
     }
   });
+  // Only the empty preview runner receives executable-document permissions.
+  // The main application keeps its existing script policy.
+  app.addHook("onSend", async (request, reply, payload) => {
+    if (request.url.split("?")[0] === "/render-frame.html" && [200, 304].includes(reply.statusCode)) {
+      reply.header("content-security-policy", "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https: http: data: blob:; style-src 'unsafe-inline' https: http: data:; img-src https: http: data: blob:; font-src https: http: data:; connect-src https: http: wss: ws:; media-src https: http: data: blob:; frame-src 'self' https: http:; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts allow-same-origin");
+      reply.header("referrer-policy", "no-referrer");
+    }
+    return payload;
+  });
   const store = new Store(options.dataFile);
   const imageService = new ImageService(store);
   await imageService.initialize();

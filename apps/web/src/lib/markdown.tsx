@@ -10,6 +10,8 @@ import { harden } from "rehype-harden";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
+import { RichPreview } from "../components/RichPreview";
+import { splitRichContent } from "./rich-content";
 import { MarkdownTable } from "../components/MarkdownTable";
 
 const INLINE_MATH = /\\\((.+?)\\\)/g;
@@ -180,7 +182,7 @@ const richHtmlPlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
 ];
 
 /** Streaming-safe GFM, math, highlighted code, and sanitized model-authored HTML. */
-export const Markdown = memo(function Markdown({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
+function MarkdownChunk({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
   const content = useMemo(() => normalizeRichHtmlTags(normalizeMarkdown(text)), [text]);
   return (
     <div className={`markdown${inline ? " markdown-inline" : ""}`} data-streaming={streaming || undefined}>
@@ -202,4 +204,11 @@ export const Markdown = memo(function Markdown({ text, streaming = false, inline
       </Streamdown>
     </div>
   );
+}
+
+export const Markdown = memo(function Markdown({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
+  const parts = useMemo(() => inline ? [{ start: 0, source: text, kind: "markdown" as const }] : splitRichContent(text, streaming), [text, streaming, inline]);
+  return <>{parts.map((part) => part.kind === "markdown"
+    ? <MarkdownChunk key={part.start} text={part.source} streaming={streaming} inline={inline} />
+    : <RichPreview key={part.start} part={part} />)}</>;
 });

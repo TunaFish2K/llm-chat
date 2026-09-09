@@ -112,7 +112,7 @@ describe("Markdown component", () => {
   });
 
   it("removes an inline style when no declaration survives", () => {
-    render(<Markdown text={'<div style="position: fixed">plain</div>'} />);
+    render(<Markdown text={'<div style="position: fixed">plain</div>'} inline />);
     expect(screen.getByText("plain")).not.toHaveAttribute("style");
   });
 
