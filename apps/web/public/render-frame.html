@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>内容预览</title><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{display:block;width:100%;height:100%;border:0}</style></head><body>
+<script>
+(() => {
+  // Only this fixed runner is same-origin, so it can load from the offline app cache.
+  // Model-authored content always runs in the inner, opaque-origin sandbox.
+  if (parent === window) return;
+  const initialize = (event) => {
+    if (event.source !== parent || event.origin !== location.origin || event.data?.type !== 'llm-chat:render' || typeof event.data.html !== 'string' || !event.ports[0]) return;
+    removeEventListener('message', initialize);
+    const port = event.ports[0];
+    const frame = document.createElement('iframe');
+    frame.title = '渲染内容';
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.referrerPolicy = 'no-referrer';
+    addEventListener('message', (message) => {
+      if (message.source !== frame.contentWindow) return;
+      if (message.data?.type === 'height' && Number.isFinite(message.data.height)) port.postMessage({ type: 'height', height: Math.max(0, Math.min(10000, message.data.height)) });
+      if (message.data?.type === 'ready') port.postMessage({ type: 'ready' });
+    });
+    function monitor() {
+      const observe = () => {
+        let scheduled = false;
+        let lastHeight = 0;
+        const report = () => {
+          scheduled = false;
+          const body = document.body;
+          if (!body) return;
+          const height = Math.ceil(Math.max(body.scrollHeight, body.getBoundingClientRect().height));
+          if (height !== lastHeight) { lastHeight = height; parent.postMessage({ type: 'height', height }, '*'); }
+        };
+        const schedule = () => { if (!scheduled) { scheduled = true; requestAnimationFrame(report); } };
+        new ResizeObserver(schedule).observe(document.body);
+        new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+        addEventListener('load', schedule, true);
+        parent.postMessage({ type: 'ready' }, '*');
+        schedule();
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', observe, { once: true });
+      else observe();
+    }
+    const script = '<script>(' + monitor.toString() + ')();<\/script>';
+    frame.srcdoc = event.data.html.replace(/<head\b[^>]*>/i, (head) => head + script);
+    document.body.append(frame);
+  };
+  addEventListener('message', initialize);
+})();
+</script>
+</body></html>
