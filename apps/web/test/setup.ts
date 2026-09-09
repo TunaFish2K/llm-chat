@@ -1,3 +1,4 @@
+import { offlineStore } from "../src/lib/offline-history";
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
@@ -74,6 +75,7 @@ if (!window.matchMedia) {
 }
 
 afterEach(() => {
+  offlineStore.set({ offline: false });
   cleanup();
   memoryStorage.clear();
   tabStorage.clear();

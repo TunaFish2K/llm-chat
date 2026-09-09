@@ -170,7 +170,6 @@
 .conversation-row[data-active="true"] {
   background: var(--surface-3);
   color: var(--text);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .conversation-row .conversation-link {
@@ -866,3 +865,7 @@
 }
 .mobile-back-feedback[data-active] { opacity: 1; transition: none; }
 .mobile-back-feedback[data-ready] { color: var(--accent); }
+
+.offline-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px; flex-shrink: 0; background: var(--surface-2); color: var(--text-muted); font-size: var(--text-xs); }
+.offline-settings-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.offline-settings-fields:disabled { opacity: .65; }

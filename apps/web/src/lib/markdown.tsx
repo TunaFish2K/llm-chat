@@ -1,3 +1,4 @@
+import { OfflineAwareImage } from "../components/chat/atoms";
 import { memo, useMemo, type ComponentProps, type ReactNode } from "react";
 import { Streamdown, type Components, type StreamdownProps } from "streamdown";
 import { cjk } from "@streamdown/cjk";
@@ -66,7 +67,7 @@ function SafeImage({ src, alt = "", ...props }: ComponentProps<"img">) {
   if (!safe) return alt ? <span className="image-unavailable">[图片：{alt}]</span> : null;
   return (
     <a className="markdown-image-link" href={safe} target="_blank" rel="noopener noreferrer">
-      <img {...props} src={safe} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
+      <OfflineAwareImage {...props} src={safe} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
     </a>
   );
 }

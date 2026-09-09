@@ -1301,3 +1301,19 @@ export interface McpServerDto {
   createdAt: number;
   updatedAt: number;
 }
+
+/** Read-only snapshots used for device-local history downloads. */
+export interface OfflineManifestDto {
+  sourceId: string;
+  settings: AppSettings;
+  agents: AgentSummaryDto[];
+  connections: ConnectionDto[];
+  models: ModelDto[];
+  conversations: Array<ConversationDto & { cacheRevision: number }>;
+}
+export interface OfflineConversationDto {
+  sourceId: string;
+  revision: number;
+  conversation: ConversationDto;
+  messages: MessageDto[];
+}

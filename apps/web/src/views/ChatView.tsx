@@ -1,3 +1,5 @@
+import { isOffline, offlineStore } from "../lib/offline-history";
+import { browseOfflineBranch } from "../lib/app-state";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AgentDto, ConversationRoleplayState, ForkConversationInput, MessageDto } from "@llm-chat/contracts";
@@ -63,6 +65,7 @@ export function ChatView({
   onInspect = () => undefined,
   onViewChange = () => undefined
 }: ChatViewProps) {
+  const offline = useStore(offlineStore, (state) => state.offline);
   const conversation = useStore(
     appStore,
     (state) => state.conversations.find((item) => item.id === conversationId) ?? null
@@ -135,7 +138,7 @@ export function ChatView({
   useEffect(() => {
     if (!conversation || !conversationId || !conversation.activeBranchId) return;
     const root = resolveConversationRoot(conversation, conversations);
-    if (root.id === conversation.id && conversation.activeBranchId !== conversationId) {
+    if (!offline && root.id === conversation.id && conversation.activeBranchId !== conversationId) {
       navigate(routes.chat(conversation.activeBranchId));
     }
   }, [conversation, conversationId, conversations]);
@@ -184,6 +187,7 @@ export function ChatView({
 
   const switchBranch = async (branchId: string) => {
     if (!conversation) return;
+    if (isOffline()) { browseOfflineBranch(branchId); navigate(routes.chat(branchId)); return; }
     try {
       await endpoints.selectConversationBranch(conversation.id, branchId);
       await refreshConversations();
@@ -291,7 +295,7 @@ export function ChatView({
                         onContinue: continueFrom,
                         onGreetingFork: switchGreeting,
                         onBranchChange: (id) => void switchBranch(id),
-                        branching: branching || busy || retrying
+                        branching: offline || branching || busy || retrying
                       }}
                     />
                   ))

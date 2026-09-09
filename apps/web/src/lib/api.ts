@@ -1,3 +1,4 @@
+import { isOffline, markOffline, offlineRequest } from "./offline-history";
 import type {
   AgentDto,
   AgentInput,
@@ -73,10 +74,21 @@ function emitAuthRequired(): void {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  if (method !== "GET" && method !== "HEAD" && (isOffline() || navigator.onLine === false) && path !== "/api/auth/login" && path !== "/api/auth/logout") {
+    throw new ApiRequestError(0, "offline_readonly", "当前离线，此操作需要联网");
+  }
+  if (method === "GET" && (isOffline() || navigator.onLine === false)) {
+    markOffline();
+    try { return await offlineRequest(path) as T; }
+    catch (error) {
+      if (navigator.onLine === false || !path.startsWith("/api/bootstrap")) throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : "本机尚未保存此记录");
+    }
+  }
   let response: Response;
   try {
     response = await fetch(path, {
       method,
+      ...(method === "GET" ? { signal: AbortSignal.timeout(15_000) } : {}),
       credentials: "same-origin",
       headers: {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
@@ -85,8 +97,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       body: body !== undefined ? JSON.stringify(body) : null
     });
   } catch (error) {
+    if (method === "GET") {
+      markOffline();
+      try { return await offlineRequest(path) as T; } catch { /* Preserve the request error when no snapshot is available. */ }
+    }
     throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : "网络请求失败");
   }
+  if (method === "GET" && [502, 503, 504].includes(response.status)) { markOffline(); return await offlineRequest(path) as T; }
   if (response.status === 401) {
     const text = await response.text();
     let serverMessage = "请输入访问密码";
@@ -126,6 +143,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 async function uploadFile(file: File): Promise<FileAssetDto> {
+  if (isOffline()) throw new ApiRequestError(0, "offline_readonly", "当前离线，无法上传附件");
   const response = await fetch("/api/files", {
     method: "POST",
     credentials: "same-origin",

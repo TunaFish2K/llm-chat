@@ -1,3 +1,5 @@
+import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
+import { clearOfflineHistory, offlineStore } from "../lib/offline-history";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Maximize2 } from "lucide-react";
 import type {
@@ -59,6 +61,7 @@ function useResourceEvents(resources: string[], load: () => Promise<void>): void
 }
 
 export function SettingsView({ section }: { section: string }) {
+  const offline = useStore(offlineStore, (state) => state.offline);
   const active = SECTIONS.some(([key]) => key === section) ? section : "general";
   return (
     <>
@@ -79,7 +82,9 @@ export function SettingsView({ section }: { section: string }) {
           </a>
         ))}
       </div>
-      {active === "connections" ? (
+      {offline && !["general", "security"].includes(active) ? (
+        <div className="panel-scroll"><div className="panel-inner"><p className="hint">此设置需要联网后查看和修改。</p></div></div>
+      ) : active === "connections" ? (
         <ConnectionsView embedded />
       ) : (
         <div className="panel-scroll">
@@ -137,6 +142,7 @@ function AppUpdateCard() {
 }
 
 function GeneralSection() {
+  const offline = useStore(offlineStore, (state) => state.offline);
   const settings = useStore(appStore, (s) => s.settings);
   const agents = useStore(appStore, (s) => s.agents);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
@@ -165,6 +171,8 @@ function GeneralSection() {
 
   return (
     <div>
+      <OfflineHistorySettings />
+      <fieldset disabled={offline} className="offline-settings-fields">
       <div className="card">
         <h3>外观与交互</h3>
         <Field label="主题">
@@ -285,6 +293,7 @@ function GeneralSection() {
           }}
         />
       ) : null}
+      </fieldset>
     </div>
   );
 }
@@ -292,6 +301,7 @@ function GeneralSection() {
 /* ---------- security ---------- */
 
 function SecuritySection() {
+  const offline = useStore(offlineStore, (state) => state.offline);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -315,6 +325,7 @@ function SecuritySection() {
   const logout = async () => {
     setBusy(true);
     try {
+      await clearOfflineHistory({ logout: true });
       await endpoints.logout();
       window.location.reload();
     } catch (error) {
@@ -359,7 +370,7 @@ function SecuritySection() {
         ) : null}
         <button
           className="btn primary"
-          disabled={busy || password.length < 8 || password !== confirm}
+          disabled={offline || busy || password.length < 8 || password !== confirm}
           onClick={() => void changePassword()}
         >
           修改密码

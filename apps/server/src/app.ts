@@ -42,6 +42,7 @@ import {
 import { adapterFor, ProviderError } from "@llm-chat/providers";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
+import { offlineManifest, offlineSourceId } from "./offline-history";
 import { Store, StoreError } from "./database";
 import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
 import { GenerationRunner } from "./generations";
@@ -277,6 +278,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     };
   });
 
+  app.get("/api/offline/manifest", async () => offlineManifest(store));
+  app.get<{ Params: { id: string } }>("/api/offline/conversations/:id", async (request) => {
+    const conversation = store.getConversation(request.params.id);
+    if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+    const row = store.sqlite.prepare("SELECT cache_revision AS revision FROM conversations WHERE id=?").get(conversation.id) as { revision: number };
+    return { sourceId: offlineSourceId(store), revision: row.revision, conversation, messages: store.listMessages(conversation.id) };
+  });
   app.get("/api/settings", async () => store.getSettings());
   app.patch("/api/settings", async (request) => {
     const patch = appSettingsUpdateSchema.parse(request.body);
