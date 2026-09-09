@@ -35,7 +35,8 @@ export async function startMockProvider(options = {}) {
             usage: {
               prompt_tokens: 11,
               completion_tokens: 7,
-              total_tokens: 18
+              total_tokens: 18,
+              ...(options.cachedInputTokens !== undefined ? { prompt_tokens_details: { cached_tokens: options.cachedInputTokens } } : {})
             }
           }
         ];
