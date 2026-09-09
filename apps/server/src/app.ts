@@ -283,7 +283,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     for (const agentId of [patch.defaultAgentId, patch.lastAgentId]) {
       if (agentId && !store.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
     }
-    return store.updateSettings(patch);
+    const saved = store.updateSettings(patch);
+    eventHub.emit({ type: "resource-changed", resource: "settings" });
+    return saved;
   });
   app.get("/api/agents", async () => store.listAgents());
   app.post("/api/agents", async (request, reply) => {

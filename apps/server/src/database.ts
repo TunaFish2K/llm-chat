@@ -15,6 +15,7 @@ import type {
   AgentRoleplayConfig,
   AgentSummaryDto,
   AppSettings,
+  AppSettingsUpdate,
   BalanceConfig,
   CharacterCardV2,
   ConnectionDto,
@@ -358,7 +359,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 37) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 38) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1237,6 +1238,12 @@ function migrate(sqlite: DatabaseSyncType): void {
       if (!hasColumn(sqlite, "generation_tool_calls", "presentation_json")) sqlite.exec("ALTER TABLE generation_tool_calls ADD COLUMN presentation_json TEXT");
       sqlite.exec("PRAGMA user_version = 37;");
     }
+    if (current < 38) {
+      for (const [name, value] of [["chat_font_size", 13.5], ["chat_letter_spacing", 0], ["chat_line_height", 1.55]] as const) {
+        if (!hasColumn(sqlite, "app_settings", name)) sqlite.exec(`ALTER TABLE app_settings ADD COLUMN ${name} REAL NOT NULL DEFAULT ${value}`);
+      }
+      sqlite.exec("PRAGMA user_version = 38;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1541,31 +1548,35 @@ export class Store {
         reasoningCollapsePolicy: row.reasoning_collapse_policy as AppSettings["uiPreferences"]["reasoningCollapsePolicy"],
         generationHaptics: Boolean(row.generation_haptics),
         accentColor: textOrNull(row.accent_color),
-        amoled: Boolean(row.amoled)
+        amoled: Boolean(row.amoled),
+        chatFontSize: Number(row.chat_font_size),
+        chatLetterSpacing: Number(row.chat_letter_spacing),
+        chatLineHeight: Number(row.chat_line_height)
       },
       lastWorkspacePath: textOrNull(row.last_workspace_path)
     };
   }
 
-  updateSettings(patch: OptionalInput<AppSettings>): AppSettings {
+  updateSettings(patch: AppSettingsUpdate): AppSettings {
     const current = this.getSettings();
     const next: AppSettings = {
       theme: patch.theme ?? current.theme,
       defaultAgentId: patch.defaultAgentId ?? current.defaultAgentId,
       lastAgentId: patch.lastAgentId ?? current.lastAgentId,
       userProfile: patch.userProfile ?? current.userProfile,
-      uiPreferences: { ...current.uiPreferences, ...patch.uiPreferences },
+      uiPreferences: { ...current.uiPreferences, ...Object.fromEntries(Object.entries(patch.uiPreferences ?? {}).filter(([, value]) => value !== undefined)) },
       lastWorkspacePath: patch.lastWorkspacePath === undefined ? current.lastWorkspacePath : patch.lastWorkspacePath
     };
     this.sqlite.prepare(`
       UPDATE app_settings SET theme = ?,
         default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
-        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?, accent_color = ?, amoled = ?
+        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?, accent_color = ?, amoled = ?, chat_font_size = ?, chat_letter_spacing = ?, chat_line_height = ?
       WHERE id = 1
     `).run(next.theme,
       next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
       next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy,
-      next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath, next.uiPreferences.accentColor ?? null, Number(next.uiPreferences.amoled ?? false));
+      next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath, next.uiPreferences.accentColor ?? null, Number(next.uiPreferences.amoled ?? false),
+      next.uiPreferences.chatFontSize ?? 13.5, next.uiPreferences.chatLetterSpacing ?? 0, next.uiPreferences.chatLineHeight ?? 1.55);
     if (patch.userProfile !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries").run();
     }

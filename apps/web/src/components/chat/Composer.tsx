@@ -35,6 +35,7 @@ import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
 import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson } from "./model";
+import { ChatTypographySettings } from "../ChatTypographySettings";
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
 import { AgentPicker } from "./AgentPicker";
@@ -114,6 +115,8 @@ export function Composer({
   const [editingOverrides, setEditingOverrides] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [typographyOpen, setTypographyOpen] = useState(false);
+  const inputAreaRef = useRef<HTMLDivElement>(null);
   useBackLayer(moreOpen, () => setMoreOpen(false));
   useBackLayer(settingsOpen, () => setSettingsOpen(false));
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
@@ -397,7 +400,7 @@ export function Composer({
     } catch (error) { toastError(error); }
   };
 
-  const toolbar = useComposerLayout(Boolean(generating && active));
+  const toolbar = useComposerLayout();
   const holdSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const keyHoldSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -441,6 +444,7 @@ export function Composer({
             />
           ) : null}
             <>
+              <div className="composer-input-area" ref={inputAreaRef}>
               <textarea
                 className="composer-input"
                 aria-label="输入消息"
@@ -465,6 +469,9 @@ export function Composer({
                   }
                 }}
               />
+
+              {generating && active ? <CancelGenerationButton generationId={active.generation.id} className="composer-stop-button" /> : null}
+              </div>
 
               <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={uploading || sending} />
               {attachments.some((asset) => asset.kind === "image") && !imageConfigured ? (
@@ -498,13 +505,21 @@ export function Composer({
                     inherited={effectiveAgent?.execution.reasoningEffort ?? "none"}
                     levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
 
-                  <Popover.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
+                  <Popover.Root modal={false} open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setTypographyOpen(false); }}>
+                    {typographyOpen ? <Popover.Anchor virtualRef={inputAreaRef} /> : null}
                     <Popover.Trigger asChild><button type="button" className="chip composer-settings-trigger"
-                      aria-label="低频设置" title="低频设置" disabled={controlsDisabled}>
+                      aria-label="低频设置" title="低频设置">
                       <Settings2 size={26} />
                       {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
                     </button></Popover.Trigger>
-                    <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}>
+                    <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}
+                      onInteractOutside={(event) => { if (typographyOpen) event.preventDefault(); }}>
+                      {typographyOpen ? <>
+                        <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>返回</button><strong>聊天排版</strong>
+                          <button type="button" aria-label="关闭排版面板" onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
+                        <ChatTypographySettings />
+                      </> : <>
+                      <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>聊天排版</strong><small>字号、字间距与行间距</small></span></button>
                       {toolbar.foldAgent ? <AgentPicker menuItem agents={agents} value={effectiveAgentId} disabled={controlsDisabled}
                         onChange={(id) => { setSettingsOpen(false); chooseAgent(id); }} /> : null}
                       <button type="button" aria-label="选择工作目录" onClick={() => { setSettingsOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
@@ -513,6 +528,7 @@ export function Composer({
                       <button type="button" aria-label="高级执行设置" onClick={() => { setSettingsOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
                         <Settings2 size={18} /><span><strong>高级执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
                       </button>
+                      </>}
                     </Popover.Content></Popover.Portal>
                   </Popover.Root>
 
@@ -520,9 +536,6 @@ export function Composer({
                 <div className="composer-action-group">
                   <AttachmentMenu uploadFiles={uploadFiles} disabled={sending || attachments.length >= 8} uploading={uploading} />
 
-                {generating && active ? (
-<CancelGenerationButton generationId={active.generation.id} className="send-button stop" />
-                ) : null}
                   <button
                     type="button"
                     className="send-button"

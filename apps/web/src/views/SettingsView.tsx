@@ -9,16 +9,19 @@ import type {
   ToolSettingsDto
 } from "@llm-chat/contracts";
 import { endpoints, type MemoryDto as MemoryItem } from "../lib/api";
+import { ChatTypographySettings } from "../components/ChatTypographySettings";
 import { AccentPicker } from "../components/AccentPicker";
 import {
   appStore,
+  acceptSettings,
+  updateUiPreferences,
   refreshSettings,
   toast,
   toastError
 } from "../lib/app-state";
 import { formatTime } from "../lib/format";
 import {
-  generationHapticsSupported, setGenerationHapticsEnabled
+  generationHapticsSupported
 } from "../lib/haptics";
 import { linkClick, routes } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -143,17 +146,18 @@ function GeneralSection() {
 
   if (!settings) return <LoadingState />;
 
-  const patch = (value: Partial<AppSettings>) => {
+  const patch = (value: Omit<Partial<AppSettings>, "uiPreferences"> & { uiPreferences?: Partial<AppSettings["uiPreferences"]> }) => {
+    if (value.uiPreferences) { updateUiPreferences(value.uiPreferences); return; }
     const revision = ++patchVersion.current;
     const current = appStore.get().settings ?? settings;
-    appStore.set({ settings: { ...current, ...value } });
-    if (value.uiPreferences) setGenerationHapticsEnabled(value.uiPreferences.generationHaptics);
+    const { uiPreferences: _preferences, ...fields } = value;
+    appStore.set({ settings: { ...current, ...fields } });
     patchSequence.current = patchSequence.current.then(async () => {
       await endpoints.updateSettings(value);
       if (revision !== patchVersion.current) return;
       const saved = await endpoints.settings();
       if (revision === patchVersion.current) {
-        appStore.set({ settings: saved }); setGenerationHapticsEnabled(saved.uiPreferences.generationHaptics);
+        acceptSettings(saved);
         toast("success", "设置已保存");
       }
     }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
@@ -175,15 +179,15 @@ function GeneralSection() {
             <option value="dark">深色</option>
           </select>
         </Field>
-        <AccentPicker value={settings.uiPreferences.accentColor ?? null} onChange={(accentColor) => patch({ uiPreferences: { ...settings.uiPreferences, accentColor } })} />
+        <AccentPicker value={settings.uiPreferences.accentColor ?? null} onChange={(accentColor) => patch({ uiPreferences: { accentColor } })} />
         <label className="checkbox-row"><input type="checkbox" checked={settings.uiPreferences.amoled ?? false}
-          onChange={(event) => patch({ uiPreferences: { ...settings.uiPreferences, amoled: event.target.checked } })} />深色模式使用纯黑背景</label>
+          onChange={(event) => patch({ uiPreferences: { amoled: event.target.checked } })} />深色模式使用纯黑背景</label>
         <label className="checkbox-row">
           <input
             type="checkbox"
             checked={settings.uiPreferences.sidebarCollapsed}
             onChange={(event) =>
-              patch({ uiPreferences: { ...settings.uiPreferences, sidebarCollapsed: event.target.checked } })
+              patch({ uiPreferences: { sidebarCollapsed: event.target.checked } })
             }
           />
           默认折叠侧边栏
@@ -193,7 +197,7 @@ function GeneralSection() {
             type="checkbox"
             checked={settings.uiPreferences.generationHaptics}
             onChange={(event) => patch({
-              uiPreferences: { ...settings.uiPreferences, generationHaptics: event.target.checked }
+              uiPreferences: { generationHaptics: event.target.checked }
             })}
           />
           <span className="haptics-label">
@@ -209,7 +213,6 @@ function GeneralSection() {
             onChange={(event) =>
               patch({
                 uiPreferences: {
-                  ...settings.uiPreferences,
                   reasoningCollapsePolicy: event.target
                     .value as AppSettings["uiPreferences"]["reasoningCollapsePolicy"]
                 }
@@ -223,6 +226,7 @@ function GeneralSection() {
         </Field>
       </div>
 
+      <div className="card"><h3>聊天排版</h3><ChatTypographySettings preview /></div>
       <AppUpdateCard />
       <div className="card"><h3>快速教程</h3><p className="hint">教程观看状态只保存在当前浏览器，不同步到其他设备。</p>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</button></div>

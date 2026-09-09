@@ -25,7 +25,7 @@ export function QuickTour() {
     {step > 0 ? <button className="btn" onClick={() => setStep(step - 1)}>上一步</button> : null}
     <button className="btn primary" onClick={() => step === pages.length - 1 ? close() : setStep(step + 1)}>{step === pages.length - 1 ? "开始使用" : "下一步"}</button>
   </>}>
-    <div className="quick-tour" aria-live="polite"><span className="hint">{step + 1} / {pages.length} · 仅此浏览器记录是否看过</span>
+    <div className="quick-tour" aria-live="polite"><span className="hint">{step + 1} / {pages.length}</span>
       <h3>{pages[step]![0]}</h3><p>{pages[step]![1]}</p>
       {step === 2 ? <p className="hint">Steer 不打断当前请求或工具，不跳过审批。待发送消息可以单条删除或全部清空。</p> : null}
     </div>

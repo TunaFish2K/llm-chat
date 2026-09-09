@@ -7,6 +7,7 @@ import type { InspectionTarget } from "./lib/inspection";
 import { applyUpdate, getPwaState, initPwa, promptInstall, subscribePwa } from "./lib/pwa";
 import { navigate, replaceRoute, routes, useRoute, type Route } from "./lib/router";
 import { useStore } from "./lib/store";
+import { useChatTypography } from "./lib/chat-typography";
 import { useTheme } from "./lib/theme";
 import { ErrorState, LoadingState } from "./components/ui";
 import {
@@ -68,6 +69,7 @@ export function App() {
   const [pwa, setPwa] = useState(getPwaState());
   const preferencesApplied = useRef(false);
   useTheme(state.settings);
+  useChatTypography(state.settings);
 
   useEffect(() => {
     initAuthGate();
