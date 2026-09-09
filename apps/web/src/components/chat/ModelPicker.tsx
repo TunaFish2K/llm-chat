@@ -1,3 +1,4 @@
+import { useBackLayer } from "../../lib/mobile-navigation";
 import { useEffect, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, RefreshCw, Search, Settings2, X } from "lucide-react";
@@ -32,6 +33,7 @@ export function ModelPicker({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  useBackLayer(open, () => setOpen(false));
   const [query, setQuery] = useState("");
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const touchLayout = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -92,7 +94,7 @@ export function ModelPicker({
           <header>
             <div>
               <strong>模型</strong>
-              <span>仅影响当前会话</span>
+              <span>无默认模型的 Agent 会记住选择</span>
             </div>
             <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="关闭模型选择">
               <X size={15} />

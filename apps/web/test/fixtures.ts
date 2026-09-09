@@ -2,11 +2,7 @@ import type { AgentSummaryDto, AppSettings, BackgroundTaskDto, ConnectionDto, Co
 
 export function makeSettings(patch: Partial<AppSettings> = {}): AppSettings {
   return {
-    defaultModelId: null,
-    defaultContextPolicy: "trim",
     theme: "dark",
-    defaultSystemPrompt: "",
-    reasoningEffort: "medium",
     defaultAgentId: "agent-1",
     lastAgentId: "agent-1",
     userProfile: { displayName: "主人", description: "" },
@@ -25,6 +21,7 @@ export function makeAgent(patch: Partial<AgentSummaryDto> = {}): AgentSummaryDto
     revision: 1,
     hasAvatar: false,
     modelId: "model-1",
+    lastSelectedModelId: null,
     searchApiKeyConfigured: false,
     execution: {
       modelId: "model-1",

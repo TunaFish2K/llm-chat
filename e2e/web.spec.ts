@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
-import { agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded } from "./helpers.mjs";
+import { agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 const unique = () => Math.random().toString(36).slice(2, 8);
@@ -217,10 +217,13 @@ test.describe("会话与流式生成", () => {
 
       // Streaming reply, usage and final status render in the assistant message.
       await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
-      await expect(page.getByText("合计 18")).toBeVisible();
-      if (test.info().project.name !== "mobile-chromium") {
-        await expect(page.getByText("已完成").first()).toBeVisible();
-      }
+      await openMessageActions(page, page.locator('.msg[data-role="assistant"]').last());
+      await expect(page.getByText("↑ 11").filter({ visible: true })).toBeVisible();
+      await page.getByRole("button", { name: "查看生成用量" }).click();
+      const usageInspector = page.getByRole("complementary", { name: "检查器" });
+      await expect(usageInspector).toContainText("18 tokens");
+      await usageInspector.getByRole("button", { name: "关闭检查器" }).click();
+      await expect(page.getByText("处理完成").first()).toBeVisible();
       expect(provider.requests.at(-1)?.model).toBe("e2e-chat");
 
       // The conversation lives at a real path; opening it directly works.
@@ -239,9 +242,9 @@ test.describe("会话与流式生成", () => {
         expect(await modelSearch.evaluate((element) => element === document.activeElement)).toBe(false);
         await page.getByRole("button", { name: "关闭模型选择" }).click();
         await page.getByRole("button", { name: "打开导航" }).click();
-        await expect(page.getByRole("button", { name: "关闭导航" })).toHaveCount(1);
-        await expect(page.locator(".workspace-sidebar").getByRole("button", { name: "关闭导航" })).toHaveCount(0);
-        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+        await expect(page.locator('.drawer-scrim[aria-label="关闭导航"]')).toBeVisible();
+        await expect(page.locator(".workspace-sidebar").getByRole("button", { name: "关闭导航" })).toHaveCount(1);
+        await page.locator('.drawer-scrim[aria-label="关闭导航"]').click({ position: { x: 380, y: 500 } });
         await page.getByRole("button", { name: "打开导航" }).click();
         const drawer = page.locator(".drawer-panel");
         await drawer.click({ trial: true, position: { x: 20, y: 20 } });
@@ -261,10 +264,12 @@ test.describe("会话与流式生成", () => {
       await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
 
       // Retry produces a second generation version that can be switched.
+      await openMessageActions(page, page.locator('.msg[data-role="assistant"]').last());
       await page.getByRole("button", { name: /重试/ }).click();
-      await expect(page.getByText("2 / 2")).toBeVisible({ timeout: 15_000 });
+      await openMessageActions(page, page.locator('.msg[data-role="assistant"]').last());
+      await expect(page.getByText("2 / 2").filter({ visible: true })).toBeVisible({ timeout: 15_000 });
       await page.getByRole("button", { name: "上一版本" }).click();
-      await expect(page.getByText("1 / 2")).toBeVisible();
+      await expect(page.getByText("1 / 2").filter({ visible: true })).toBeVisible();
 
       // The Harness-style trajectory and inspector are projections of the
       // persisted generation, not a second execution runtime.
@@ -292,7 +297,7 @@ test.describe("会话与流式生成", () => {
       await openDrawerIfNeeded(page);
       await expect(page.locator(".conversation-row").first()).toContainText(title);
       if (test.info().project.name === "mobile-chromium") {
-        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+        await page.locator('.drawer-scrim[aria-label="关闭导航"]').click({ position: { x: 380, y: 500 } });
       }
       await expect(page.locator(".conversation-title")).toHaveAttribute("title", title);
       expect(await page.locator(".conversation-header").evaluate((header) => {
@@ -310,22 +315,27 @@ test.describe("会话与流式生成", () => {
       // A fork stays inside the conversation family and is switched at its source message.
       const originalUrl = page.url();
       const userMessage = page.locator('.msg[data-role="user"]', { hasText: "你好，测试一下" });
-      await userMessage.hover();
-      await userMessage.getByRole("button", { name: "编辑并分叉" }).click();
+      await openMessageActions(page, userMessage);
+      await page.getByRole("button", { name: "编辑并分叉" }).click();
       await page.getByLabel("修改后的消息").fill("你好，这是分支");
       await page.getByRole("button", { name: "创建分支并生成" }).click();
       await expect(page).not.toHaveURL(originalUrl);
-      await expect(page.getByLabel("对话分支切换")).toContainText("2 / 2");
+      await openMessageActions(page, page.locator('.msg[data-role="user"]').last());
+      await expect(page.getByLabel("对话分支切换").filter({ visible: true })).toContainText("2 / 2");
+      await page.keyboard.press("Escape");
 
       await openDrawerIfNeeded(page);
       await expect(page.locator(".conversation-row", { hasText: title })).toHaveCount(1);
       await expect(page.locator(".conversation-row", { hasText: "· 分支" })).toHaveCount(0);
       if (test.info().project.name === "mobile-chromium") {
-        await page.getByRole("button", { name: "关闭导航" }).click({ position: { x: 380, y: 500 } });
+        await page.locator('.drawer-scrim[aria-label="关闭导航"]').click({ position: { x: 380, y: 500 } });
       }
+      await openMessageActions(page, page.locator('.msg[data-role="user"]').last());
       await page.getByRole("button", { name: "上一分支" }).click();
       await expect(page).toHaveURL(originalUrl);
-      await expect(page.getByLabel("对话分支切换")).toContainText("1 / 2");
+      await openMessageActions(page, page.locator('.msg[data-role="user"]').last());
+      await expect(page.getByLabel("对话分支切换").filter({ visible: true })).toContainText("1 / 2");
+      await page.keyboard.press("Escape");
 
       // Deleting the visible family root also deletes its hidden branches.
       await openDrawerIfNeeded(page);
@@ -483,7 +493,7 @@ test.describe("Agent 管理", () => {
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const table = page.locator(".markdown table").last();
       await expect(table).toBeVisible();
-      await expect(page.getByText("已完成", { exact: true })).toBeVisible();
+      await expect(page.locator('.stream[data-busy="true"]')).toHaveCount(0);
       const metrics = await table.evaluate((element) => {
         const wrapper = element.closest('[data-streamdown="table-wrapper"]');
         const scroller = element.parentElement;

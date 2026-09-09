@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { Maximize2 } from "lucide-react";
 import type {
   AppSettings,
-  ContextPolicy,
   McpServerDto,
   PluginDto,
-  ReasoningEffort,
   SkillDto,
   ToolCatalogItemDto,
   ToolSettingsDto
@@ -45,7 +43,6 @@ const SECTIONS: Array<[string, string]> = [
   ["memories", "记忆"]
 ];
 
-const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 
 function useResourceEvents(resources: string[], load: () => Promise<void>): void {
   useEffect(() => {
@@ -139,7 +136,6 @@ function AppUpdateCard() {
 function GeneralSection() {
   const settings = useStore(appStore, (s) => s.settings);
   const agents = useStore(appStore, (s) => s.agents);
-  const models = useStore(appStore, (s) => s.models);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const hapticsSupported = generationHapticsSupported();
   const patchSequence = useRef(Promise.resolve());
@@ -232,74 +228,16 @@ function GeneralSection() {
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</button></div>
 
       <div className="card">
-        <h3>默认生成</h3>
-        <Field label="默认模型">
-          <select
-            className="select"
-            aria-label="默认模型"
-            value={settings.defaultModelId ?? ""}
-            onChange={(event) => patch({ defaultModelId: event.target.value || null })}
-          >
-            <option value="">（未设置）</option>
-            {models
-              .filter((model) => model.enabled)
-              .map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.displayName}
-                </option>
-              ))}
+        <h3>默认 Agent</h3>
+        <Field label="默认 Agent">
+          <select className="select" aria-label="默认 Agent" value={settings.defaultAgentId}
+            onChange={(event) => patch({ defaultAgentId: event.target.value })}>
+            {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
         </Field>
-        <div className="grid-2">
-          <Field label="默认 Agent">
-            <select
-              className="select"
-              aria-label="默认 Agent"
-              value={settings.defaultAgentId}
-              onChange={(event) => patch({ defaultAgentId: event.target.value })}
-            >
-              {agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="默认上下文策略">
-            <select
-              className="select"
-              aria-label="默认上下文策略"
-              value={settings.defaultContextPolicy}
-              onChange={(event) => patch({ defaultContextPolicy: event.target.value as ContextPolicy })}
-            >
-              <option value="auto">auto</option>
-              <option value="trim">trim</option>
-              <option value="summarize">summarize</option>
-              <option value="full">full</option>
-            </select>
-          </Field>
-        </div>
-        <Field label="默认推理档位">
-          <select
-            className="select"
-            aria-label="默认推理档位"
-            value={settings.reasoningEffort}
-            onChange={(event) => patch({ reasoningEffort: event.target.value as ReasoningEffort })}
-          >
-            {REASONING_LEVELS.map((level) => (
-              <option key={level} value={level}>
-                {level}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="默认系统提示">
-          <ExpandableTextarea
-            label="默认系统提示"
-            value={settings.defaultSystemPrompt}
-            onChange={(value) => patch({ defaultSystemPrompt: value })}
-          />
-        </Field>
+        <p className="hint">模型、上下文、推理档位和系统提示在 Agent 中设置。</p>
+        <a className="btn" href={routes.agents(settings.defaultAgentId)}
+          onClick={linkClick(routes.agents(settings.defaultAgentId))}>编辑此 Agent</a>
       </div>
 
       <div className="card">

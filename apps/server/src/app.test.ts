@@ -18,6 +18,44 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("rejects retired global generation settings and saves Agent-owned prompts", async () => {
+    const app = await testApp();
+    const settings = (await app.inject({ method: "GET", url: "/api/settings" })).json();
+    for (const field of ["defaultModelId", "defaultContextPolicy", "reasoningEffort", "defaultSystemPrompt"]) {
+      expect(settings).not.toHaveProperty(field);
+      const response = await app.inject({ method: "PATCH", url: "/api/settings", payload: { [field]: "old value" } });
+      expect(response.statusCode).toBe(400);
+      expect(response.body).toContain("生成配置已移至 Agent");
+    }
+    const agent = app.store.getAgent(settings.defaultAgentId)!;
+    const response = await app.inject({ method: "PATCH", url: `/api/agents/${agent.id}`, payload: {
+      execution: { ...agent.execution, baseSystemPrompt: "Agent rules" }
+    } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().execution.baseSystemPrompt).toBe("Agent rules");
+    const { baseSystemPrompt: _base, ...legacyExecution } = agent.execution;
+    const legacyUpdate = await app.inject({ method: "PATCH", url: `/api/agents/${agent.id}`, payload: { execution: legacyExecution } });
+    expect(legacyUpdate.json().execution.baseSystemPrompt).toBe("Agent rules");
+  });
+
+  it("persists pre-send model selections and applies them when creating a conversation", async () => {
+    const app = await testApp(); const model = await createApiModel(app);
+    const id = app.store.getSettings().defaultAgentId;
+    const agent = app.store.getAgent(id)!;
+    app.store.updateAgent(id, { execution: { ...agent.execution, modelId: null } });
+    const selection = await app.inject({ method: "PATCH", url: `/api/agents/${id}/model-selection`, payload: { modelId: model.id } });
+    expect(selection.statusCode).toBe(200);
+    expect(selection.json()).toMatchObject({ lastSelectedModelId: model.id, execution: { modelId: null } });
+    const bootstrap = (await app.inject({ method: "GET", url: "/api/bootstrap" })).json();
+    expect(bootstrap.agents.find((item: { id: string }) => item.id === id).lastSelectedModelId).toBe(model.id);
+    const created = await app.inject({ method: "POST", url: "/api/conversations", payload: { agentId: id } });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ modelId: model.id, executionOverrides: { modelId: model.id } });
+    const patch = await app.inject({ method: "PATCH", url: `/api/conversations/${created.json().id}`, payload: { modelId: model.id } });
+    expect(patch.statusCode).toBe(200);
+    expect((await app.inject({ method: "PATCH", url: `/api/agents/${id}/model-selection`, payload: { modelId: "invalid" } })).statusCode).toBe(400);
+  });
+
   it("searches active message text and empty conversation titles, escapes wildcards and rejects oversized queries", async () => {
     const app = await testApp(); const model = await createApiModel(app);
     const started = app.store.startConversation({ text: "正文 needle 100%", modelId: model.id, contextPolicy: "full" });
@@ -320,7 +358,11 @@ describe("server API", () => {
       enabled: true
     };
     const model = (await app.inject({ method: "POST", url: "/api/models", payload: modelInput })).json();
-    await app.inject({ method: "PATCH", url: "/api/settings", payload: { defaultModelId: model.id, defaultSystemPrompt: "系统提示", reasoningEffort: "low" } });
+    const defaultAgentId = (await app.inject({ method: "GET", url: "/api/settings" })).json().defaultAgentId;
+    const defaultAgent = (await app.inject({ method: "GET", url: `/api/agents/${defaultAgentId}` })).json();
+    await app.inject({ method: "PATCH", url: `/api/agents/${defaultAgentId}`, payload: {
+      execution: { ...defaultAgent.execution, modelId: model.id, baseSystemPrompt: "系统提示", reasoningEffort: "low" }
+    } });
     const startResponse = await app.inject({
       method: "POST",
       url: "/api/conversations/start",

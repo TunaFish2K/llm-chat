@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
+import { readComposerDraft, writeComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
 import {
@@ -47,9 +48,96 @@ function messageFetch(messages: MessageDto[]) {
 beforeEach(() => {
   window.history.pushState(null, "", "/");
   vi.spyOn(endpoints, "queueState").mockResolvedValue({ items: [], paused: false });
+  vi.spyOn(endpoints, "agents").mockImplementation(async () => appStore.get().agents);
 });
 
 describe("ChatView", () => {
+  it("uses the remembered model when a new draft resets to follow its Agent", async () => {
+    seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
+    const agent = makeAgent();
+    appStore.set({ agents: [{ ...agent, modelId: null, execution: { ...agent.execution, modelId: null }, lastSelectedModelId: "model-1" }] });
+    writeComposerDraft(null, { text: "draft", attachments: [], agentId: agent.id, overrides: { modelId: "model-2" }, workspace: null, greetingIndex: 0 });
+    vi.stubGlobal("fetch", messageFetch([]));
+    const select = vi.spyOn(endpoints, "selectAgentModel");
+    const user = userEvent.setup(); render(<ChatView conversationId={null} />);
+    await user.click(screen.getByRole("button", { name: "选择模型" }));
+    await user.click(screen.getByText("跟随 Agent", { exact: true }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", makeModel().displayName));
+    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("waits for the chosen model to save before enabling send", async () => {
+    seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
+    const updated = makeConversation({ modelId: "model-2", executionOverrides: { modelId: "model-2" } });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/api/conversations") return json([updated]);
+      if (url.endsWith("/messages")) return json([]);
+      return json({});
+    }));
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    vi.spyOn(endpoints, "updateConversation").mockImplementation(async (_, patch) => {
+      if (patch.modelId) await pending;
+      return updated;
+    });
+    const user = userEvent.setup(); render(<ChatView conversationId="conv-1" />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "next turn" } });
+    await user.click(screen.getByRole("button", { name: "选择模型" }));
+    await user.click(screen.getByRole("button", { name: /Second/ }));
+    expect(screen.getByRole("button", { name: /^发送$/ })).toBeDisabled();
+    finish();
+    await waitFor(() => expect(screen.getByRole("button", { name: /^发送$/ })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", "Second");
+  });
+
+  it("keeps an unsent draft when the first send fails", async () => {
+    seedStore(); vi.stubGlobal("fetch", messageFetch([]));
+    vi.spyOn(endpoints, "startConversation").mockRejectedValue(new Error("发送失败测试"));
+    const user = userEvent.setup();
+    const first = render(<ChatView conversationId={null} />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "失败后保留" } });
+    await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    await waitFor(() => expect(appStore.get().toasts.some((item) => item.text === "发送失败测试")).toBe(true));
+    first.unmount();
+    render(<ChatView conversationId={null} />);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("失败后保留");
+  });
+
+  it("restores text and attachments after unmounting, keeping branches isolated", () => {
+    seedStore(); vi.stubGlobal("fetch", messageFetch([]));
+    writeComposerDraft("conv-1", { text: "恢复草稿", attachments: [{ id: "asset", fileName: "draft.txt", mimeType: "text/plain", kind: "file", byteSize: 1, sha256: "hash", url: "/api/files/asset", createdAt: 1 }], agentId: "agent-1", overrides: {}, workspace: null, greetingIndex: 0 });
+    const first = render(<ChatView conversationId="conv-1" />);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("恢复草稿");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent("draft.txt");
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "最新草稿" } });
+    first.unmount();
+    const other = render(<ChatView conversationId={null} />);
+    expect(screen.getByLabelText("输入消息")).toHaveValue(""); other.unmount();
+    render(<ChatView conversationId="conv-1" />);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("最新草稿");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent("draft.txt");
+  });
+
+  it("does not pin an untouched blank chat to an old remembered model", () => {
+    seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
+    const agent = makeAgent();
+    appStore.set({ agents: [{ ...agent, modelId: null, execution: { ...agent.execution, modelId: null }, lastSelectedModelId: "model-1" }] });
+    vi.stubGlobal("fetch", messageFetch([]));
+    const first = render(<ChatView conversationId={null} />);
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", makeModel().displayName);
+    first.unmount();
+    expect(readComposerDraft(null)?.overrides).not.toHaveProperty("modelId");
+    appStore.set({ agents: [{ ...agent, modelId: null, execution: { ...agent.execution, modelId: null }, lastSelectedModelId: "model-2" }] });
+    const second = render(<ChatView conversationId={null} />);
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", "Second");
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "draft pins this choice" } });
+    second.unmount();
+    appStore.set({ agents: [{ ...agent, modelId: null, execution: { ...agent.execution, modelId: null }, lastSelectedModelId: "model-1" }] });
+    render(<ChatView conversationId={null} />);
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", "Second");
+    expect(screen.getByLabelText("输入消息")).toHaveValue("draft pins this choice");
+  });
+
   it("confirms a different Agent for existing messages and leaves the current selection untouched", async () => {
     const messages = [makeMessage({ role: "user", text: "保留历史" })];
     seedStore(messages);
@@ -153,7 +241,7 @@ describe("ChatView", () => {
     render(<ChatView conversationId="conv-1" />);
 
     expect(await screen.findByText("你好，主人！")).toBeInTheDocument();
-    expect(screen.getByText("测试连接 / GPT 测试")).toBeInTheDocument();
+    expect(screen.getByText(/测试连接 \/ GPT 测试/)).toBeInTheDocument();
     expect(screen.getByText("↑ 12")).toBeInTheDocument();
     expect(screen.getByText("↓ 34")).toBeInTheDocument();
     expect(screen.getByText("推理过程")).toBeInTheDocument();
@@ -610,7 +698,7 @@ describe("ChatView", () => {
     await user.click(await screen.findByRole("button", { name: /Claude 测试/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1",
-      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ executionOverrides: { modelId: "model-2" } }) })
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ modelId: "model-2" }) })
     ));
   });
 

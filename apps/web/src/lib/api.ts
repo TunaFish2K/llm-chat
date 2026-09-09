@@ -213,6 +213,7 @@ export const endpoints = {
   agent: (id: string) => api.get<AgentDto>(`/api/agents/${id}`),
   createAgent: (input: AgentInput) => api.post<AgentDto>("/api/agents", input),
   updateAgent: (id: string, patch: Partial<AgentInput>) => api.patch<AgentDto>(`/api/agents/${id}`, patch),
+  selectAgentModel: (id: string, modelId: string) => api.patch<AgentDto>(`/api/agents/${id}/model-selection`, { modelId }),
   updateAgentSearchSecret: (id: string, input: AgentSearchSecretInput) =>
     api.patch<AgentSearchSecretDto>(`/api/agents/${id}/search-secret`, input),
   deleteAgent: (id: string) => api.delete<undefined>(`/api/agents/${id}`),

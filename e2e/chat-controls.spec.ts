@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "./fixtures";
-import { agentInput, api, APP_URL } from "./helpers.mjs";
+import { agentInput, api, APP_URL, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 async function setup(request: APIRequestContext, baseUrl: string) {
@@ -200,6 +200,7 @@ test("附件菜单、灯泡滑条与历史附件编辑分叉", async ({ page, re
     await expect(page.getByLabel("待发送附件")).toContainText("original.txt");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
+    await openMessageActions(page, page.locator('.msg[data-role="user"]').last());
     await page.getByRole("button", { name: "编辑并分叉", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "编辑并分叉" });
     await dialog.getByRole("button", { name: "移除 original.txt" }).click();

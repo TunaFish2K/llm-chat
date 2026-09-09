@@ -1530,3 +1530,61 @@
 .message-queue small { display: block; color: var(--text-muted); }
 .message-queue small[role=alert], .tool-error-summary { color: var(--err); }
 .tool-error-summary { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 4.5em; overflow: auto; min-width: 0; }
+
+@media (max-width: 767px) {
+  .chat-scroll { overscroll-behavior-x: contain; overscroll-behavior-y: auto; }
+}
+
+/* Replies: prose first; metadata occupies one stable, quiet row. */
+.chat-thread .msg { gap: 4px; font-size: 13.5px; line-height: 1.55; }
+.chat-thread .stream { margin-left: 0; padding-left: 0; border-left: 0; gap: 6px; }
+.chat-thread .markdown > * + * { margin-top: 0.55em; }
+.chat-thread .markdown h1 { font-size: 20px; }
+.chat-thread .markdown h2 { font-size: 18px; }
+.chat-thread .markdown h3 { font-size: 16px; }
+.chat-thread .markdown h4 { font-size: 14px; }
+.chat-thread .markdown :is(h1, h2, h3, h4) { margin-top: 0.8em; }
+.chat-thread .markdown > :first-child { margin-top: 0; }
+.chat-thread .msg-bubble { padding: 8px 12px; box-shadow: none; }
+.reply-footer { display: flex; align-items: center; gap: 4px; height: 28px; min-width: 0; width: 100%; }
+.msg[data-role="user"] .reply-footer { justify-content: flex-end; }
+.msg[data-role="user"] .reply-inline { flex: 0 1 auto; }
+.reply-inline { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; opacity: 0; pointer-events: none; }
+.msg:hover .reply-inline, .msg:focus-within .reply-inline, .reply-footer[data-open] .reply-inline { opacity: 1; pointer-events: auto; }
+.reply-metadata { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text-faint); font-size: 11px; }
+.reply-inline .reply-metadata { flex: 1; overflow: hidden; white-space: nowrap; }
+.reply-identity { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.reply-inline .reply-timestamp { display: none; }
+.reply-inline .usage-summary { flex-shrink: 0; white-space: nowrap; flex-wrap: nowrap; padding: 0; gap: 6px; }
+.reply-footer .stream-actions, .reply-popover .stream-actions { opacity: 1; flex-shrink: 0; }
+.reply-inline .stream-actions { overflow-x: auto; max-width: 60%; scrollbar-width: none; }
+.reply-inline .stream-actions > * { flex-shrink: 0; }
+.reply-live-action { flex: 0 0 auto; }
+.reply-more { display: none; }
+.reply-popover { z-index: 80; width: min(360px, calc(100vw - 24px)); padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); }
+.reply-popover .reply-metadata { align-items: flex-start; flex-direction: column; color: var(--text-muted); font-size: 12px; }
+.reply-popover .reply-identity { white-space: normal; overflow-wrap: anywhere; }
+.reply-popover .usage-summary { padding: 0; }
+.reply-popover .stream-actions { display: flex; flex-wrap: wrap; margin-top: 8px; gap: 4px; }
+.reply-popover .act, .reply-popover .version-switch button { width: 40px; height: 40px; }
+.process-group { min-width: 0; }
+.process-disclosure > summary { display: flex; align-items: center; gap: 6px; min-height: 26px; width: fit-content; max-width: 100%; color: var(--text-muted); font-size: 12px; cursor: pointer; list-style: none; }
+.process-disclosure > summary::-webkit-details-marker { display: none; }
+.process-disclosure > summary > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-disclosure > summary svg { flex-shrink: 0; }
+.process-count { color: var(--text-faint); white-space: nowrap; }
+.process-disclosure[open] > summary .chev { transform: rotate(180deg); }
+.process-steps { display: flex; flex-direction: column; gap: 8px; padding: 6px 0 8px; }
+.process-reasoning > div { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); max-height: 460px; overflow-y: auto; }
+.process-steps .tool-call { background: transparent; border: 0; border-radius: 0; }
+.process-steps .tool-call > summary { padding: 4px 0; font-size: 12px; }
+.process-steps .tool-call[open] > summary { border-bottom: 0; }
+.process-steps .tool-call-details { padding: 6px 0; }
+.process-error { color: var(--err); font-size: 12px; overflow-wrap: anywhere; }
+@media (max-width: 767px), (hover: none) {
+  .reply-footer { height: 40px; }
+  .reply-inline { display: none; }
+  .reply-more { display: inline-flex; width: 40px; height: 40px; }
+  .reply-live-action .act { width: 40px; height: 40px; }
+  .process-disclosure > summary { min-height: 32px; }
+}

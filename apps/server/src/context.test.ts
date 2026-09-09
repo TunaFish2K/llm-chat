@@ -1,3 +1,4 @@
+import { updateDefaultAgentExecution } from "./test-helpers";
 import { adapterFor, type ProviderAdapter, type ProviderEvent } from "@llm-chat/providers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildContext, compactConversationContext, ContextError, estimateTokens } from "./context";
@@ -16,7 +17,7 @@ afterEach(() => {
 
 function createStore(): Store {
   const store = createTestStore();
-  store.updateSettings({ defaultSystemPrompt: "" });
+  updateDefaultAgentExecution(store, { baseSystemPrompt: "" });
   return store;
 }
 

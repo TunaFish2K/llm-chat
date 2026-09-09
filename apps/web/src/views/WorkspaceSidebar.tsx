@@ -22,6 +22,7 @@ import { formatTime } from "../lib/format";
 import { linkClick, navigate, routes, type Route } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, Modal } from "../lib/ui";
+import { useBackLayer } from "../lib/mobile-navigation";
 import { Popover } from "radix-ui";
 import { ConversationSearch } from "../components/ConversationSearch";
 import type { PwaState } from "../lib/pwa";
@@ -99,7 +100,9 @@ export function WorkspaceSidebar({
   };
 
   return (
-    <aside ref={sidebar} className="workspace-sidebar" data-compact={compact || undefined} aria-label="主导航与会话">
+    <aside ref={sidebar} onClick={(event) => {
+      if (event.target instanceof Element && event.target.closest('a[href]') && event.defaultPrevented) onClose?.();
+    }} className="workspace-sidebar" data-compact={compact || undefined} aria-label="主导航与会话">
       <header className="sidebar-brand">
         {compact ? (
           <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label="展开会话栏" title="展开会话栏">
@@ -126,7 +129,7 @@ export function WorkspaceSidebar({
         <>
           <nav className="sidebar-rail-primary" aria-label="主要操作">
             <button className="sidebar-rail-button" aria-label="搜索会话" title="搜索会话" onClick={() => setSearchOpen(true)}><Search size={18} /></button>
-            <button className="sidebar-rail-button primary" onClick={() => navigate(routes.chat())} aria-label="新会话" title="新会话">
+            <button className="sidebar-rail-button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label="新会话" title="新会话">
               <SquarePen size={18} />
             </button>
             <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label="聊天" compact />
@@ -143,7 +146,7 @@ export function WorkspaceSidebar({
       ) : (
         <>
           <div className="sidebar-primary-actions">
-            <button className="button primary" onClick={() => navigate(routes.chat())} aria-label="新会话" title="新会话">
+            <button className="button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label="新会话" title="新会话">
               <Plus size={17} /> {!compact ? <span>新会话</span> : null}
             </button>
           </div>
@@ -179,12 +182,12 @@ export function WorkspaceSidebar({
                         <small>{formatTime(conversation.updatedAt)}</small>
                       </a>
                       <div className="conversation-actions">
-                        <Popover.Root><Popover.Trigger asChild><button className="icon-button" aria-label={`会话操作 ${conversation.title}`}><MoreHorizontal size={16} /></button></Popover.Trigger>
+                        <ConversationPopover><Popover.Trigger asChild><button className="icon-button" aria-label={`会话操作 ${conversation.title}`}><MoreHorizontal size={16} /></button></Popover.Trigger>
                           <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4}>
                             <Popover.Close asChild><button aria-label={`重命名 ${conversation.title}`} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />修改标题</button></Popover.Close>
                             <Popover.Close asChild><button className="danger-quiet" aria-label={`删除 ${conversation.title}`} onClick={() => setDeleting(conversation)}><Trash2 size={14} />删除会话</button></Popover.Close>
                           </Popover.Content></Popover.Portal>
-                        </Popover.Root>
+                        </ConversationPopover>
                       </div>
                     </div>
                   ))}
@@ -252,4 +255,10 @@ function groupConversations(conversations: ConversationDto[]): Array<{ label: st
     const items = groups.get(label);
     return items?.length ? [{ label, items }] : [];
   });
+}
+
+function ConversationPopover({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useBackLayer(open, () => setOpen(false));
+  return <Popover.Root open={open} onOpenChange={setOpen}>{children}</Popover.Root>;
 }

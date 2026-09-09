@@ -1,3 +1,4 @@
+import { useBackLayer } from "../../lib/mobile-navigation";
 import { useEffect, useRef, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, Search, X } from "lucide-react";
@@ -18,6 +19,7 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
   menuItem?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  useBackLayer(open, () => setOpen(false));
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
   const selected = agents.find((agent) => agent.id === value);

@@ -123,6 +123,16 @@ describe("api client", () => {
     });
   });
 
+  it("persists an Agent model selection without editing the Agent configuration", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(200, { id: "agent", lastSelectedModelId: "model" }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(endpoints.selectAgentModel("agent", "model")).resolves.toMatchObject({ lastSelectedModelId: "model" });
+    expect(fetchMock).toHaveBeenCalledWith("/api/agents/agent/model-selection", expect.objectContaining({
+      method: "PATCH", body: JSON.stringify({ modelId: "model" }),
+      headers: expect.objectContaining({ "x-llm-chat-request": "1" })
+    }));
+  });
+
   it("keeps every endpoint wrapper wired to the request client", async () => {
     const fetchMock = vi.fn(async () => mockResponse(200, {}));
     vi.stubGlobal("fetch", fetchMock);

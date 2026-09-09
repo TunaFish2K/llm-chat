@@ -7,8 +7,9 @@ import fastifyHelmet from "@fastify/helmet";
 import fastifyRateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import {
-  appSettingsSchema,
+  appSettingsUpdateSchema,
   agentInputSchema,
+  agentModelSelectionSchema,
   agentSearchSecretInputSchema,
   connectionInputSchema,
   connectionInputPatchSchema,
@@ -278,12 +279,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.get("/api/settings", async () => store.getSettings());
   app.patch("/api/settings", async (request) => {
-    const patch = appSettingsSchema.partial().parse(request.body);
-    if (patch.defaultModelId) {
-      const model = store.getModel(patch.defaultModelId);
-      if (!model) throw new StoreError("model_not_found", "默认模型不存在");
-      if (!model.enabled) throw new StoreError("model_disabled", "默认模型已停用");
-    }
+    const patch = appSettingsUpdateSchema.parse(request.body);
     for (const agentId of [patch.defaultAgentId, patch.lastAgentId]) {
       if (agentId && !store.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
     }
@@ -310,6 +306,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const agent = store.updateAgent(request.params.id, patch);
     if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
     taskManager.notifyAgentPolicyChanged(request.params.id);
+    return agent;
+  });
+  app.patch<{ Params: { id: string } }>("/api/agents/:id/model-selection", async (request) => {
+    const { modelId } = agentModelSelectionSchema.parse(request.body);
+    const agent = store.rememberAgentModel(request.params.id, modelId);
+    eventHub.emit({ type: "resource-changed", resource: "agents" });
     return agent;
   });
   app.patch<{ Params: { id: string } }>("/api/agents/:id/search-secret", async (request) => {
@@ -597,6 +599,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.post("/api/conversations/start", async (request, reply) => {
     const value = startConversationSchema.parse(request.body);
+    value.executionOverrides = store.newConversationOverrides(value.agentId, value.executionOverrides);
     const imageAssetIds = attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image");
     if (imageAssetIds.length) {
       const agent = store.getAgent(value.agentId);
@@ -623,6 +626,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : value.workspacePath;
     const result = store.updateConversation(request.params.id, { ...value, ...(value.workspacePath !== undefined ? { workspacePath } : {}) });
     if (!result) throw new StoreError("conversation_not_found", "会话不存在");
+    if (value.modelId !== undefined || value.executionOverrides?.modelId !== undefined) {
+      eventHub.emit({ type: "resource-changed", resource: "agents" });
+    }
     return result;
   });
   app.patch<{ Params: { id: string } }>("/api/conversations/:id/active-branch", async (request) => {

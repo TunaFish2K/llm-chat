@@ -104,6 +104,10 @@ export function InspectorPanel({
         {generation && !tool ? (
           <>
             <InspectorSection title="生成快照" icon={<Gauge size={15} />}>
+              <Definition label="Agent" value={generation.generatedAgent?.name ?? "—"} />
+              <Definition label="Agent 修订" value={generation.generatedAgent ? `v${generation.generatedAgent.revision}` : "—"} />
+              <Definition label="总用量" value={`${formatTokens(generation.usage.totalTokens)} tokens`} />
+              <Definition label="耗时" value={generation.completedAt ? `${Math.max(0, generation.completedAt - generation.createdAt)} ms` : "—"} />
               <Definition label="状态" value={<StatusTag status={generation.status} />} />
               <Definition label="模型" value={`${generation.connectionName} / ${generation.modelKey}`} />
               <Definition label="协议" value={generation.protocol} mono />

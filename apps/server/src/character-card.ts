@@ -44,7 +44,7 @@ export function importCharacterCard(store: Store, fileName: string, bytes: Uint8
         modelId: resolvePortableModel(store, extension.execution.model),
         visionModelId: resolvePortableModel(store, extension.execution.visionModel ?? null)
       }
-    : defaultAgent.execution;
+    : { ...defaultAgent.execution, baseSystemPrompt: undefined };
   const input: AgentInput = {
     card,
     execution,
@@ -157,6 +157,7 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
         modelKey: visionModel.modelKey,
         connectionName: visionConnection.name
       } : null,
+      baseSystemPrompt: agent.execution.baseSystemPrompt,
       contextPolicy: agent.execution.contextPolicy,
       reasoningEffort: agent.execution.reasoningEffort,
       search: agent.execution.search,
