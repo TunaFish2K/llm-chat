@@ -19,7 +19,7 @@ import type { GenerationDto, ImageGenerationJobDto, MessageDto, ToolCallDto } fr
 import { endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, toastError } from "../../lib/app-state";
 import type { ConversationBranchGroup } from "../../lib/conversation-tree";
-import { formatTime, formatTokens } from "../../lib/format";
+import { formatCachedTokens, formatTime, formatTokens } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
 import { Markdown } from "../../lib/markdown";
 import { useStore } from "../../lib/store";
@@ -250,7 +250,10 @@ function GenerationTimeline({
           <button type="button" className="usage-summary" aria-label="查看生成用量" onClick={inspectGeneration}>
             {generation.usage.inputTokens !== undefined ? <span>↑ {formatTokens(generation.usage.inputTokens)}</span> : null}
             {generation.usage.outputTokens !== undefined ? <span>↓ {formatTokens(generation.usage.outputTokens)}</span> : null}
-            {generation.completedAt ? <span>{(Math.max(0, generation.completedAt - generation.createdAt) / 1000).toFixed(1)} s</span> : null}
+            {generation.usage.cachedInputTokens !== undefined ? (
+              <span>缓存 {formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens).replace(" tokens", "")}</span>
+            ) : null}
+            {generation.completedAt ? <span>{(Math.max(0, generation.completedAt - generation.createdAt) / 1000).toFixed(1)}s</span> : null}
           </button>
           <time className="reply-timestamp">{formatTime(message.createdAt)}</time>
         </>}>

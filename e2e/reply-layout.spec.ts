@@ -4,7 +4,7 @@ import { agentInput, api, APP_URL, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 test("回复密度、常驻操作和推理展开在宽窄屏保持稳定", async ({ page, request }, testInfo) => {
-  const provider = await startMockProvider({ responseText: "你好！有需要尽管说。" });
+  const provider = await startMockProvider({ responseText: "你好！有需要尽管说。", cachedInputTokens: 8 });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Reply layout", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
   const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
@@ -33,6 +33,10 @@ test("回复密度、常驻操作和推理展开在宽窄屏保持稳定", async
         await expect(reply.locator(".reply-inline")).toBeVisible();
         await expect(reply.locator(".reply-metadata")).toContainText("回复布局助手");
         await expect(reply.locator(".reply-timestamp")).toBeVisible();
+        const usage = reply.getByRole("button", { name: "查看生成用量" });
+        await expect(usage).toContainText("缓存 8（73%）");
+        await expect(usage).toHaveText(/\d+\.\ds$/);
+        await expect(usage).not.toHaveText(/\d\s+s$/);
         await expect(reply.getByRole("button", { name: "复制回答", exact: true })).toBeVisible();
         await expect(reply.getByRole("button", { name: "重试", exact: true })).toBeVisible();
         await expect(reply.getByRole("button", { name: "消息更多操作" })).toHaveCount(0);
@@ -51,6 +55,7 @@ test("回复密度、常驻操作和推理展开在宽窄屏保持稳定", async
     const inspector = page.getByRole("complementary", { name: "检查器" });
     await expect(inspector).toContainText("回复布局助手");
     await expect(inspector).toContainText("18 tokens");
+    await expect(inspector).toContainText("8 tokens（73%）");
   } finally {
     await page.goto("about:blank");
     await api(request, APP_URL, "DELETE", `/api/conversations/${started.conversation.id}`);

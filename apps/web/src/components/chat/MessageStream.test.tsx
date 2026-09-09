@@ -56,3 +56,18 @@ it("disables a user retry without an answer and sends the resolved answer id whe
   rerender(renderUser("answer-1", true));
   expect(screen.getByRole("button", { name: "重试回答" })).toBeDisabled();
 });
+
+it.each([
+  [{ cachedInputTokens: 40, inputTokens: 100 }, "缓存 40（40%）"],
+  [{ cachedInputTokens: 0, inputTokens: 100 }, "缓存 0（0%）"],
+  [{ cachedInputTokens: 40 }, "缓存 40"],
+  [{ cachedInputTokens: 0, inputTokens: 0 }, "缓存 0"],
+  [{ inputTokens: 100 }, null]
+] as const)("renders reported cache usage %j and compact elapsed seconds", (usage, expected) => {
+  render(reply(makeGeneration({ usage, createdAt: 1000, completedAt: 4400 })));
+  const summary = screen.getByRole("button", { name: "查看生成用量" });
+  if (expected) expect(summary).toHaveTextContent(expected);
+  else expect(summary).not.toHaveTextContent("缓存");
+  expect(summary).toHaveTextContent("3.4s");
+  expect(summary).not.toHaveTextContent(/3\.4\s+s/);
+});
