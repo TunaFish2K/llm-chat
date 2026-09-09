@@ -235,7 +235,7 @@ export function WorkspaceSidebar({
 function SidebarLink({ active, href, icon, label, compact }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean }) {
   return (
     <a className={active ? "active" : ""} href={href} onClick={linkClick(href)} aria-current={active ? "page" : undefined} title={compact ? label : undefined}>
-      {icon}<span>{compact ? <span className="sr-only">{label}</span> : label}</span>
+      {icon}<span className={compact ? "sr-only" : undefined}>{label}</span>
     </a>
   );
 }

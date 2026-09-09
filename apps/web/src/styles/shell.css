@@ -798,7 +798,8 @@
 }
 
 .sidebar-rail-button.primary:hover {
-  background: var(--accent-hover);
+  background: var(--accent);
+  filter: brightness(1.08);
   color: var(--text-invert);
 }
 
