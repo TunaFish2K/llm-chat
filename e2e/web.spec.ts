@@ -101,7 +101,7 @@ test.describe("应用外壳", () => {
     await expect(page.getByRole("navigation", { name: "最近会话" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
 
-    await page.getByRole("link", { name: "Agent" }).click();
+    await page.getByRole("link", { name: "Agent", exact: true }).click();
     await expect(page).toHaveURL(/\/agents$/);
     await expect(page.getByRole("heading", { name: "Agent", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "展开会话栏" }).click();
@@ -223,7 +223,7 @@ test.describe("会话与流式生成", () => {
       const usageInspector = page.getByRole("complementary", { name: "检查器" });
       await expect(usageInspector).toContainText("18 tokens");
       await usageInspector.getByRole("button", { name: "关闭检查器" }).click();
-      await expect(page.getByText("处理完成").first()).toBeVisible();
+      await expect(page.locator(".process-disclosure > summary").filter({ hasText: "推理过程" }).first()).toBeVisible();
       expect(provider.requests.at(-1)?.model).toBe("e2e-chat");
 
       // The conversation lives at a real path; opening it directly works.
@@ -265,7 +265,7 @@ test.describe("会话与流式生成", () => {
 
       // Retry produces a second generation version that can be switched.
       await openMessageActions(page, page.locator('.msg[data-role="assistant"]').last());
-      await page.getByRole("button", { name: /重试/ }).click();
+      await page.locator('.msg[data-role="assistant"]').last().getByRole("button", { name: "重试", exact: true }).click();
       await openMessageActions(page, page.locator('.msg[data-role="assistant"]').last());
       await expect(page.getByText("2 / 2").filter({ visible: true })).toBeVisible({ timeout: 15_000 });
       await page.getByRole("button", { name: "上一版本" }).click();

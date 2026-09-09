@@ -82,10 +82,7 @@ export async function gotoPath(page, path) {
   await expect(page.locator(".app-frame")).toBeVisible();
 }
 
-/** Reveal message actions on either input mode. */
+/** Bring the always-visible message actions into the viewport. */
 export async function openMessageActions(page, message) {
-  const more = message.getByRole("button", { name: "消息更多操作", exact: true });
-  if (await more.isVisible()) {
-    if (!(await page.getByRole("dialog", { name: "消息详情与操作" }).isVisible())) await more.click();
-  } else await message.hover();
+  await message.locator(".stream-actions").scrollIntoViewIfNeeded();
 }

@@ -1,6 +1,4 @@
 import { useState, type ReactNode } from "react";
-import { Popover } from "radix-ui";
-import { useBackLayer } from "../../lib/mobile-navigation";
 import {
   ChevronDown,
   ChevronLeft,
@@ -8,7 +6,6 @@ import {
   Clipboard,
   Copy,
   Gauge,
-  MoreHorizontal,
   GitFork,
   LoaderCircle,
   Pencil,
@@ -20,7 +17,7 @@ import {
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import type { GenerationDto, ImageGenerationJobDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
-import { appStore, isGenerationActive, loadMessages, toastError, trackGeneration } from "../../lib/app-state";
+import { appStore, isGenerationActive, loadMessages, toastError } from "../../lib/app-state";
 import type { ConversationBranchGroup } from "../../lib/conversation-tree";
 import { formatTime, formatTokens } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
@@ -39,10 +36,11 @@ function toolStderr(output: string | null): string {
 export interface StreamCallbacks {
   onInspect: (target: InspectionTarget) => void;
   onEdit: (message: MessageDto) => void;
+  onRetry: (assistantMessageId: string) => void;
   onContinue: (messageId: string) => void;
   onGreetingFork: (message: MessageDto, greetingIndex: number) => void;
   onBranchChange: (conversationId: string) => void;
-  /** True while a fork or a generation is in flight; blocks branching actions. */
+  /** True while a fork, retry request or generation is in flight; blocks new generation actions. */
   branching: boolean;
 }
 
@@ -51,11 +49,13 @@ export function MessageItem({
   conversationId,
   message,
   branchGroups = [],
+  retryTargetId,
   callbacks
 }: {
   conversationId: string;
   message: MessageDto;
   branchGroups?: ConversationBranchGroup[];
+  retryTargetId?: string | undefined;
   callbacks: StreamCallbacks;
 }) {
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
@@ -75,6 +75,11 @@ export function MessageItem({
           <MessageAction label="编辑并分叉" disabled={callbacks.branching} onClick={() => callbacks.onEdit(message)}>
             <Pencil size={14} />
           </MessageAction>
+          <span title={retryTargetId ? "重新生成对应回答" : "尚无可重试的回答"}>
+            <MessageAction label="重试回答" disabled={callbacks.branching || !retryTargetId} onClick={() => retryTargetId && callbacks.onRetry(retryTargetId)}>
+              <RotateCcw size={14} />
+            </MessageAction>
+          </span>
           <BranchSwitchers groups={branchGroups} onChange={callbacks.onBranchChange} />
         </MessageFooter>
       </article>
@@ -179,16 +184,6 @@ function GenerationTimeline({
   const answer = answerText(generation);
   const versionIndex = message.generations.findIndex((item) => item.id === generation.id);
 
-  const retry = async () => {
-    try {
-      const result = await endpoints.retryGeneration(message.id);
-      await loadMessages(conversationId);
-      trackGeneration(conversationId, result.assistantMessageId, result.generationId);
-    } catch (error) {
-      toastError(error);
-    }
-  };
-
   const selectVersion = async (id: string) => {
     try {
       await endpoints.selectGeneration(message.id, id);
@@ -266,7 +261,7 @@ function GenerationTimeline({
           ) : null}
           {!busy ? (
             <>
-              <MessageAction label="重试" onClick={() => void retry()}>
+              <MessageAction label="重试" disabled={callbacks.branching} onClick={() => callbacks.onRetry(message.id)}>
                 <RotateCcw size={14} />
               </MessageAction>
               <MessageAction
@@ -301,23 +296,11 @@ function GenerationTimeline({
 function MessageFooter({ metadata, children, liveAction, busy = false }: {
   metadata: ReactNode; children: ReactNode; liveAction?: ReactNode; busy?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  useBackLayer(open, () => setOpen(false));
-  return <footer className="reply-footer" data-open={open || undefined}>
+  return <footer className="reply-footer">
     <div className="reply-inline">
       <div className="reply-metadata">{metadata}</div>
-      <div className="stream-actions">{children}</div>
+      <div className="stream-actions">{children}{busy ? liveAction : null}</div>
     </div>
-    {busy ? <div className="reply-live-action">{liveAction}</div> : null}
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild><button className="act reply-more" aria-label="消息更多操作"><MoreHorizontal size={16} /></button></Popover.Trigger>
-      <Popover.Portal><Popover.Content className="reply-popover" side="top" align="start" sideOffset={6} collisionPadding={12} aria-label="消息详情与操作" onClick={(event) => {
-          if ((event.target as HTMLElement).closest("button") && !(event.target as HTMLElement).closest(".version-switch")) setOpen(false);
-        }}>
-        <div className="reply-metadata">{metadata}</div>
-        <div className="stream-actions">{children}</div>
-      </Popover.Content></Popover.Portal>
-    </Popover.Root>
   </footer>;
 }
 
@@ -332,7 +315,7 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect }: {
   const thinking = entries.some((entry) => entry.kind === "block" && !entry.block.complete);
   const active = busy && Boolean(pending || activeTool || thinking);
   const incomplete = thinking || Boolean(activeTool);
-  const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? "处理失败" : "处理已停止") : pending ? "等待审批" : activeTool && busy ? `正在调用 ${activeTool.name}` : active ? "正在推理" : "处理完成";
+  const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? "处理失败" : "处理已停止") : pending ? "等待审批" : activeTool && busy ? `正在调用 ${activeTool.name}` : active ? "正在推理" : "推理过程";
   return <div className="process-group">
     <details className="process-disclosure" open={open}>
       <summary onClick={(event) => { event.preventDefault(); setManualOpen(!open); }}>
@@ -344,7 +327,7 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect }: {
       <div className="process-steps">
         {entries.map((entry) => entry.kind === "tool"
           ? <ToolCallDisclosure key={entry.call.id} call={entry.call} onInspect={() => onInspect(entry.call.id)} />
-          : <div className="process-reasoning" key={entry.block.id}><span className="small muted">推理过程</span><div>{entry.block.content}</div></div>)}
+          : <div className="process-reasoning" key={entry.block.id}><div>{entry.block.content}</div></div>)}
       </div>
     </details>
     {!open ? tools.filter((call) => call.error).map((call) => <div key={call.id} className="process-error" role="alert">
