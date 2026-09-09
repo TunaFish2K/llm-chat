@@ -94,3 +94,16 @@ describe("plugin host runtime", () => {
     expect(() => serializeHostMessage("x".repeat(4 * 1024 * 1024 + 1))).toThrow("Plugin host response is too large");
   });
 });
+
+it("exposes optional independent Markdown formatters without changing execute results", async () => {
+  const { api, tools } = createPluginRegistry({}, {});
+  api.registerTool(tool({
+    formatArguments: (input) => ({ summary: String(input.value), detail: "**args**" }),
+    formatResult: ({ output }) => ({ detail: `Output: ${output}` })
+  }));
+  expect(describePluginTools(tools)[0]).toMatchObject({ formatArguments: true, formatResult: true });
+  const call = (type: string) => handlePluginLine(tools, JSON.stringify({ id: "1", type, tool: "echo", input: { value: "hello" }, output: "raw" }));
+  await expect(call("format-arguments")).resolves.toMatchObject({ ok: true, result: { summary: "hello", detail: "**args**" } });
+  await expect(call("format-result")).resolves.toMatchObject({ ok: true, result: { detail: "Output: raw" } });
+  await expect(call("execute")).resolves.toMatchObject({ ok: true, result: '{"input":{"value":"hello"},"context":{}}' });
+});

@@ -22,7 +22,10 @@ export async function startMockProvider(options = {}) {
           "cache-control": "no-cache",
           connection: "keep-alive"
         });
-        const deltas = [
+        const deltas = options.toolCall && requests.length === 1 ? [
+          { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "presentation-call", type: "function", function: options.toolCall }] } }] },
+          { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
+        ] : [
           { choices: [{ index: 0, delta: { reasoning_content: "先想一下。" } }] },
           ...(options.responseText
             ? [{ choices: [{ index: 0, delta: { content: options.responseText } }] }]

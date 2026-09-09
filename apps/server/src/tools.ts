@@ -1,3 +1,4 @@
+import { builtinToolFormatters, type ToolFormatters } from "./tool-presentation";
 import { spawn } from "node:child_process";
 import { executeShell } from "./shell";
 import type { BrowserFetchManager } from "./browser-fetch";
@@ -23,7 +24,7 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 type JsonObject = Record<string, unknown>;
 
-export interface ServerTool {
+export interface ServerTool extends ToolFormatters {
   error?: string | null;
   definition: ProviderToolDefinition;
   label: string;
@@ -475,6 +476,7 @@ function tool(
   available = true
 ): ServerTool {
   return {
+    ...builtinToolFormatters(name),
     definition: {
       name,
       description,

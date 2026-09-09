@@ -1,3 +1,4 @@
+import { builtinToolFormatters } from "./tool-presentation";
 import type { ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { GenerationRecord, Store } from "./database";
 import type { TaskManager } from "./background-tasks";
@@ -30,6 +31,7 @@ export interface ToolSearchResult {
 
 export function createSearchToolsTool(lazyTools: ServerTool[]): ServerTool {
   return {
+    ...builtinToolFormatters(SEARCH_TOOLS_NAME),
     definition: {
       name: SEARCH_TOOLS_NAME,
       description: "Search the authorized lazy tool catalog. Matching tools are loaded for later model steps in this generation.",
@@ -113,6 +115,9 @@ export class ToolRegistry {
     const management = this.appTools ? this.appTools.tools() : this.managementTools();
     const all = [...builtins, this.skills.tool(record), ...management, ...await this.plugins.tools(record)];
     const policy = record?.agentSnapshot.execution.tools;
+    for (const tool of all) {
+      if (tool.sourceKind !== "plugin" && tool.category !== "mcp") Object.assign(tool, builtinToolFormatters(tool.definition.name));
+    }
     return all.filter((tool) => (includeUnavailable || tool.available)
       && (!policy || (policy.overrides[tool.definition.name] ?? (tool.definition.name === "browser_fetch" ? false : policy.defaultEnabled))));
   }

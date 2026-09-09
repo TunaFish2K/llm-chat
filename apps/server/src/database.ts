@@ -1,3 +1,4 @@
+import { legacyToolPresentation } from "./tool-presentation";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -357,7 +358,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 36) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 37) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1231,6 +1232,10 @@ function migrate(sqlite: DatabaseSyncType): void {
         }
       }
       sqlite.exec("PRAGMA user_version = 36");
+    }
+    if (current < 37) {
+      if (!hasColumn(sqlite, "generation_tool_calls", "presentation_json")) sqlite.exec("ALTER TABLE generation_tool_calls ADD COLUMN presentation_json TEXT");
+      sqlite.exec("PRAGMA user_version = 37;");
     }
     sqlite.exec("COMMIT");
   } catch (error) {
@@ -3307,18 +3312,19 @@ export class Store {
 
   updateToolCall(
     id: string,
-    patch: { approvalState?: ToolCallDto["approvalState"]; output?: string | null; error?: string | null; startedAt?: number | null; completedAt?: number | null }
+    patch: { presentation?: ToolCallDto["presentation"]; approvalState?: ToolCallDto["approvalState"]; output?: string | null; error?: string | null; startedAt?: number | null; completedAt?: number | null }
   ): ToolCallDto | undefined {
     const current = this.getToolCall(id);
     if (!current) return undefined;
     this.sqlite.prepare(`
-      UPDATE generation_tool_calls SET approval_state = ?, output = ?, error = ?, started_at = ?, completed_at = ? WHERE id = ?
+      UPDATE generation_tool_calls SET approval_state = ?, output = ?, error = ?, started_at = ?, completed_at = ?, presentation_json = ? WHERE id = ?
     `).run(
       patch.approvalState ?? current.approvalState,
       patch.output === undefined ? current.output : patch.output,
       patch.error === undefined ? current.error : patch.error,
       patch.startedAt === undefined ? current.startedAt : patch.startedAt,
       patch.completedAt === undefined ? current.completedAt : patch.completedAt,
+      json(patch.presentation ?? current.presentation ?? {}),
       id
     );
     return this.getToolCall(id);
@@ -3821,12 +3827,14 @@ function fileAssetRecord(row: Row): FileAssetRecord {
 }
 
 function toolCallDto(row: Row, artifacts: FileAssetDto[] = []): ToolCallDto {
+  const presentation = row.presentation_json ? parse<import("@llm-chat/contracts").ToolPresentation>(String(row.presentation_json), {}) : legacyToolPresentation(String(row.name), String(row.arguments_json), textOrNull(row.output), textOrNull(row.error));
   return {
     id: String(row.id),
     providerId: String(row.provider_id ?? row.id),
     index: Number(row.call_index),
     stepIndex: Number(row.step_index ?? Math.floor(Number(row.call_index) / 1000)),
     name: String(row.name),
+    ...(presentation ? { presentation } : {}),
     arguments: String(row.arguments_json),
     approvalState: row.approval_state as ToolCallDto["approvalState"],
     requiresApproval: Boolean(row.requires_approval),

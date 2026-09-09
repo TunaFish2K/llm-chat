@@ -1,3 +1,4 @@
+import { formatTool } from "./tool-presentation";
 import type { GenerationEvent, GenerationStatus, ProviderProtocol, UsageDto } from "@llm-chat/contracts";
 import Ajv, { type ValidateFunction } from "ajv";
 import {
@@ -373,7 +374,10 @@ export class GenerationRunner {
           const requiresApproval = override === "always"
             || (override === "default" && await (definition?.requiresApproval(args) ?? false));
           job.controller.signal.throwIfAborted();
-          const saved = this.store.upsertToolCall(generationId, call, stepIndex * 1000 + index, stepIndex, requiresApproval);
+          let saved = this.store.upsertToolCall(generationId, call, stepIndex * 1000 + index, stepIndex, requiresApproval);
+          const formatted = await formatTool(definition?.formatArguments, args);
+          job.controller.signal.throwIfAborted();
+          saved = this.store.updateToolCall(saved.id, { presentation: formatted ? { arguments: formatted } : {} })!;
           this.emit(generationId, { type: "tool-call", generationId, toolCall: saved });
           persisted.push(saved);
         }
@@ -447,6 +451,12 @@ export class GenerationRunner {
           approvalState: "completed", output, error: null, completedAt: Date.now()
         })!;
         this.emit(generationId, { type: "tool-call", generationId, toolCall: completed });
+        const formatted = await formatTool(tool.formatResult, { input: parseToolArguments(call.arguments), output, error: null });
+        signal.throwIfAborted();
+        if (formatted) {
+          const presented = this.store.updateToolCall(call.id, { presentation: { ...call.presentation, result: formatted } })!;
+          this.emit(generationId, { type: "tool-call", generationId, toolCall: presented });
+        }
         if (tool.activatesTools) exposeAuthorized(await tool.activatesTools(parseToolArguments(call.arguments)));
       } catch (error) {
         if (signal.aborted && !(error instanceof ShellError)) throw error;
@@ -467,6 +477,12 @@ export class GenerationRunner {
         })!;
         this.emit(generationId, { type: "tool-call", generationId, toolCall: failed });
         if (signal.aborted) throw error;
+        const formatted = await formatTool(tool?.formatResult, { input: parseToolArguments(call.arguments), output, error: message });
+        if (!this.jobs.has(generationId) || signal.aborted) throw error;
+        if (formatted) {
+          const presented = this.store.updateToolCall(call.id, { presentation: { ...call.presentation, result: formatted } })!;
+          this.emit(generationId, { type: "tool-call", generationId, toolCall: presented });
+        }
       }
     }
   }

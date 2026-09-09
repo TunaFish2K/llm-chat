@@ -179,18 +179,23 @@ const richHtmlPlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
 ];
 
 /** Streaming-safe GFM, math, highlighted code, and sanitized model-authored HTML. */
-export const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export const Markdown = memo(function Markdown({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
   const content = useMemo(() => normalizeRichHtmlTags(normalizeMarkdown(text)), [text]);
   return (
-    <div className="markdown" data-streaming={streaming || undefined}>
+    <div className={`markdown${inline ? " markdown-inline" : ""}`} data-streaming={streaming || undefined}>
       <Streamdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={richHtmlPlugins}
         plugins={{ cjk }}
-        controls={{ code: true, mermaid: false, table: false }}
+        controls={{ code: !inline, mermaid: false, table: false }}
         isAnimating={streaming}
         normalizeHtmlIndentation
-        components={markdownComponents}
+        components={inline ? { ...markdownComponents,
+          p: "span", div: "span", h1: "span", h2: "span", h3: "span", h4: "span", h5: "span", h6: "span",
+          pre: "span", blockquote: "span", ul: "span", ol: "span", li: "span", br: () => <span> </span>,
+          img: ({ alt }) => <span>{alt}</span>, table: () => null, hr: () => null,
+          details: "span", summary: "span"
+        } : markdownComponents}
       >
         {content}
       </Streamdown>

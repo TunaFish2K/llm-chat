@@ -774,7 +774,12 @@ export const toolApprovalStateSchema = z.enum([
 ]);
 export type ToolApprovalState = z.infer<typeof toolApprovalStateSchema>;
 
+export interface ToolMarkdown { summary?: string; detail?: string; }
+export interface ToolPresentation { arguments?: ToolMarkdown; result?: ToolMarkdown; }
+export interface ToolResultFormatInput { input: Record<string, unknown>; output: string | null; error: string | null; }
+
 export interface ToolCallDto {
+  presentation?: ToolPresentation;
   id: string;
   /** Provider-visible call ID; differs from id for cloned branch history. */
   providerId?: string;
