@@ -101,3 +101,23 @@ describe("background task counts", () => {
     expect(appStore.get().runningTasksByConversation).toEqual({ "conv-1": 2, "conv-2": 1 });
   });
 });
+
+it("merges streamed blocks into persisted snapshots by position rather than their different IDs", () => {
+  const id = "snapshot-identity";
+  const generation = makeGeneration({
+    id, status: "running",
+    blocks: [{ id: "database-block-id", stepIndex: 0, index: 0, type: "reasoning", content: "before", complete: false }]
+  });
+  const message = makeMessage({ id: "snapshot-message", activeGenerationId: id, generations: [generation] });
+  appStore.set({ messages: { "snapshot-conversation": [message] } });
+  trackGeneration("snapshot-conversation", message.id, id);
+  const stream = FakeEventSource.instances.at(-1)!;
+  stream.emit("block-delta", {
+    type: "block-delta", generationId: id,
+    block: { id: id + ":0", stepIndex: 0, index: 0, type: "reasoning", content: "after", complete: false }
+  });
+  const blocks = appStore.get().messages["snapshot-conversation"]![0]!.generations[0]!.blocks;
+  expect(blocks).toHaveLength(1);
+  expect(blocks[0]?.content).toBe("after");
+  stream.close();
+});

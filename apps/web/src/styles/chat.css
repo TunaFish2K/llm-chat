@@ -190,6 +190,12 @@
   scroll-behavior: auto;
 }
 
+/* Browser anchoring must not undo explicit bottom-follow positioning. */
+.chat-scroll[data-following-bottom],
+.process-reasoning > div[data-following-bottom] {
+  overflow-anchor: none;
+}
+
 .chat-thread {
   display: flex;
   flex-direction: column;

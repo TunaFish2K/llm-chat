@@ -22,9 +22,11 @@ describe("reply processing disclosure", () => {
     expect(container.querySelector(".process-disclosure")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByText("推理过程"));
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
-    rerender(reply({ ...generation, status: "completed", completedAt: 10, blocks: [{ ...reasoning, complete: true }, { ...answer, content: "The answer continues", complete: true }] }));
+    const reasoningElement = screen.getByRole("region", { name: "推理内容" });
+    rerender(reply({ ...generation, status: "completed", completedAt: 10, blocks: [{ ...reasoning, id: "persisted-reasoning", complete: true }, { ...answer, content: "The answer continues", complete: true }] }));
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
     expect(screen.getByText("Consider the question")).toBeVisible();
+    expect(screen.getByRole("region", { name: "推理内容" })).toBe(reasoningElement);
   });
 
   it.each(["always-collapsed", "never-auto-collapse"] as const)("honors %s for processing groups", (policy) => {

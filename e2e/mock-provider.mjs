@@ -26,7 +26,7 @@ export async function startMockProvider(options = {}) {
           { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "presentation-call", type: "function", function: options.toolCall }] } }] },
           { choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
         ] : [
-          { choices: [{ index: 0, delta: { reasoning_content: "先想一下。" } }] },
+          ...(options.reasoningChunks ?? ["先想一下。"]).map((reasoning_content) => ({ choices: [{ index: 0, delta: { reasoning_content } }] })),
           ...(options.responseText
             ? [{ choices: [{ index: 0, delta: { content: options.responseText } }] }]
             : [
