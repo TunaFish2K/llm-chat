@@ -1,9 +1,10 @@
 import { useEffect } from "react";
-import { appStore, flushUiPreferences, preferenceSaveStore, updateUiPreferences } from "../lib/app-state";
+import { appStore } from "../lib/app-state";
+import { CHAT_TYPOGRAPHY_DEFAULTS, initializeTypography, saveTypography, typographyStore } from "../lib/local-typography";
+export { CHAT_TYPOGRAPHY_DEFAULTS } from "../lib/local-typography";
 import { useStore } from "../lib/store";
 import { Markdown } from "../lib/markdown";
 
-export const CHAT_TYPOGRAPHY_DEFAULTS = { chatFontSize: 13.5, chatLetterSpacing: 0, chatLineHeight: 1.55 };
 const controls = [
   { key: "chatFontSize", label: "字号", min: 12, max: 24, step: 0.5, unit: "px" },
   { key: "chatLetterSpacing", label: "字间距", min: 0, max: 0.15, step: 0.01, unit: "em" },
@@ -11,9 +12,10 @@ const controls = [
 ] as const;
 
 export function ChatTypographySettings({ preview = false }: { preview?: boolean }) {
-  const preferences = useStore(appStore, (state) => state.settings?.uiPreferences);
-  const status = useStore(preferenceSaveStore, (state) => state.status);
-  useEffect(() => () => { void flushUiPreferences(); }, []);
+  const settings = useStore(appStore, (state) => state.settings);
+  const preferences = useStore(typographyStore, (state) => state.values);
+  const saved = useStore(typographyStore, (state) => state.saved);
+  useEffect(() => initializeTypography(settings?.uiPreferences), [settings]);
   return <div className={`chat-typography-settings${preview ? " with-preview" : ""}`}>
     <div className="chat-typography-controls">
       {controls.map(({ key, label, min, max, step, unit }) => {
@@ -21,14 +23,14 @@ export function ChatTypographySettings({ preview = false }: { preview?: boolean 
         return <label className="chat-typography-control" key={key}>
           <span>{label}<output>{value} {unit}</output></span>
           <input type="range" aria-label={label} aria-valuetext={`${value} ${unit}`} min={min} max={max} step={step} value={value}
-            onChange={(event) => updateUiPreferences({ [key]: Number(event.target.value) })}
-            onPointerUp={() => void flushUiPreferences()} onKeyUp={() => void flushUiPreferences()} onBlur={() => void flushUiPreferences()} />
+            onChange={(event) => saveTypography({ [key]: Number(event.target.value) })}
+ />
         </label>;
       })}
       <div className="chat-typography-save">
-        <button type="button" className="btn small" onClick={() => { updateUiPreferences(CHAT_TYPOGRAPHY_DEFAULTS); void flushUiPreferences(); }}>恢复默认</button>
-        {status === "error" ? <span role="alert">未保存 <button type="button" className="btn small" onClick={() => void flushUiPreferences()}>重试</button></span>
-          : <span role="status">{status === "saving" ? "正在保存…" : "已同步"}</span>}
+        <button type="button" className="btn small" onClick={() => saveTypography(CHAT_TYPOGRAPHY_DEFAULTS)}>恢复默认</button>
+        {!saved ? <span role="alert">未保存 <button type="button" className="btn small" onClick={() => saveTypography()}>重试</button></span>
+          : <span role="status">已保存到此浏览器</span>}
       </div>
     </div>
     {preview ? <div className="chat-typography-preview" aria-label="聊天排版预览">

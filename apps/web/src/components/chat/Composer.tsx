@@ -26,7 +26,7 @@ import type {
   ToolCallDto
 } from "@llm-chat/contracts";
 import { useBackLayer } from "../../lib/mobile-navigation";
-import { readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
+import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
 import { ApiRequestError, endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
@@ -133,11 +133,11 @@ export function Composer({
   const effectiveAgentId = conversation?.agentId ?? newAgentId ?? fallbackAgent?.id ?? "";
   const effectiveAgent = agents.find((agent) => agent.id === effectiveAgentId);
   useLayoutEffect(() => {
-    const savedOverrides = { ...newOverrides };
+    const savedOverrides = { ...(conversation?.executionOverrides ?? newOverrides) };
     if (!text && !attachments.length && !explicitNewModel.current) delete savedOverrides.modelId;
     writeComposerDraft(conversation?.id ?? null, {
       text, attachments, agentId: effectiveAgentId || null, overrides: savedOverrides,
-      workspace: newWorkspace, greetingIndex
+      workspace: conversation ? conversation.workspacePath : newWorkspace, greetingIndex
     });
   }, [conversation?.id, text, attachments, effectiveAgentId, newOverrides, newWorkspace, greetingIndex]);
   useEffect(() => {
@@ -424,6 +424,14 @@ export function Composer({
   return (
     <div className="composer">
       <div className="composer-inner">
+        {isNew && recoveredDraftIds().length > 0 && <button type="button" className="btn small" onClick={() => {
+          const draft = swapRecoveredDraft();
+          if (!draft) return;
+          setText(draft.text); setAttachments(draft.attachments); setNewAgentId(draft.agentId);
+          setNewOverrides(draft.overrides); setNewWorkspace(draft.workspace);
+          explicitNewModel.current = Object.hasOwn(draft.overrides, "modelId");
+          onGreetingIndexChange(draft.greetingIndex);
+        }}>切换保留的草稿</button>}
         <div
           className="composer-surface"
           onDragOver={(event) => {
@@ -519,7 +527,7 @@ export function Composer({
                       {typographyOpen ? <>
                         <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>返回</button><strong>聊天排版</strong>
                           <button type="button" aria-label="关闭排版面板" onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
-                        <fieldset disabled={offline} className="offline-settings-fields"><ChatTypographySettings /></fieldset>
+                        <ChatTypographySettings />
                       </> : <>
                       <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>聊天排版</strong><small>字号、字间距与行间距</small></span></button>
                       {toolbar.foldAgent ? <AgentPicker menuItem agents={agents} value={effectiveAgentId} disabled={controlsDisabled}

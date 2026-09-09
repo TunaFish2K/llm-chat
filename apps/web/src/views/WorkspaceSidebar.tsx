@@ -1,3 +1,4 @@
+import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { offlineStore } from "../lib/offline-history";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ConversationDto } from "@llm-chat/contracts";
@@ -90,7 +91,7 @@ export function WorkspaceSidebar({
     if (!deleting) return;
     setBusy(true);
     try {
-      await endpoints.deleteConversation(deleting.id);
+      await endpoints.deleteConversation(deleting.id).catch((error: unknown) => { if (!conversationDeleted(deleting.id)) throw error; });
       await refreshConversations();
       if (deleting.id === activeId) navigate(routes.chat());
       setDeleting(null);

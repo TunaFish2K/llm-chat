@@ -1,4 +1,5 @@
 import { conversationExecutionOverridesSchema, type ConversationExecutionOverrides, type FileAssetDto } from "@llm-chat/contracts";
+import { conversationDeleted } from "./conversation-lifecycle";
 import { endpoints } from "./api";
 
 export interface ComposerDraft {
@@ -35,6 +36,7 @@ export function readComposerDraft(id: string | null): ComposerDraft | null {
 }
 
 export function writeComposerDraft(id: string | null, draft: ComposerDraft): void {
+  if (id && conversationDeleted(id)) return;
   const key = keyFor(id);
   try {
     window.sessionStorage.setItem(key, JSON.stringify(draft));
@@ -54,13 +56,14 @@ const pending = new Map<string, { text: string; timer: ReturnType<typeof setTime
 
 function writeServerDraft(id: string, text: string): Promise<unknown> {
   const next = (writes.get(id) ?? Promise.resolve()).catch(() => undefined)
-    .then(() => endpoints.updateConversation(id, { draft: text }));
+    .then(() => conversationDeleted(id) ? undefined : endpoints.updateConversation(id, { draft: text }));
   writes.set(id, next);
   void next.finally(() => { if (writes.get(id) === next) writes.delete(id); }).catch(() => undefined);
   return next;
 }
 
 export function scheduleServerDraft(id: string, text: string): void {
+  if (conversationDeleted(id)) return;
   const previous = pending.get(id);
   if (previous) clearTimeout(previous.timer);
   const timer = setTimeout(() => { void flushServerDraft(id).catch(() => undefined); }, 500);
@@ -68,6 +71,7 @@ export function scheduleServerDraft(id: string, text: string): void {
 }
 
 export async function flushServerDraft(id: string): Promise<void> {
+  if (conversationDeleted(id)) return;
   const item = pending.get(id);
   if (item) {
     clearTimeout(item.timer);
@@ -82,4 +86,46 @@ export function serializeModelSelection<T>(agentId: string, select: () => Promis
   modelWrites.set(agentId, next);
   void next.finally(() => { if (modelWrites.get(agentId) === next) modelWrites.delete(agentId); }).catch(() => undefined);
   return next;
+}
+
+export function removeComposerDraft(id: string): void {
+  const item = pending.get(id);
+  if (item) clearTimeout(item.timer);
+  pending.delete(id);
+  fallback.delete(keyFor(id));
+  try { sessionStorage.removeItem(keyFor(id)); } catch {}
+}
+
+export function preserveDeletedDraft(id: string): void {
+  const draft = readComposerDraft(id);
+  if (!draft || (!draft.text && !draft.attachments.length)) return;
+  const existing = readComposerDraft(null);
+  if (existing && (existing.text || existing.attachments.length)) {
+    // Each collision gets its own slot; successive deletions never overwrite an older draft.
+    writeComposerDraft("recovered-" + crypto.randomUUID(), existing);
+  }
+  writeComposerDraft(null, draft);
+}
+export function recoveredDraftIds(): string[] {
+  const keys = new Set(fallback.keys());
+  try { for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i)!); } catch {}
+  return [...keys].filter((key) => key.startsWith(prefix + "recovered-")).map((key) => key.slice(prefix.length));
+}
+export function swapRecoveredDraft(): ComposerDraft | null {
+  const id = recoveredDraftIds()[0];
+  if (!id) return null;
+  const draft = readComposerDraft(id);
+  if (!draft) return null;
+  const current = readComposerDraft(null);
+  removeComposerDraft(id);
+  if (current && (current.text || current.attachments.length)) writeComposerDraft("recovered-" + crypto.randomUUID(), current);
+  writeComposerDraft(null, draft);
+  return draft;
+}
+export function draftImageUrls(): string[] {
+  const keys = new Set(fallback.keys());
+  try { for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i)!); } catch {}
+  return [...keys].filter((key) => key.startsWith(prefix)).flatMap((key) =>
+    readComposerDraft(key.slice(prefix.length) === "new" ? null : key.slice(prefix.length))?.attachments
+      .filter((asset) => asset.kind === "image").map((asset) => asset.url) ?? []);
 }

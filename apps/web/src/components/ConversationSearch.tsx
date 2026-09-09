@@ -1,3 +1,4 @@
+import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { isOffline, offlineStore } from "../lib/offline-history";
 import { useEffect, useRef, useState } from "react";
 import { endpoints } from "../lib/api";
@@ -32,16 +33,22 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
     let alive = true; setSelected(0); setError(""); setItems([]);
     if (!query.trim()) { setLoading(false); return; }
     setLoading(true);
-    const timer = setTimeout(() => { void endpoints.searchConversations(query.trim()).then((result) => { if (alive) setItems(result); })
+    const timer = setTimeout(() => { void endpoints.searchConversations(query.trim()).then((result) => { if (alive) setItems(result.filter((item) => !conversationDeleted(item.conversationId))); })
       .catch((cause) => { if (alive) setError(cause.message ?? "搜索失败"); }).finally(() => { if (alive) setLoading(false); }); }, 180);
     return () => { alive = false; clearTimeout(timer); };
   }, [query, offline]);
+  useEffect(() => {
+    const remove = () => { setItems((current) => current.filter((item) => !conversationDeleted(item.conversationId))); setSelected(0); };
+    window.addEventListener("llm-chat:conversations-deleted", remove);
+    return () => window.removeEventListener("llm-chat:conversations-deleted", remove);
+  }, []);
   const open = async (id: string) => {
+    if (conversationDeleted(id)) return;
     try {
       if (isOffline()) { browseOfflineBranch(id); onClose(); navigate(routes.chat(id)); return; }
       const conversation = conversations.find((item) => item.id === id);
       if (conversation) await endpoints.selectConversationBranch(resolveConversationRoot(conversation, conversations).id, id);
-      await refreshConversations(); onClose(); navigate(routes.chat(id));
+      await refreshConversations(); onClose(); if (!conversationDeleted(id)) navigate(routes.chat(id));
       window.dispatchEvent(new Event("llm-chat:reveal-conversation"));
     } catch (cause) { toastError(cause); }
   };

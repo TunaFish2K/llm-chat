@@ -1,3 +1,4 @@
+import { conversationDeleted } from "../../lib/conversation-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import type { QueuedMessageDto } from "@llm-chat/contracts";
@@ -12,10 +13,10 @@ export function useMessageQueue(conversationId?: string) {
   const revision = useRef(0);
   const reload = useCallback(async () => {
     const id = ++revision.current;
-    if (!conversationId) { setItems([]); setPaused(false); return; }
+    if (!conversationId || conversationDeleted(conversationId)) { setItems([]); setPaused(false); return; }
     const next = await endpoints.queueState(conversationId);
     if (!Array.isArray(next.items) || typeof next.paused !== "boolean") throw new Error("待发送队列响应格式错误");
-    if (current.current === conversationId && revision.current === id) { setItems(next.items); setPaused(next.paused); }
+    if (!conversationDeleted(conversationId) && current.current === conversationId && revision.current === id) { setItems(next.items); setPaused(next.paused); }
   }, [conversationId]);
   useEffect(() => {
     setItems([]); setPaused(false);
