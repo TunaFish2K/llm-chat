@@ -89,7 +89,7 @@ test.describe("应用外壳", () => {
     }
   });
 
-  test("桌面收起栏在所有主页面保持可导航和可展开", async ({ page }) => {
+  test("桌面收起栏在所有主页面保持可导航和可展开", async ({ page, request }) => {
     test.skip(test.info().project.name === "mobile-chromium", "移动端使用完整导航抽屉");
 
     await gotoPath(page, "/settings/general");
@@ -100,6 +100,56 @@ test.describe("应用外壳", () => {
     await expect(rail).toHaveCSS("width", "64px");
     await expect(page.getByRole("navigation", { name: "最近会话" })).toHaveCount(0);
     await expect(page.getByRole("link", { name: "设置" })).toHaveAttribute("aria-current", "page");
+
+    const original = await api(request, APP_URL, "GET", "/api/settings");
+    try {
+      for (const theme of [
+        { theme: "light", accentColor: null },
+        { theme: "dark", accentColor: null },
+        { theme: "dark", accentColor: "#3377ff" }
+      ]) {
+        await api(request, APP_URL, "PATCH", "/api/settings", { theme: theme.theme, uiPreferences: { accentColor: theme.accentColor } });
+        await expect(page.locator("html")).toHaveAttribute("data-theme", theme.theme);
+        await expect.poll(() => page.locator("html").evaluate((root) => (root as HTMLElement).style.getPropertyValue("--accent")))
+          .toBe(theme.accentColor ?? "");
+        for (const label of ["聊天", "Agent", "设置"]) {
+          const link = rail.getByRole("link", { name: label, exact: true });
+          const offset = await link.evaluate((element) => {
+            const button = element.getBoundingClientRect();
+            const icon = element.querySelector("svg")!.getBoundingClientRect();
+            return { x: Math.abs(icon.x + icon.width / 2 - button.x - button.width / 2),
+              y: Math.abs(icon.y + icon.height / 2 - button.y - button.height / 2) };
+          });
+          expect(offset.x).toBeLessThanOrEqual(1);
+          expect(offset.y).toBeLessThanOrEqual(1);
+        }
+        const create = rail.getByRole("button", { name: "新会话", exact: true });
+        await page.mouse.move(200, 200);
+        const before = await create.boundingBox();
+        const background = await create.evaluate((element) => getComputedStyle(element).backgroundColor);
+        expect(background).not.toBe("rgba(0, 0, 0, 0)");
+        await create.hover();
+        await expect(create).toHaveCSS("background-color", background);
+        await expect(create).toHaveCSS("opacity", "1");
+        await expect(create.locator("svg")).toBeVisible();
+        expect(await create.boundingBox()).toEqual(before);
+        expect(await create.locator("svg").evaluate((element) => getComputedStyle(element).color)).not.toBe(background);
+        await create.focus();
+        await page.keyboard.press("Tab");
+        await page.keyboard.press("Shift+Tab");
+        await expect(create).toBeFocused();
+        await expect(create).toHaveCSS("outline-style", "solid");
+      }
+      await rail.getByRole("link", { name: "聊天", exact: true }).click();
+      await expect(page).toHaveURL(APP_URL + "/");
+      await expect(rail.getByRole("link", { name: "聊天", exact: true })).toHaveAttribute("aria-current", "page");
+      await rail.getByRole("link", { name: "设置", exact: true }).click();
+      await expect(page).toHaveURL(/\/settings\/general$/);
+      await rail.getByRole("button", { name: "新会话", exact: true }).click();
+      await expect(page).toHaveURL(APP_URL + "/");
+    } finally {
+      await api(request, APP_URL, "PATCH", "/api/settings", { theme: original.theme, uiPreferences: { accentColor: original.uiPreferences.accentColor } });
+    }
 
     await page.getByRole("link", { name: "Agent", exact: true }).click();
     await expect(page).toHaveURL(/\/agents$/);
