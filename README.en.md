@@ -62,13 +62,10 @@ The first startup creates `config.json` with mode `0600`. The default address ac
 | `host` | `127.0.0.1` | Listening address |
 | `port` | `3000` | HTTP port |
 | `dataDir` | `./data` | Data directory, relative to the configuration file |
-| `authMode` | `password` | Password authentication is required for remote access |
-| `trustProxy` | `false` | Enable only behind a trusted reverse proxy |
-| `serveWeb` | `true` | Serve the built web application |
-| `shutdownTimeoutMs` | `30000` | Shutdown deadline in milliseconds |
-| `buildId` | `development` | Release identifier in logs and probes |
 
-Change the listening address for remote deployment. HTTP sends passwords and sessions without encryption. Use HTTPS through a trusted reverse proxy for transport security. PWA installation and updates require a browser-supported secure context. Do not expose a server with `authMode: "disabled"`.
+The server always requires password authentication and serves the Web app. It ignores forwarded protocol and client IP headers. Shutdown cleanup has a fixed 30-second deadline. The build embeds `buildId`, preferring the Git commit ID. Remove `authMode`, `trustProxy`, `serveWeb`, `shutdownTimeoutMs`, and `buildId` from older configuration files.
+
+Change the listening address for remote deployment. HTTP sends passwords and sessions without encryption. Use HTTPS through a trusted reverse proxy for transport security. PWA installation and updates require a browser-supported secure context.
 
 See the [deployment manual](docs/DEPLOYMENT.md) for process management, reverse proxies, probes, and password recovery. The manual is in Chinese.
 

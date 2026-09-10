@@ -62,13 +62,10 @@ Chat 是单用户、自托管的 Web AI 聊天客户端。项目目录名为 `ll
 | `host` | `127.0.0.1` | 监听地址 |
 | `port` | `3000` | HTTP 端口 |
 | `dataDir` | `./data` | 数据目录，相对路径以配置文件目录为准 |
-| `authMode` | `password` | 远程访问必须使用密码认证 |
-| `trustProxy` | `false` | 只在可信反向代理后配置代理信任 |
-| `serveWeb` | `true` | 同时提供构建后的 Web 页面 |
-| `shutdownTimeoutMs` | `30000` | 关闭期限，单位毫秒 |
-| `buildId` | `development` | 日志和探针中的发布标识 |
 
-远程部署需要修改监听地址。HTTP 会明文传输密码和会话，建议通过可信反向代理提供 HTTPS。PWA 安装和更新需要浏览器支持的安全上下文。不要将 `authMode: "disabled"` 的服务公开。
+服务固定启用密码认证并提供 Web 页面，忽略代理转发的协议和客户端 IP。关闭清理期限固定为 30 秒。日志和探针中的 `buildId` 在构建时写入，优先使用 Git 提交号；无需手动配置。升级旧配置时删除 `authMode`、`trustProxy`、`serveWeb`、`shutdownTimeoutMs` 和 `buildId`。
+
+远程部署需要修改监听地址。HTTP 会明文传输密码和会话，建议通过可信反向代理提供 HTTPS。PWA 安装和更新需要浏览器支持的安全上下文。
 
 进程管理、反向代理、探针和密码恢复见[部署运维手册](docs/DEPLOYMENT.md)。
 

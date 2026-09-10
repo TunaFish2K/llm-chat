@@ -47,7 +47,7 @@ test("选模型后未发送也跨浏览器记忆，发送后草稿清除", async
   const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { displayName: "Memory test model", contextWindow: 128000 });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`memory-${Date.now()}`));
-  const secondContext = await browser.newContext();
+  const secondContext = await browser.newContext({ storageState: await page.context().storageState() });
   try {
     await api(request, APP_URL, "PATCH", "/api/settings", { lastAgentId: agent.id });
     await page.goto(APP_URL!);

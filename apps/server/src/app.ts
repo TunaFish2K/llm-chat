@@ -73,23 +73,20 @@ import { providerRequestContextForConversation } from "./provider-context";
 import { ImageGenerationManager } from "./image-generation";
 import { CodexManager } from "./codex";
 
-export type AuthMode = "password" | "disabled";
-
 export interface AppOptions {
   dataFile: string;
   logger?: boolean;
-  serveWeb?: boolean;
+  webRoot?: string;
   skillDiscoveryRoot?: string;
-  authMode?: AuthMode;
-  trustProxy?: boolean | string;
   authAnnounce?: (message: string) => void;
 }
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
+  const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+  assertWebArtifact(webRoot);
   const app = Fastify({
     logger: options.logger ?? true,
-    bodyLimit: 65 * 1024 * 1024,
-    trustProxy: options.trustProxy ?? false
+    bodyLimit: 65 * 1024 * 1024
   });
   await app.register(fastifyCookie);
   await app.register(fastifyRateLimit, { global: false });
@@ -129,11 +126,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const imageService = new ImageService(store);
   await imageService.initialize();
   const visionService = new VisionService(store, imageService);
-  const authMode = options.authMode ?? "disabled";
   const auth = new AuthManager(store, options.authAnnounce ?? ((message) => {
     if (options.logger !== false) process.stderr.write(`\n${message}\n`);
   }));
-  if (authMode === "password") await auth.ensurePassword();
+  await auth.ensurePassword();
   const balanceService = new BalanceService();
   const modelCatalog = new ModelCatalogService();
   const eventHub = new EventHub();
@@ -204,7 +200,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get("/api/health", async () => ({ ok: true }));
 
   app.addHook("preHandler", async (request, reply) => {
-    if (authMode !== "password" || !request.url.startsWith("/api/")) return;
+    if (!request.url.startsWith("/api/")) return;
     if (!isReadMethod(request.method)) requireMutationSource(request);
     if (isPublicApiRoute(request)) return;
     const token = sessionToken(request);
@@ -263,21 +259,18 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.post("/api/auth/login", authRateLimit(8), async (request, reply) => {
-    requireAuthEnabled(authMode);
     const value = z.object({ password: z.string().min(1).max(128) }).parse(request.body);
     const result = await auth.login(value.password);
     setSessionCookie(request, reply, result.token);
     return { ok: true };
   });
   app.put("/api/auth/password", async (request, reply) => {
-    requireAuthEnabled(authMode);
     const value = z.object({ password: passwordSchema }).parse(request.body);
     const result = await auth.changePassword(request.authIdentity!.sessionId, value.password);
     setSessionCookie(request, reply, result.token);
     return { ok: true, sessionsRevoked: result.sessionsRevoked };
   });
   app.post("/api/auth/logout", async (request, reply) => {
-    requireAuthEnabled(authMode);
     auth.logout(sessionToken(request));
     clearSessionCookies(reply);
     return reply.code(204).send();
@@ -1022,7 +1015,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { toolCall: updated, generationId, resumed: !pending };
   });
 
-  if (options.serveWeb !== false) await registerWeb(app);
+  await registerWeb(app, webRoot);
 
   app.addHook("onClose", async () => {
     await queue.close();
@@ -1105,11 +1098,10 @@ class AuthHttpError extends Error {
 const passwordSchema = z.string().min(8).max(128);
 
 function authRateLimit(max: number) {
-  return { config: { rateLimit: { max, timeWindow: 60 * 1000 } } };
-}
-
-function requireAuthEnabled(mode: AuthMode): void {
-  if (mode !== "password") throw new AuthHttpError(404, "not_found", "API 不存在");
+  return { config: { rateLimit: {
+    max, timeWindow: 60 * 1000,
+    errorResponseBuilder: () => new AuthHttpError(429, "rate_limit_exceeded", "登录尝试过于频繁，请稍后重试")
+  } } };
 }
 
 function isPublicApiRoute(request: FastifyRequest): boolean {
@@ -1156,10 +1148,13 @@ function clearSessionCookies(reply: FastifyReply): void {
   reply.clearCookie("__Host-llm_chat_session", { path: "/", httpOnly: true, sameSite: "strict", secure: true });
 }
 
-async function registerWeb(app: FastifyInstance): Promise<void> {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const root = resolve(here, "../../web/dist");
-  if (!existsSync(resolve(root, "index.html"))) return;
+export function assertWebArtifact(root: string): void {
+  if (!existsSync(resolve(root, "index.html"))) {
+    throw new Error(`Web build artifact is missing: ${resolve(root, "index.html")}. Run pnpm build before starting the server.`);
+  }
+}
+
+async function registerWeb(app: FastifyInstance, root: string): Promise<void> {
   await app.register(fastifyStatic, {
     root,
     // Resolve files at request time so a running server survives web rebuilds

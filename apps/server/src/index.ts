@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildApp } from "./app";
+import { buildApp, assertWebArtifact } from "./app";
+import { BUILD_ID } from "./runtime/build-info";
+import { startShutdownDeadline } from "./runtime/shutdown";
 import { loadRuntimeConfig, selectRuntimeConfig } from "./runtime/config";
 import { acquireInstanceLock, type InstanceLock } from "./runtime/instance-lock";
 
@@ -32,11 +34,8 @@ async function main(): Promise<void> {
     }
     closing = true;
     ready = false;
-    if (app) app.log.info({ reason, buildId: config.buildId }, "server shutdown started");
-    const deadline = setTimeout(() => {
-      process.stderr.write(`Shutdown exceeded ${config.shutdownTimeoutMs}ms; forcing exit.\n`);
-      process.exit(1);
-    }, config.shutdownTimeoutMs);
+    if (app) app.log.info({ reason, buildId: BUILD_ID }, "server shutdown started");
+    const clearDeadline = startShutdownDeadline();
     shutdownPromise = (async () => {
       try {
         if (app) {
@@ -52,7 +51,7 @@ async function main(): Promise<void> {
         } finally {
           instanceLock = undefined;
           process.exitCode = exitCode;
-          clearTimeout(deadline);
+          clearDeadline();
           removeSignalListeners();
         }
       }
@@ -75,33 +74,29 @@ async function main(): Promise<void> {
 
   try {
     instanceLock = await acquireInstanceLock(config.dataDir, fatalShutdown);
-    if (config.serveWeb && !existsSync(resolve(config.webRoot, "index.html"))) {
-      throw new Error(`Web build artifact is missing: ${resolve(config.webRoot, "index.html")}. Run pnpm build before starting the server.`);
-    }
+    assertWebArtifact(config.webRoot);
     app = await buildApp({
       dataFile: resolve(instanceLock.dataDir, "llm-chat.sqlite"),
-      authMode: config.authMode,
-      trustProxy: config.trustProxy,
-      serveWeb: config.serveWeb
+      webRoot: config.webRoot
     });
-    app.get("/healthz", async () => ({ ok: true, buildId: config.buildId }));
+    app.get("/healthz", async () => ({ ok: true, buildId: BUILD_ID }));
     app.get("/readyz", async (_request, reply) => {
-      if (!ready || closing) return reply.code(503).send({ ok: false, buildId: config.buildId });
+      if (!ready || closing) return reply.code(503).send({ ok: false, buildId: BUILD_ID });
       try {
         app!.store.sqlite.prepare("SELECT 1").get();
-        if (config.serveWeb && !existsSync(resolve(config.webRoot, "index.html"))) {
-          return reply.code(503).send({ ok: false, buildId: config.buildId });
+        if (!existsSync(resolve(config.webRoot, "index.html"))) {
+          return reply.code(503).send({ ok: false, buildId: BUILD_ID });
         }
-        return { ok: true, buildId: config.buildId };
+        return { ok: true, buildId: BUILD_ID };
       } catch {
-        return reply.code(503).send({ ok: false, buildId: config.buildId });
+        return reply.code(503).send({ ok: false, buildId: BUILD_ID });
       }
     });
     process.once("SIGTERM", onSigterm);
     process.once("SIGINT", onSigint);
     const address = await app.listen({ host: config.host, port: config.port });
     ready = true;
-    app.log.info({ address, buildId: config.buildId, serveWeb: config.serveWeb }, "server ready");
+    app.log.info({ address, buildId: BUILD_ID }, "server ready");
   } catch (error) {
     try {
       await shutdown("startup failure", 1);

@@ -35,11 +35,10 @@ Maintenance commands still acquire the data-directory lock and require the serve
 
 ### Immutable code and the Web artifact
 
-Production serves the built Web artifact by default (`serveWeb: true`). Startup requires
-`apps/web/dist/index.html` in that code release. An API-only process may explicitly set `serveWeb: false`;
-that mode does not register the Web static-file handler and does not require the Web artifact. Code releases are
-immutable after build. The configured `dataDir` remains a separate writable directory containing SQLite and managed
-runtime state.
+The server always serves the built Web artifact. Startup requires `apps/web/dist/index.html` in the release;
+readiness always checks that file. There is no API-only mode. Releases are immutable after build, while the
+configured `dataDir` remains a separate writable directory. Development builds the Web artifact before starting
+its watchers. Tests supply a temporary Web root as a file dependency, without a production serving bypass.
 
 ### Plain JSON runtime configuration
 
@@ -48,6 +47,11 @@ The server reads runtime settings from `config.json` in the project root or from
 atomically creates a missing file with complete safe defaults and owner-only permissions; it never overwrites an
 existing invalid file. Maintenance commands require an existing configuration so they cannot silently select a new
 default data directory. Relative `dataDir` values resolve from the configuration file's directory.
+
+Runtime configuration contains only `host`, `port`, and `dataDir`. Password authentication is always enabled.
+Proxy headers do not override the direct connection protocol or client IP. Existing configurations must remove
+`authMode`, `trustProxy`, `serveWeb`, `shutdownTimeoutMs`, and `buildId`; the parser reports retired fields instead
+of silently accepting them. Passwords and sessions are preserved.
 
 The file is plain JSON and receives no application-level encryption. It currently contains process settings rather
 than model credentials. Operators protect and back it up separately from the runtime data directory.
@@ -71,8 +75,8 @@ Plugin/MCP resources, and the Store before releasing the instance lock.
 
 Background tasks are marked `interrupted` during service shutdown. A live task receives `SIGTERM` for its process
 group and gets up to two seconds to exit; the manager then sends `SIGKILL` and waits for the exit. Queued and
-remaining non-terminal tasks are also marked interrupted. The application-level `shutdownTimeoutMs`
-is bounded to 1000-300000 ms, defaults to 30000 ms, and forces process exit if the complete shutdown exceeds it.
+remaining non-terminal tasks are also marked interrupted. The application-level deadline is fixed at 30 seconds
+and forces exit with code 1 if cleanup exceeds it.
 The external manager's grace period must be longer than this application timeout.
 
 ### Offline-only authentication reset
@@ -93,9 +97,11 @@ merging it with a live or partially retained directory.
 
 ### Build identity
 
-`buildId` is a validated single-line configuration value (1-200 characters) with default `development`. The server
-includes it in `/healthz`, `/readyz`, and lifecycle logs. Operators set a stable release identifier so probes and
-logs distinguish code versions during rollout and rollback.
+The build embeds `buildId` in the server and writes the same value to `dist/build-info.json` for deployment checks.
+It uses the first 12 Git commit characters, appending `-dirty-<content hash>` for changed build inputs. Git archives
+carry the revision through an export-substituted `BUILD_REVISION`. Sources without Git or archive metadata use a
+`source-<content hash>` identifier. Source development uses `development`. Runtime configuration and environment
+variables cannot change a compiled release's identity. Probes and lifecycle logs retain the `buildId` field.
 
 ### External manager and proxy boundary
 
@@ -111,7 +117,7 @@ systemd, or nginx configuration.
   writes before SQLite closes.
 - A task that ignores `SIGTERM` is forcibly terminated after two seconds, and the application has a bounded final
   shutdown deadline. Operators must choose a manager grace period longer than that deadline.
-- API-only deployments can omit the Web artifact, but they cannot provide the bundled Web UI from that process.
+- Every deployment includes the Web artifact and requires password authentication.
 - Runtime configuration has one explicit JSON source and can bootstrap itself on first server start; operators must
   manage and back up an external configuration file separately.
 - Build IDs make mixed-release observations visible in probes and logs, while immutable releases make update and
