@@ -7,6 +7,7 @@ const authPort = requiredEnv("E2E_AUTH_PORT");
 const runDir = requiredEnv("E2E_RUN_DIR");
 const stateFile = requiredEnv("E2E_STATE_FILE");
 const children = new Set();
+const state = { appUrl: `http://127.0.0.1:${appPort}`, authUrl: `http://localhost:${authPort}` };
 let shuttingDown = false;
 
 mkdirSync(runDir, { recursive: true, mode: 0o700 });
@@ -17,14 +18,23 @@ process.once("exit", cleanupRunDir);
 
 try {
   await runBuild();
-  const app = startServer("app", appPort, "disabled", join(runDir, "app-data"));
-  const auth = startServer("auth", authPort, "password", join(runDir, "auth-data"));
-  captureInitialPassword(auth, authPort);
+  const app = startServer("app", appPort, join(runDir, "app-data"));
+  const auth = startServer("auth", authPort, join(runDir, "auth-data"));
+  captureInitialPassword(app, "appPassword");
+  captureInitialPassword(auth, "initialPassword");
   await Promise.all([
     waitForHealth(`http://127.0.0.1:${appPort}/api/health`),
     waitForHealth(`http://localhost:${authPort}/api/health`),
     waitForState()
   ]);
+  const login = await fetch(`${state.appUrl}/api/auth/login`, {
+    method: "POST", headers: { "content-type": "application/json", "x-llm-chat-request": "1" },
+    body: JSON.stringify({ password: state.appPassword })
+  });
+  if (!login.ok) throw new Error(`App fixture login failed: ${login.status}`);
+  state.appCookie = login.headers.get("set-cookie").split(";", 1)[0].split("=").slice(1).join("=");
+  writeFileSync(`${stateFile}.tmp`, `${JSON.stringify(state)}\n`, { mode: 0o600 });
+  renameSync(`${stateFile}.tmp`, stateFile);
   process.stdout.write(`E2E servers ready on ${appPort} and ${authPort}\n`);
 } catch (error) {
   process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
@@ -56,17 +66,12 @@ async function runBuild() {
   if (code !== 0) throw new Error(`Production build failed with exit code ${code}`);
 }
 
-function startServer(name, port, authMode, dataDir) {
+function startServer(name, port, dataDir) {
   const configPath = join(runDir, `${name}.config.json`);
   writeFileSync(configPath, `${JSON.stringify({
     host: "127.0.0.1",
     port: Number(port),
-    dataDir,
-    authMode,
-    trustProxy: false,
-    serveWeb: true,
-    shutdownTimeoutMs: 30_000,
-    buildId: `e2e-${name}`
+    dataDir
   }, null, 2)}\n`, { mode: 0o600 });
   const child = spawn("node", ["apps/server/dist/index.js", "--config", configPath], {
     cwd: process.cwd(),
@@ -90,18 +95,15 @@ function startServer(name, port, authMode, dataDir) {
   return child;
 }
 
-function captureInitialPassword(child, port) {
+function captureInitialPassword(child, key) {
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr = `${stderr}${chunk}`.slice(-1_000_000);
     const match = stderr.match(/初始登录密码：(\d{8})/);
     if (!match) return;
     const temporary = `${stateFile}.tmp`;
-    writeFileSync(temporary, `${JSON.stringify({
-      appUrl: `http://127.0.0.1:${appPort}`,
-      authUrl: `http://localhost:${authPort}`,
-      initialPassword: match[1]
-    })}\n`, { mode: 0o600 });
+    state[key] = match[1];
+    writeFileSync(temporary, `${JSON.stringify(state)}\n`, { mode: 0o600 });
     renameSync(temporary, stateFile);
   });
 }
@@ -129,7 +131,7 @@ async function waitForState() {
       const response = await fetch(`http://localhost:${authPort}/api/health`);
       if (response.ok) {
         const state = readFileSync(stateFile, "utf8");
-        if (JSON.parse(state).initialPassword) return;
+        if (JSON.parse(state).initialPassword && JSON.parse(state).appPassword) return;
       }
     } catch {}
     await delay(100);
@@ -145,7 +147,7 @@ async function shutdown(exitCode) {
   for (const child of active) signalChild(child, "SIGTERM");
   await Promise.race([
     Promise.all(closed),
-    delay(5_000)
+    delay(35_000)
   ]);
   const remaining = [...children];
   for (const child of remaining) signalChild(child, "SIGKILL");

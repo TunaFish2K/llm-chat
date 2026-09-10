@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_RUNTIME_CONFIG,
-  isLoopbackHostname,
   loadRuntimeConfig,
   parseRuntimeConfig,
   selectRuntimeConfig
@@ -29,30 +28,16 @@ describe("runtime config", () => {
       host: "127.0.0.1",
       port: 3000,
       dataDir: "/etc/llm-chat/data",
-      authMode: "password",
-      trustProxy: false,
-      serveWeb: true,
-      shutdownTimeoutMs: 30_000,
-      buildId: "development",
       webRoot: "/srv/llm-chat/apps/web/dist"
     });
     expect(parseRuntimeConfig({
       host: "0.0.0.0",
       port: 4321,
-      dataDir: "/srv/chat-data",
-      authMode: "password",
-      trustProxy: "127.0.0.1",
-      serveWeb: false,
-      shutdownTimeoutMs: 15_000,
-      buildId: "release-42"
+      dataDir: "/srv/chat-data"
     }, "/etc/llm-chat/config.json", projectRoot)).toMatchObject({
       host: "0.0.0.0",
       port: 4321,
-      dataDir: "/srv/chat-data",
-      trustProxy: "127.0.0.1",
-      serveWeb: false,
-      shutdownTimeoutMs: 15_000,
-      buildId: "release-42"
+      dataDir: "/srv/chat-data"
     });
   });
 
@@ -128,43 +113,16 @@ describe("runtime config", () => {
   });
 
   it("strictly validates document fields", () => {
-    for (const value of [999, 300_001, 1.5, "15000", null]) {
-      expect(() => parseRuntimeConfig({ shutdownTimeoutMs: value }, "/config.json", projectRoot))
-        .toThrow("shutdownTimeoutMs");
-    }
     for (const value of [0, 65_536, 1.5, "3000", null]) {
       expect(() => parseRuntimeConfig({ port: value }, "/config.json", projectRoot)).toThrow("port");
     }
-    expect(() => parseRuntimeConfig({ serveWeb: "true" }, "/config.json", projectRoot)).toThrow("serveWeb");
-    expect(() => parseRuntimeConfig({ trustProxy: "" }, "/config.json", projectRoot)).toThrow("trustProxy");
     expect(() => parseRuntimeConfig({ dataDir: "" }, "/config.json", projectRoot)).toThrow("dataDir");
-    expect(() => parseRuntimeConfig({ buildId: "x".repeat(201) }, "/config.json", projectRoot)).toThrow("buildId");
     expect(() => parseRuntimeConfig({ extra: true }, "/config.json", projectRoot)).toThrow("未知字段");
     expect(() => parseRuntimeConfig([], "/config.json", projectRoot)).toThrow("JSON 对象");
   });
 
-  it("allows disabled auth only on a loopback listener", () => {
-    expect(parseRuntimeConfig(
-      { authMode: "disabled", host: "127.0.0.2" },
-      "/config.json",
-      projectRoot
-    ).authMode).toBe("disabled");
-    expect(() => parseRuntimeConfig(
-      { authMode: "disabled", host: "0.0.0.0" },
-      "/config.json",
-      projectRoot
-    )).toThrow("仅允许回环");
-    expect(() => parseRuntimeConfig({ authMode: "webauthn" }, "/config.json", projectRoot))
-      .toThrow("password 或 disabled");
-  });
-
-  it("recognizes common IPv4 and IPv6 loopback hosts", () => {
-    expect(isLoopbackHostname("localhost")).toBe(true);
-    expect(isLoopbackHostname("127.255.0.1")).toBe(true);
-    expect(isLoopbackHostname("::1")).toBe(true);
-    expect(isLoopbackHostname("[::1]")).toBe(true);
-    expect(isLoopbackHostname("127.999.0.1")).toBe(false);
-    expect(isLoopbackHostname("0.0.0.0")).toBe(false);
-    expect(isLoopbackHostname("example.com")).toBe(false);
+  it.each(["authMode", "trustProxy", "serveWeb", "shutdownTimeoutMs", "buildId"])("explains how to remove retired configuration %s", (key) => {
+    expect(() => parseRuntimeConfig({ [key]: false }, "/config.json", projectRoot))
+      .toThrow(`配置项已移除，请从配置文件删除：${key}`);
   });
 });

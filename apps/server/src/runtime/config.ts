@@ -1,42 +1,19 @@
 import { chmod, readFile, writeFile } from "node:fs/promises";
-import { isIP } from "node:net";
 import { dirname, resolve } from "node:path";
-import type { AuthMode } from "../app";
 
-const LOOPBACK_NAMES = new Set(["localhost", "::1", "[::1]"]);
-const MIN_SHUTDOWN_TIMEOUT_MS = 1_000;
-const MAX_SHUTDOWN_TIMEOUT_MS = 300_000;
-const CONFIG_KEYS = new Set([
-  "host",
-  "port",
-  "dataDir",
-  "authMode",
-  "trustProxy",
-  "serveWeb",
-  "shutdownTimeoutMs",
-  "buildId"
-]);
+const REMOVED_CONFIG_KEYS = new Set(["authMode", "trustProxy", "serveWeb", "shutdownTimeoutMs", "buildId"]);
+const CONFIG_KEYS = new Set(["host", "port", "dataDir"]);
 
 export const DEFAULT_RUNTIME_CONFIG = {
   host: "127.0.0.1",
   port: 3000,
-  dataDir: "./data",
-  authMode: "password",
-  trustProxy: false,
-  serveWeb: true,
-  shutdownTimeoutMs: 30_000,
-  buildId: "development"
+  dataDir: "./data"
 } as const;
 
 export interface RuntimeConfig {
   host: string;
   port: number;
   dataDir: string;
-  authMode: AuthMode;
-  trustProxy: boolean | string;
-  serveWeb: boolean;
-  shutdownTimeoutMs: number;
-  buildId: string;
   webRoot: string;
 }
 
@@ -125,54 +102,26 @@ export function parseRuntimeConfig(
   projectRoot: string
 ): RuntimeConfig {
   if (!isRecord(document)) throw new Error("配置文件根节点必须是 JSON 对象");
+  const removedKeys = Object.keys(document).filter((key) => REMOVED_CONFIG_KEYS.has(key));
+  if (removedKeys.length) throw new Error(`配置项已移除，请从配置文件删除：${removedKeys.join("、")}`);
   const unknownKeys = Object.keys(document).filter((key) => !CONFIG_KEYS.has(key));
   if (unknownKeys.length) throw new Error(`配置文件包含未知字段：${unknownKeys.join("、")}`);
 
   const host = optionalString(document.host, "host", DEFAULT_RUNTIME_CONFIG.host);
   const port = optionalInteger(document.port, "port", DEFAULT_RUNTIME_CONFIG.port, 1, 65_535);
   const configuredDataDir = optionalString(document.dataDir, "dataDir", DEFAULT_RUNTIME_CONFIG.dataDir);
-  const authMode = optionalAuthMode(document.authMode);
-  const trustProxy = optionalTrustProxy(document.trustProxy);
-  const serveWeb = optionalBoolean(document.serveWeb, "serveWeb", DEFAULT_RUNTIME_CONFIG.serveWeb);
-  const shutdownTimeoutMs = optionalInteger(
-    document.shutdownTimeoutMs,
-    "shutdownTimeoutMs",
-    DEFAULT_RUNTIME_CONFIG.shutdownTimeoutMs,
-    MIN_SHUTDOWN_TIMEOUT_MS,
-    MAX_SHUTDOWN_TIMEOUT_MS
-  );
-  const buildId = optionalString(document.buildId, "buildId", DEFAULT_RUNTIME_CONFIG.buildId, 200);
-
-  if (authMode === "disabled" && !isLoopbackHostname(host)) {
-    throw new Error("authMode=disabled 仅允许回环监听地址");
-  }
   return {
     host,
     port,
     dataDir: resolve(dirname(configPath), configuredDataDir),
-    authMode,
-    trustProxy,
-    serveWeb,
-    shutdownTimeoutMs,
-    buildId,
     webRoot: resolve(projectRoot, "apps/web/dist")
   };
 }
 
-export function isLoopbackHostname(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (LOOPBACK_NAMES.has(normalized)) return true;
-  if (isIP(normalized) !== 4) return false;
-  return normalized.split(".")[0] === "127";
-}
-
-function optionalString(value: unknown, name: string, fallback: string, maxLength?: number): string {
+function optionalString(value: unknown, name: string, fallback: string): string {
   if (value === undefined) return fallback;
   if (typeof value !== "string" || !value.trim() || /[\0\r\n]/.test(value)) {
     throw new Error(`配置项 ${name} 必须是非空单行字符串`);
-  }
-  if (maxLength !== undefined && value.length > maxLength) {
-    throw new Error(`配置项 ${name} 长度不能超过 ${maxLength} 个字符`);
   }
   return value;
 }
@@ -183,27 +132,6 @@ function optionalInteger(value: unknown, name: string, fallback: number, minimum
     throw new Error(`配置项 ${name} 必须是 ${minimum} 到 ${maximum} 之间的整数`);
   }
   return value as number;
-}
-
-function optionalBoolean(value: unknown, name: string, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  if (typeof value !== "boolean") throw new Error(`配置项 ${name} 必须是布尔值`);
-  return value;
-}
-
-function optionalAuthMode(value: unknown): AuthMode {
-  if (value === undefined) return DEFAULT_RUNTIME_CONFIG.authMode;
-  if (value !== "password" && value !== "disabled") {
-    throw new Error("配置项 authMode 必须是 password 或 disabled");
-  }
-  return value;
-}
-
-function optionalTrustProxy(value: unknown): boolean | string {
-  if (value === undefined) return DEFAULT_RUNTIME_CONFIG.trustProxy;
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string" && value.trim() && !/[\0\r\n]/.test(value)) return value;
-  throw new Error("配置项 trustProxy 必须是布尔值或非空单行字符串");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

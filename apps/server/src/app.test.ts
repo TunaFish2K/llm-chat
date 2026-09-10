@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ModelInput, ModelSettings } from "@llm-chat/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "./app";
+import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
 
 const dirs: string[] = [];
@@ -19,6 +20,31 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("requires a Web artifact before opening the application", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-missing-web-"));
+    dirs.push(dir);
+    await expect(buildApp({ dataFile: join(dir, "test.sqlite"), logger: false, webRoot: join(dir, "missing") }))
+      .rejects.toThrow("Web build artifact is missing");
+  });
+
+  it("ignores forwarded protocol and IP headers for cookies and login rate limits", async () => {
+    const app = await testApp();
+    const login = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: app.password },
+      headers: { "x-forwarded-proto": "https", "x-forwarded-for": "192.0.2.1" } });
+    expect(login.statusCode).toBe(200);
+    expect(login.headers["set-cookie"]).toContain("llm_chat_session=");
+    expect(login.headers["set-cookie"]).not.toContain("Secure");
+    expect(login.headers["set-cookie"]).not.toContain("__Host-");
+    for (let index = 0; index < 6; index++) {
+      const failed = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "wrong-password" },
+        headers: { "x-forwarded-for": `192.0.2.${index + 2}` } });
+      expect(failed.statusCode).toBe(401);
+    }
+    const limited = await app.inject({ method: "POST", url: "/api/auth/login", payload: { password: "wrong-password" },
+      headers: { "x-forwarded-for": "198.51.100.1" } });
+    expect(limited.statusCode).toBe(429);
+  });
+
   it("rejects deleting a family with an active image job in a hidden branch", async () => {
     const app = await testApp();
     const store = app.store;
@@ -223,8 +249,7 @@ describe("server API", () => {
     dirs.push(dir);
     let initialPassword = "";
     const app = await buildApp({
-      dataFile: join(dir, "test.sqlite"), logger: false, serveWeb: false,
-      authMode: "password",
+      dataFile: join(dir, "test.sqlite"), logger: false, webRoot: testWebRoot(dir),
       authAnnounce: (message) => { initialPassword = message.match(/\d{8}/)?.[0] ?? ""; },
       skillDiscoveryRoot: join(dir, "agent-skills")
     });
@@ -691,9 +716,8 @@ describe("server API", () => {
 
   it("returns 404 for stale assets while preserving the SPA route fallback", async () => {
     const runtimeAssetName = "runtime-added-12345678.js";
-    const runtimeAssetPath = join(process.cwd(), "apps/web/dist/assets", runtimeAssetName);
-    rmSync(runtimeAssetPath, { force: true });
-    const app = await testApp(true);
+    const app = await testApp();
+    const runtimeAssetPath = join(app.webRoot, "assets", runtimeAssetName);
     const index = await app.inject({ method: "GET", url: "/" });
     expect(index.headers["cache-control"]).toBe("no-cache");
     const scriptPath = index.body.match(/src="([^"]+\.js)"/)?.[1];
@@ -1034,15 +1058,33 @@ async function createApiModel(app: Awaited<ReturnType<typeof testApp>>) {
   } })).json();
 }
 
-async function testApp(serveWeb = false) {
+function testWebRoot(dir: string): string {
+  const root = join(dir, "web");
+  mkdirSync(join(root, "assets"), { recursive: true });
+  writeFileSync(join(root, "index.html"), '<html><script src="/assets/index-12345678.js"></script></html>');
+  writeFileSync(join(root, "assets/index-12345678.js"), "export const app = true;");
+  writeFileSync(join(root, "render-frame.html"), "<html></html>");
+  return root;
+}
+
+async function testApp() {
   const dir = mkdtempSync(join(tmpdir(), "llm-chat-api-"));
   dirs.push(dir);
+  const webRoot = testWebRoot(dir);
+  let password = "";
   const app = await buildApp({
-    dataFile: join(dir, "test.sqlite"), logger: false, serveWeb,
+    dataFile: join(dir, "test.sqlite"), logger: false, webRoot,
+    authAnnounce: (message) => { password = message.match(/\d{8}/)![0]; },
     skillDiscoveryRoot: join(dir, "agent-skills")
   });
   apps.push(app);
-  return app;
+  const login = await app.inject({ method: "POST", url: "/api/auth/login", headers: { "x-llm-chat-request": "1" }, payload: { password } });
+  expect(login.statusCode).toBe(200);
+  const cookie = login.cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
+  return {
+    store: app.store, runner: app.runner, webRoot, password, close: () => app.close(),
+    inject: (options: InjectOptions) => app.inject({ ...options, headers: { cookie, "x-llm-chat-request": "1", ...options.headers } })
+  };
 }
 
 function modelPayload(connectionId: string): ModelInput {

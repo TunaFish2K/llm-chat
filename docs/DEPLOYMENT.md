@@ -22,7 +22,7 @@ HTTPS 反向代理负责证书、TLS 和对外入口。本仓库不生成 `serve
    数据目录包含密钥和用户数据。
 3. 一个独立的发布目录。发布完成后不要在该目录中改写源码或构建产物。
 4. 可选的 DNS、TLS 证书和可信 HTTPS 代理。纯内网 HTTP 部署不要求这些组件。
-5. 管理器的停止宽限期。它必须严格大于配置中的 `shutdownTimeoutMs`，并且不能在该期限前
+5. 管理器的停止宽限期。它必须严格大于应用固定的 30 秒关闭期限，并且不能在该期限前
    发送 `SIGKILL`。
 
 ## 安装和构建
@@ -35,7 +35,7 @@ pnpm build
 ```
 
 `pnpm build` 先构建 Web，再构建服务端，并生成 `apps/web/dist/index.html`、`apps/server/dist/index.js`
-和 `apps/server/dist/auth-reset.js`。默认 `serveWeb: true`，所以缺少 Web 入口时服务不会启动。
+和 `apps/server/dist/auth-reset.js`。服务始终提供 Web 页面，缺少 Web 入口时不会启动。
 完成验证后，将整个发布目录作为不可变代码版本交给管理器；不要把可写数据目录放进代码发布目录。
 
 质量门禁见[验证和 CI](#验证和-ci)。`pnpm test:deploy` 需要已经构建的服务端产物；新检出目录可先执行
@@ -61,12 +61,7 @@ Codex worker 是例外：它支持以下仅用于 Codex app-server 的环境覆�
 {
   "host": "0.0.0.0",
   "port": 3000,
-  "dataDir": "/srv/llm-chat/data",
-  "authMode": "password",
-  "trustProxy": false,
-  "serveWeb": true,
-  "shutdownTimeoutMs": 30000,
-  "buildId": "release-2026-09-03"
+  "dataDir": "/srv/llm-chat/data"
 }
 ```
 
@@ -78,26 +73,22 @@ pnpm start --config /etc/llm-chat/config.json
 
 显式配置路径的父目录必须已经存在；缺失文件会在该目录内自动生成。`dataDir` 的相对路径按配置文件
 所在目录解析。浏览器可以通过 localhost、回环 IP、内网 IP 或反向代理域名访问，无需声明公开地址。
-使用反向代理时，根据代理拓扑设置 `trustProxy`，以便服务正确识别协议和客户端地址。
+服务忽略代理转发的协议和客户端 IP。反向代理后的请求按直接连接设置会话 Cookie；通过同一代理的客户端共用该代理地址的登录限流。
 
 运行时配置的默认值和解析规则如下：
 
 | 配置项 | 默认值 | 规则 |
 | --- | --- | --- |
-| `host` | `127.0.0.1` | 非空单行字符串；`disabled` 认证时必须是回环地址 |
+| `host` | `127.0.0.1` | 非空单行字符串 |
 | `port` | `3000` | 1 到 65535 的整数 |
 | `dataDir` | `./data` | 非空路径；相对配置文件解析；与其他进程共享会触发实例锁 |
-| `authMode` | `password` | 只能是 `password` 或 `disabled` |
-| `trustProxy` | `false` | 布尔值或 Fastify 接受的非空代理地址/CIDR 字符串 |
-| `serveWeb` | `true` | 布尔值；`false` 时 API 不提供 Web 静态文件 |
-| `shutdownTimeoutMs` | `30000` | 1000 到 300000 的整数毫秒值 |
-| `buildId` | `development` | 1 到 200 个字符的非空单行文本 |
 
-`authMode: "disabled"` 只允许监听 `localhost`、`::1` 或 `127.0.0.0/8`。例如 `0.0.0.0` 会在
-启动前被拒绝。不要通过反向代理公开无认证实例；远程访问必须使用 `password` 模式。
+服务固定启用密码认证，所有环境均须登录；开发和测试没有免认证开关。`pnpm dev` 先准备 Web
+产物，再启动前后端监听进程。应用始终提供 Web 页面，且始终在启动和就绪检查中验证 Web 入口。
 
-若只需要 API，可以设置 `serveWeb: false`；此时不要求 Web 入口，`/readyz` 也不会检查
-Web 文件。浏览器 UI 和通常的生产部署应保留 `true`。
+升级旧配置时，删除 `authMode`、`trustProxy`、`serveWeb`、`shutdownTimeoutMs` 和 `buildId`。
+解析器会列出已移除字段并拒绝启动，不会静默忽略或自动改写配置。修改前备份原配置；保留原来的
+`host`、`port`、`dataDir`，密码和会话数据无需迁移。
 
 配置文件是明文 JSON，应用不加密也不改写已有文件。当前运行配置不包含模型 API Key；这些业务密钥仍
 保存在 SQLite。仍应限制配置文件所有者和权限，并将外置配置与 `dataDir` 分别备份。
@@ -127,22 +118,29 @@ curl -sS -i http://127.0.0.1:3000/readyz
 
 - `/healthz` 是存活探针。服务开始监听后返回 HTTP `200`、`ok: true` 和当前 `buildId`，不执行 SQLite
   查询。关闭排空时它仍可能返回 `200`，所以不要用它决定是否继续接收流量。
-- `/readyz` 是就绪和流量探针。启动完成后，它检查 SQLite 的 `SELECT 1`；`serveWeb: true` 时还检查
+- `/readyz` 是就绪和流量探针。启动完成后，它检查 SQLite 的 `SELECT 1`，并检查
   `apps/web/dist/index.html`。通过时返回 HTTP `200`、`ok: true` 和 `buildId`；启动未完成、检查失败
   或关闭排空时返回 HTTP `503`、`ok: false` 和 `buildId`。
 
 关闭收到 `SIGTERM` 后会立即撤回 readiness。应用先中止并等待活动生成，再关闭后台任务、Plugin/MCP
 资源、Fastify 和 SQLite，最后释放实例锁。后台任务先向进程组发送 `SIGTERM`，单个任务最多等待 2 秒；
-仍未退出时发送 `SIGKILL`。`shutdownTimeoutMs` 是整个应用关闭的上限，超时会强制退出。
+仍未退出时发送 `SIGKILL`。整个应用关闭的上限固定为 30 秒；清理完成即退出，超时以退出码 1 强制退出。
 管理器宽限期必须严格超过此值，并应使用 `/readyz` 先摘流量。
 
 ## 更新和回滚
 
-更新时先在新的发布目录安装依赖并构建，在配置中设置新的 `buildId`，然后按停服顺序切换管理器：
+更新时先在新的发布目录安装依赖并构建。构建将版本标识直接写入服务端代码，同时输出
+`apps/server/dist/build-info.json` 供部署核对；运行时不读取配置或环境变量覆盖标识。
+
+构建标识优先取 Git 提交号前 12 位。参与构建的源码存在未提交改动时追加 `-dirty-<内容哈希>`。
+`git archive` 通过 `BUILD_REVISION` 的 `export-subst` 携带提交号，没有 `.git` 也能识别版本；没有
+Git 和归档提交信息时使用 `source-<内容哈希>`。直接运行源码的开发模式显示 `development`。
+
+然后按停服顺序切换管理器：
 
 1. 停止旧进程，等待旧进程退出并确认旧数据目录不再被占用。
 2. 启动新发布目录中的 `pnpm start --config <path>`，使用同一份外置配置或等效的 `dataDir`。
-3. 轮询 `/readyz`，确认 HTTP `200` 且响应中的 `buildId` 是新值；再把流量切换到新进程。
+3. 轮询 `/readyz`，确认 HTTP `200` 且响应中的 `buildId` 与新制品的 `build-info.json` 一致；再把流量切换到新进程。
 
 回滚使用同样的停服和单副本顺序，选择以前的不可变发布目录并保留同一个数据目录。启动前确认该版本
 支持当前数据库架构；数据库迁移在启动时向前执行，旧版本可能拒绝比它更新的数据库版本，不要假设可以
@@ -184,6 +182,8 @@ SQLite 还包含 API Key、秘密请求头、密码哈希和会话相关材料�
 4. 使用指向同一 `dataDir` 的配置启动服务，检查 `/healthz` 和 `/readyz`，再恢复流量。
 
 不要在服务运行时用普通文件复制替换 SQLite，也不要只恢复数据库而遗漏修订、任务日志或工具输出。
+
+若管理器的停止宽限期不超过 30 秒，先向应用 PID 发送 `SIGTERM` 并等待其自行退出，再执行管理器的停用和切换操作。不要让短宽限期提前强制终止清理。
 
 ## 离线密码重置
 
@@ -232,9 +232,8 @@ Firefox。非本机 HTTP 下普通网页可用，但 Service Worker、PWA 安装
 
 | 现象 | 检查和处理 |
 | --- | --- |
-| 启动报告 Web build artifact missing | 在当前不可变发布目录执行 `pnpm build`，确认 `apps/web/dist/index.html` 存在，并确认 `serveWeb: true` 时管理器使用的是该发布目录。若只运行 API，可设为 `false`。 |
+| 启动报告 Web build artifact missing | 在当前不可变发布目录执行 `pnpm build`，确认 `apps/web/dist/index.html` 存在，并确认管理器使用的是该发布目录。 |
 | 报告数据目录被另一个 llm-chat 进程占用 | 检查 `served` 是否有旧副本、端口不同的副本或同一目录的别名进程。先停止并等待旧进程退出；不要删除锁文件绕过保护。 |
-| 报告 disabled auth 只允许回环 | 检查配置中的 `authMode` 和 `host`。远程部署改为 `password`；不要通过反向代理公开 disabled auth。 |
 | 配置文件无法生成 | 确认显式路径的父目录已经存在并允许服务账号写入；服务不会递归创建配置目录。 |
 | 配置文件不是有效 JSON 或包含未知字段 | 修正原文件；服务不会覆盖或“修复”已有配置。可以对照 `config.example.json`。 |
 | `/healthz` 为 200 但 `/readyz` 为 503 | 这是启动检查失败或关闭排空的预期信号。查看日志中的 `buildId`，确认 SQLite 可读写、Web 入口存在且进程没有收到停止信号；排空时等待进程退出，不要立刻重叠启动。 |

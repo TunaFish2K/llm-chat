@@ -154,7 +154,7 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
 test("生成中排队、跨设备同步、删除与取消后继续", async ({ page, browser, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 5000 });
   const fixture = await setup(request, provider.baseUrl);
-  const other = await browser.newContext();
+  const other = await browser.newContext({ storageState: await page.context().storageState() });
   try {
     await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
     await page.getByLabel("输入消息").fill("first");
@@ -242,7 +242,7 @@ test("聊天排版实时预览且仅在同一浏览器同步，离线可调整",
   const provider = await startMockProvider();
   const fixture = await setup(request, provider.baseUrl);
   const original = await api(request, APP_URL, "GET", "/api/settings");
-  const other = await browser.newContext();
+  const other = await browser.newContext({ storageState: await page.context().storageState() });
   await other.addInitScript(() => localStorage.setItem("llm-chat.quick-tour.v1", "seen"));
   try {
     await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const processes = new Set();
 let provider;
 let tempRoot;
 let backgroundPid;
+let sessionCookie;
 
 try {
   assert(existsSync(serverEntry), `Built server is missing: ${serverEntry}`);
@@ -32,29 +33,19 @@ try {
   await writeConfig(configPath, {
     host: "127.0.0.1",
     port,
-    dataDir,
-    authMode: "disabled",
-    trustProxy: false,
-    serveWeb: true,
-    shutdownTimeoutMs: 10_000,
-    buildId: "deployment-smoke"
+    dataDir
   });
   await writeConfig(secondConfigPath, {
     host: "127.0.0.1",
     port: secondPort,
-    dataDir,
-    authMode: "disabled",
-    trustProxy: false,
-    serveWeb: true,
-    shutdownTimeoutMs: 10_000,
-    buildId: "deployment-smoke-second"
+    dataDir
   });
   const legacyEnv = {
     ...process.env,
     LLM_CHAT_HOST: "0.0.0.0",
     LLM_CHAT_PORT: String(secondPort),
     LLM_CHAT_DATA_DIR: join(tempRoot, "ignored-data"),
-    LLM_CHAT_AUTH_MODE: "password",
+    LLM_CHAT_AUTH_MODE: "disabled",
     LLM_CHAT_SERVE_WEB: "false",
     LLM_CHAT_BUILD_ID: "ignored-environment"
   };
@@ -63,10 +54,20 @@ try {
   await waitForHttp(`${baseUrl}/healthz`, server, 20_000);
   const health = await fetchJson(`${baseUrl}/healthz`);
   assert(health.response.status === 200 && health.body.ok === true, "healthz did not report liveness");
-  assert(health.body.buildId === "deployment-smoke", "healthz did not surface buildId");
+  const { buildId } = JSON.parse(await readFile(resolve(projectRoot, "apps/server/dist/build-info.json"), "utf8"));
+  assert(health.body.buildId === buildId && buildId !== "development", "healthz did not surface the compiled buildId");
   const readiness = await fetchJson(`${baseUrl}/readyz`);
   assert(readiness.response.status === 200 && readiness.body.ok === true, "readyz did not report readiness");
-  assert(readiness.body.buildId === "deployment-smoke", "readyz did not surface buildId");
+  assert(readiness.body.buildId === buildId, "readyz did not surface buildId");
+  assert((await fetch(`${baseUrl}/api/bootstrap`)).status === 401, "API accepted an unauthenticated request");
+  const password = server.output().match(/初始登录密码：(\d{8})/)?.[1];
+  assert(password, "initial password was not announced");
+  const login = await fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST", headers: { "content-type": "application/json", "x-llm-chat-request": "1" },
+    body: JSON.stringify({ password })
+  });
+  assert(login.ok, "password login failed");
+  sessionCookie = login.headers.get("set-cookie").split(";", 1)[0];
   await assertImmediateEventStream(baseUrl);
 
   const index = await fetch(`${baseUrl}/`);
@@ -152,9 +153,30 @@ try {
   assert(Number.isInteger(backgroundPid) && processExists(backgroundPid), "background child did not start");
 
   server.child.kill("SIGTERM");
-  const serverExit = await waitForExit(server, 15_000);
+  const drainingDeadline = Date.now() + 2_000;
+  let draining = false;
+  while (Date.now() < drainingDeadline && !draining) {
+    try {
+      const probe = await fetchJson(`${baseUrl}/readyz`);
+      draining = probe.response.status === 503 && probe.body.ok === false && probe.body.buildId === buildId;
+    } catch (error) {
+      // Fastify can close its listener before background cleanup finishes.
+      if (["ECONNREFUSED", "ECONNRESET", "UND_ERR_SOCKET"].includes(error.cause?.code)) draining = true;
+      else throw error;
+    }
+    if (!draining) await delay(20);
+  }
+  assert(draining, "the service remained ready while shutting down");
+  const serverExit = await waitForExit(server, 35_000);
   assert(serverExit.code === 0, `SIGTERM shutdown exited ${serverExit.code}: ${server.output()}`);
   assert(!processExists(backgroundPid), `background child ${backgroundPid} survived server shutdown`);
+
+  const restarted = launchNode([serverEntry, "--config", configPath], legacyEnv);
+  await waitForHttp(`${baseUrl}/readyz`, restarted, 20_000);
+  assert((await fetchJson(`${baseUrl}/readyz`)).body.buildId === buildId, "restart changed the compiled buildId");
+  assert((await fetch(`${baseUrl}/api/bootstrap`, { headers: { cookie: sessionCookie } })).ok, "restart lost the password session");
+  restarted.child.kill("SIGTERM");
+  assert((await waitForExit(restarted, 35_000)).code === 0, "restarted service did not close cleanly");
 
   const reset = launchNode([
     resetEntry,
@@ -182,6 +204,7 @@ try {
   assert(missingConfigExit.code !== 0, "auth reset generated a missing config file");
   assert(missingConfigReset.output().includes("无法读取配置文件"), "auth reset did not report its missing config file");
 
+  await assertRequiredWebArtifact(buildId);
   process.stdout.write("Deployment smoke passed.\n");
 } finally {
   for (const processInfo of processes) {
@@ -197,6 +220,34 @@ try {
   }
   if (provider) await new Promise((resolvePromise) => provider.close(resolvePromise));
   if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+}
+
+async function assertRequiredWebArtifact(buildId) {
+  const release = join(tempRoot, "isolated-release");
+  const serverRoot = join(release, "apps/server");
+  const webRoot = join(release, "apps/web/dist");
+  await cp(resolve(projectRoot, "apps/server/dist"), join(serverRoot, "dist"), { recursive: true });
+  await symlink(resolve(projectRoot, "apps/server/node_modules"), join(serverRoot, "node_modules"), "dir");
+  const configPath = join(release, "config.json");
+  const port = await availablePort();
+  await writeConfig(configPath, { host: "127.0.0.1", port, dataDir: "./data" });
+  const entry = join(serverRoot, "dist/index.js");
+  const missing = launchNode([entry, "--config", configPath], process.env);
+  assert((await waitForExit(missing, 10_000)).code !== 0, "server started without a Web artifact");
+  assert(missing.output().includes("Web build artifact is missing"), "missing Web artifact was not explained");
+  await mkdir(webRoot, { recursive: true });
+  const index = join(webRoot, "index.html");
+  await writeFile(index, "<!doctype html><title>Web readiness test</title>");
+  const server = launchNode([entry, "--config", configPath], process.env);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  await waitForHttp(`${baseUrl}/readyz`, server, 20_000);
+  assert((await fetchJson(`${baseUrl}/readyz`)).body.buildId === buildId, "moving the release changed its identity");
+  await rm(index);
+  const missingProbe = await fetchJson(`${baseUrl}/readyz`);
+  assert(missingProbe.response.status === 503 && missingProbe.body.ok === false, "readiness ignored the missing Web artifact");
+  assert((await fetchJson(`${baseUrl}/healthz`)).response.status === 200, "Web readiness failure affected liveness");
+  server.child.kill("SIGTERM");
+  assert((await waitForExit(server, 35_000)).code === 0, "isolated release did not close cleanly");
 }
 
 async function startProvider(childPidFile) {
@@ -246,7 +297,7 @@ async function assertImmediateEventStream(baseUrl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1_500);
   try {
-    const response = await fetch(`${baseUrl}/api/events`, { signal: controller.signal });
+    const response = await fetch(`${baseUrl}/api/events`, { signal: controller.signal, headers: { cookie: sessionCookie } });
     assert(response.status === 200, `event stream returned ${response.status}`);
     assert((response.headers.get("content-type") ?? "").includes("text/event-stream"), "event stream has the wrong MIME type");
     const reader = response.body?.getReader();
@@ -315,7 +366,7 @@ async function waitForHttp(url, processInfo, timeoutMs) {
 async function apiJson(baseUrl, path, options = {}) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: options.method ?? "GET",
-    headers: options.body === undefined ? undefined : { "content-type": "application/json" },
+    headers: { cookie: sessionCookie, "x-llm-chat-request": "1", ...(options.body === undefined ? {} : { "content-type": "application/json" }) },
     body: options.body === undefined ? undefined : JSON.stringify(options.body)
   });
   const text = await response.text();
