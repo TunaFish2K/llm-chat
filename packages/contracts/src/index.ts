@@ -1264,7 +1264,20 @@ export interface DirectoryListingDto {
   entries: DirectoryEntryDto[];
 }
 
+/** Lightweight state for browser notifications; excludes message and tool content. */
+export interface GenerationNotificationState {
+  generationId: string;
+  conversationId: string;
+  messageId: string;
+  conversationTitle: string;
+  status: GenerationStatus;
+  stopReason: string | null;
+  pendingTools: Array<{ id: string; name: string; stepIndex: number }>;
+}
+
 export type AppEvent =
+  | { id: number; type: "generation-state"; generation: GenerationNotificationState }
+  | { id: number; type: "generation-snapshot"; sourceId: string; active: GenerationNotificationState[] }
   | { id: number; type: "message-queue"; conversationId: string; generation?: GenerationCreatedDto }
   | { id: number; type: "task"; taskId: string; task: BackgroundTaskDto }
   | { id: number; type: "task-output"; taskId: string; cursor: number }

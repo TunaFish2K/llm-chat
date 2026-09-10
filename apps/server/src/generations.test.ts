@@ -19,6 +19,20 @@ afterEach(() => {
 });
 
 describe("GenerationRunner lifecycle", () => {
+  it("publishes saved running, approval and cancellation states to the global observer", async () => {
+    const store = createStore(); const generation = seedGeneration(store);
+    const statuses: string[] = [];
+    const runner = makeRunner(store, {
+      onStateChange: (id) => statuses.push(store.getGeneration(id)!.status),
+      buildTools: async () => [serverTool("needs-approval", async () => "ok", true)],
+      stream: () => events([toolCall("notify-call", "needs-approval", "{}")])
+    });
+    runner.start(generation.generationId);
+    await inactiveWithStatus(runner, store, generation, "waiting-approval");
+    expect(statuses).toEqual(["running", "waiting-approval"]);
+    runner.cancel(generation.generationId);
+    expect(statuses).toEqual(["running", "waiting-approval", "stopped"]);
+  });
   it("hands off to steer before the next API call, after completing tools, ahead of ordinary queue items", async () => {
     const store = createStore(); const generation = seedGeneration(store);
     const gate = deferred<void>();

@@ -1,4 +1,5 @@
 import { saveTypography } from "./local-typography";
+import { observeNotificationEvent, startNotificationSession, stopNotificationSession } from "./notifications";
 import { conversationDeleted, deletionRevision, markConversationsDeleted } from "./conversation-lifecycle";
 import { preserveDeletedDraft, removeComposerDraft } from "./composer-drafts";
 import { replaceRoute } from "./router";
@@ -415,9 +416,11 @@ export function stopAppEvents(): void {
 export function startAppEvents(): void {
   if (isOffline()) return;
   if (appEventsSubscription) return;
+  startNotificationSession();
   let hasConnected = false;
   appEventsSubscription = subscribeAppEvents(
     (event) => {
+      observeNotificationEvent(event);
       if (event.type === "message-queue") {
         window.dispatchEvent(new CustomEvent("llm-chat:message-queue", { detail: event }));
         void loadMessages(event.conversationId).then(() => {
@@ -463,6 +466,7 @@ export async function refreshTaskCounts(): Promise<void> {
 
 export function initAuthGate(): void {
   const requireAuth = (event?: Event) => {
+    stopNotificationSession();
     stopAppEvents();
     void clearOfflineHistory({ logout: true, broadcast: !(event instanceof CustomEvent && event.detail?.remote) }).catch(() => {});
     appStore.set({ auth: "required", messages: {}, conversations: [] });

@@ -36,6 +36,7 @@ interface LiveJob {
 }
 
 export interface GenerationRunnerDependencies {
+  onStateChange?: (generationId: string) => void;
   onSettled?: (conversationId: string) => void;
   buildContext: (
     store: Store,
@@ -150,6 +151,7 @@ export class GenerationRunner {
       });
     }
     this.store.finishGeneration(generationId, "stopped", { stopReason: "cancelled" });
+    this.emitStatus(generationId, "stopped", "cancelled");
     if (!this.closing) this.dependencies.onSettled?.(record.conversationId);
     return true;
   }
@@ -497,6 +499,7 @@ export class GenerationRunner {
   }
 
   private emitStatus(generationId: string, status: GenerationStatus, stopReason?: string): void {
+    this.dependencies.onStateChange?.(generationId);
     this.emit(generationId, {
       type: "status",
       generationId,

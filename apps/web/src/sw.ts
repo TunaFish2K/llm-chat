@@ -5,8 +5,10 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { OFFLINE_IMAGES_PREFIX, offlineRead, type OfflineControl } from "./lib/offline-db";
 import { NetworkOnly } from "workbox-strategies";
+import { createNotificationWorker } from "./lib/notification-worker";
 
 declare let self: ServiceWorkerGlobalScope & { __WB_MANIFEST: Array<never> };
+const conversationNotifications = createNotificationWorker({ origin: self.location.origin, clients: self.clients, registration: self.registration });
 
 clientsClaim();
 cleanupOutdatedCaches();
@@ -33,4 +35,16 @@ registerRoute(new NavigationRoute(createHandlerBoundToURL("index.html"), { denyl
 
 self.addEventListener("message", (event) => {
   if (event.data?.type === "SKIP_WAITING") void self.skipWaiting();
+  if (event.data?.type === "CHAT_NOTIFICATIONS" && event.source && "id" in event.source) {
+    event.waitUntil(conversationNotifications.handle(event.data.command, event.source.id).then(
+      () => event.ports[0]?.postMessage({ ok: true }),
+      () => event.ports[0]?.postMessage({ ok: false, error: "无法显示通知，请检查浏览器权限或重试" })
+    ));
+  }
+});
+
+self.addEventListener("notificationclick", (event) => {
+  if (!event.notification.tag.startsWith("llm-chat:")) return;
+  event.notification.close();
+  event.waitUntil(conversationNotifications.click(event.notification.data));
 });

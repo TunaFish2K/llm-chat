@@ -9,6 +9,8 @@ export class EventHub {
   private readonly history: AppEvent[] = [];
   private readonly listeners = new Set<(event: AppEvent) => void>();
 
+  get cursor(): number { return this.nextId - 1; }
+
   emit(event: AppEventInput): AppEvent {
     const stored = { ...event, id: this.nextId++ } as AppEvent;
     this.history.push(stored);
