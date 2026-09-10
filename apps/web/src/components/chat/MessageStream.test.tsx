@@ -75,7 +75,7 @@ describe("inline image jobs", () => {
     expect(screen.getByText(label)).toBeVisible();
     if (control) {
       fireEvent.click(screen.getByRole("button", { name: control }));
-      await waitFor(() => expect(control === "停止图片生成" ? cancel : retry).toHaveBeenCalledWith(job.id));
+      await waitFor(() => expect(control === "停止图片生成" ? cancel : retry).toHaveBeenCalledWith("conv-1", job.id));
       await waitFor(() => expect(endpoints.messages).toHaveBeenCalledWith("conv-1"));
     }
   });

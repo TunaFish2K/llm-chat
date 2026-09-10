@@ -1,5 +1,5 @@
 import { conversationDeleted, deletedConversationIds, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
-import { draftImageUrls } from "./composer-drafts";
+import { draftImageUrls } from "./composer-draft-storage";
 import type { MessageDto, OfflineConversationDto, OfflineManifestDto } from "@llm-chat/contracts";
 import { createStore } from "./store";
 import { OFFLINE_IMAGES_PREFIX, offlineConversations, offlineRead, offlineWrite, readOfflineManifest, resetOfflineDb, type OfflineControl } from "./offline-db";

@@ -1,3 +1,4 @@
+import { ApiRequestError, httpRequest, uploadFileHttp, type HttpResult } from "./http-client";
 import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
 import { isOffline, markOffline, offlineRequest } from "./offline-history";
 import type {
@@ -50,151 +51,73 @@ import type {
   ToolSettingsInput
 } from "@llm-chat/contracts";
 
-export class ApiRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    readonly details?: unknown
-  ) {
-    super(message);
-    this.name = "ApiRequestError";
-  }
+export { ApiRequestError, onAuthRequired } from "./http-client";
+
+interface RequestContext {
+  conversationId?: string;
+  deletesConversation?: boolean;
 }
 
-type AuthListener = () => void;
-const authListeners = new Set<AuthListener>();
-
-export function onAuthRequired(listener: AuthListener): () => void {
-  authListeners.add(listener);
-  return () => authListeners.delete(listener);
-}
-
-function emitAuthRequired(): void {
-  for (const listener of authListeners) listener();
-}
-
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const conversationId = /^\/api\/conversations\/([\da-f-]{36})(?:[/?]|$)/i.exec(path)?.[1];
+async function request<T>(method: string, path: string, body?: unknown, context: RequestContext = {}): Promise<T> {
+  const { conversationId, deletesConversation: deleting = false } = context;
   if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
-  const deleting = method === "DELETE" && /^\/api\/conversations\/[\da-f-]{36}$/i.test(path);
   if (deleting && conversationId) localDeletions.add(conversationId);
   const controller = new AbortController();
   const untrack = conversationId ? trackConversationRequest(conversationId, controller) : () => {};
   try {
-    const result = await performRequest<T>(method, path, body, controller.signal, conversationId, deleting);
+    const result = await performRequest<T>(method, path, body, controller.signal);
+    if (deleting && conversationId && result.status === 204) markConversationsDeleted([conversationId], true);
     if (!deleting && conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
-    return result;
+    return result.data;
+  } catch (error) {
+    if (conversationId && error instanceof ApiRequestError && error.status === 404 && error.code === "conversation_not_found") {
+      markConversationsDeleted([conversationId]);
+    } else if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
+    throw error;
+  } finally {
+    untrack();
+    if (deleting && conversationId) localDeletions.delete(conversationId);
   }
-  finally { untrack(); if (deleting && conversationId) localDeletions.delete(conversationId); }
 }
 
-async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, conversationId?: string, deleting = false): Promise<T> {
+async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
   if (method !== "GET" && method !== "HEAD" && (isOffline() || navigator.onLine === false) && path !== "/api/auth/login" && path !== "/api/auth/logout") {
     throw new ApiRequestError(0, "offline_readonly", "当前离线，此操作需要联网");
   }
+  const offline = async (): Promise<HttpResult<T>> => ({ data: await offlineRequest(path) as T, status: 200 });
   if (method === "GET" && (isOffline() || navigator.onLine === false)) {
     markOffline();
-    try { return await offlineRequest(path) as T; }
+    try { return await offline(); }
     catch (error) {
       if (navigator.onLine === false || !path.startsWith("/api/bootstrap")) throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : "本机尚未保存此记录");
     }
   }
-  let response: Response;
   try {
-    response = await fetch(path, {
-      method,
-      signal: method === "GET" ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : signal,
-      credentials: "same-origin",
-      headers: {
-        ...(body !== undefined ? { "content-type": "application/json" } : {}),
-        ...(method !== "GET" && method !== "HEAD" ? { "x-llm-chat-request": "1" } : {})
-      },
-      body: body !== undefined ? JSON.stringify(body) : null
-    });
+    return await httpRequest<T>(method, path, body, signal);
   } catch (error) {
-    if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
-    if (method === "GET") {
-      markOffline();
-      try { return await offlineRequest(path) as T; } catch { /* Preserve the request error when no snapshot is available. */ }
+    if (signal.aborted) throw error;
+    if (method === "GET" && error instanceof ApiRequestError) {
+      if ([502, 503, 504].includes(error.status)) { markOffline(); return offline(); }
+      if (error.status === 0) {
+        markOffline();
+        try { return await offline(); } catch { /* Preserve the network error when no snapshot exists. */ }
+      }
     }
-    throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : "网络请求失败");
+    throw error;
   }
-  if (method === "GET" && [502, 503, 504].includes(response.status)) { markOffline(); return await offlineRequest(path) as T; }
-  if (response.status === 401) {
-    const text = await response.text();
-    let serverMessage = "请输入访问密码";
-    let serverCode = "authentication_required";
-    try {
-      const parsed = JSON.parse(text) as { error?: { code?: string; message?: string } };
-      serverCode = parsed.error?.code ?? serverCode;
-      serverMessage = parsed.error?.message ?? serverMessage;
-    } catch {
-      /* keep defaults */
-    }
-    // Only a missing/expired session invalidates global auth state. Other 401s
-    // (e.g. a wrong password on the login form) stay local to the caller.
-    if (serverCode === "authentication_required") emitAuthRequired();
-    throw new ApiRequestError(401, serverCode, serverMessage);
-  }
-  if (response.status === 204) {
-    if (deleting && conversationId) markConversationsDeleted([conversationId], true);
-    return undefined as T;
-  }
-  const text = await response.text();
-  let data: unknown = undefined;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      throw new ApiRequestError(response.status, "invalid_response", "服务端返回了无法解析的响应");
-    }
-  }
-  if (!response.ok) {
-    const error = (data as { error?: { code?: string; message?: string; details?: unknown } } | undefined)?.error;
-    if (response.status === 404 && error?.code === "conversation_not_found") {
-      if (conversationId) markConversationsDeleted([conversationId]);
-      else window.dispatchEvent(new CustomEvent("llm-chat:conversation-missing", { detail: { path } }));
-    }
-    throw new ApiRequestError(
-      response.status,
-      error?.code ?? "request_failed",
-      error?.message ?? `请求失败（HTTP ${response.status}）`,
-      error?.details
-    );
-  }
-  if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
-  return data as T;
 }
 
 async function uploadFile(file: File): Promise<FileAssetDto> {
   if (isOffline()) throw new ApiRequestError(0, "offline_readonly", "当前离线，无法上传附件");
-  const response = await fetch("/api/files", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "content-type": "application/octet-stream",
-      "x-llm-chat-request": "1",
-      "x-file-name": encodeURIComponent(file.name || "file"),
-      "x-file-type": file.type || "application/octet-stream"
-    },
-    body: file
-  });
-  if (response.status === 401) emitAuthRequired();
-  const data = await response.json() as FileAssetDto | { error?: { code?: string; message?: string } };
-  if (!response.ok) {
-    const error = (data as { error?: { code?: string; message?: string } }).error;
-    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? "文件上传失败");
-  }
-  return data as FileAssetDto;
+  return uploadFileHttp(file);
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>("GET", path),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
-  put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
-  patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
-  delete: <T>(path: string) => request<T>("DELETE", path)
+  get: <T>(path: string, context?: RequestContext) => request<T>("GET", path, undefined, context),
+  post: <T>(path: string, body?: unknown, context?: RequestContext) => request<T>("POST", path, body, context),
+  put: <T>(path: string, body?: unknown, context?: RequestContext) => request<T>("PUT", path, body, context),
+  patch: <T>(path: string, body?: unknown, context?: RequestContext) => request<T>("PATCH", path, body, context),
+  delete: <T>(path: string, context?: RequestContext) => request<T>("DELETE", path, undefined, context)
 };
 
 export interface BootstrapDto {
@@ -237,12 +160,12 @@ export interface McpTestResult {
 export const endpoints = {
   serviceSettings: () => api.get<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services"),
   updateServiceSettings: (input: import("@llm-chat/contracts").ServiceSettingsInput) => api.patch<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services", input),
-  queueState: (id: string) => api.get<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue`),
-  resumeQueue: (id: string) => api.post<{ ok: true }>(`/api/conversations/${id}/queue/resume`, {}),
-  queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`),
-  enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode }),
+  queueState: (id: string) => api.get<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue`, { conversationId: id }),
+  resumeQueue: (id: string) => api.post<{ ok: true }>(`/api/conversations/${id}/queue/resume`, {}, { conversationId: id }),
+  queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`, { conversationId: id }),
+  enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode }, { conversationId: id }),
   searchConversations: (query: string) => api.get<Array<{ conversationId: string; title: string; snippet: string; updatedAt: number }>>(`/api/conversations/search?query=${encodeURIComponent(query)}`),
-  deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`),
+  deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`, { conversationId: id }),
   login: (password: string) => api.post<{ ok: true }>("/api/auth/login", { password }),
   logout: () => api.post<undefined>("/api/auth/logout"),
   changePassword: (password: string) =>
@@ -345,31 +268,31 @@ export const endpoints = {
     executionOverrides?: ConversationExecutionOverrides;
     workspacePath?: string | null;
   }) => api.post<ConversationStartedDto>("/api/conversations/start", input),
-  conversation: (id: string) => api.get<ConversationDto>(`/api/conversations/${id}`),
+  conversation: (id: string) => api.get<ConversationDto>(`/api/conversations/${id}`, { conversationId: id }),
   updateConversation: (id: string, patch: Record<string, unknown>) =>
-    api.patch<ConversationDto>(`/api/conversations/${id}`, patch),
+    api.patch<ConversationDto>(`/api/conversations/${id}`, patch, { conversationId: id }),
   selectConversationBranch: (id: string, branchId: string) =>
-    api.patch<{ activeBranchId: string }>(`/api/conversations/${id}/active-branch`, { branchId }),
+    api.patch<{ activeBranchId: string }>(`/api/conversations/${id}/active-branch`, { branchId }, { conversationId: id }),
   conversationRoleplayState: (id: string) =>
-    api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`),
+    api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, { conversationId: id }),
   updateConversationRoleplayState: (id: string, patch: ConversationRoleplayStatePatch) =>
-    api.patch<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, patch),
+    api.patch<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, patch, { conversationId: id }),
   executeRoleplayScript: (id: string, input: { script?: string; quickReplyId?: string; trigger?: "new_chat" | "before_send" | "after_reply" | "lore_activated"; draft?: string }) =>
-    api.post<RoleplayScriptExecutionDto>(`/api/conversations/${id}/roleplay-scripts/execute`, input),
+    api.post<RoleplayScriptExecutionDto>(`/api/conversations/${id}/roleplay-scripts/execute`, input, { conversationId: id }),
   roleplayScriptAudit: (id: string) =>
-    api.get<Array<Record<string, unknown>>>(`/api/conversations/${id}/roleplay-scripts/audit`),
-  deleteConversation: (id: string) => api.delete<undefined>(`/api/conversations/${id}`),
+    api.get<Array<Record<string, unknown>>>(`/api/conversations/${id}/roleplay-scripts/audit`, { conversationId: id }),
+  deleteConversation: (id: string) => api.delete<undefined>(`/api/conversations/${id}`, { conversationId: id, deletesConversation: true }),
   forkConversation: (id: string, input: ForkConversationInput) =>
-    api.post<ConversationForkDto>(`/api/conversations/${id}/forks`, input),
-  contextSummary: (id: string) => api.get<ContextSummaryDto | null>(`/api/conversations/${id}/context/compact`),
-  compactContext: (id: string) => api.post<ContextSummaryDto>(`/api/conversations/${id}/context/compact`, {}),
-  messages: (conversationId: string) => api.get<MessageDto[]>(`/api/conversations/${conversationId}/messages`),
-  imageGenerations: (conversationId: string) => api.get<ImageGenerationJobDto[]>(`/api/conversations/${conversationId}/image-generations`),
+    api.post<ConversationForkDto>(`/api/conversations/${id}/forks`, input, { conversationId: id }),
+  contextSummary: (id: string) => api.get<ContextSummaryDto | null>(`/api/conversations/${id}/context/compact`, { conversationId: id }),
+  compactContext: (id: string) => api.post<ContextSummaryDto>(`/api/conversations/${id}/context/compact`, {}, { conversationId: id }),
+  messages: (conversationId: string) => api.get<MessageDto[]>(`/api/conversations/${conversationId}/messages`, { conversationId }),
+  imageGenerations: (conversationId: string) => api.get<ImageGenerationJobDto[]>(`/api/conversations/${conversationId}/image-generations`, { conversationId }),
   startImageGeneration: (conversationId: string, input: ImageGenerationInput) =>
-    api.post<ImageGenerationJobDto>(`/api/conversations/${conversationId}/image-generations`, input),
-  imageGeneration: (id: string) => api.get<ImageGenerationJobDto>(`/api/image-generations/${id}`),
-  cancelImageGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/cancel`, {}),
-  retryImageGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/retry`, {}),
+    api.post<ImageGenerationJobDto>(`/api/conversations/${conversationId}/image-generations`, input, { conversationId }),
+  imageGeneration: (conversationId: string, id: string) => api.get<ImageGenerationJobDto>(`/api/image-generations/${id}`, { conversationId }),
+  cancelImageGeneration: (conversationId: string, id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/cancel`, {}, { conversationId }),
+  retryImageGeneration: (conversationId: string, id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/retry`, {}, { conversationId }),
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
   uploadFile,
@@ -377,18 +300,18 @@ export const endpoints = {
     api.post<GenerationCreatedDto>(`/api/conversations/${conversationId}/messages`, {
       text,
       ...(assetIds.length ? { assetIds } : {})
-    }),
-  retryGeneration: (messageId: string) => api.post<GenerationCreatedDto>(`/api/messages/${messageId}/generations`, {}),
-  selectGeneration: (messageId: string, generationId: string) =>
-    api.patch<{ ok: true }>(`/api/messages/${messageId}/active-generation`, { generationId }),
-  cancelGeneration: (generationId: string) =>
-    api.post<{ ok: boolean; status: GenerationDto["status"] | "stopping" }>(`/api/generations/${generationId}/cancel`),
-  generation: (id: string) => api.get<GenerationDto>(`/api/generations/${id}`),
-  resolveToolCall: (toolCallId: string, approved: boolean, reason?: string) =>
+    }, { conversationId }),
+  retryGeneration: (conversationId: string, messageId: string) => api.post<GenerationCreatedDto>(`/api/messages/${messageId}/generations`, {}, { conversationId }),
+  selectGeneration: (conversationId: string, messageId: string, generationId: string) =>
+    api.patch<{ ok: true }>(`/api/messages/${messageId}/active-generation`, { generationId }, { conversationId }),
+  cancelGeneration: (conversationId: string, generationId: string) =>
+    api.post<{ ok: boolean; status: GenerationDto["status"] | "stopping" }>(`/api/generations/${generationId}/cancel`, undefined, { conversationId }),
+  generation: (conversationId: string, id: string) => api.get<GenerationDto>(`/api/generations/${id}`, { conversationId }),
+  resolveToolCall: (conversationId: string, toolCallId: string, approved: boolean, reason?: string) =>
     api.post<{ toolCall: unknown; generationId: string; resumed: boolean }>(
       `/api/tool-calls/${toolCallId}/approval`,
       reason ? { approved, reason } : { approved }
-    ),
+    , { conversationId }),
 
   backgroundTasks: (conversationId?: string, scope?: "current" | "all") => {
     const params = new URLSearchParams();

@@ -507,14 +507,6 @@ window.addEventListener("llm-chat:conversation-manifest", (event) => {
   const { conversations, knownIds, currentId } = (event as CustomEvent<{ conversations: ConversationDto[]; knownIds: string[]; currentId: string | null }>).detail;
   reconcileConversations(conversations, currentId, knownIds);
 });
-window.addEventListener("llm-chat:conversation-missing", (event) => {
-  const path = (event as CustomEvent<{ path: string }>).detail.path;
-  const messageId = path.match(/^\/api\/messages\/([^/]+)/)?.[1];
-  const generationId = path.match(/^\/api\/generations\/([^/]+)/)?.[1];
-  const id = generationId ? generationOwners.get(generationId)?.conversationId
-    : Object.entries(appStore.get().messages).find(([, messages]) => messages.some((message) => message.id === messageId))?.[0];
-  if (id) markConversationsDeleted([id]);
-});
 window.addEventListener("popstate", () => {
   const id = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
   if (id && conversationDeleted(id)) replaceRoute("/");

@@ -1,3 +1,5 @@
+import { markConversationsDeleted } from "./conversation-lifecycle";
+import { preserveDeletedDraft, removeComposerDraft, swapRecoveredDraft } from "./composer-drafts";
 import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "./api";
 import { flushServerDraft, readComposerDraft, scheduleServerDraft, serializeModelSelection, writeComposerDraft, type ComposerDraft } from "./composer-drafts";
@@ -47,6 +49,26 @@ describe("tab drafts", () => {
 });
 
 describe("server draft ordering", () => {
+  it("preserves colliding drafts and cancels pending synchronization when a conversation is deleted", async () => {
+    vi.useFakeTimers();
+    const id = crypto.randomUUID();
+    const update = vi.spyOn(endpoints, "updateConversation").mockResolvedValue(makeConversation());
+    try {
+      writeComposerDraft(null, { ...draft, text: "existing new draft" });
+      writeComposerDraft(id, { ...draft, text: "deleted conversation draft" });
+      scheduleServerDraft(id, "pending network write");
+      markConversationsDeleted([id]);
+      preserveDeletedDraft(id);
+      removeComposerDraft(id);
+      await vi.advanceTimersByTimeAsync(1000);
+      await flushServerDraft(id);
+      expect(update).not.toHaveBeenCalled();
+      expect(readComposerDraft(id)).toBeNull();
+      expect(readComposerDraft(null)?.text).toBe("deleted conversation draft");
+      expect(swapRecoveredDraft()?.text).toBe("existing new draft");
+    } finally { vi.useRealTimers(); }
+  });
+
   it("coalesces typing, waits for in-flight writes, then clears in order", async () => {
     let finish!: () => void;
     const first = new Promise<void>((resolve) => { finish = resolve; });
