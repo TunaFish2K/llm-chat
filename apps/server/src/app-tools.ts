@@ -1,3 +1,4 @@
+import type { ConversationService } from "./conversations";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
 import {
@@ -21,7 +22,7 @@ import type { TaskManager } from "./background-tasks";
 import { BalanceService } from "./balance";
 import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
 import type { Store } from "./database";
-import { StoreError } from "./database";
+import { StoreError } from "./errors";
 import type { EventHub } from "./events";
 import { sniffImage, type ImageService } from "./images";
 import { mcpManager } from "./mcp";
@@ -39,6 +40,7 @@ const READ_ACTIONS = new Set(["list", "get", "test", "balance", "get_agent", "ge
 
 export interface AppToolDependencies {
   store: Store;
+  conversations: Pick<ConversationService, "fork">;
   tasks: TaskManager;
   plugins: PluginManager;
   skills: SkillManager;
@@ -56,8 +58,8 @@ export class AppTools {
     return [
       this.tool("app_agents", "Agent 管理", "List, inspect, create, update, import, export, set avatar, or delete llm-chat Agents. Character-card sources may be a current-conversation attachment, public URL, or selected workspace file.",
         ["list", "get", "create", "update", "import", "export", "set_avatar", "remove_avatar", "delete"], (input, signal, context) => this.agents(input, signal, context)),
-      this.tool("app_conversations", "会话管理", "List, inspect, create, update, delete, fork without generation, or select an existing response version. This tool never starts model generation or context summarization.",
-        ["list", "get", "create", "update", "delete", "fork", "select_generation"], (input, _signal, context) => this.conversations(input, context)),
+      this.tool("app_conversations", "会话管理", "List, inspect, create, update, fork without generation, or select an existing response version. This tool never starts model generation or context summarization.",
+        ["list", "get", "create", "update", "fork", "select_generation"], (input) => this.conversations(input)),
       this.tool("app_settings", "应用设置", "Read or update non-secret llm-chat settings. Generation settings belong to app_agents execution, including baseSystemPrompt. Login credentials are never available.",
         ["get", "update"], (input) => this.settings(input)),
       this.tool("app_connections", "连接管理", "Manage non-secret connection fields, test a connection, query balance, or discover models. API keys and secret headers cannot be read or written.",
@@ -165,7 +167,7 @@ export class AppTools {
     throw invalidAction(action);
   }
 
-  private async conversations(input: JsonObject, context?: ToolExecutionContext): Promise<string> {
+  private async conversations(input: JsonObject): Promise<string> {
     const action = string(input, "action");
     if (action === "list") return json(this.deps.store.listConversations());
     if (action === "get") return json({
@@ -190,23 +192,12 @@ export class AppTools {
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
       return this.changed("conversations", conversation, conversation.id);
     }
-    if (action === "delete") {
-      const target = id(input);
-      if (context?.conversationId === target) throw new StoreError("conversation_busy", "不能从当前生成删除当前会话");
-      if (this.deps.store.isConversationBusy(target) || this.deps.tasks.hasNonterminalForConversation(target)) {
-        throw new StoreError("conversation_busy", "会话仍有生成或后台任务");
-      }
-      if (!this.deps.store.deleteConversation(target)) throw new StoreError("conversation_not_found", "会话不存在");
-      await this.deps.files.scheduleAttachmentWorkspaceCleanup(target);
-      return this.changed("conversations", { success: true }, target);
-    }
     if (action === "fork") {
       const target = id(input);
-      const fork = this.deps.store.forkConversation(target, {
+      const fork = await this.deps.conversations.fork(target, {
         mode: "continue",
         throughMessageId: nullableString(input.through_message_id)
       });
-      await this.deps.files.cloneAttachmentWorkspace(target, fork.conversation.id);
       return this.changed("conversations", fork, fork.conversation.id);
     }
     if (action === "select_generation") {
@@ -419,10 +410,7 @@ export class AppTools {
     if (source === "attachment") {
       requireContext(context);
       const assetId = string(input, "asset_id");
-      const owned = this.deps.store.sqlite.prepare(`
-        SELECT 1 FROM message_file_assets f JOIN messages m ON m.id = f.message_id
-        WHERE f.asset_id = ? AND m.conversation_id = ? LIMIT 1
-      `).get(assetId, context!.conversationId);
+      const owned = this.deps.store.conversationHasFileAsset(context!.conversationId, assetId);
       if (!owned) throw new StoreError("file_asset_not_found", "当前会话没有该附件");
       const loaded = await this.deps.files.readFileAsset(assetId);
       return { bytes: loaded.bytes, fileName: loaded.asset.fileName };

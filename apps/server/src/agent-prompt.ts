@@ -1,6 +1,6 @@
 import type { CharacterBookEntry, RoleplayPromptBlock } from "@llm-chat/contracts";
 import type { ProviderMessage } from "@llm-chat/providers";
-import type { AgentSnapshot, ContextMessageRecord } from "./database";
+import type { AgentSnapshot, ContextMessageRecord } from "./generation-types";
 import { substituteCardPlaceholders } from "./database";
 import { selectedRoleplayPreset } from "./roleplay";
 import { renderRoleplayMacros } from "./roleplay-macros";

@@ -22,6 +22,17 @@ second server using the directory fails. The offline authentication reset CLI us
 There is one replica per data directory. An update or restart must stop the old process and wait for its exit before
 starting the next process; a different port does not make overlapping access safe.
 
+### Explicit startup recovery
+
+Opening a Store performs database initialization and schema migrations. Application startup then explicitly runs
+persisted-work recovery before image jobs, background managers, or the message queue can resume work. Recovery
+interrupts unfinished foreground generations, completes their missing tool results, and interrupts stale background
+tasks. A stored process is terminated only when its recorded start identity matches the live process. Waiting
+approvals remain resumable, and image jobs retain their own manager's recovery behavior.
+
+Opening a Store for maintenance, including the offline password reset command, does not run task recovery.
+Maintenance commands still acquire the data-directory lock and require the server to be stopped.
+
 ### Immutable code and the Web artifact
 
 Production serves the built Web artifact by default (`serveWeb: true`). Startup requires

@@ -1,5 +1,5 @@
 import type { ProviderRequestContext } from "@llm-chat/providers";
-import type { GenerationRecord } from "./database";
+import type { GenerationRecord } from "./generation-types";
 
 const CLIENT_ID = "llm-chat";
 const USER_AGENT = "llm-chat/0.1.0";

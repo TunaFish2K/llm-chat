@@ -1,5 +1,5 @@
 import type { AgentRoleplayConfig, ConversationRoleplayState, ConversationRoleplayStatePatch } from "@llm-chat/contracts";
-import { StoreError } from "./database";
+import { StoreError } from "./errors";
 
 export interface StscriptResult {
   draft: string;

@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import type { PluginDto, PluginManifest } from "@llm-chat/contracts";
 import { pluginManifestSchema } from "@llm-chat/contracts";
 import Ajv from "ajv";
-import type { GenerationRecord, Store } from "./database";
+import type { Store } from "./database";
+import type { GenerationRecord } from "./generation-types";
 import type { EventHub } from "./events";
 import type { ServerTool } from "./tools";
 

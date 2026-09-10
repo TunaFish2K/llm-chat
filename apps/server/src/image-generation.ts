@@ -7,7 +7,8 @@ import {
   type ProviderConnection,
   type ProviderImage
 } from "@llm-chat/providers";
-import { Store, StoreError } from "./database";
+import { Store } from "./database";
+import { StoreError } from "./errors";
 import { EventHub } from "./events";
 import { ImageService } from "./images";
 import { ServiceSettings } from "./service-settings";

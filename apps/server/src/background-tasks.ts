@@ -5,7 +5,8 @@ import { appendFile, mkdir, readFile, readdir, rm, stat } from "node:fs/promises
 import { resolve } from "node:path";
 import type { BackgroundTaskDto, BackgroundTaskEventDto } from "@llm-chat/contracts";
 import * as pty from "node-pty";
-import type { AgentSnapshot, Store } from "./database";
+import type { Store } from "./database";
+import type { AgentSnapshot } from "./generation-types";
 import type { EventHub } from "./events";
 import { terminalScreen } from "./terminal-screen";
 

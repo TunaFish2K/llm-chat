@@ -10,7 +10,9 @@ import {
   type ProviderMessage
 } from "@llm-chat/providers";
 import { buildContext, ContextError, type BuiltContext } from "./context";
-import { StoreError, type GenerationRecord, type Store } from "./database";
+import type { Store } from "./database";
+import type { GenerationRecord } from "./generation-types";
+import { StoreError } from "./errors";
 import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
 import type { PreparedImages } from "./vision";

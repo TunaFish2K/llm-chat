@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { ServiceSettings, migrateServiceSettings } from "./service-settings";
+import { ServiceSettings } from "./service-settings";
+import { migrateServiceSettings } from "./service-settings-migration";
 import { buildServerTools } from "./tools";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 
@@ -45,10 +46,10 @@ it("deduplicates legacy service credentials without overwriting subsequent globa
   store.updateAgent(agent.id, { card: agent.card, execution: { ...agent.execution, search: { provider: "tavily", baseUrl: "" } }, userProfile: agent.userProfile });
   store.updateAgentSearchSecret(agent.id, "tavily", "legacy-key");
   store.sqlite.exec("DELETE FROM global_search_engines");
-  migrateServiceSettings(store);
+  migrateServiceSettings(store.sqlite);
   const services = new ServiceSettings(store);
   expect(services.engines().find((item) => item.provider === "tavily")).toMatchObject({ available: true, apiKey: "legacy-key" });
-  const before = services.get(); migrateServiceSettings(store); expect(services.get()).toEqual(before);
+  const before = services.get(); migrateServiceSettings(store.sqlite); expect(services.get()).toEqual(before);
   expect(() => services.update({ searchEngines: [before.searchEngines[0]!, before.searchEngines[0]!] })).toThrow("不能重复");
   expect(services.get()).toEqual(before);
 });
@@ -58,7 +59,7 @@ it("keeps a selected URL when only the other provider has a stored secret", () =
   store.updateAgent(agent.id, { card: agent.card, execution: { ...agent.execution, search: { provider: "searxng", baseUrl: "https://search.test" } }, userProfile: agent.userProfile });
   store.updateAgentSearchSecret(agent.id, "tavily", "unused-secret");
   store.sqlite.exec("DELETE FROM global_search_engines");
-  migrateServiceSettings(store);
+  migrateServiceSettings(store.sqlite);
   const engines = new ServiceSettings(store).engines();
   expect(engines.find((item) => item.provider === "searxng")).toMatchObject({ available: true, baseUrl: "https://search.test" });
   expect(engines.find((item) => item.provider === "tavily")).toMatchObject({ enabled: false, apiKey: "unused-secret" });
