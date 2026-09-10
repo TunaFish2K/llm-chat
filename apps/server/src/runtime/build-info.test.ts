@@ -24,6 +24,7 @@ it("uses a stable source fingerprint without Git and ignores generated files", (
   mkdirSync(join(root, "apps/server/dist"));
   writeFileSync(join(root, "apps/server/dist/index.js"), "built");
   writeFileSync(join(root, "apps/server/src/index.test.ts"), "test");
+  writeFileSync(join(root, "apps/server/tsup.config.bundled_123.mjs"), "temporary compiled config");
   expect(resolveBuildId(root)).toBe(first);
   writeFileSync(join(root, "pnpm-lock.yaml"), "changed dependencies");
   expect(resolveBuildId(root)).not.toBe(first);
@@ -44,6 +45,8 @@ it("identifies clean checkouts, dirty inputs and exported source archives", () =
   writeFileSync(join(root, "BUILD_REVISION"), "$Format:%H$\n");
   git("add", "."); git("commit", "-m", "fixture");
   const revision = git("rev-parse", "HEAD").slice(0, 12);
+  expect(resolveBuildId(root)).toBe(revision);
+  writeFileSync(join(root, "apps/server/tsup.config.bundled_456.mjs"), "temporary compiled config");
   expect(resolveBuildId(root)).toBe(revision);
   const archive = execFileSync("git", ["-C", root, "archive", "HEAD"]);
   const exported = fixture();

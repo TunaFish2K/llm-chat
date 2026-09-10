@@ -11,6 +11,7 @@ function isBuildInput(path: string): boolean {
   const parts = path.split("/");
   return ["apps", "packages", "scripts"].includes(parts[0]!)
     && !parts.some((part) => EXCLUDED_DIRS.has(part) || part.startsWith("."))
+    && !/\.bundled_[^/]+\.[cm]js$/.test(path)
     && !/\.(?:test|test-suite|spec)\.[^/]+$|test-helpers?/.test(path)
     && (path.startsWith("apps/web/public/") || /\.(?:[cm]?[jt]sx?|json|ya?ml|html|css|svg|png|ico|woff2?|webmanifest)$/.test(path));
 }
