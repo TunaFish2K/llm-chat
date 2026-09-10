@@ -10,7 +10,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { imageGenerationInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
 import type { ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
-import type { AgentSnapshot } from "./database";
+import type { AgentSnapshot } from "./generation-types";
 import type { TaskManager } from "./background-tasks";
 import type { ImageService } from "./images";
 import type { ImageGenerationManager } from "./image-generation";

@@ -6,7 +6,7 @@ import { isIP } from "node:net";
 import { basename, isAbsolute, resolve, sep } from "node:path";
 import type { FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
 import type { FileAssetRecord, Store } from "./database";
-import { StoreError } from "./database";
+import { StoreError } from "./errors";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_BYTES = 32 * 1024 * 1024;

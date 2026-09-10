@@ -17,7 +17,7 @@ import type {
   CodexTurnInput
 } from "@llm-chat/contracts";
 import type { Store } from "./database";
-import { StoreError } from "./database";
+import { StoreError } from "./errors";
 import type { EventHub } from "./events";
 
 const execFileAsync = promisify(execFile);

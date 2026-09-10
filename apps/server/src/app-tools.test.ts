@@ -1,3 +1,6 @@
+import { GenerationRunner } from "./generations";
+import { ConversationService } from "./conversations";
+import { ImageGenerationManager } from "./image-generation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CharacterCardV2 } from "@llm-chat/contracts";
 import { AppTools } from "./app-tools";
@@ -18,6 +21,39 @@ const ONE_PIXEL_PNG = Buffer.from(
 afterEach(cleanupStores);
 
 describe("application management tools", () => {
+  it.each(["approved", "auto"] as const)("does not advertise deletion and rejects direct and %s legacy calls", async (approvalState) => {
+    const { store, tools } = await setup();
+    seedModel(store);
+    const target = store.createConversation({ systemPrompt: "" });
+    const caller = store.createConversation({ systemPrompt: "" });
+    const tool = tools.tools().find((item) => item.definition.name === "app_conversations")!;
+    expect(tool.definition.description).not.toMatch(/\bdelete\b/i);
+    expect(JSON.stringify(tool.definition.inputSchema)).not.toContain('"delete"');
+    await expect(tool.execute({ action: "delete", id: target.id }, new AbortController().signal))
+      .rejects.toMatchObject({ code: "app_tool_action_invalid" });
+    const generation = store.createMessageGeneration(caller.id, "old delete request");
+    const record = store.getGenerationRecord(generation.generationId)!;
+    record.agentSnapshot.execution.tools.overrides.app_conversations = true;
+    record.agentSnapshot.execution.tools.directOverrides = { ...record.agentSnapshot.execution.tools.directOverrides, app_conversations: true };
+    store.updateGenerationExtensionSnapshot(generation.generationId, record.agentSnapshot);
+    store.upsertToolCall(generation.generationId, { id: "legacy-delete", name: "app_conversations",
+      arguments: JSON.stringify({ action: "delete", id: target.id }) }, 0, 0, true);
+    store.setGenerationWaitingApproval(generation.generationId);
+    store.updateToolCall("legacy-delete", { approvalState });
+    const runner = new GenerationRunner(store, {
+      buildContext: async () => ({ systemPrompt: "", messages: [], metadata: { policy: "full", omittedMessages: 0, estimatedInputTokens: 1, summaryUsed: false } }),
+      memoryPrompt: () => "",
+      buildTools: async () => tools.tools(),
+      stream: async function* () { yield { type: "complete", stopReason: "stop" }; }
+    });
+    try {
+      runner.start(generation.generationId);
+      await vi.waitFor(() => expect(store.getToolCall("legacy-delete")).toMatchObject({ approvalState: "failed" }));
+      expect(store.getToolCall("legacy-delete")?.error).toContain("delete");
+      expect(store.getConversation(target.id)).toBeDefined();
+    } finally { await runner.close(); }
+  });
+
   it("manages Agent-scoped roleplay through a restricted audited tool", async () => {
     const { store, tools } = await setup();
     const agent = store.getAgent(store.getSettings().defaultAgentId)!;
@@ -163,11 +199,11 @@ describe("application management tools", () => {
     await expect(invoke("app_conversations", { action: "update", id: missing, input: { title: "missing" } }))
       .rejects.toMatchObject({ code: "conversation_not_found" });
     await expect(invoke("app_conversations", { action: "delete", id: conversation.id }, context))
-      .rejects.toMatchObject({ code: "conversation_busy" });
+      .rejects.toMatchObject({ code: "app_tool_action_invalid" });
     await expect(invoke("app_conversations", { action: "delete", id: conversation.id }))
-      .rejects.toMatchObject({ code: "conversation_busy" });
+      .rejects.toMatchObject({ code: "app_tool_action_invalid" });
     await expect(invoke("app_conversations", { action: "delete", id: missing }))
-      .rejects.toMatchObject({ code: "conversation_not_found" });
+      .rejects.toMatchObject({ code: "app_tool_action_invalid" });
     await expect(invoke("app_conversations", {
       action: "select_generation", message_id: missing, generation_id: missing
     })).rejects.toMatchObject({ code: "generation_not_found" });
@@ -308,7 +344,7 @@ describe("application management tools", () => {
     expect(await run("app_conversations", { action: "list" })).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: conversation.id }), expect.objectContaining({ id: fork.conversation.id })
     ]));
-    expect(await run("app_conversations", { action: "delete", id: fork.conversation.id })).toEqual({ success: true });
+    await expect(run("app_conversations", { action: "delete", id: fork.conversation.id })).rejects.toMatchObject({ code: "app_tool_action_invalid" });
 
     const mcp = await run("app_mcp_servers", {
       action: "create", input: { name: "ManagedMcp", url: "https://mcp.test", enabled: true }
@@ -334,7 +370,7 @@ describe("application management tools", () => {
       action: "update", input: { search: { baseUrl: "", apiKey: "secret" } }
     })).rejects.toMatchObject({ code: "secret_field_forbidden" });
 
-    expect(await run("app_conversations", { action: "delete", id: conversation.id })).toEqual({ success: true });
+    await expect(run("app_conversations", { action: "delete", id: conversation.id })).rejects.toMatchObject({ code: "app_tool_action_invalid" });
     expect(await run("app_agents", { action: "delete", id: agent.id })).toEqual({ success: true });
     expect(await run("app_models", { action: "delete", id: model.id })).toEqual({ success: true });
     expect(await run("app_connections", { action: "delete", id: connection.id })).toEqual({ success: true });
@@ -349,6 +385,7 @@ async function setup() {
   const tasks = new TaskManager(store, events);
   const tools = new AppTools({
     store,
+    conversations: new ConversationService({ store, tasks, files, events, imageJobs: new ImageGenerationManager(store, files, events), startGeneration: () => { throw new Error("Management tools cannot start generations"); } }),
     tasks,
     plugins: new PluginManager(store, events),
     skills: new SkillManager(store, events, { discoveryRoot: `${store.dataDir}/agent-skills` }),

@@ -1,10 +1,12 @@
+import { recoverInterruptedWork } from "./runtime/startup-recovery";
 import { updateDefaultAgentExecution } from "./test-helpers";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { MIGRATION_V1, resolveManualThinkingBudget, Store } from "./database";
+import { MIGRATION_V1, Store } from "./database";
+import { resolveManualThinkingBudget } from "./generation-policy";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 import { appSettingsUpdateSchema } from "@llm-chat/contracts";
 import { defaultRoleplayConfig } from "./roleplay";
@@ -1044,6 +1046,7 @@ describe("Store", () => {
     const path = String((store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file);
     store.close();
     const reopened = new Store(path);
+    recoverInterruptedWork(reopened.sqlite);
     expect(reopened.getGeneration(queued.generationId)?.status).toBe("interrupted");
     expect(reopened.getGeneration(queued.generationId)?.completedAt).not.toBeNull();
     reopened.sqlite.exec("PRAGMA user_version = 999");
@@ -1107,6 +1110,7 @@ describe("Store", () => {
     store.close();
 
     const reopened = new Store(path);
+    recoverInterruptedWork(reopened.sqlite);
     expect(reopened.getGeneration(active.generationId)?.status).toBe("interrupted");
     expect(reopened.listToolCalls(active.generationId)).toEqual([
       expect.objectContaining({ id: "running-call", approvalState: "failed", error: expect.stringContaining("interrupted") }),

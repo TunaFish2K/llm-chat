@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_AGENT_SYSTEM_PROMPT, Store } from "./database";
+import { Store } from "./database";
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
 import { compileAgentPrompt } from "./agent-prompt";
 import { exportCharacterCardWithAssets, importCharacterCard } from "./character-card";
 import { ImageService } from "./images";

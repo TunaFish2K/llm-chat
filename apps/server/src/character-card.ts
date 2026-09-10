@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { characterCardV2Schema } from "@llm-chat/contracts";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import type { Store } from "./database";
-import { StoreError } from "./database";
+import { StoreError } from "./errors";
 import type { ImageService } from "./images";
 import { defaultRoleplayConfig } from "./roleplay";
 

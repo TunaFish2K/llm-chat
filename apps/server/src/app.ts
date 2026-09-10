@@ -1,3 +1,6 @@
+import { ConversationService } from "./conversations";
+import { assertImageConfiguration } from "./image-configuration";
+import { recoverInterruptedWork } from "./runtime/startup-recovery";
 import { existsSync } from "node:fs";
 import { dirname, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,7 +46,8 @@ import { adapterFor, ProviderError } from "@llm-chat/providers";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { offlineManifest, offlineSourceId } from "./offline-history";
-import { Store, StoreError } from "./database";
+import { Store } from "./database";
+import { StoreError } from "./errors";
 import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
 import { GenerationRunner } from "./generations";
 import { TaskManager } from "./background-tasks";
@@ -121,6 +125,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return payload;
   });
   const store = new Store(options.dataFile);
+  recoverInterruptedWork(store.sqlite);
   const imageService = new ImageService(store);
   await imageService.initialize();
   const visionService = new VisionService(store, imageService);
@@ -141,8 +146,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const skillManager = new SkillManager(store, eventHub,
     options.skillDiscoveryRoot === undefined ? {} : { discoveryRoot: options.skillDiscoveryRoot });
   await skillManager.initialize();
+  const conversations = new ConversationService({
+    store, tasks: taskManager, imageJobs, files: imageService, events: eventHub,
+    startGeneration: (id) => runner.start(id)
+  });
   const appTools = new AppTools({
-    store, tasks: taskManager, plugins: pluginManager, skills: skillManager, files: imageService,
+    store, conversations, tasks: taskManager, plugins: pluginManager, skills: skillManager, files: imageService,
     events: eventHub, balance: balanceService, catalog: modelCatalog
   });
   const browser = new BrowserFetchManager();
@@ -291,8 +300,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>("/api/offline/conversations/:id", async (request) => {
     const conversation = store.getConversation(request.params.id);
     if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
-    const row = store.sqlite.prepare("SELECT cache_revision AS revision FROM conversations WHERE id=?").get(conversation.id) as { revision: number };
-    return { sourceId: offlineSourceId(store), revision: row.revision, conversation, messages: store.listMessages(conversation.id) };
+    return { sourceId: offlineSourceId(store), revision: store.conversationCacheRevision(conversation.id), conversation, messages: store.listMessages(conversation.id) };
   });
   app.get("/api/settings", async () => store.getSettings());
   app.patch("/api/settings", async (request) => {
@@ -713,37 +721,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return store.listRoleplayScriptAudit(request.params.id);
   });
   app.delete<{ Params: { id: string } }>("/api/conversations/:id", async (request, reply) => {
-    if (store.isConversationBusy(request.params.id)) {
-      throw new StoreError("conversation_busy", "请先停止当前生成，再删除会话");
-    }
-    if (taskManager.hasNonterminalForConversation(request.params.id)) {
-      throw new StoreError("conversation_tasks_active", "请先停止该会话的后台任务，再删除会话");
-    }
-    if (imageJobs.hasActiveForConversation(request.params.id)) {
-      throw new StoreError("conversation_image_tasks_active", "请先停止该会话的图片任务，再删除会话");
-    }
-    if (!store.deleteConversation(request.params.id)) throw new StoreError("conversation_not_found", "会话不存在");
-    eventHub.emit({ type: "resource-changed", resource: "conversations", resourceId: request.params.id });
-    await imageService.scheduleAttachmentWorkspaceCleanup(request.params.id);
+    await conversations.delete(request.params.id);
     return reply.code(204).send();
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/forks", async (request, reply) => {
     const value = forkConversationSchema.parse(request.body);
-    const imageAssetIds = value.mode === "edit"
-      ? attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image")
-      : [];
-    if (value.mode === "edit" && imageAssetIds.length) {
-      const source = store.getConversation(request.params.id);
-      if (!source) throw new StoreError("conversation_not_found", "会话不存在");
-      const resolved = store.resolveGeneration(source);
-      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, imageAssetIds);
-    }
-    const result = store.forkConversation(request.params.id, value);
-    await imageService.cloneAttachmentWorkspace(request.params.id, result.conversation.id);
-    if (result.generation?.userMessageId) {
-      await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
-    }
-    if (result.generation) runner.start(result.generation.generationId);
+    const result = await conversations.fork(request.params.id, value);
     return reply.code(result.generation ? 202 : 201).send(result);
   });
   app.get<{ Params: { id: string } }>("/api/conversations/:id/context/compact", async (request) => {
@@ -1107,21 +1090,6 @@ function sendFileAsset(
 
 function isStreamEnd(status: string): boolean {
   return ["waiting-approval", "completed", "stopped", "failed", "interrupted"].includes(status);
-}
-
-function assertImageConfiguration(store: Store, agentId: string | null, modelId: string | null, assetIds: string[]): void {
-  for (const assetId of assetIds) {
-    if (!store.getImageAsset(assetId)) throw new StoreError("image_asset_not_found", "图片资产不存在");
-  }
-  const agent = agentId ? store.getAgent(agentId) : undefined;
-  if (!agent) throw new StoreError("conversation_agent_required", "请先选择可用 Agent");
-  const model = modelId ? store.getModel(modelId) : undefined;
-  if (!model?.enabled) throw new StoreError("conversation_model_required", "请先选择可用模型");
-  if (model.capabilities.imageInput) return;
-  const vision = agent.execution.visionModelId ? store.getModel(agent.execution.visionModelId) : undefined;
-  if (!vision?.enabled || !vision.capabilities.imageInput) {
-    throw new StoreError("vision_model_required", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
-  }
 }
 
 class AuthHttpError extends Error {

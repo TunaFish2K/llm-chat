@@ -5,7 +5,8 @@ import { homedir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import type { ApprovalPolicy, SkillDiscoverySummary, SkillDto } from "@llm-chat/contracts";
 import { parseDocument } from "yaml";
-import type { GenerationRecord, Store } from "./database";
+import type { Store } from "./database";
+import type { GenerationRecord } from "./generation-types";
 import type { EventHub } from "./events";
 import type { ServerTool } from "./tools";
 
@@ -85,7 +86,7 @@ Use \`app_roleplay\` for Agent-owned presets, personas, lorebooks, safe regex, q
 
 Management tools intentionally cannot reveal or write API keys and secret headers. Explain that boundary and direct the user to the connection or MCP editor for secret-bearing fields; never ask them to paste a secret into chat merely to work around the boundary.
 
-Creating and updating the requested object is allowed when the request is explicit. Before deleting a conversation, Agent, model, connection, Plugin, or another durable object, confirm the exact target unless the user already explicitly authorized that deletion. Do not start model generations or compact conversations through indirect workarounds.
+Creating and updating the requested object is allowed when the request is explicit. Conversation deletion is available only in the web interface; never delete conversations through tools or indirect workarounds. Before deleting an Agent, model, connection, Plugin, or another durable object, confirm the exact target unless the user already explicitly authorized that deletion. Do not start model generations or compact conversations through indirect workarounds.
 `
   },
   {

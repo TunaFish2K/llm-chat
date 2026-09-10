@@ -1,0 +1,58 @@
+import type { ForkConversationInput } from "@llm-chat/contracts";
+import type { Store } from "./database";
+import type { TaskManager } from "./background-tasks";
+import type { ImageGenerationManager } from "./image-generation";
+import type { ImageService } from "./images";
+import type { EventHub } from "./events";
+import { StoreError } from "./errors";
+import { assertImageConfiguration } from "./image-configuration";
+
+interface ConversationDependencies {
+  store: Store;
+  tasks: Pick<TaskManager, "hasNonterminalForConversation">;
+  imageJobs: Pick<ImageGenerationManager, "hasActiveForConversation">;
+  files: Pick<ImageService, "cloneAttachmentWorkspace" | "materializeMessageAttachments" | "scheduleAttachmentWorkspaceCleanup">;
+  events: Pick<EventHub, "emit">;
+  startGeneration: (id: string) => void;
+}
+
+export class ConversationService {
+  constructor(private readonly deps: ConversationDependencies) {}
+
+  async delete(id: string): Promise<void> {
+    const { store, tasks, imageJobs, files, events } = this.deps;
+    const ids = store.conversationDeletionIds(id);
+    if (!ids.length) throw new StoreError("conversation_not_found", "会话不存在");
+    // Do not yield between the checks and deletion: managers share this process.
+    for (const target of ids) {
+      if (store.isConversationBusy(target)) throw new StoreError("conversation_busy", "请先停止当前生成，再删除会话");
+      if (tasks.hasNonterminalForConversation(target)) throw new StoreError("conversation_tasks_active", "请先停止该会话的后台任务，再删除会话");
+      if (imageJobs.hasActiveForConversation(target)) throw new StoreError("conversation_image_tasks_active", "请先停止该会话的图片任务，再删除会话");
+    }
+    if (!store.deleteConversation(id)) throw new StoreError("conversation_not_found", "会话不存在");
+    for (const target of ids) events.emit({ type: "resource-changed", resource: "conversations", resourceId: target });
+    const cleanups = await Promise.allSettled(ids.map((target) => files.scheduleAttachmentWorkspaceCleanup(target)));
+    for (const result of cleanups) if (result.status === "rejected") throw result.reason;
+  }
+
+  async fork(id: string, input: ForkConversationInput) {
+    const { store, files } = this.deps;
+    const imageAssetIds = input.mode === "edit"
+      ? [...new Set([...(input.assetIds ?? []), ...(input.imageAssetIds ?? [])])]
+        .filter((assetId) => store.getFileAsset(assetId)?.kind === "image")
+      : [];
+    if (imageAssetIds.length) {
+      const source = store.getConversation(id);
+      if (!source) throw new StoreError("conversation_not_found", "会话不存在");
+      const resolved = store.resolveGeneration(source);
+      assertImageConfiguration(store, resolved.agent.id, resolved.model.id, imageAssetIds);
+    }
+    const result = store.forkConversation(id, input);
+    await files.cloneAttachmentWorkspace(id, result.conversation.id);
+    if (result.generation?.userMessageId) {
+      await files.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
+    }
+    if (result.generation) this.deps.startGeneration(result.generation.generationId);
+    return result;
+  }
+}

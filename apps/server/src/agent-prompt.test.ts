@@ -1,4 +1,4 @@
-import type { AgentSnapshot, ContextMessageRecord } from "./database";
+import type { AgentSnapshot, ContextMessageRecord } from "./generation-types";
 import { describe, expect, it } from "vitest";
 import { compileAgentPrompt } from "./agent-prompt";
 import { defaultRoleplayConfig } from "./roleplay";

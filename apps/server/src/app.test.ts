@@ -1,3 +1,4 @@
+import { seedModel as seedStoreModel } from "./test-helpers";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +19,29 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("rejects deleting a family with an active image job in a hidden branch", async () => {
+    const app = await testApp();
+    const store = app.store;
+    const { model, connection } = seedStoreModel(store);
+    const imageModel = store.updateModel(model.id, { imageProtocol: "openai-images", capabilities: { ...model.capabilities, imageOutput: true } })!;
+    const root = store.createConversation({ systemPrompt: "" });
+    const child = store.forkConversation(root.id, { mode: "continue", throughMessageId: null }).conversation;
+    const job = store.createImageGenerationJob({ conversationId: child.id,
+      assistantMessageId: store.createImageAssistantMessage(child.id), model: imageModel,
+      connection: store.getConnection(connection.id)!, request: {
+        modelId: model.id, prompt: "beach", operation: "generate", referenceAssetIds: [], count: 1
+      } });
+    const blocked = await app.inject({ method: "DELETE", url: `/api/conversations/${root.id}` });
+    expect(blocked.statusCode).toBe(400);
+    expect(blocked.json().error.code).toBe("conversation_image_tasks_active");
+    expect(store.getConversation(root.id)).toBeDefined();
+    expect(store.getImageGenerationJob(job.id)?.status).toBe("queued");
+    store.updateImageGenerationJob(job.id, { status: "cancelled", completedAt: Date.now() });
+    expect((await app.inject({ method: "DELETE", url: `/api/conversations/${root.id}` })).statusCode).toBe(204);
+    expect(store.getConversation(child.id)).toBeUndefined();
+    expect(store.getImageGenerationJob(job.id)).toBeUndefined();
+  });
+
   it("rejects retired global generation settings and saves Agent-owned prompts", async () => {
     const app = await testApp();
     const settings = (await app.inject({ method: "GET", url: "/api/settings" })).json();

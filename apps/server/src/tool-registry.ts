@@ -1,6 +1,7 @@
 import { builtinToolFormatters } from "./tool-presentation";
 import type { ToolCatalogItemDto } from "@llm-chat/contracts";
-import type { GenerationRecord, Store } from "./database";
+import type { Store } from "./database";
+import type { GenerationRecord } from "./generation-types";
 import type { TaskManager } from "./background-tasks";
 import type { PluginManager } from "./plugins";
 import type { SkillManager } from "./skills";
