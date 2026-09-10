@@ -14,8 +14,6 @@ export async function api(request, baseUrl, method, path, body) {
   const response = await request.fetch(`${baseUrl}${path}`, {
     method,
     headers: {
-      // Playwright APIRequestContext does not decode zstd in every browser project.
-      "accept-encoding": "gzip, deflate",
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
       ...(method !== "GET" ? { "x-llm-chat-request": "1" } : {})
     },

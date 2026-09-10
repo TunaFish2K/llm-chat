@@ -1,4 +1,3 @@
-import { ActionButton } from "../lib/action-feedback";
 import { useEffect, useRef, useState } from "react";
 import type { AgentInput } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
@@ -71,8 +70,7 @@ export function AgentsView() {
     setBusy(true);
     try {
       const agent = await endpoints.createAgent(defaultAgentInput(newName.trim()));
-      appStore.set((state) => ({ agents: [...state.agents.filter((item) => item.id !== agent.id), agent] }));
-      void refreshAgents().catch(toastError);
+      await refreshAgents();
       setCreating(false);
       setNewName("");
       navigate(routes.agents(agent.id));
@@ -88,8 +86,7 @@ export function AgentsView() {
     try {
       const dataBase64 = await fileToBase64(file);
       const agent = await endpoints.importAgent(file.name, dataBase64);
-      appStore.set((state) => ({ agents: [...state.agents.filter((item) => item.id !== agent.id), agent] }));
-      void refreshAgents().catch(toastError);
+      await refreshAgents();
       toast("success", `已导入 ${agent.name}`);
       navigate(routes.agents(agent.id));
     } catch (error) {
@@ -104,8 +101,7 @@ export function AgentsView() {
     setBusy(true);
     try {
       await endpoints.deleteAgent(deleting);
-      appStore.set((state) => ({ agents: state.agents.filter((item) => item.id !== deleting) }));
-      void refreshAgents().catch(toastError);
+      await refreshAgents();
       setDeleting(null);
       toast("success", "已删除 Agent");
     } catch (error) {
@@ -132,10 +128,10 @@ export function AgentsView() {
               if (file) void importCard(file);
             }}
           />
-          <ActionButton className="btn" onClick={() => fileInput.current?.click()} disabled={busy}>
+          <button className="btn" onClick={() => fileInput.current?.click()} disabled={busy}>
             导入角色卡
-          </ActionButton>
-          <ActionButton
+          </button>
+          <button
             className="btn primary"
             onClick={() => {
               setNewName("");
@@ -143,7 +139,7 @@ export function AgentsView() {
             }}
           >
             新建 Agent
-          </ActionButton>
+          </button>
         </div>
       </div>
       <div className="panel-scroll">
@@ -196,9 +192,9 @@ export function AgentsView() {
                     </a>
                   ) : null}
                   {!agent.protected ? (
-                    <ActionButton className="btn small danger" onClick={() => setDeleting(agent.id)}>
+                    <button className="btn small danger" onClick={() => setDeleting(agent.id)}>
                       删除
-                    </ActionButton>
+                    </button>
                   ) : null}
                 </div>
               </div>
@@ -206,8 +202,8 @@ export function AgentsView() {
           )}
           {agents.length > 0 && !filtered.length ? <p className="hint">没有匹配的 Agent。</p> : null}
           <nav className="list-pagination" aria-label="Agent 分页"><span>{filtered.length} 个 Agent · {currentPage} / {pages}</span>
-            <ActionButton className="btn small" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</ActionButton>
-            <ActionButton className="btn small" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>下一页</ActionButton></nav>
+            <button className="btn small" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</button>
+            <button className="btn small" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>下一页</button></nav>
         </div>
       </div>
       {creating ? (
@@ -216,12 +212,12 @@ export function AgentsView() {
           onClose={() => setCreating(false)}
           footer={
             <>
-              <ActionButton className="btn" onClick={() => setCreating(false)}>
+              <button className="btn" onClick={() => setCreating(false)}>
                 取消
-              </ActionButton>
-              <ActionButton className="btn primary" disabled={busy || !newName.trim()} onClick={() => create()}>
+              </button>
+              <button className="btn primary" disabled={busy || !newName.trim()} onClick={() => void create()}>
                 创建
-              </ActionButton>
+              </button>
             </>
           }
         >
@@ -247,7 +243,7 @@ export function AgentsView() {
           danger
           busy={busy}
           onClose={() => setDeleting(null)}
-          onConfirm={() => remove()}
+          onConfirm={() => void remove()}
         />
       ) : null}
     </>

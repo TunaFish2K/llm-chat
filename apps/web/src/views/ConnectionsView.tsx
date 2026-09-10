@@ -1,6 +1,4 @@
-import { saveModelEnabled } from "../lib/app-state";
-import { ActionGroup, ActionButton } from "../lib/action-feedback";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ModelBrandIcon } from "../components/chat/ModelBrandIcon";
 import { Bot, Plus } from "lucide-react";
 import type {
@@ -96,10 +94,10 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
 
   const actions = (
     <div className={embedded ? "connection-actions" : "actions"}>
-      <ActionButton className="btn primary" onClick={() => setEditingConnection("new")}>
+      <button className="btn primary" onClick={() => setEditingConnection("new")}>
         <Plus size={15} aria-hidden="true" />
         新建连接
-      </ActionButton>
+      </button>
     </div>
   );
 
@@ -126,21 +124,21 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       <span className="tag">{providerPreset(connection.providerId).label}</span>
                       <span className="tag">{connection.protocol}</span>
                     </h3>
-                    <ActionGroup actionKey={`connection:${connection.id}`} className="list-row-actions">
-                      <ActionButton className="btn small" onClick={() => { setNewModelConnection(connection.id); setEditingModel("new"); }}>手动添加模型</ActionButton>
-                      <ActionButton className="btn small" onClick={() => testConnection(connection)}>
+                    <div className="list-row-actions">
+                      <button className="btn small" onClick={() => { setNewModelConnection(connection.id); setEditingModel("new"); }}>手动添加模型</button>
+                      <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>
                         测试连接
-                      </ActionButton>
-                      <ActionButton className="btn small" onClick={() => discover(connection)}>
+                      </button>
+                      <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>
                         发现模型
-                      </ActionButton>
-                      <ActionButton className="btn small" onClick={() => setEditingConnection(connection)}>
+                      </button>
+                      <button className="btn small" onClick={() => setEditingConnection(connection)}>
                         编辑
-                      </ActionButton>
-                      <ActionButton className="btn small danger" onClick={() => setDeletingConnection(connection)}>
+                      </button>
+                      <button className="btn small danger" onClick={() => setDeletingConnection(connection)}>
                         删除
-                      </ActionButton>
-                    </ActionGroup>
+                      </button>
+                    </div>
                   </header>
                   <p className="small muted mono">{connection.baseUrl}</p>
                   <p className="small muted">
@@ -164,9 +162,9 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       ) : (
                         "未查询"
                       )}{" "}
-                      <ActionButton className="btn small ghost" onClick={() => loadBalance(connection, true)}>
+                      <button className="btn small ghost" onClick={() => void loadBalance(connection, true)}>
                         刷新
-                      </ActionButton>
+                      </button>
                     </p>
                   ) : null}
 
@@ -207,17 +205,20 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                                 hideLabel
                                 checked={model.enabled}
                                 onChange={(checked) => {
-                                  return saveModelEnabled(model, checked).catch(toastError);
+                                  endpoints
+                                    .updateModel(model.id, { enabled: checked })
+                                    .then(() => refreshConnectionsAndModels())
+                                    .catch(toastError);
                                 }}
                               />
                             </td>
                             <td className="connection-model-actions" data-label="操作">
-                              <ActionButton className="btn small" onClick={() => setEditingModel(model)}>
+                              <button className="btn small" onClick={() => setEditingModel(model)}>
                                 编辑
-                              </ActionButton>{" "}
-                              <ActionButton className="btn small danger" onClick={() => setDeletingModel(model)}>
+                              </button>{" "}
+                              <button className="btn small danger" onClick={() => setDeletingModel(model)}>
                                 删除
-                              </ActionButton>
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -253,13 +254,10 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
           onClose={() => setDeletingConnection(null)}
           onConfirm={() => {
             const target = deletingConnection;
-            return endpoints
+            setDeletingConnection(null);
+            endpoints
               .deleteConnection(target.id)
-              .then(() => {
-                setDeletingConnection(null);
-                appStore.set((state) => ({ connections: state.connections.filter((item) => item.id !== target.id), models: state.models.filter((item) => item.connectionId !== target.id) }));
-                void refreshConnectionsAndModels().catch(toastError);
-              })
+              .then(() => refreshConnectionsAndModels())
               .catch(toastError);
           }}
         />
@@ -273,13 +271,10 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
           onClose={() => setDeletingModel(null)}
           onConfirm={() => {
             const target = deletingModel;
-            return endpoints
+            setDeletingModel(null);
+            endpoints
               .deleteModel(target.id)
-              .then(() => {
-                setDeletingModel(null);
-                appStore.set((state) => ({ models: state.models.filter((item) => item.id !== target.id) }));
-                void refreshConnectionsAndModels().catch(toastError);
-              })
+              .then(() => refreshConnectionsAndModels())
               .catch(toastError);
           }}
         />
@@ -313,11 +308,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
     }
   };
 
-  const savedConnection = useRef(connection);
-  const editVersion = useRef(0);
-  useEffect(() => () => { editVersion.current++; }, []);
   const save = async () => {
-    const submittedVersion = editVersion.current;
     setBusy(true);
     setError(null);
     try {
@@ -326,7 +317,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         if (header.name.trim()) secretHeaders[header.name.trim()] = header.value;
       }
       let saved: ConnectionDto;
-      if (savedConnection.current) {
+      if (connection) {
         const patch: Partial<ConnectionInput> = {
           name: name.trim(),
           providerId,
@@ -342,11 +333,11 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
                   resultExpression: balanceExpression.trim()
                 }
               }
-            : savedConnection.current.balanceConfig
-              ? { balanceConfig: { ...savedConnection.current.balanceConfig, enabled: false } }
+            : connection.balanceConfig
+              ? { balanceConfig: { ...connection.balanceConfig, enabled: false } }
               : {})
         };
-        saved = await endpoints.updateConnection(savedConnection.current.id, patch);
+        saved = await endpoints.updateConnection(connection.id, patch);
       } else {
         const input: ConnectionInput = {
           name: name.trim(),
@@ -367,16 +358,19 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         };
         saved = await endpoints.createConnection(input);
       }
-      savedConnection.current = saved;
-      appStore.set((state) => ({ connections: [...state.connections.filter((item) => item.id !== saved.id), saved] }));
-      if (editVersion.current === submittedVersion) onClose();
-      void refreshConnectionsAndModels().catch(toastError);
+      await refreshConnectionsAndModels();
       if (providerId !== "custom" && providerId !== "stability") {
-        void endpoints.discoverModels(saved.id).then(async (result) => {
+        try {
+          const result = await endpoints.discoverModels(saved.id);
           await refreshConnectionsAndModels();
           toast("success", `连接已保存，发现 ${result.discovered} 个模型，新增 ${result.created.length} 个`);
-        }).catch((cause) => toast("error", `连接已保存，但自动发现模型失败：${cause instanceof Error ? cause.message : "请求失败"}`));
-      } else toast("success", "连接已保存");
+        } catch (cause) {
+          toast("error", `连接已保存，但自动发现模型失败：${cause instanceof Error ? cause.message : "请求失败"}`);
+        }
+      } else {
+        toast("success", "连接已保存");
+      }
+      onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败");
     } finally {
@@ -385,22 +379,22 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
   };
 
   return (
-    <Modal onEdit={() => { editVersion.current++; }}
+    <Modal
       title={connection ? `编辑连接 ${connection.name}` : "新建连接"}
       onClose={onClose}
       wide
       footer={
         <>
-          <ActionButton className="btn" onClick={onClose}>
+          <button className="btn" onClick={onClose}>
             取消
-          </ActionButton>
-          <ActionButton
+          </button>
+          <button
             className="btn primary"
             disabled={busy || !name.trim() || !baseUrl.trim() || (providerId !== "custom" && !apiKey && !connection?.hasApiKey)}
-            onClick={() => save()}
+            onClick={() => void save()}
           >
             保存
-          </ActionButton>
+          </button>
         </>
       }
     >
@@ -495,14 +489,14 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
                 setHeaders(headers.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)))
               }
             />
-            <ActionButton className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>
+            <button className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>
               移除
-            </ActionButton>
+            </button>
           </div>
         ))}
-        <ActionButton className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>
+        <button className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>
           添加请求头
-        </ActionButton>
+        </button>
       </Field>
       <label className="checkbox-row">
         <input type="checkbox" checked={balanceEnabled} onChange={(event) => setBalanceEnabled(event.target.checked)} />
@@ -579,11 +573,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const savedModel = useRef(model);
-  const editVersion = useRef(0);
-  useEffect(() => () => { editVersion.current++; }, []);
   const save = async () => {
-    const submittedVersion = editVersion.current;
     setBusy(true);
     setError(null);
     try {
@@ -609,12 +599,11 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         },
         enabled: model?.enabled ?? true
       };
-      const saved = savedModel.current ? await endpoints.updateModel(savedModel.current.id, input) : await endpoints.createModel(input);
-      savedModel.current = saved;
-      appStore.set((state) => ({ models: [...state.models.filter((item) => item.id !== saved.id), saved] }));
-      void refreshConnectionsAndModels().catch(toastError);
+      if (model) await endpoints.updateModel(model.id, input);
+      else await endpoints.createModel(input);
+      await refreshConnectionsAndModels();
       toast("success", "模型已保存");
-      if (editVersion.current === submittedVersion) onClose();
+      onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败");
     } finally {
@@ -639,27 +628,27 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
   };
 
   return (
-    <Modal onEdit={() => { editVersion.current++; }}
+    <Modal
       title={model ? `编辑模型 ${model.displayName}` : "手动添加模型"}
       onClose={onClose}
       wide
       footer={
         <>
           {model && !model.catalogManaged ? (
-            <ActionButton className="btn" disabled={busy} onClick={() => restoreCatalog()}>
+            <button className="btn" disabled={busy} onClick={() => void restoreCatalog()}>
               恢复目录托管
-            </ActionButton>
+            </button>
           ) : null}
-          <ActionButton className="btn" onClick={onClose}>
+          <button className="btn" onClick={onClose}>
             取消
-          </ActionButton>
-          <ActionButton
+          </button>
+          <button
             className="btn primary"
             disabled={busy || !modelKey.trim() || !displayName.trim() || !connectionId}
-            onClick={() => save()}
+            onClick={() => void save()}
           >
             保存
-          </ActionButton>
+          </button>
         </>
       }
     >

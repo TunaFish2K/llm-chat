@@ -18,6 +18,40 @@ afterEach(() => {
 });
 
 describe("Store", () => {
+  it.each([39, 40])("opens schema %i without losing messages or retained submission receipts", (version) => {
+    const store = createStore();
+    seedModel(store);
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const generation = store.createMessageGeneration(conversation.id, "preserve this message");
+    store.finishGeneration(generation.generationId, "completed", {});
+    expect(store.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 39 });
+    if (version === 40) {
+      store.sqlite.exec(`CREATE TABLE message_submissions (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, input_hash TEXT NOT NULL,
+        conversation_id TEXT NOT NULL, user_message_id TEXT, assistant_message_id TEXT,
+        generation_id TEXT, queued_message_id TEXT, created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_submission_message ON message_submissions(user_message_id);
+      CREATE INDEX idx_submission_conversation ON message_submissions(conversation_id);
+      CREATE INDEX idx_submission_queue ON message_submissions(queued_message_id);
+      PRAGMA user_version = 40;`);
+      store.sqlite.prepare("INSERT INTO message_submissions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run("retained-receipt", "send", "original-hash", conversation.id, generation.userMessageId!, generation.assistantMessageId, generation.generationId, null, 1);
+    }
+    const messages = store.listMessages(conversation.id);
+    const path = join(store.dataDir, "test.sqlite");
+    store.close();
+    const reopened = new Store(path);
+    try {
+      expect(reopened.listMessages(conversation.id)).toEqual(messages);
+      expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: version });
+      expect(reopened.sqlite.prepare("PRAGMA quick_check").get()).toMatchObject({ quick_check: "ok" });
+      if (version === 40) expect(reopened.sqlite.prepare("SELECT * FROM message_submissions").all()).toEqual([
+        expect.objectContaining({ id: "retained-receipt", input_hash: "original-hash", conversation_id: conversation.id, generation_id: generation.generationId })
+      ]);
+    } finally { reopened.close(); }
+  });
+
   it("merges typography patches without resetting unrelated preferences", () => {
     const store = createStore();
     store.updateSettings({ lastWorkspacePath: "/tmp/preserve-workspace", uiPreferences: { generationHaptics: false, accentColor: "#018EEE" } });
@@ -441,7 +475,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(40);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(39);
     migrated.close();
   });
 
@@ -522,7 +556,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(40);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(39);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getAgent(store.getSettings().defaultAgentId)?.execution.reasoningEffort).toBe("none");
@@ -552,7 +586,7 @@ describe("Store", () => {
 
     const migrated = new Store(path);
     expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(40);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(39);
     migrated.close();
   });
 
@@ -600,7 +634,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(40);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(39);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -636,7 +670,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(40);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(39);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -1049,7 +1083,7 @@ describe("Store", () => {
     recoverInterruptedWork(reopened.sqlite);
     expect(reopened.getGeneration(queued.generationId)?.status).toBe("interrupted");
     expect(reopened.getGeneration(queued.generationId)?.completedAt).not.toBeNull();
-    reopened.sqlite.exec("PRAGMA user_version = 999");
+    reopened.sqlite.exec("PRAGMA user_version = 41");
     reopened.close();
     expect(() => new Store(path)).toThrow("高于当前服务支持的版本");
   });
@@ -1070,7 +1104,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(40);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(39);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

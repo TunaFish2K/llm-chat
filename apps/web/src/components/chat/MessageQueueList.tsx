@@ -1,4 +1,3 @@
-import { ActionButton } from "../../lib/action-feedback";
 import { conversationDeleted } from "../../lib/conversation-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
@@ -24,9 +23,7 @@ export function useMessageQueue(conversationId?: string) {
     void reload().catch(toastError);
     const update = (event: Event) => {
       if (event instanceof CustomEvent && event.detail.conversationId !== conversationId) return;
-      if (event instanceof CustomEvent && event.detail.state) {
-        revision.current++; setItems(event.detail.state.items); setPaused(event.detail.state.paused);
-      } else void reload().catch(toastError);
+      void reload().catch(toastError);
       if (conversationId) void loadMessages(conversationId).catch(toastError);
     };
     window.addEventListener("llm-chat:message-queue", update);
@@ -54,12 +51,12 @@ export function MessageQueueList({ conversationId, items, reload, paused = false
     try { await endpoints.deleteQueuedMessage(conversationId, id); await reload(); } catch (error) { toastError(error); }
   };
   return <section className="message-queue" aria-label="待发送消息">
-    {paused ? <div className="row"><span>队列已暂停</span><ActionButton className="btn small" onClick={() => endpoints.resumeQueue(conversationId).then(reload).catch(toastError)}>继续发送</ActionButton></div> : null}
-    <header><span>待发送 · {items.length}</span><ActionButton type="button" className="icon-button" aria-label="清空待发送消息" onClick={() => remove()}><Trash2 size={15} /></ActionButton></header>
+    {paused ? <div className="row"><span>队列已暂停</span><button className="btn small" onClick={() => void endpoints.resumeQueue(conversationId).then(reload).catch(toastError)}>继续发送</button></div> : null}
+    <header><span>待发送 · {items.length}</span><button type="button" className="icon-button" aria-label="清空待发送消息" onClick={() => void remove()}><Trash2 size={15} /></button></header>
     <ol>{items.map((item) => <li key={item.id}>
       <div><p>{item.mode === "steer" ? <span className="tag accent">Steer · 下次请求</span> : null}{item.text || "附件消息"}</p>{item.attachments.length ? <small>{item.attachments.length} 个附件</small> : null}
         {item.status === "dispatching" ? <small>正在发送</small> : item.error ? <small role="alert">{item.error}</small> : null}</div>
-      <ActionButton type="button" className="icon-button" disabled={item.status === "dispatching"} aria-label={`删除待发送消息 ${item.text || "附件消息"}`} onClick={() => remove(item.id)}><X size={15} /></ActionButton>
+      <button type="button" className="icon-button" disabled={item.status === "dispatching"} aria-label={`删除待发送消息 ${item.text || "附件消息"}`} onClick={() => void remove(item.id)}><X size={15} /></button>
     </li>)}</ol>
   </section>;
 }

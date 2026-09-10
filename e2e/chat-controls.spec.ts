@@ -60,9 +60,6 @@ async function checkToolbar(page: Page) {
   }
 }
 
-test.describe("受控网络延迟", () => {
-// Requests owned by a service worker can bypass the cancellation route used to hold the response.
-test.use({ serviceWorkers: "block" });
 test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌色适配主题", async ({ page, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 60_000 });
   const fixture = await setup(request, provider.baseUrl);
@@ -152,7 +149,6 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
         .toBe(await brand.evaluate((element) => getComputedStyle(element).color));
     }
   } finally { await fixture.cleanup(); await provider.close(); }
-});
 });
 
 test("生成中排队、跨设备同步、删除与取消后继续", async ({ page, browser, request }) => {

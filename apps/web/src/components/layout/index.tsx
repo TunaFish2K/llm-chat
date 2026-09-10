@@ -1,4 +1,3 @@
-import { ActionButton } from "../../lib/action-feedback";
 /**
  * The application shell: the three-column frame, its resize affordances, the
  * mobile drawers, and the toast stack. Nothing here knows about conversations
@@ -228,7 +227,7 @@ export function MobileDrawer({
 
   return (
     <div className="mobile-drawer" data-side={side}>
-      <ActionButton type="button" className="drawer-scrim" onClick={onClose} aria-label={closeLabel} />
+      <button type="button" className="drawer-scrim" onClick={onClose} aria-label={closeLabel} />
       <div
         ref={panelRef}
         className="drawer-panel"

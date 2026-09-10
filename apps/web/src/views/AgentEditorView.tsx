@@ -1,4 +1,3 @@
-import { ActionButton } from "../lib/action-feedback";
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import type {
@@ -76,24 +75,19 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   }, [agentId]);
 
   useEffect(() => {
-    let current = true;
     const refresh = (event: Event) => {
-      const revision = editRevision.current;
-      const accept = () => current && revision === editRevision.current;
       const resource = (event as CustomEvent<{ resource?: string }>).detail?.resource;
-      if (resource === "agents" && !dirty) void endpoints.agent(agentId).then((value) => { if (accept()) setAgent(value); }).catch(toastError);
+      if (resource === "agents" && !dirty) void endpoints.agent(agentId).then(setAgent).catch(toastError);
       if (resource === "tools" || (resource === "agents" && !dirty)) {
-        void endpoints.toolCatalog(agentId).then((value) => { if (accept()) setCatalog(value); }).catch(toastError);
+        void endpoints.toolCatalog(agentId).then(setCatalog).catch(toastError);
       }
-      if (resource === "skills") void endpoints.skills().then((value) => { if (accept()) setSkills(value); }).catch(toastError);
+      if (resource === "skills") void endpoints.skills().then(setSkills).catch(toastError);
     };
     window.addEventListener("llm-chat:resource-changed", refresh);
-    return () => { current = false; window.removeEventListener("llm-chat:resource-changed", refresh); };
+    return () => window.removeEventListener("llm-chat:resource-changed", refresh);
   }, [agentId, dirty]);
 
-  const editRevision = useRef(0);
   const mutate = (fn: (draft: AgentDto) => void) => {
-    editRevision.current++;
     setAgent((current) => {
       if (!current) return current;
       const next: AgentDto = JSON.parse(JSON.stringify(current)) as AgentDto;
@@ -106,7 +100,6 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   const save = async () => {
     if (!agent) return;
     setSaving(true);
-    const revision = editRevision.current;
     try {
       const updated = await endpoints.updateAgent(agent.id, {
         card: agent.card,
@@ -114,8 +107,9 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
         userProfile: agent.userProfile,
         roleplay: agent.roleplay
       });
-      if (revision === editRevision.current) { setAgent(updated); setDirty(false); }
-      void refreshAgents().catch(toastError);
+      setAgent(updated);
+      setDirty(false);
+      await refreshAgents();
       toast("success", "已保存 Agent");
     } catch (cause) {
       toastError(cause);
@@ -149,17 +143,17 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
           {agent.protected ? <span className="tag accent" style={{ marginLeft: 8 }}>内置</span> : null}
         </h2>
         <div className="actions">
-          <ActionButton className="btn" onClick={() => navigate(routes.agents())}>
+          <button className="btn" onClick={() => navigate(routes.agents())}>
             返回列表
-          </ActionButton>
-          <ActionButton className="btn primary" disabled={!dirty || saving} onClick={() => save()}>
+          </button>
+          <button className="btn primary" disabled={!dirty || saving} onClick={() => void save()}>
             {saving ? "保存中…" : dirty ? "保存修改" : "已保存"}
-          </ActionButton>
+          </button>
         </div>
       </div>
       <div className="tabs" role="tablist">
         {TABS.map(([key, label]) => (
-          <ActionButton
+          <button
             key={key}
             role="tab"
             aria-selected={tab === key}
@@ -167,7 +161,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
             onClick={() => setTab(key)}
           >
             {label}
-          </ActionButton>
+          </button>
         ))}
       </div>
       <div className="panel-scroll">
@@ -262,13 +256,13 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
             <label>备选开场白</label>
             <span className="hint">每条可包含多行；新会话中可预览和切换。</span>
           </div>
-          <ActionButton
+          <button
             type="button"
             className="btn small"
             onClick={() => setField("alternate_greetings", [...data.alternate_greetings, ""])}
           >
             <Plus size={15} aria-hidden="true" />新增
-          </ActionButton>
+          </button>
         </div>
         {data.alternate_greetings.length === 0 ? (
           <p className="small muted">尚未添加备选开场白。</p>
@@ -279,7 +273,7 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
                 <div className="greeting-editor-item-header">
                   <span>备选 {index + 1}</span>
                   <div className="row compact">
-                    <ActionButton
+                    <button
                       type="button"
                       className="btn ghost icon"
                       title="上移"
@@ -288,8 +282,8 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
                       onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
                         itemIndex === index - 1 ? greeting : itemIndex === index ? data.alternate_greetings[index - 1] : item
                       ))}
-                    ><ArrowUp size={15} /></ActionButton>
-                    <ActionButton
+                    ><ArrowUp size={15} /></button>
+                    <button
                       type="button"
                       className="btn ghost icon"
                       title="下移"
@@ -298,14 +292,14 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
                       onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
                         itemIndex === index + 1 ? greeting : itemIndex === index ? data.alternate_greetings[index + 1] : item
                       ))}
-                    ><ArrowDown size={15} /></ActionButton>
-                    <ActionButton
+                    ><ArrowDown size={15} /></button>
+                    <button
                       type="button"
                       className="btn ghost icon danger"
                       title="删除"
                       aria-label={`删除备选开场白 ${index + 1}`}
                       onClick={() => setField("alternate_greetings", data.alternate_greetings.filter((_, itemIndex) => itemIndex !== index))}
-                    ><Trash2 size={15} /></ActionButton>
+                    ><Trash2 size={15} /></button>
                   </div>
                 </div>
                 <ExpandableTextarea
@@ -462,13 +456,13 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
             }}
           />
           <div className="row">
-            <ActionButton className="btn" onClick={() => input.current?.click()} disabled={busy}>
+            <button className="btn" onClick={() => input.current?.click()} disabled={busy}>
               上传 PNG 头像
-            </ActionButton>
+            </button>
             {agent.hasAvatar ? (
-              <ActionButton className="btn danger" onClick={() => setConfirmRemove(true)} disabled={busy}>
+              <button className="btn danger" onClick={() => setConfirmRemove(true)} disabled={busy}>
                 删除头像
-              </ActionButton>
+              </button>
             ) : null}
           </div>
           <p className="small muted">头像必须是小于 10 MiB 的 PNG。</p>
@@ -485,7 +479,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
           onConfirm={() => {
             setConfirmRemove(false);
             setBusy(true);
-            return endpoints
+            endpoints
               .deleteAgentAvatar(agent.id)
               .then(async () => {
                 const fresh = await endpoints.agent(agent.id);
@@ -813,12 +807,12 @@ function PolicySelector<T extends string>({
   return (
     <div className="policy-segmented" role="group" aria-label={label}>
       {options.map(([option, text]) => (
-        <ActionButton
+        <button
           type="button"
           key={option}
           aria-pressed={value === option}
           onClick={() => onChange(option)}
-        >{text}</ActionButton>
+        >{text}</button>
       ))}
     </div>
   );

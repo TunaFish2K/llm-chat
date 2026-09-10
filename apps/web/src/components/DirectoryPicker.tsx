@@ -1,5 +1,4 @@
-import { ActionButton } from "../lib/action-feedback";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DirectoryListingDto } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { toastError } from "../lib/app-state";
@@ -18,24 +17,19 @@ export function DirectoryPicker({
   const [error, setError] = useState<string | null>(null);
   const [newDirName, setNewDirName] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [targetPath, setTargetPath] = useState(initialPath);
-  const readVersion = useRef(0);
 
   const load = useCallback(async (path?: string) => {
-    const version = ++readVersion.current;
-    setError(null); setLoading(true); setTargetPath(path ?? initialPath);
+    setError(null);
+    setListing(null);
     try {
-      const next = await endpoints.listDirectories(path);
-      if (version === readVersion.current) setListing(next);
+      setListing(await endpoints.listDirectories(path));
     } catch (cause) {
-      if (version === readVersion.current) setError(cause instanceof Error ? cause.message : "无法读取目录");
-    } finally { if (version === readVersion.current) setLoading(false); }
+      setError(cause instanceof Error ? cause.message : "无法读取目录");
+    }
   }, []);
 
   useEffect(() => {
     void load(initialPath ?? undefined);
-    return () => { readVersion.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -61,22 +55,22 @@ export function DirectoryPicker({
       footer={
         <>
           {initialPath !== null ? (
-            <ActionButton className="btn" onClick={() => onSelect(null)}>
+            <button className="btn" onClick={() => onSelect(null)}>
               清除目录
-            </ActionButton>
+            </button>
           ) : null}
-          <ActionButton className="btn" onClick={onClose}>
+          <button className="btn" onClick={onClose}>
             取消
-          </ActionButton>
-          <ActionButton className="btn primary" disabled={!listing || loading || Boolean(error)} onClick={() => listing && onSelect(listing.path)}>
+          </button>
+          <button className="btn primary" disabled={!listing} onClick={() => listing && onSelect(listing.path)}>
             使用当前目录
-          </ActionButton>
+          </button>
         </>
       }
     >
-      {loading ? <p role="status">正在读取 {targetPath ?? "目录"}…</p> : null}
-      {error ? <ErrorState message={error} onRetry={() => load(targetPath ?? undefined)} /> : null}
-      {!listing ? (
+      {error ? (
+        <ErrorState message={error} onRetry={() => void load(initialPath ?? undefined)} />
+      ) : !listing ? (
         <LoadingState label="读取目录…" />
       ) : (
         <>
@@ -85,16 +79,16 @@ export function DirectoryPicker({
           </p>
           <div className="dir-list" role="listbox" aria-label="目录列表">
             {listing.parentPath !== null ? (
-              <ActionButton className="dir-row" disabled={loading} onClick={() => load(listing.parentPath ?? undefined)}>
+              <button className="dir-row" onClick={() => void load(listing.parentPath ?? undefined)}>
                 ⬅ 上级目录
-              </ActionButton>
+              </button>
             ) : null}
             {listing.entries
               .filter((entry) => entry.directory)
               .map((entry) => (
-                <ActionButton key={entry.path} className="dir-row" disabled={loading} onClick={() => load(entry.path)}>
+                <button key={entry.path} className="dir-row" onClick={() => void load(entry.path)}>
                   📁 {entry.name}
-                </ActionButton>
+                </button>
               ))}
             {listing.entries.filter((entry) => entry.directory).length === 0 ? (
               <p className="muted small" style={{ padding: "8px 12px" }}>
@@ -111,9 +105,9 @@ export function DirectoryPicker({
               value={newDirName}
               onChange={(event) => setNewDirName(event.target.value)}
             />
-            <ActionButton className="btn" disabled={busy || !newDirName.trim()} onClick={() => mkdir()}>
+            <button className="btn" disabled={busy || !newDirName.trim()} onClick={() => void mkdir()}>
               新建目录
-            </ActionButton>
+            </button>
           </div>
         </>
       )}

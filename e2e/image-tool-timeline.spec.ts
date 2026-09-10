@@ -10,7 +10,7 @@ test("图片任务按调用顺序显示，折叠和刷新后不堆积到末尾",
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
   const messages = imageRetryMessages(conversation.id);
   await page.route("**/api/bootstrap?*", async (route) => {
-    const response = await route.fetch({ headers: { ...route.request().headers(), "accept-encoding": "gzip, deflate" } });
+    const response = await route.fetch();
     await route.fulfill({ json: { ...await response.json(), messages } });
   });
   await page.route(`**/api/conversations/${conversation.id}/messages`, (route) => route.fulfill({ json: messages }));
