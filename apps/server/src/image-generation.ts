@@ -51,10 +51,8 @@ export class ImageGenerationManager {
     const connection = this.store.getConnection(model.connectionId);
     if (!connection) throw new StoreError("connection_not_found", "模型连接不存在");
     this.assertInputsBelongToConversation(input.conversationId, input.input);
-    const assistantMessageId = this.store.createImageAssistantMessage(input.conversationId);
     return this.store.createImageGenerationJob({
       conversationId: input.conversationId,
-      assistantMessageId,
       ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
       model,
       connection,

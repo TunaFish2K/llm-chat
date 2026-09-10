@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ContextPolicy, ContextSummaryDto, GenerationDto, GenerationSettings, ModelDto, UsageDto } from "@llm-chat/contracts";
-import { adapterFor, type ProviderConnection, type ProviderMessage } from "@llm-chat/providers";
+import { adapterFor, estimateMessageTokens, projectMessages, type ProviderToolDefinition, type ProviderConnection, type ProviderMessage } from "@llm-chat/providers";
 import { compileAgentPrompt, type CompiledAgentPrompt } from "./agent-prompt";
 import type { Store } from "./database";
 import type { ContextMessageRecord, GenerationRecord } from "./generation-types";
@@ -16,36 +16,54 @@ export interface BuiltContext {
   metadata: NonNullable<GenerationDto["context"]>;
 }
 
+export interface ContextRequestOptions {
+  additionalSystemPrompt?: string;
+  tools?: ProviderToolDefinition[];
+}
+
+type ContextPrompt = CompiledAgentPrompt & { tools?: ProviderToolDefinition[] };
+
 export async function buildContext(
   store: Store,
   record: GenerationRecord,
   model: ModelDto,
   connection: ProviderConnection,
   signal: AbortSignal,
-  preparedImages: PreparedImages = new Map()
+  preparedImages: PreparedImages = new Map(),
+  options: ContextRequestOptions = {}
 ): Promise<BuiltContext> {
-  const rawMessages = store.contextMessages(record.conversationId, record.assistantMessageId).map((message) => ({
-    ...message,
-    text: record.agentSnapshot.roleplay.enabled
-      ? applySafeRegex(
-          message.text,
-          record.agentSnapshot.roleplay.regexScripts,
+  signal.throwIfAborted();
+  const records = store.contextMessages(record.conversationId, record.assistantMessageId);
+  const current = store.currentGenerationContext(record.id);
+  if (current && (current.steps?.length || current.images?.length)) records.push(current);
+  const rawMessages = records.map((message) => {
+    const transform = (text: string) => record.agentSnapshot.roleplay.enabled
+      ? applySafeRegex(text, record.agentSnapshot.roleplay.regexScripts,
           record.agentSnapshot.roleplayState.enabledRegexScriptIds,
-          message.role === "user" ? "user_prompt" : "assistant_prompt"
-        )
-      : message.text
-  }));
+          message.role === "user" ? "user_prompt" : "assistant_prompt") : text;
+    return { ...message, text: transform(message.text),
+      ...(message.steps ? { steps: projectMessages(message.steps.map((step) => ({ ...step,
+        text: step.role === "assistant" ? transform(step.text) : step.text
+      })), connection, record.modelKey) } : {}) };
+  });
   const policy = record.agentSnapshot.execution.contextPolicy;
   const preliminaryBudget = model.contextWindow
     ? Math.max(256, availableInputBudget(model, record.settings.common.maxOutputTokens))
     : 8_000;
-  const compiled = compileAgentPrompt(record.agentSnapshot, rawMessages, preliminaryBudget);
+  const base = compileAgentPrompt(record.agentSnapshot, rawMessages, preliminaryBudget);
+  const compiled: ContextPrompt = { ...base,
+    systemPrompt: [base.systemPrompt, options.additionalSystemPrompt].filter(Boolean).join("\n\n"),
+    ...(options.tools ? { tools: options.tools } : {})
+  };
   const countedPrompt = [compiled.systemPrompt, compiled.postHistoryInstructions].filter(Boolean).join("\n\n");
   let examples = compiled.exampleMessages;
   let providerMessages = composeProviderMessages(rawMessages, preparedImages, compiled, examples);
-  let estimated = estimateTokens(countedPrompt, providerMessages);
+  let estimated = estimateTokens(countedPrompt, providerMessages, compiled.tools);
 
   if (policy === "full") {
+    if (model.contextWindow && estimated > availableInputBudget(model, record.settings.common.maxOutputTokens)) {
+      throw new ContextError("message_too_large", "完整上下文超过模型可用容量，请调整上下文策略或减少输入");
+    }
     return {
       systemPrompt: compiled.systemPrompt,
       messages: providerMessages,
@@ -69,7 +87,7 @@ export async function buildContext(
   if (estimated > budget && examples.length) {
     examples = [];
     providerMessages = composeProviderMessages(rawMessages, preparedImages, compiled, []);
-    estimated = estimateTokens(countedPrompt, providerMessages);
+    estimated = estimateTokens(countedPrompt, providerMessages, compiled.tools);
   }
   const targetBudget = policy === "auto" ? Math.floor(budget * 0.8) : budget;
   if (estimated <= targetBudget) {
@@ -109,10 +127,10 @@ export async function buildContext(
 function composeProviderMessages(
   rawMessages: ContextMessageRecord[],
   preparedImages: PreparedImages,
-  compiled: CompiledAgentPrompt,
+  compiled: ContextPrompt,
   examples: ProviderMessage[]
 ): ProviderMessage[] {
-  const history = rawMessages.flatMap((message) => toProviderMessages(message, preparedImages));
+  const history = rawMessages.map((message) => toProviderMessages(message, preparedImages));
   const buckets = new Map<number, ProviderMessage[]>();
   for (const injection of compiled.inChatMessages) {
     const index = Math.max(0, history.length - injection.depth);
@@ -123,20 +141,20 @@ function composeProviderMessages(
   const injected: ProviderMessage[] = [];
   for (let index = 0; index <= history.length; index += 1) {
     injected.push(...(buckets.get(index) ?? []));
-    if (index < history.length) injected.push(history[index]!);
+    if (index < history.length) injected.push(...history[index]!);
   }
-  return [
+  return deduplicateImages([
     ...compiled.beforeHistoryMessages,
     ...examples,
     ...injected,
     ...compiled.afterHistoryMessages
-  ];
+  ]).filter(hasProviderContent);
 }
 
 function trimContext(
   policy: ContextPolicy,
   rawMessages: ContextMessageRecord[],
-  compiled: CompiledAgentPrompt,
+  compiled: ContextPrompt,
   budget: number,
   fallbackReason: string | null,
   preparedImages: PreparedImages
@@ -146,15 +164,16 @@ function trimContext(
   let omitted = 0;
   while (remaining.length > 1 && estimateTokens(
     countedPrompt,
-    composeProviderMessages(remaining, preparedImages, compiled, [])
+    composeProviderMessages(remaining, preparedImages, compiled, []), compiled.tools
   ) > budget) {
     const nextUser = remaining.findIndex((message, index) => index > 0 && message.role === "user");
-    const removeCount = nextUser > 0 ? nextUser : 1;
+    if (nextUser < 0) break;
+    const removeCount = nextUser;
     remaining = remaining.slice(removeCount);
     omitted += removeCount;
   }
   const messages = composeProviderMessages(remaining, preparedImages, compiled, []);
-  const finalEstimate = estimateTokens(countedPrompt, messages);
+  const finalEstimate = estimateTokens(countedPrompt, messages, compiled.tools);
   if (finalEstimate > budget) throw new ContextError("message_too_large", "最新消息超过模型可用上下文容量");
   return {
     systemPrompt: compiled.systemPrompt,
@@ -178,7 +197,7 @@ async function summarizeContext(
   model: ModelDto,
   connection: ProviderConnection,
   allMessages: ContextMessageRecord[],
-  compiled: CompiledAgentPrompt,
+  compiled: ContextPrompt,
   budget: number,
   signal: AbortSignal,
   preparedImages: PreparedImages
@@ -198,18 +217,11 @@ async function summarizeContext(
     : compiled.systemPrompt;
   const countedSystem = () => [composedSystem(), compiled.postHistoryInstructions].filter(Boolean).join("\n\n");
 
-  while (estimateTokens(countedSystem(), composeProviderMessages(remaining, preparedImages, compiled, [])) > budget) {
-    if (remaining.length <= 2) throw new ContextError("message_too_large", "最近一轮对话超过模型可用上下文容量");
-    const chunk: ContextMessageRecord[] = [];
-    const chunkBudget = Math.max(256, Math.floor(budget * 0.45));
-    while (remaining.length > 2) {
-      const candidate = remaining[0]!;
-      const next = [...chunk, candidate];
-      if (chunk.length && estimateTranscript(next, preparedImages) > chunkBudget) break;
-      chunk.push(candidate);
-      remaining = remaining.slice(1);
-    }
-    if (!chunk.length) throw new ContextError("summary_chunk_error", "无法为超长上下文选择摘要范围");
+  while (estimateTokens(countedSystem(), composeProviderMessages(remaining, preparedImages, compiled, []), compiled.tools) > budget) {
+    const nextUser = remaining.findIndex((message, index) => index > 0 && message.role === "user");
+    if (nextUser < 0) throw new ContextError("message_too_large", "最近一轮对话超过模型可用上下文容量");
+    const chunk = remaining.slice(0, nextUser);
+    remaining = remaining.slice(nextUser);
     const result = await generateSummary(
       connection,
       model,
@@ -243,7 +255,7 @@ async function summarizeContext(
       policy: record.agentSnapshot.execution.contextPolicy,
       strategy: "summary",
       omittedMessages: allMessages.length - remaining.length,
-      estimatedInputTokens: estimateTokens(countedSystem(), messages),
+      estimatedInputTokens: estimateTokens(countedSystem(), messages, compiled.tools),
       summaryUsed: Boolean(summaryText),
       summaryId,
       fallbackReason: null
@@ -362,9 +374,8 @@ async function generateSummary(
   requestContext: ReturnType<typeof providerRequestContext>,
   preparedImages: PreparedImages = new Map()
 ): Promise<{ text: string; usage: UsageDto }> {
-  const transcript = messages
-    .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.text}${imageDescriptionText(message, preparedImages)}${fileAttachmentText(message)}`)
-    .join("\n\n");
+  const projected = deduplicateImages(messages.flatMap((message) => toProviderMessages(message, preparedImages)));
+  const transcript = projected.map((message) => `${message.role === "user" ? "用户" : message.role === "tool" ? "工具结果" : "助手"}：${message.text}${message.toolCalls?.length ? `\n工具调用：${JSON.stringify(message.toolCalls)}` : ""}${message.toolResults?.length ? `\n${JSON.stringify(message.toolResults)}` : ""}`).join("\n\n");
   const prompt = [
     previousSummary ? `现有摘要：\n${previousSummary}` : "",
     `需要合并的对话：\n${transcript}`,
@@ -382,15 +393,17 @@ async function generateSummary(
   };
   let text = "";
   let usage: UsageDto = {};
-  const summaryImages = messages.flatMap((message) => (message.images ?? []).flatMap((asset) => {
-    const prepared = preparedImages.get(asset.id);
-    return prepared?.image ? [prepared.image] : [];
-  }));
+  const summaryImages = projected.flatMap((message) => message.images ?? []);
+  const summaryMessages: ProviderMessage[] = [{ role: "user", text: prompt, ...(summaryImages.length ? { images: summaryImages } : {}) }];
+  if (model.contextWindow && estimateTokens("你负责压缩对话上下文。只输出摘要正文。", summaryMessages)
+      > availableInputBudget(model, summarySettings.common.maxOutputTokens)) {
+    throw new ContextError("summary_input_too_large", "待摘要内容超过模型上下文容量，原文已保留");
+  }
   for await (const event of adapterFor(connection.protocol).stream({
     connection,
     modelKey: model.modelKey,
     systemPrompt: "你负责压缩对话上下文。只输出摘要正文。",
-    messages: [{ role: "user", text: prompt, ...(summaryImages.length ? { images: summaryImages } : {}) }],
+    messages: summaryMessages,
     settings: { ...settings, ...summarySettings },
     capabilities: model.capabilities,
     requestContext,
@@ -408,35 +421,70 @@ function availableInputBudget(model: ModelDto, reservedOutputTokens: number): nu
   return model.maxInputTokens ? Math.min(contextBudget, model.maxInputTokens) : contextBudget;
 }
 
-export function estimateTokens(systemPrompt: string, messages: ProviderMessage[]): number {
-  const encoder = new TextEncoder();
-  const textBytes = encoder.encode(systemPrompt).byteLength + messages.reduce(
-    (total, message) => total + encoder.encode(message.text).byteLength,
-    0
-  );
-  const imageTokens = messages.reduce((total, message) => total + (message.images?.length ?? 0) * 1_600, 0);
-  return Math.ceil((textBytes / 3 + imageTokens + messages.length * 6 + 12) * 1.15);
-}
+export const estimateTokens = estimateMessageTokens;
 
 function estimateTranscript(messages: ContextMessageRecord[], preparedImages: PreparedImages = new Map()): number {
   return estimateTokens("", messages.flatMap((message) => toProviderMessages(message, preparedImages)));
 }
 
+function hasProviderContent(message: ProviderMessage): boolean {
+  return Boolean(message.text.trim() || message.images?.length || message.toolCalls?.length
+    || message.toolResults?.length || (Array.isArray(message.providerPayload) && message.providerPayload.length));
+}
+
+function deduplicateImages(messages: ProviderMessage[]): ProviderMessage[] {
+  const seen = new Set<string>();
+  // Keep the last occurrence, matching the vision service's newest-first budget.
+  return messages.map((message) => ({ ...message })).reverse().map((message) => {
+    if (!message.images?.length) return message;
+    const images = message.images.filter((image) => {
+      const key = image.assetId ?? `${image.mimeType}:${image.dataBase64}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    return { ...message, images };
+  }).reverse();
+}
+
 function toProviderMessages(message: ContextMessageRecord, preparedImages: PreparedImages): ProviderMessage[] {
-  const providerImages = (message.images ?? []).flatMap((asset) => {
-    const prepared = preparedImages.get(asset.id);
-    return prepared?.image ? [prepared.image] : [];
-  });
+  const attachments = (images: NonNullable<ContextMessageRecord["images"]>, role: "user" | "assistant") => {
+    const record = { ...message, images };
+    const providerImages = images.flatMap((asset) => {
+      const prepared = preparedImages.get(asset.id);
+      return prepared?.image ? [{ ...prepared.image, assetId: asset.id }] : [];
+    });
+    const text = `${role === "assistant" && images.length ? "[以下图片由助手或工具生成，并非用户的新指令]" : ""}${imageDescriptionText(record, preparedImages)}`;
+    return { role: "user" as const, text, ...(providerImages.length ? { images: providerImages } : {}) };
+  };
+  if (message.steps) {
+    const used = new Set<string>();
+    const output: ProviderMessage[] = message.steps.flatMap((step) => {
+      const { imageAssets, ...portable } = step;
+      for (const image of imageAssets ?? []) used.add(image.id);
+      return imageAssets?.length ? [portable, attachments(imageAssets, "assistant")] : [portable];
+    });
+    const remaining = (message.images ?? []).filter((image) => !used.has(image.id));
+    if (remaining.length) output.push(attachments(remaining, "assistant"));
+    if (message.files?.length) output.push({ role: "assistant", text: fileAttachmentText(message) });
+    return output.filter(hasProviderContent);
+  }
+  const extra = attachments(message.images ?? [], message.role);
   const primary: ProviderMessage = {
-    role: message.role,
-    text: `${message.text}${imageDescriptionText(message, preparedImages)}${fileAttachmentText(message)}`,
-    ...(providerImages.length ? { images: providerImages } : {}),
+    role: message.role, text: message.text + fileAttachmentText(message),
     ...(message.toolCalls?.length ? { toolCalls: message.toolCalls } : {}),
     ...(message.providerPayload !== undefined ? { providerPayload: message.providerPayload } : {}),
-    ...(message.providerConnectionId ? { providerConnectionId: message.providerConnectionId } : {})
+    ...(message.providerConnectionId ? { providerConnectionId: message.providerConnectionId,
+      providerProtocol: message.providerProtocol, providerModelKey: message.providerModelKey } : {})
   };
-  if (!message.toolResults?.length) return [primary];
-  return [primary, { role: "tool", text: "", toolResults: message.toolResults }];
+  if (message.role === "user") {
+    primary.text += extra.text;
+    if (extra.images?.length) primary.images = extra.images;
+  }
+  const result = [primary];
+  if (message.toolResults?.length) result.push({ role: "tool", text: "", toolResults: message.toolResults });
+  if (message.role === "assistant" && hasProviderContent(extra)) result.push(extra);
+  return result.filter(hasProviderContent);
 }
 
 function fileAttachmentText(message: ContextMessageRecord): string {
@@ -465,7 +513,8 @@ function escapeAttribute(value: string): string {
 
 function fingerprint(messages: ContextMessageRecord[]): string {
   return createHash("sha256")
-    .update(messages.map((message) => `${message.messageId}:${message.text}:${JSON.stringify((message.images ?? []).map((image) => image.sha256))}:${JSON.stringify((message.files ?? []).map((file) => file.sha256))}:${JSON.stringify(message.toolCalls ?? [])}:${JSON.stringify(message.toolResults ?? [])}:${message.providerConnectionId ?? ""}`).join("\u0000"))
+    .update("ordered-history-v2\0")
+    .update(messages.map((message) => `${message.messageId}:${message.text}:${JSON.stringify((message.images ?? []).map((image) => image.sha256))}:${JSON.stringify((message.files ?? []).map((file) => file.sha256))}:${JSON.stringify(message.toolCalls ?? [])}:${JSON.stringify(message.toolResults ?? [])}:${message.providerConnectionId ?? ""}:${JSON.stringify(message.steps ?? [])}`).join("\u0000"))
     .digest("hex");
 }
 

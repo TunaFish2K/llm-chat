@@ -20,7 +20,7 @@ function service(store: Store) {
   const runner = new GenerationRunner(store, {
     onSettled: (id) => queue.kick(id), buildTools: async () => [], memoryPrompt: () => "",
     buildContext: async () => ({ systemPrompt: "", messages: [], metadata: { policy: "full", omittedMessages: 0, estimatedInputTokens: 0, summaryUsed: false } }),
-    stream: async function* () { yield { type: "complete", stopReason: "stop" }; }
+    stream: async function* () { yield { type: "block", index: 1, blockType: "text", content: "done", complete: true }; yield { type: "complete", stopReason: "stop" }; }
   });
   const queue = new MessageQueue(store, runner, images, events, () => {});
   return { queue, runner, images, events };

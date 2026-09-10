@@ -1,5 +1,5 @@
 import { StoreError } from "./errors";
-import type { ConnectionRecord, ContextMessageRecord, GenerationRecord, AgentSnapshot } from "./generation-types";
+import type { ConnectionRecord, ContextMessageRecord, ContextGenerationStep, GenerationRecord, AgentSnapshot } from "./generation-types";
 import { DEFAULT_AGENT_SYSTEM_PROMPT, effectiveModelId, resolveGenerationPlan } from "./generation-policy";
 import { repairTerminalToolCalls } from "./database-repair";
 import { migrateOfflineHistory } from "./offline-history";
@@ -2011,44 +2011,47 @@ export class Store {
   }
 
   createImageAssistantMessage(conversationId: string): string {
-    return this.transaction(() => {
-      if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
-      const row = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?")
-        .get(conversationId) as Row;
-      const id = randomUUID();
-      this.sqlite.prepare(`
-        INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at)
-        VALUES (?, ?, ?, 'assistant', NULL, NULL, ?)
-      `).run(id, conversationId, Number(row.value) + 1, Date.now());
-      return id;
-    });
+    return this.transaction(() => this.insertImageAssistantMessage(conversationId));
+  }
+
+  private insertImageAssistantMessage(conversationId: string): string {
+    if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    const row = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?")
+      .get(conversationId) as Row;
+    const id = randomUUID();
+    this.sqlite.prepare(`INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at)
+      VALUES (?, ?, ?, 'assistant', NULL, NULL, ?)`).run(id, conversationId, Number(row.value) + 1, Date.now());
+    return id;
   }
 
   createImageGenerationJob(input: {
     conversationId: string;
-    assistantMessageId: string;
+    assistantMessageId?: string;
     toolCallId?: string;
     model: ModelDto;
     connection: ConnectionRecord;
     request: ImageGenerationInput;
   }): ImageGenerationJobDto {
-    const protocol = input.model.imageProtocol;
-    if (!protocol) throw new StoreError("image_protocol_required", "图片模型缺少图片协议");
-    const now = Date.now();
-    const id = randomUUID();
-    this.sqlite.prepare(`
-      INSERT INTO image_generation_jobs (
-        id, conversation_id, assistant_message_id, tool_call_id, model_id, connection_id,
-        model_key, connection_name, image_protocol, operation, prompt, request_json, status,
-        progress, provider_job_id, output_asset_ids_json, revised_prompt, error_code, error_message,
-        created_at, started_at, completed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, '[]', NULL, NULL, NULL, ?, NULL, NULL)
-    `).run(
-      id, input.conversationId, input.assistantMessageId, input.toolCallId ?? null, input.model.id,
-      input.connection.id, input.model.modelKey, input.connection.name, protocol, input.request.operation,
-      input.request.prompt, json(input.request), now
-    );
-    return this.getImageGenerationJob(id)!;
+    return this.transaction(() => {
+      const assistantMessageId = input.assistantMessageId ?? this.insertImageAssistantMessage(input.conversationId);
+      const protocol = input.model.imageProtocol;
+      if (!protocol) throw new StoreError("image_protocol_required", "图片模型缺少图片协议");
+      const now = Date.now();
+      const id = randomUUID();
+      this.sqlite.prepare(`
+        INSERT INTO image_generation_jobs (
+          id, conversation_id, assistant_message_id, tool_call_id, model_id, connection_id,
+          model_key, connection_name, image_protocol, operation, prompt, request_json, status,
+          progress, provider_job_id, output_asset_ids_json, revised_prompt, error_code, error_message,
+          created_at, started_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, '[]', NULL, NULL, NULL, ?, NULL, NULL)
+      `).run(
+        id, input.conversationId, assistantMessageId, input.toolCallId ?? null, input.model.id,
+        input.connection.id, input.model.modelKey, input.connection.name, protocol, input.request.operation,
+        input.request.prompt, json(input.request), now
+      );
+      return this.getImageGenerationJob(id)!;
+    });
   }
 
   getImageGenerationInput(id: string): ImageGenerationInput | undefined {
@@ -2615,6 +2618,8 @@ export class Store {
       SELECT * FROM messages WHERE conversation_id = ? AND history_active = 1 AND ordinal <= ? ORDER BY ordinal
     `).all(sourceConversationId, throughOrdinal) as Row[];
     for (const message of messages) {
+      if (this.sqlite.prepare(`SELECT 1 FROM image_generation_jobs j JOIN generation_tool_calls tc ON tc.id = j.tool_call_id
+        WHERE j.assistant_message_id = ?`).get(String(message.id))) continue;
       const messageId = randomUUID();
       this.sqlite.prepare(`
         INSERT INTO messages (id, conversation_id, ordinal, role, text, active_generation_id, created_at, greeting_json)
@@ -3042,14 +3047,16 @@ export class Store {
     requiresApproval: boolean
   ): ToolCallDto {
     const state = requiresApproval ? "pending" : "auto";
+    const existing = this.sqlite.prepare("SELECT generation_id, step_index FROM generation_tool_calls WHERE id = ?").get(call.id) as Row | undefined;
+    const id = existing && (String(existing.generation_id) !== generationId || Number(existing.step_index) !== stepIndex) ? randomUUID() : call.id;
     this.sqlite.prepare(`
       INSERT INTO generation_tool_calls
         (id, generation_id, call_index, step_index, name, arguments_json, approval_state, requires_approval, provider_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET name = excluded.name, arguments_json = excluded.arguments_json,
         provider_id = excluded.provider_id
-    `).run(call.id, generationId, index, stepIndex, call.name, call.arguments, state, requiresApproval ? 1 : 0, call.id);
-    return this.getToolCall(call.id)!;
+    `).run(id, generationId, index, stepIndex, call.name, call.arguments, state, requiresApproval ? 1 : 0, call.id);
+    return this.getToolCall(id)!;
   }
 
   getToolCall(id: string): ToolCallDto | undefined {
@@ -3070,45 +3077,59 @@ export class Store {
     `).run(generationId, stepIndex, json(payload));
   }
 
-  currentGenerationMessages(generationId: string): Array<{
-    role: "assistant" | "tool";
-    text: string;
-    toolCalls?: Array<{ id: string; name: string; arguments: string }>;
-    toolResults?: Array<{ callId: string; name: string; content: string; isError?: boolean }>;
-    providerPayload?: unknown;
-    providerConnectionId?: string;
-  }> {
-    const generation = this.sqlite.prepare("SELECT connection_id FROM generations WHERE id = ?").get(generationId) as Row | undefined;
+  currentGenerationMessages(generationId: string): ContextGenerationStep[] {
+    const generation = this.sqlite.prepare("SELECT * FROM generations WHERE id = ?").get(generationId) as Row | undefined;
     if (!generation) return [];
-    const calls = this.sqlite.prepare(`SELECT * FROM generation_tool_calls WHERE generation_id = ? ORDER BY call_index`)
+    const calls = this.listToolCalls(generationId);
+    const blocks = this.sqlite.prepare("SELECT * FROM generation_blocks WHERE generation_id = ? ORDER BY block_index")
       .all(generationId) as Row[];
-    if (!calls.length) return [];
-    const steps = [...new Set(calls.map((row) => Number(row.step_index)))].sort((a, b) => a - b);
-    const messages: ReturnType<Store["currentGenerationMessages"]> = [];
-    for (const stepIndex of steps) {
-      const stepCalls = calls.filter((row) => Number(row.step_index) === stepIndex).map((row) => toolCallDto(row));
-      const blocks = this.sqlite.prepare(`
-        SELECT * FROM generation_blocks WHERE generation_id = ? AND block_index >= ? AND block_index < ? ORDER BY block_index
-      `).all(generationId, stepIndex * 1000, (stepIndex + 1) * 1000) as Row[];
-      const contextRow = this.sqlite.prepare(`
-        SELECT provider_context_json FROM generation_steps WHERE generation_id = ? AND step_index = ?
-      `).get(generationId, stepIndex) as Row | undefined;
-      messages.push({
-        role: "assistant",
-        text: blocks.filter((block) => block.type === "text" || block.type === "refusal").map((block) => String(block.content)).join(""),
-        toolCalls: stepCalls.map((call) => ({ id: call.providerId ?? call.id, name: call.name, arguments: call.arguments })),
-        ...(contextRow?.provider_context_json ? { providerPayload: parse(contextRow.provider_context_json, undefined) } : {}),
-        providerConnectionId: String(generation.connection_id)
+    const contexts = this.sqlite.prepare("SELECT * FROM generation_steps WHERE generation_id = ? ORDER BY step_index")
+      .all(generationId) as Row[];
+    const indices = [...new Set([
+      ...calls.map((call) => call.stepIndex),
+      ...blocks.map((block) => Number(block.step_index ?? Math.floor(Number(block.block_index) / 1000))),
+      ...contexts.map((step) => Number(step.step_index))
+    ])].sort((a, b) => a - b);
+    if (!indices.length && generation.provider_context_json) indices.push(0);
+    const messages: ContextGenerationStep[] = [];
+    for (const index of indices) {
+      const stepCalls = calls.filter((call) => call.stepIndex === index);
+      const stepBlocks = blocks.filter((block) => Number(block.step_index ?? Math.floor(Number(block.block_index) / 1000)) === index);
+      const context = contexts.find((step) => Number(step.step_index) === index)?.provider_context_json
+        ?? (index === indices.at(-1) ? generation.provider_context_json : undefined);
+      const text = stepBlocks.filter((block) => block.type === "text" || block.type === "refusal")
+        .map((block) => String(block.content)).join("");
+      if (text || stepCalls.length || context) messages.push({
+        role: "assistant", text,
+        ...(stepCalls.length ? { toolCalls: stepCalls.map((call) => ({ id: call.providerId ?? call.id, name: call.name, arguments: call.arguments })) } : {}),
+        ...(context ? { providerPayload: parse(context, undefined) } : {}),
+        providerConnectionId: String(generation.connection_id),
+        providerProtocol: generation.protocol as ProviderProtocol,
+        providerModelKey: String(generation.model_key)
       });
       const results = stepCalls.filter((call) => call.output !== null || call.error !== null).map((call) => ({
-        callId: call.providerId ?? call.id,
-        name: call.name,
+        callId: call.providerId ?? call.id, name: call.name,
         content: call.output ?? JSON.stringify({ error: call.error }),
         ...(call.error ? { isError: true } : {})
       }));
-      if (results.length) messages.push({ role: "tool", text: "", toolResults: results });
+      const imageAssets = stepCalls.flatMap((call) => this.toolCallImages(call.id));
+      if (results.length) messages.push({ role: "tool", text: "", toolResults: results,
+        ...(imageAssets.length ? { imageAssets } : {}) });
     }
     return messages;
+  }
+
+  currentGenerationContext(generationId: string): ContextMessageRecord | undefined {
+    const row = this.sqlite.prepare(`SELECT m.* FROM messages m JOIN generations g ON g.assistant_message_id = m.id WHERE g.id = ?`)
+      .get(generationId) as Row | undefined;
+    if (!row) return undefined;
+    const steps = this.currentGenerationMessages(generationId);
+    return {
+      messageId: String(row.id), ordinal: Number(row.ordinal), role: "assistant",
+      text: steps.filter((step) => step.role === "assistant").map((step) => step.text).join(""), steps,
+      images: [...steps.flatMap((step) => step.imageAssets ?? []), ...this.messageImages(String(row.id))],
+      files: this.messageFiles(String(row.id)).filter((asset) => asset.kind === "file")
+    };
   }
 
   updateToolCall(
@@ -3196,40 +3217,25 @@ export class Store {
 
   private contextMessagesThrough(conversationId: string, throughOrdinal: number): ContextMessageRecord[] {
     const rows = this.sqlite.prepare(`
-      SELECT m.*, g.id AS generation_id, g.connection_id, g.provider_context_json,
-        (SELECT GROUP_CONCAT(content, '') FROM (
-          SELECT content FROM generation_blocks b
-          WHERE b.generation_id = g.id AND b.type IN ('text', 'refusal')
-          ORDER BY b.block_index
-        )) AS generation_text
+      SELECT m.*, g.id AS generation_id
       FROM messages m
       LEFT JOIN generations g ON g.id = m.active_generation_id
       WHERE m.conversation_id = ? AND m.history_active = 1 AND m.ordinal <= ?
       ORDER BY m.ordinal
     `).all(conversationId, throughOrdinal) as Row[];
-    return rows.map((row) => {
-      const calls = row.generation_id ? this.listToolCalls(String(row.generation_id)) : [];
-      return {
-        messageId: String(row.id),
-        ordinal: Number(row.ordinal),
-        role: row.role as "user" | "assistant",
-        text: row.role === "user" ? String(row.text ?? "") : String(row.generation_text ?? row.text ?? ""),
-        images: this.messageImages(String(row.id)),
-        files: this.messageFiles(String(row.id)).filter((asset) => asset.kind === "file"),
-        ...(row.provider_context_json ? { providerPayload: parse(row.provider_context_json, undefined) } : {}),
-        ...(row.connection_id ? { providerConnectionId: String(row.connection_id) } : {}),
-        ...(calls.length ? {
-          toolCalls: calls.map((call) => ({ id: call.providerId ?? call.id, name: call.name, arguments: call.arguments })),
-          toolResults: calls
-            .filter((call) => call.output !== null || call.error !== null)
-            .map((call) => ({
-              callId: call.providerId ?? call.id,
-              name: call.name,
-              content: call.output ?? JSON.stringify({ error: call.error }),
-              ...(call.error ? { isError: true } : {})
-            }))
-        } : {})
-      };
+    return rows.flatMap((row): ContextMessageRecord[] => {
+      const imageJob = this.sqlite.prepare(`SELECT j.*, tc.generation_id AS owner_generation_id
+        FROM image_generation_jobs j LEFT JOIN generation_tool_calls tc ON tc.id = j.tool_call_id
+        WHERE j.assistant_message_id = ? LIMIT 1`).get(String(row.id)) as Row | undefined;
+      // Tool-owned images are replayed with that tool's selected generation, never as independent turns.
+      if (imageJob?.owner_generation_id) return [];
+      if (row.generation_id) return [this.currentGenerationContext(String(row.generation_id))!];
+      let text = String(row.text ?? "");
+      const images = this.messageImages(String(row.id));
+      const files = this.messageFiles(String(row.id)).filter((asset) => asset.kind === "file");
+      if (imageJob && !images.length) text ||= `[图片生成任务：${String(imageJob.status)}${imageJob.error_message ? `；${String(imageJob.error_message)}` : ""}]`;
+      if (row.role === "assistant" && !text.trim() && !images.length && !files.length) return [];
+      return [{ messageId: String(row.id), ordinal: Number(row.ordinal), role: row.role as "user" | "assistant", text, images, files }];
     });
   }
 

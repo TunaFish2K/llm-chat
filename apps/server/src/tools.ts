@@ -162,6 +162,7 @@ export async function buildServerTools(
         toolCallId: context.toolCallId,
         input: request
       }, signal);
+      if (job.status !== "completed") throw new Error(job.error?.message ?? `图片生成任务${job.status}`);
       return JSON.stringify({
         jobId: job.id,
         status: job.status,

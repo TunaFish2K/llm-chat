@@ -1,3 +1,4 @@
+import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
 import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent } from "./types";
@@ -18,7 +19,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
     const { common, protocol } = request.settings;
     const effort = request.settings.reasoningEffort;
     const input: unknown[] = [];
-    for (const message of request.messages) {
+    for (const message of prepareMessages(request)) {
       if (message.role === "tool") {
         for (const result of message.toolResults ?? []) {
           input.push({ type: "function_call_output", call_id: result.callId, output: result.content });
@@ -99,6 +100,8 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
     let text = "";
     let reasoning = "";
     let refusal = "";
+    let ended = false;
+    let hasOutput = false;
     let stopReason = "stop";
     const providerItems: unknown[] = [];
     for await (const frame of readSse(response)) {
@@ -127,12 +130,16 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
           if (typeof item.result !== "string" || !item.result) {
             throw new ProviderError("image_generation_result_missing", "Responses 未返回生成图片数据");
           }
+          hasOutput = true;
           yield { type: "image", dataBase64: item.result };
         } else if (item.type === "function_call") {
           const id = typeof item.call_id === "string" ? item.call_id : String(item.id ?? "");
           const name = typeof item.name === "string" ? item.name : "";
           const args = typeof item.arguments === "string" ? item.arguments : "{}";
-          if (id && name) yield { type: "tool-call", call: { id, name, arguments: args } };
+          const call = { id, name, arguments: args };
+          validateToolCall(call);
+          hasOutput = true;
+          yield { type: "tool-call", call };
         } else if (item.type !== "reasoning" && item.type !== "message") {
           yield {
             type: "block",
@@ -143,7 +150,8 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
             providerPayload: item
           };
         }
-      } else if (type === "response.completed") {
+      } else if (type === "response.completed" || type === "response.incomplete") {
+        ended = true;
         const completed = event.response as Record<string, unknown> | undefined;
         const usage = normalizeUsage(completed?.usage);
         if (usage) yield { type: "usage", usage };
@@ -155,6 +163,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
         throw new Error(typeof error?.message === "string" ? error.message : "Responses 生成失败");
       }
     }
+    assertStreamComplete(ended, hasOutput || Boolean(text.trim() || refusal.trim()));
     if (reasoning) yield { type: "block", index: 0, blockType: "reasoning", content: reasoning, complete: true };
     if (text) yield { type: "block", index: 1, blockType: "text", content: text, complete: true };
     if (refusal) yield { type: "block", index: 2, blockType: "refusal", content: refusal, complete: true };

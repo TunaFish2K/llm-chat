@@ -1,3 +1,4 @@
+import type { ProviderMessage } from "@llm-chat/providers";
 import type {
   AgentSearchConfig,
   AgentRoleplayConfig,
@@ -20,7 +21,12 @@ export interface ConnectionRecord extends ConnectionDto {
   secretHeaders: Record<string, string>;
 }
 
+export interface ContextGenerationStep extends ProviderMessage {
+  imageAssets?: ImageAssetDto[];
+}
+
 export interface ContextMessageRecord {
+  steps?: ContextGenerationStep[];
   messageId: string;
   ordinal: number;
   role: "user" | "assistant";
@@ -29,6 +35,8 @@ export interface ContextMessageRecord {
   files?: FileAssetDto[];
   providerPayload?: unknown;
   providerConnectionId?: string;
+  providerProtocol?: ProviderProtocol;
+  providerModelKey?: string;
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
   toolResults?: Array<{ callId: string; name: string; content: string; isError?: boolean }>;
 }

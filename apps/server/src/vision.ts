@@ -32,7 +32,14 @@ export class VisionService {
     onAnalysis: (analysis: VisionAnalysisDto) => void
   ): Promise<PreparedImages> {
     const messages = this.store.contextMessages(record.conversationId, record.assistantMessageId);
-    const assets = [...new Map(messages.flatMap((message) => message.images ?? []).map((asset) => [asset.id, asset])).values()];
+    const current = this.store.currentGenerationContext(record.id);
+    if (current) messages.push(current);
+    const unique = new Map<string, ImageAssetDto>();
+    for (const asset of messages.flatMap((message) => message.images ?? [])) {
+      unique.delete(asset.id);
+      unique.set(asset.id, asset);
+    }
+    const assets = [...unique.values()];
     if (!assets.length) return new Map();
 
     const maxImageInputs = mainModel.capabilities.imageInput

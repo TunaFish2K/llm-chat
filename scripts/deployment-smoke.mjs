@@ -117,7 +117,7 @@ try {
       connectionId: connection.id,
       modelKey: "smoke-model",
       displayName: "Smoke Model",
-      contextWindow: 4096,
+      contextWindow: 65536,
       maxOutputTokens: 256,
       capabilities: {
         tools: true,
