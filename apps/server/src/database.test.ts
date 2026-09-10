@@ -1025,10 +1025,10 @@ describe("Store", () => {
     expect(store.contextMessages(conversation.id, latest.assistantMessageId)).toEqual([
       expect.objectContaining({ role: "user", text: "literal 100%_value" }),
       expect.objectContaining({
-        role: "assistant", text: "assistant content", providerConnectionId: connection.id,
-        providerPayload: [{ id: "provider" }],
-        toolCalls: [{ id: "ctx-call", name: "fn", arguments: "{}" }],
-        toolResults: [{ callId: "ctx-call", name: "fn", content: JSON.stringify({ error: "tool failed" }), isError: true }]
+        role: "assistant", text: "assistant content",
+        steps: [expect.objectContaining({ role: "assistant", providerConnectionId: connection.id,
+          providerPayload: [{ id: "provider" }], toolCalls: [{ id: "ctx-call", name: "fn", arguments: "{}" }] }),
+          expect.objectContaining({ role: "tool", toolResults: [{ callId: "ctx-call", name: "fn", content: JSON.stringify({ error: "tool failed" }), isError: true }] })]
       }),
       expect.objectContaining({ role: "user", text: "latest" })
     ]);
@@ -1088,10 +1088,10 @@ describe("Store", () => {
     expect(repaired.contextMessages(conversation.id, next.assistantMessageId)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "assistant",
-        toolResults: [
+        steps: expect.arrayContaining([expect.objectContaining({ role: "tool", toolResults: [
           expect.objectContaining({ callId: "legacy-auto", isError: true }),
           expect.objectContaining({ callId: "legacy-pending" })
-        ]
+        ] })])
       })
     ]));
     repaired.close();

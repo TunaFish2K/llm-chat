@@ -115,12 +115,12 @@ describe("provider adapters", () => {
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       if (url.endsWith("/responses")) {
-        return streamResponse([namedFrame("response.completed", { response: {} })]);
+        return streamResponse([namedFrame("response.output_text.delta", { delta: "ok" }), namedFrame("response.completed", { response: {} })]);
       }
       if (url.endsWith("/messages")) {
-        return streamResponse([namedFrame("message_stop", {})]);
+        return streamResponse([namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }), namedFrame("message_stop", {})]);
       }
-      return streamResponse(["data: [DONE]\n\n"]);
+      return streamResponse([frame({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }), "data: [DONE]\n\n"]);
     }));
     const image = { mimeType: "image/png" as const, dataBase64: "aW1hZ2U=", fileName: "image.png" };
 
@@ -246,7 +246,7 @@ describe("provider adapters", () => {
       { prompt_tokens: 10, completion_tokens: 2 }
     ];
     vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
-      frame({ choices: [], usage: rawUsages.shift() }),
+      frame({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }], usage: rawUsages.shift() }),
       "data: [DONE]\n\n"
     ])));
 
@@ -276,7 +276,7 @@ describe("provider adapters", () => {
     req.messages = [{
       role: "assistant",
       text: "旧答案",
-      providerConnectionId: req.connection.id,
+      providerConnectionId: req.connection.id, providerProtocol: req.connection.protocol, providerModelKey: req.modelKey,
       providerPayload: [{ type: "reasoning", id: "old", encrypted_content: "secret" }]
     }, { role: "user", text: "继续" }];
     const events = await collect(new OpenAiResponsesAdapter().stream(req));
@@ -334,7 +334,6 @@ describe("provider adapters", () => {
       return streamResponse([
         "data: not-json\n\n",
         frame({ choices: [{ delta: { reasoning: "why", refusal: "cannot" } }] }),
-        frame({ choices: [{ delta: { tool_calls: [{ function: { name: "missing_id" } }] } }] }),
         frame({ choices: [], usage: { completion_tokens_details: { reasoning_tokens: 2 }, prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 } }),
         "data: [DONE]\n\n"
       ]);
@@ -391,6 +390,7 @@ describe("provider adapters", () => {
       { input_tokens: 4, output_tokens: 1, input_tokens_details: {} }
     ];
     vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      namedFrame("response.output_text.delta", { delta: "ok" }),
       namedFrame("response.completed", { response: { usage: rawUsages.shift() } })
     ])));
 
@@ -407,7 +407,7 @@ describe("provider adapters", () => {
     let body: Record<string, unknown> = {};
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       body = JSON.parse(String(init?.body));
-      return streamResponse([namedFrame("response.completed", { response: {} })]);
+      return streamResponse([namedFrame("response.output_text.delta", { delta: "ok" }), namedFrame("response.completed", { response: {} })]);
     }));
     const req = request("openai-responses");
     req.messages = [{
@@ -419,7 +419,7 @@ describe("provider adapters", () => {
     expect(body.input).toEqual([{ role: "assistant", content: [{ type: "output_text", text: "visible" }] }]);
   });
 
-  it("normalizes Anthropic redacted and unsupported blocks and malformed tool JSON", async () => {
+  it("normalizes Anthropic redacted and unsupported blocks and tool JSON", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
       "data: not-json\n\n",
       namedFrame("content_block_start", { index: 0, content_block: { type: "redacted_thinking", data: "opaque" } }),
@@ -427,9 +427,9 @@ describe("provider adapters", () => {
       namedFrame("content_block_start", { index: 1, content_block: { type: "image", source: "x" } }),
       namedFrame("content_block_stop", { index: 1 }),
       namedFrame("content_block_start", { index: 2, content_block: { type: "tool_use", id: "tool", name: "fn" } }),
-      namedFrame("content_block_delta", { index: 2, delta: { type: "input_json_delta", partial_json: "{" } }),
+      namedFrame("content_block_delta", { index: 2, delta: { type: "input_json_delta", partial_json: "{}" } }),
       namedFrame("content_block_stop", { index: 2 }),
-      namedFrame("message_delta", { delta: { stop_reason: "max_tokens" }, usage: { output_tokens: 4, cache_read_input_tokens: 2 } })
+      namedFrame("message_delta", { delta: { stop_reason: "max_tokens" }, usage: { output_tokens: 4, cache_read_input_tokens: 2 } }), namedFrame("message_stop", {})
     ])));
     const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "reasoning", content: "[推理内容已由提供方隐藏]", complete: true }));
@@ -450,7 +450,8 @@ describe("provider adapters", () => {
         cache_read_input_tokens: 2,
         output_tokens: 1
       } } }),
-      namedFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } })
+      namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }),
+      namedFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 5 } }), namedFrame("message_stop", {})
     ])));
 
     const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
@@ -468,7 +469,8 @@ describe("provider adapters", () => {
         cache_read_input_tokens: 0,
         output_tokens: 0
       } } }),
-      namedFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } })
+      namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }),
+      namedFrame("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 0 } }), namedFrame("message_stop", {})
     ])));
 
     const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
@@ -482,7 +484,7 @@ describe("provider adapters", () => {
     let body: Record<string, unknown> = {};
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       body = JSON.parse(String(init?.body));
-      return streamResponse([namedFrame("message_stop", {})]);
+      return streamResponse([namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }), namedFrame("message_stop", {})]);
     }));
     const req = request("anthropic-messages");
     req.settings = {
@@ -492,13 +494,13 @@ describe("provider adapters", () => {
     req.messages = [{
       role: "assistant", text: "ignored", providerConnectionId: req.connection.id,
       providerPayload: [{ type: "tool_use", id: "same", name: "fn", input: {} }],
-      toolCalls: [{ id: "same", name: "fn", arguments: "{" }, { id: "new", name: "new_fn", arguments: "{" }]
-    }, { role: "tool", text: "", toolResults: [{ callId: "new", name: "new_fn", content: "bad", isError: true }] }];
+      toolCalls: [{ id: "same", name: "fn", arguments: "{}" }, { id: "new", name: "new_fn", arguments: "{}" }]
+    }, { role: "tool", text: "", toolResults: [{ callId: "same", name: "fn", content: "ok" }, { callId: "new", name: "new_fn", content: "bad", isError: true }] }];
     await collect(new AnthropicAdapter().stream(req));
     expect(body).toMatchObject({ max_tokens: 100, temperature: 0, top_p: 0.2, stop_sequences: ["END"] });
     expect(JSON.stringify(body.messages).match(/\"id\":\"same\"/g)).toHaveLength(1);
     expect(body.messages).toEqual(expect.arrayContaining([
-      expect.objectContaining({ role: "user", content: [expect.objectContaining({ is_error: true })] })
+      expect.objectContaining({ role: "user", content: expect.arrayContaining([expect.objectContaining({ is_error: true })]) })
     ]));
 
     const missing = request("anthropic-messages");
@@ -529,7 +531,7 @@ describe("unified reasoningEffort mapping", () => {
     const seen: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return streamResponse([namedFrame("response.completed", { response: {} })]);
+      return streamResponse([namedFrame("response.output_text.delta", { delta: "ok" }), namedFrame("response.completed", { response: {} })]);
     }));
     for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
       const req = request("openai-responses");
@@ -548,7 +550,7 @@ describe("unified reasoningEffort mapping", () => {
     const seen: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return streamResponse([namedFrame("response.completed", { response: {} })]);
+      return streamResponse([namedFrame("response.output_text.delta", { delta: "ok" }), namedFrame("response.completed", { response: {} })]);
     }));
     const withSummary: GenerationSettings = {
       common: { maxOutputTokens: 256, stopSequences: [] },
@@ -568,7 +570,7 @@ describe("unified reasoningEffort mapping", () => {
     const seen: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return streamResponse(["data: [DONE]\n\n"]);
+      return streamResponse([frame({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }), "data: [DONE]\n\n"]);
     }));
     for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
       const req = request("openai-chat");
@@ -586,7 +588,7 @@ describe("unified reasoningEffort mapping", () => {
     let sent: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       sent = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return streamResponse([namedFrame("message_stop", {})]);
+      return streamResponse([namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }), namedFrame("message_stop", {})]);
     }));
     const req = request("anthropic-messages");
     req.settings = { ...settings, reasoningEffort: "high" };
@@ -599,7 +601,7 @@ describe("unified reasoningEffort mapping", () => {
     let sent: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       sent = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return streamResponse([namedFrame("message_stop", {})]);
+      return streamResponse([namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }), namedFrame("message_stop", {})]);
     }));
     const req = request("anthropic-messages");
     req.capabilities = { ...req.capabilities, adaptiveThinking: false, manualThinking: true };
@@ -618,7 +620,7 @@ describe("unified reasoningEffort mapping", () => {
     let sent: Record<string, unknown> | undefined;
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       sent = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      return streamResponse([namedFrame("message_stop", {})]);
+      return streamResponse([namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }), namedFrame("message_stop", {})]);
     }));
     const req = request("anthropic-messages");
     req.capabilities = { ...req.capabilities, adaptiveThinking: false, manualThinking: true };
@@ -636,7 +638,7 @@ describe("unified reasoningEffort mapping", () => {
     const seen: Array<Record<string, unknown>> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
       seen.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
-      return streamResponse([namedFrame("response.completed", { response: {} })]);
+      return streamResponse([namedFrame("response.output_text.delta", { delta: "ok" }), namedFrame("response.completed", { response: {} })]);
     }));
     const req = request("openai-responses");
     req.capabilities = { ...req.capabilities, reasoning: false };

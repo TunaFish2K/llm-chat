@@ -1,3 +1,4 @@
+import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
 import type { GenerateRequest, ProviderAdapter, ProviderEvent } from "./types";
@@ -12,7 +13,7 @@ export class OpenAiChatAdapter implements ProviderAdapter {
     const effort = request.settings.reasoningEffort;
     const messages: Array<Record<string, unknown>> = [];
     if (request.systemPrompt) messages.push({ role: "system", content: request.systemPrompt });
-    for (const message of request.messages) {
+    for (const message of prepareMessages(request)) {
       if (message.role === "tool") {
         for (const result of message.toolResults ?? []) {
           messages.push({ role: "tool", tool_call_id: result.callId, content: result.content });
@@ -78,10 +79,11 @@ export class OpenAiChatAdapter implements ProviderAdapter {
     let text = "";
     let reasoning = "";
     let refusal = "";
+    let ended = false;
     let stopReason = "stop";
     const toolCalls = new Map<number, { id: string; name: string; arguments: string }>();
     for await (const frame of readSse(response)) {
-      if (frame.data === "[DONE]") break;
+      if (frame.data === "[DONE]") { ended = true; break; }
       let event: Record<string, unknown>;
       try {
         event = JSON.parse(frame.data) as Record<string, unknown>;
@@ -115,7 +117,7 @@ export class OpenAiChatAdapter implements ProviderAdapter {
           toolCalls.set(index, current);
         }
       }
-      if (typeof choice?.finish_reason === "string") stopReason = choice.finish_reason;
+      if (typeof choice?.finish_reason === "string" && choice.finish_reason) { stopReason = choice.finish_reason; ended = true; }
       const rawUsage = event.usage as Record<string, unknown> | undefined;
       if (rawUsage) {
         const completionDetails = rawUsage.completion_tokens_details as Record<string, unknown> | undefined;
@@ -134,6 +136,8 @@ export class OpenAiChatAdapter implements ProviderAdapter {
         yield { type: "usage", usage };
       }
     }
+    for (const call of toolCalls.values()) validateToolCall(call);
+    assertStreamComplete(ended, Boolean(text.trim() || refusal.trim() || toolCalls.size));
     if (reasoning) yield { type: "block", index: 0, blockType: "reasoning", content: reasoning, complete: true };
     if (text) yield { type: "block", index: 1, blockType: "text", content: text, complete: true };
     if (refusal) yield { type: "block", index: 2, blockType: "refusal", content: refusal, complete: true };

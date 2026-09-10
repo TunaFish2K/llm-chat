@@ -3,13 +3,15 @@ import type { GenerationEvent, GenerationStatus, ProviderProtocol, UsageDto } fr
 import Ajv, { type ValidateFunction } from "ajv";
 import {
   adapterFor,
+  assertStreamComplete,
+  prepareMessages,
+  estimateMessageTokens,
   ProviderError,
   type GenerateRequest,
   type ProviderConnection,
-  type ProviderEvent,
-  type ProviderMessage
+  type ProviderEvent
 } from "@llm-chat/providers";
-import { buildContext, ContextError, type BuiltContext } from "./context";
+import { buildContext, ContextError, type ContextRequestOptions, type BuiltContext } from "./context";
 import type { Store } from "./database";
 import type { GenerationRecord } from "./generation-types";
 import { StoreError } from "./errors";
@@ -41,7 +43,8 @@ export interface GenerationRunnerDependencies {
     model: Parameters<typeof buildContext>[2],
     connection: ProviderConnection,
     signal: AbortSignal,
-    preparedImages?: PreparedImages
+    preparedImages?: PreparedImages,
+    options?: ContextRequestOptions
   ) => Promise<BuiltContext>;
   prepareImages: (
     store: Store,
@@ -219,24 +222,6 @@ export class GenerationRunner {
     };
 
     try {
-      const preparedImages = await this.dependencies.prepareImages(
-        this.store,
-        record,
-        model,
-        job.controller.signal,
-        (analysis) => this.emit(generationId, { type: "vision-analysis", generationId, analysis })
-      );
-      job.controller.signal.throwIfAborted();
-      const context = await this.dependencies.buildContext(
-        this.store,
-        record,
-        model,
-        connection,
-        job.controller.signal,
-        preparedImages
-      );
-      job.controller.signal.throwIfAborted();
-      this.store.setGenerationContext(generationId, context.metadata);
       const toolPolicy = record.agentSnapshot.execution.tools;
       const authorizedTools = model.capabilities.tools
         ? (await this.dependencies.buildTools(this.store, record)).filter((tool) =>
@@ -258,7 +243,6 @@ export class GenerationRunner {
         ...(searchTool ? [[SEARCH_TOOLS_NAME, searchTool] as const] : [])
       ]);
       const memoryPrompt = this.dependencies.memoryPrompt(this.store);
-      let messages: ProviderMessage[] = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       let usage = cleanUsage(this.store.getGeneration(generationId)?.usage ?? {});
       const existingCalls = this.store.listToolCalls(generationId);
       await restoreExposedTools(existingCalls, authorizedToolMap, exposeAuthorized);
@@ -277,7 +261,6 @@ export class GenerationRunner {
         );
         await this.executeTools(record, executable, exposedToolMap(), exposeAuthorized, job.controller.signal);
         job.controller.signal.throwIfAborted();
-        messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
       }
 
       const maxToolRounds = record.agentSnapshot.execution.maxToolRounds;
@@ -289,26 +272,41 @@ export class GenerationRunner {
           return;
         }
         const stepToolMap = exposedToolMap();
+        const tools = [...stepToolMap.values()].map((tool) => tool.definition);
+        const preparedImages = await this.dependencies.prepareImages(this.store, record, model, job.controller.signal,
+          (analysis) => this.emit(generationId, { type: "vision-analysis", generationId, analysis }));
+        job.controller.signal.throwIfAborted();
+        const context = await this.dependencies.buildContext(this.store, record, model, connection, job.controller.signal,
+          preparedImages, { tools, additionalSystemPrompt: [memoryPrompt, this.dependencies.runtimePrompt(this.store, record)].filter(Boolean).join("\n\n") });
+        job.controller.signal.throwIfAborted();
+        this.store.setGenerationContext(generationId, context.metadata);
+        let completed = false;
+        let hasOutput = false;
         const calls: Array<{ id: string; name: string; arguments: string }> = [];
         let providerContext: unknown;
         let stopReason = "stop";
         let stepUsage: UsageDto = {};
-        const systemPrompt = [context.systemPrompt, memoryPrompt, this.dependencies.runtimePrompt(this.store, record)]
-          .filter(Boolean).join("\n\n");
-        for await (const event of this.dependencies.stream(record.protocol, {
+        const request: GenerateRequest = {
           connection,
           modelKey: record.modelKey,
-          systemPrompt,
+          systemPrompt: context.systemPrompt,
           postHistoryInstructions: context.postHistoryInstructions ?? "",
-          messages,
-          tools: [...stepToolMap.values()].map((tool) => tool.definition),
+          messages: context.messages,
+          tools,
           settings: record.settings,
           capabilities: model.capabilities,
           requestContext: providerRequestContext(record, `step-${stepIndex}`),
           signal: job.controller.signal
-        })) {
+        };
+        request.messages = prepareMessages(request);
+        const estimated = estimateMessageTokens([request.systemPrompt, request.postHistoryInstructions].filter(Boolean).join("\n\n"), request.messages, tools);
+        if (model.contextWindow && estimated > Math.min(model.contextWindow - record.settings.common.maxOutputTokens, model.maxInputTokens ?? Infinity)) {
+          throw new ContextError("message_too_large", "本轮上下文超过模型可用容量，工具结果已保留");
+        }
+        for await (const event of this.dependencies.stream(record.protocol, request)) {
           job.controller.signal.throwIfAborted();
           if (event.type === "block") {
+            if ((event.blockType === "text" || event.blockType === "refusal") && event.content.trim()) hasOutput = true;
             const blockIndex = stepIndex * 1000 + event.index;
             pendingBlocks.set(blockIndex, {
               type: event.blockType,
@@ -334,6 +332,7 @@ export class GenerationRunner {
           } else if (event.type === "tool-call") {
             calls.push(event.call);
           } else if (event.type === "image") {
+            if (event.dataBase64) hasOutput = true;
             if (!this.dependencies.imageService) throw new Error("图片服务不可用");
             const asset = await this.dependencies.imageService.importGeneratedBytes(
               `${record.modelKey}-response-${++generatedImageIndex}`,
@@ -345,13 +344,16 @@ export class GenerationRunner {
             providerContext = event.payload;
           } else if (event.type === "usage") {
             stepUsage = cleanUsage(event.usage);
+            this.store.updateGenerationUsage(generationId, addUsage(usage, stepUsage));
             this.emit(generationId, { type: "usage", generationId, usage: addUsage(usage, stepUsage) });
           } else if (event.type === "complete") {
+            completed = true;
             stopReason = event.stopReason;
           }
         }
         job.controller.signal.throwIfAborted();
         flush();
+        assertStreamComplete(completed, hasOutput || calls.length > 0);
         usage = addUsage(usage, stepUsage);
         this.store.updateGenerationUsage(generationId, usage);
         if (providerContext !== undefined) {
@@ -390,7 +392,6 @@ export class GenerationRunner {
         }
         await this.executeTools(record, persisted, stepToolMap, exposeAuthorized, job.controller.signal);
         job.controller.signal.throwIfAborted();
-        messages = [...context.messages, ...this.store.currentGenerationMessages(generationId)];
         if (this.store.hasPendingSteer(record.conversationId)) {
           this.store.finishGeneration(generationId, "completed", { stopReason: "steered" });
           this.emitStatus(generationId, "completed", "steered");

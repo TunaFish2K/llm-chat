@@ -122,8 +122,8 @@ describe("GenerationRunner lifecycle", () => {
     const runner = makeRunner(store, {
       buildTools,
       memoryPrompt: () => "memory",
-      buildContext: async () => ({
-        systemPrompt: "system",
+      buildContext: async (_store, _record, _model, _connection, _signal, _images, options) => ({
+        systemPrompt: ["system", options?.additionalSystemPrompt].filter(Boolean).join("\n\n"),
         messages: [{ role: "user", text: "prior" }],
         metadata: { policy: "full", omittedMessages: 0, estimatedInputTokens: 7, summaryUsed: false }
       }),
@@ -763,7 +763,7 @@ describe("GenerationRunner errors and cancellation", () => {
       }; } } : {}),
       buildTools: async () => { if (stage === "tools") await pause(); return [slowTool]; },
       stream: () => (async function* () {
-        if (stage === "tool") { yield toolCall("late-call", "slow", "{}"); return; }
+        if (stage === "tool") { yield toolCall("late-call", "slow", "{}"); yield { type: "complete", stopReason: "tool_calls" }; return; }
         if (stage === "stream") await pause();
         yield block(0, "late provider output", true);
         yield { type: "complete", stopReason: "stop" } satisfies ProviderEvent;
@@ -841,9 +841,9 @@ function seedGeneration(store: Store) {
 
 function makeRunner(store: Store, dependencies: Partial<GenerationRunnerDependencies> = {}): GenerationRunner {
   return new GenerationRunner(store, {
-    buildContext: async () => ({
-      systemPrompt: "",
-      messages: [],
+    buildContext: async (_store, record, _model, _connection, _signal, _images, options) => ({
+      systemPrompt: options?.additionalSystemPrompt ?? "",
+      messages: store.currentGenerationMessages(record.id),
       metadata: { policy: "full", omittedMessages: 0, estimatedInputTokens: 1, summaryUsed: false }
     }),
     buildTools: async () => [],
@@ -882,8 +882,13 @@ function toolCall(id: string, name: string, args: string): ProviderEvent {
   return { type: "tool-call", call: { id, name, arguments: args } };
 }
 
+// Successful fixture streams always carry output and an explicit terminal event.
 async function* events(items: ProviderEvent[]): AsyncGenerator<ProviderEvent> {
+  if (!items.some((item) => item.type === "tool-call" || item.type === "image" || (item.type === "block" && item.blockType !== "reasoning" && item.content))) {
+    yield block(1, "done", true);
+  }
   for (const item of items) yield item;
+  if (!items.some((item) => item.type === "complete")) yield { type: "complete", stopReason: "stop" };
 }
 
 async function* throwingEvents(error: unknown): AsyncGenerator<ProviderEvent> {

@@ -34,9 +34,12 @@ export interface ProviderMessage {
   toolResults?: ProviderToolResult[];
   providerPayload?: unknown;
   providerConnectionId?: string;
+  providerProtocol?: ProviderProtocol;
+  providerModelKey?: string;
 }
 
 export interface ProviderImage {
+  assetId?: string;
   mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
   dataBase64: string;
   fileName?: string;

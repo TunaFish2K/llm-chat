@@ -260,7 +260,8 @@ describe("context builder", () => {
       const seeded = seedModel(store);
       const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
       const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "summarize" });
-      completeTurn(store, conversation.id, "old".repeat(150), "answer".repeat(100));
+      completeTurn(store, conversation.id, "old".repeat(50), "answer".repeat(30));
+      completeTurn(store, conversation.id, "second".repeat(60), "answer".repeat(30));
       const latest = store.createMessageGeneration(conversation.id, "latest");
       return { store, seeded, model, conversation, latest };
     };
@@ -291,7 +292,8 @@ describe("context builder", () => {
     const seeded = seedModel(store);
     const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
     const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "summarize" });
-    completeTurn(store, conversation.id, "old".repeat(150), "answer".repeat(100));
+    completeTurn(store, conversation.id, "old".repeat(50), "answer".repeat(30));
+      completeTurn(store, conversation.id, "second".repeat(60), "answer".repeat(30));
     const latest = store.createMessageGeneration(conversation.id, "latest");
     vi.mocked(adapterFor).mockReturnValue({
       protocol: "openai-chat", listModels: async () => [],

@@ -1,3 +1,4 @@
+import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
 import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent } from "./types";
@@ -24,7 +25,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     const { common } = request.settings;
     const effort = request.settings.reasoningEffort;
     const capabilities = request.capabilities;
-    const messages = request.messages.map((message) => {
+    const messages = prepareMessages(request).map((message) => {
       if (message.role === "tool") {
         return {
           role: "user",
@@ -39,7 +40,8 @@ export class AnthropicAdapter implements ProviderAdapter {
       if (message.role === "assistant") {
         const content: unknown[] = message.providerConnectionId === request.connection.id && Array.isArray(message.providerPayload)
           ? [...message.providerPayload]
-          : message.text ? [{ type: "text", text: message.text }] : [];
+          : [];
+        if (message.text) content.push({ type: "text", text: message.text });
         const existingIds = new Set(content.flatMap((block) => {
           const value = block as Record<string, unknown>;
           return value.type === "tool_use" && typeof value.id === "string" ? [value.id] : [];
@@ -116,6 +118,8 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     const blocks = new Map<number, AnthropicBlock>();
     let usageSnapshot: Record<string, unknown> = {};
+    let ended = false;
+    let hasOutput = false;
     let stopReason = "end_turn";
     for await (const frame of readSse(response)) {
       let event: Record<string, unknown>;
@@ -149,14 +153,18 @@ export class AnthropicAdapter implements ProviderAdapter {
         const index = number(event.index) ?? 0;
         const block = blocks.get(index);
         if (block?.type === "tool_use" && block.id && block.name) {
-          const input = block.partialJson ? parseArguments(block.partialJson) : (block.input ?? {});
-          block.input = input;
+          const call = { id: block.id, name: block.name, arguments: block.partialJson ?? JSON.stringify(block.input ?? {}) };
+          validateToolCall(call);
+          block.input = JSON.parse(call.arguments);
           delete block.partialJson;
-          yield { type: "tool-call", call: { id: block.id, name: block.name, arguments: JSON.stringify(input) } };
+          hasOutput = true;
+          yield { type: "tool-call", call };
         } else if (block) {
           const normalized = blockEvent(index, block, true);
           if (normalized) yield normalized;
         }
+      } else if (type === "message_stop") {
+        ended = true;
       } else if (type === "message_delta") {
         const delta = event.delta as Record<string, unknown> | undefined;
         if (typeof delta?.stop_reason === "string") stopReason = delta.stop_reason;
@@ -167,6 +175,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         throw new Error(typeof error?.message === "string" ? error.message : "Anthropic 生成失败");
       }
     }
+    assertStreamComplete(ended, hasOutput || [...blocks.values()].some((block) => block.type === "text" && Boolean(block.text?.trim())));
     const providerPayload = [...blocks.entries()]
       .sort(([a], [b]) => a - b)
       .map(([, block]) => block);
