@@ -209,14 +209,20 @@
   max-height: none;
 }
 
-.modal.fullscreen .modal-body {
+.modal.fullscreen > .modal-body {
   display: flex;
+  flex: 1;
   min-height: 0;
 }
 
-.fullscreen-textarea {
+.modal.fullscreen > .modal-header,
+.modal.fullscreen > .modal-footer {
+  flex-shrink: 0;
+}
+
+.textarea.fullscreen-textarea {
   flex: 1;
-  min-height: 100%;
+  min-height: 0;
   resize: none;
 }
 
