@@ -104,7 +104,7 @@ export function ChatView({
     retryPending.current = true;
     setRetrying(true);
     try {
-      const result = await endpoints.retryGeneration(assistantMessageId);
+      const result = await endpoints.retryGeneration(conversationId, assistantMessageId);
       trackGeneration(conversationId, result.assistantMessageId, result.generationId);
       await loadMessages(conversationId);
     } catch (error) {

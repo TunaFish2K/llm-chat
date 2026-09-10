@@ -480,7 +480,7 @@ export function Composer({
                 }}
               />
 
-              {generating && active ? <CancelGenerationButton generationId={active.generation.id} className="composer-stop-button" /> : null}
+              {generating && active ? <CancelGenerationButton conversationId={conversation!.id} generationId={active.generation.id} className="composer-stop-button" /> : null}
               </div>
 
               <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={uploading || sending} />
@@ -653,7 +653,7 @@ function ApprovalCard({
     setBusy(true);
     setError("");
     try {
-      const result = await endpoints.resolveToolCall(item.call.id, approved, approved ? undefined : reason.trim() || undefined);
+      const result = await endpoints.resolveToolCall(conversationId, item.call.id, approved, approved ? undefined : reason.trim() || undefined);
       await loadMessages(conversationId);
       if (result.resumed) restartGenerationTracking(conversationId, item.message.id, result.generationId);
       setDenying(false);

@@ -152,7 +152,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
           label="停止图片生成"
           danger
           disabled={offline}
-          onClick={() => void endpoints.cancelImageGeneration(job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+          onClick={() => void endpoints.cancelImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
           <Square size={14} fill="currentColor" />
         </MessageAction>
@@ -160,7 +160,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
         <MessageAction
           label="重试图片生成"
           disabled={offline}
-          onClick={() => void endpoints.retryImageGeneration(job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+          onClick={() => void endpoints.retryImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
           <RotateCcw size={14} />
         </MessageAction>
@@ -202,7 +202,7 @@ function GenerationTimeline({
       return;
     }
     try {
-      await endpoints.selectGeneration(message.id, id);
+      await endpoints.selectGeneration(conversationId, message.id, id);
       await loadMessages(conversationId);
     } catch (error) {
       toastError(error);
@@ -271,7 +271,7 @@ function GenerationTimeline({
       ) : null}
 
       {offline && isGenerationActive(generation.status) ? <p className="hint">截至上次同步，生成状态尚未更新</p> : null}
-      <MessageFooter busy={busy} liveAction={busy ? <CancelGenerationButton generationId={generation.id} className="act danger" /> : null}
+      <MessageFooter busy={busy} liveAction={busy ? <CancelGenerationButton conversationId={conversationId} generationId={generation.id} className="act danger" /> : null}
         metadata={<>
           <span className="reply-identity" title={`${generation.generatedAgent?.name ?? "助手"} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>
             {generation.generatedAgent?.name ?? "助手"} · {message.generatedModel?.connectionName ?? generation.connectionName} / {message.generatedModel?.displayName ?? generation.modelKey}
