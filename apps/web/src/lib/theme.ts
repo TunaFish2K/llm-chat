@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import type { AppSettings } from "@llm-chat/contracts";
-import { updateFavicon } from "./brand-icon";
 
 export const THEME_COLORS = { dark: "#0d100e", light: "#f5f7f5" } as const;
 
@@ -27,7 +26,6 @@ export function useTheme(settings: AppSettings | null): void {
         root.style.setProperty("--text-invert", luminance > .179 ? "#000000" : "#ffffff");
       }
       root.style.colorScheme = resolved;
-      updateFavicon(resolved, accent);
       document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
         ?.setAttribute("content", amoled && resolved === "dark" ? "#000000" : THEME_COLORS[resolved]);
     };

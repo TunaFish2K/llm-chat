@@ -78,8 +78,7 @@ test.describe("应用外壳", () => {
         .poll(async () => (await api(request, APP_URL, "GET", "/api/settings")).theme)
         .toBe(next);
       await expect(page.locator("html")).toHaveAttribute("data-theme", next);
-      await expect.poll(async () => decodeURIComponent(await page.locator("#app-favicon").getAttribute("href") ?? ""))
-        .toContain(`fill="${next === "light" ? "#c64b2f" : "#ff8964"}"`);
+      await expect(page.locator("#app-favicon")).toHaveAttribute("href", "/icons/icon-v2.svg");
       await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
         "content",
         next === "light" ? "#f5f7f5" : "#0d100e"
@@ -163,6 +162,15 @@ test.describe("应用外壳", () => {
     await page.goto(APP_URL);
     const documentResponse = await page.request.get(APP_URL);
     const html = await documentResponse.text();
+    expect(html).toContain('href="/icons/icon-v2.svg"');
+    await expect(page.locator("#app-favicon")).toHaveAttribute("href", "/icons/icon-v2.svg");
+    const favicon = await page.request.get(`${APP_URL}/icons/icon-v2.svg`);
+    expect(favicon.ok()).toBeTruthy();
+    expect(favicon.headers()["content-type"]).toContain("image/svg+xml");
+    const icon = await favicon.text();
+    expect(icon).toMatch(/<rect\b[^>]*fill="#000000"/);
+    expect(icon).toMatch(/<path\b[^>]*fill="#FFFFFF"/);
+    expect(icon).not.toContain("prefers-color-scheme");
     const scriptPath = html.match(/<script[^>]+src="([^"]*\/assets\/index-[A-Za-z0-9_-]+\.js)"/)?.[1];
     expect(scriptPath).toBeTruthy();
     const script = await page.request.get(`${APP_URL}${scriptPath}`);
@@ -192,7 +200,7 @@ test.describe("应用外壳", () => {
     const sw = await page.request.get(`${APP_URL}/sw.js`);
     expect(sw.ok()).toBeTruthy();
     expect(await sw.text()).toContain("/api/");
-    expect(await sw.text()).toContain("icons/favicon-v2.svg");
+    expect(await sw.text()).toContain("icons/icon-v2.svg");
     await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", "/icons/apple-touch-icon-180-v2.png");
     const apiResponse = await page.request.get(`${APP_URL}/api/health`);
     expect(apiResponse.headers()["cache-control"]).toBe("no-store");
