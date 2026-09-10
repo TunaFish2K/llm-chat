@@ -6,7 +6,7 @@ export interface ToolFormatters {
   formatResult?: (result: ToolResultFormatInput) => ToolMarkdown | Promise<ToolMarkdown>;
 }
 
-const builtinNames = new Set(`browser_fetch get_time_info eval_javascript fetch_url search_web image_generate recent_chats conversation_search memory_tool workspace_list workspace_read_file workspace_write_file workspace_edit_file workspace_glob workspace_grep workspace_shell workspace_publish_image workspace_publish_file use_skill codex_runtime codex_sessions codex_start codex_send codex_wait codex_respond codex_interrupt background_start background_read background_wait background_write background_stop background_list search_tools plugin_install plugin_reload plugin_unload plugin_remove skill_install skill_reload app_agents app_conversations app_settings app_connections app_models app_mcp_servers app_skills app_plugins app_tool_settings app_roleplay`.split(" "));
+const builtinNames = new Set(`browser_fetch get_time_info eval_javascript fetch_url search_web image_generate recent_chats conversation_search memory_tool workspace_list workspace_read_file workspace_write_file workspace_edit_file workspace_glob workspace_grep workspace_shell workspace_shell_readonly workspace_publish_image workspace_publish_file use_skill codex_runtime codex_sessions codex_start codex_send codex_wait codex_respond codex_interrupt background_start background_read background_wait background_write background_stop background_list search_tools plugin_install plugin_reload plugin_unload plugin_remove skill_install skill_reload app_agents app_conversations app_settings app_connections app_models app_mcp_servers app_skills app_plugins app_tool_settings app_roleplay`.split(" "));
 
 function clip(value: string, bytes: number): string {
   if (Buffer.byteLength(value) <= bytes) return value;
@@ -80,9 +80,9 @@ export function builtinToolFormatters(name: string): ToolFormatters | undefined 
     formatArguments(input) {
       const summary = inline(input.command ?? input.code ?? input.query ?? input.path ?? input.url ?? input.prompt ?? [input.action, input.id ?? input.task_id ?? input.name].filter(Boolean).join(" · ")) || "无参数";
       let detail = fields(input);
-      if (name === "workspace_shell" || name === "eval_javascript") {
+      if (["workspace_shell", "workspace_shell_readonly", "eval_javascript"].includes(name)) {
         const { command, code: source, ...rest } = input;
-        detail = code(command ?? source ?? "", name === "workspace_shell" ? "bash" : "javascript") + (Object.keys(rest).length ? `\n\n${fields(rest)}` : "");
+        detail = code(command ?? source ?? "", name === "eval_javascript" ? "javascript" : "bash") + (Object.keys(rest).length ? `\n\n${fields(rest)}` : "");
       } else if (name === "workspace_edit_file") {
         const { old_text, new_text, ...rest } = input;
         detail = `${fields(rest)}\n\n**替换前**\n\n${code(old_text, language(input.path))}\n\n**替换后**\n\n${code(new_text, language(input.path))}`;

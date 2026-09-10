@@ -752,6 +752,7 @@ function ToolsTab({
                   <div>{tool.label}</div>
                   <div className="small muted mono">{tool.name}</div>
                   {tool.name === "browser_fetch" ? <div className="small muted">默认关闭；需显式启用。{tool.error ?? ""}</div> : null}
+                  {tool.name === "workspace_shell_readonly" ? <div className="small muted">只读、不联网；默认免审批。{!tool.available ? tool.error ?? "运行时不可用" : ""}</div> : null}
                 </td>
                 <td data-label="启用">
                   <PolicySelector

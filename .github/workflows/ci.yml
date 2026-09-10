@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install read-only sandbox runtime
+        run: bash scripts/install-ci-bubblewrap.sh
+
       - name: Run quality checks
         run: pnpm check
 

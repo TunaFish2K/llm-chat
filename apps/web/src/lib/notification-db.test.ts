@@ -1,7 +1,8 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 
 beforeEach(() => { vi.resetModules(); vi.stubGlobal("indexedDB", new IDBFactory()); });
+afterEach(() => vi.restoreAllMocks());
 
 it("defaults off, persists browser preferences, and rejects stale permission decisions", async () => {
   const db = await import("./notification-db");
@@ -14,6 +15,8 @@ it("defaults off, persists browser preferences, and rejects stale permission dec
 });
 
 it("deduplicates concurrent claims and keeps a bounded history across reloads", async () => {
+  let timestamp = 0;
+  vi.spyOn(Date, "now").mockImplementation(() => ++timestamp);
   const db = await import("./notification-db");
   expect(await Promise.all([db.claimNotification("same"), db.claimNotification("same")])).toEqual([true, false]);
   for (let i = 0; i < 1001; i++) await db.claimNotification(`event-${i}`);

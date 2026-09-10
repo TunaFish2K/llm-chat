@@ -19,11 +19,19 @@ export interface ShellResult {
 }
 
 export function executeShell(command: string, cwd: string, timeout: number, signal: AbortSignal): Promise<string> {
+  return executeProcess("/bin/sh", ["-lc", command], cwd, timeout, signal);
+}
+
+/** All launch paths share cancellation, output bounds and process-group cleanup. */
+export function executeProcess(
+  executable: string, args: string[], cwd: string, timeout: number, signal: AbortSignal,
+  options: { env?: NodeJS.ProcessEnv; fds?: number[] } = {}
+): Promise<string> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const child = spawn("/bin/sh", ["-lc", command], {
-      cwd, detached: true, stdio: ["ignore", "pipe", "pipe"],
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" }
+    const child = spawn(executable, args, {
+      cwd, detached: true, stdio: ["ignore", "pipe", "pipe", ...(options.fds ?? [])],
+      env: options.env ?? { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" }
     });
     const result: ShellResult = { exitCode: null, signal: null, stdout: "", stderr: "", timedOut: false, cancelled: false, truncated: false };
     let killTimer: ReturnType<typeof setTimeout> | undefined;
@@ -44,15 +52,15 @@ export function executeShell(command: string, cwd: string, timeout: number, sign
       clearTimeout(timer);
       if (killTimer) { kill("SIGKILL"); clearTimeout(killTimer); }
       signal.removeEventListener("abort", abort);
-      child.stdout.destroy(); child.stderr.destroy();
+      child.stdout!.destroy(); child.stderr!.destroy();
       if (error || result.cancelled || result.timedOut || result.exitCode !== 0) {
         const message = error?.message ?? (result.cancelled ? "命令已取消" : result.timedOut ? "命令执行超时" : `命令退出码 ${result.exitCode ?? result.signal}`);
         reject(new ShellError(result, message));
       } else resolve(JSON.stringify(result));
     };
     for (const key of ["stdout", "stderr"] as const) {
-      child[key].setEncoding("utf8");
-      child[key].on("data", (chunk: string) => {
+      child[key]!.setEncoding("utf8");
+      child[key]!.on("data", (chunk: string) => {
         const next = result[key] + chunk;
         if (next.length > 1024 * 1024) result.truncated = true;
         result[key] = next.slice(-1024 * 1024);

@@ -13,6 +13,7 @@ import type { AppTools } from "./app-tools";
 import type { ImageGenerationManager } from "./image-generation";
 import type { CodexManager } from "./codex";
 import type { BrowserFetchManager } from "./browser-fetch";
+import type { ReadonlyShellManager } from "./readonly-shell";
 
 export const SEARCH_TOOLS_NAME = "search_tools";
 
@@ -89,7 +90,8 @@ export class ToolRegistry {
     private readonly appTools?: AppTools,
     private readonly imageJobs?: ImageGenerationManager,
     private readonly codex?: CodexManager,
-    private readonly browser?: BrowserFetchManager
+    private readonly browser?: BrowserFetchManager,
+    private readonly readonlyShell?: ReadonlyShellManager
   ) {}
 
   async tools(
@@ -104,6 +106,7 @@ export class ToolRegistry {
     }
     const builtins = (await buildServerTools(this.store, true, {
       taskManager: this.tasks,
+      ...(this.readonlyShell ? { readonlyShell: this.readonlyShell } : {}),
       ...(this.browser ? { browser: this.browser } : {}),
       ...(this.images ? { imageService: this.images } : {}),
       ...(this.imageJobs ? { imageManager: this.imageJobs } : {}),

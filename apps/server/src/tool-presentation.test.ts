@@ -8,6 +8,9 @@ it("formats shell streams, search links and code while preserving raw records", 
   const shell = legacyToolPresentation("workspace_shell", '{"command":"printf hi"}', '{"stdout":"hi","stderr":"","exitCode":0}', null)!;
   expect(shell.arguments?.detail).toContain("```bash\nprintf hi");
   expect(shell.result?.detail).toContain("**stdout**");
+  const readonly = legacyToolPresentation("workspace_shell_readonly", '{"command":"cat example.txt | sort"}', '{"stdout":"example","stderr":"","exitCode":0}', null)!;
+  expect(readonly.arguments?.detail).toContain("```bash\ncat example.txt | sort");
+  expect(readonly.result?.detail).toContain("example");
   const search = legacyToolPresentation("search_web", '{"query":"hello"}', '[{"title":"Result","url":"https://example.com","snippet":"Hello"}]', null)!;
   expect(search.result?.detail).toContain("<https://example.com>");
   expect(builtinToolFormatters("plugin__sample__echo")).toBeUndefined();
