@@ -1,7 +1,8 @@
+import { overlayResource, optimisticWrite } from "./optimistic-resource";
 import { saveTypography } from "./local-typography";
-import { conversationDeleted, deletionRevision, markConversationsDeleted } from "./conversation-lifecycle";
+import { conversationDeleted, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
 import { preserveDeletedDraft, removeComposerDraft } from "./composer-drafts";
-import { replaceRoute } from "./router";
+import { replaceRoute, navigate } from "./router";
 import { resolveConversationRoot } from "./conversation-tree";
 import { clearOfflineHistory, isOffline, offlineStore, persistOfflineMessages } from "./offline-history";
 import type {
@@ -14,7 +15,7 @@ import type {
   ModelDto,
   FileAssetDto
 } from "@llm-chat/contracts";
-import { api, endpoints, onAuthRequired } from "./api";
+import { api, apiRevision, endpoints, onAuthRequired } from "./api";
 import { cancelGenerationHaptic, scheduleGenerationHaptic, setGenerationHapticsEnabled } from "./haptics";
 import { createStore } from "./store";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
@@ -66,7 +67,7 @@ export function toast(kind: Toast["kind"], text: string): void {
 }
 
 export function toastError(error: unknown): void {
-  if (error instanceof Error && "code" in error && ["conversation_not_found", "conversation_deleted_local"].includes(String(error.code))) return;
+  if (error instanceof Error && "code" in error && ["conversation_not_found", "conversation_deleted_local", "request_invalidated"].includes(String(error.code))) return;
   if (isOffline() && error instanceof Error && /网络|联网|fetch|同步/.test(error.message)) return;
   toast("error", error instanceof Error ? error.message : String(error));
 }
@@ -76,6 +77,7 @@ export async function bootstrap(conversationId?: string, background = false): Pr
   try {
     const knownIds = appStore.get().conversations.map((item) => item.id);
     const data = await endpoints.bootstrap(conversationId);
+    if (data.sourceId) setConversationSource(data.sourceId);
     if (!isOffline()) reconcileConversations(data.conversations, conversationId ?? null, knownIds);
     data.conversations = data.conversations.filter((item) => !conversationDeleted(item.id));
     if (conversationId && conversationDeleted(conversationId)) { delete data.messages; replaceRoute("/"); }
@@ -132,10 +134,18 @@ export async function refreshConversations(): Promise<void> {
   const revision = deletionRevision();
   const knownIds = appStore.get().conversations.map((item) => item.id);
   const currentId = location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null;
+  const requestVersion = apiRevision();
   const conversations = await endpoints.conversations();
-  if (sequence !== conversationsReadSequence) return;
+  if (sequence !== conversationsReadSequence || requestVersion !== apiRevision()) return;
   if (!isOffline() && revision === deletionRevision()) reconcileConversations(conversations, currentId, knownIds);
-  appStore.set({ conversations: conversations.filter((item) => !conversationDeleted(item.id)) });
+  const next = conversations.filter((item) => !conversationDeleted(item.id)).map((item) => overlayResource(`conversation:${item.id}`, item));
+  const roots = new Set(next.map((item) => resolveConversationRoot(item, next).id));
+  for (const root of roots) {
+    const family = next.filter((item) => resolveConversationRoot(item, next).id === root);
+    const projected = overlayResource(`branch:${root}`, family);
+    for (const value of projected) { const index = next.findIndex((item) => item.id === value.id); if (index >= 0) next[index] = value; }
+  }
+  appStore.set({ conversations: next });
 }
 
 export async function refreshAgents(): Promise<void> {
@@ -143,9 +153,12 @@ export async function refreshAgents(): Promise<void> {
   appStore.set({ agents });
 }
 
+let connectionsReadSequence = 0;
 export async function refreshConnectionsAndModels(): Promise<void> {
+  const sequence = ++connectionsReadSequence, revision = apiRevision();
   const [connections, models] = await Promise.all([endpoints.connections(), endpoints.models()]);
-  appStore.set({ connections, models });
+  if (sequence !== connectionsReadSequence || revision !== apiRevision()) return;
+  appStore.set({ connections, models: models.map((model) => overlayResource(`model:${model.id}`, model)) });
 }
 
 type UiPreferences = AppSettings["uiPreferences"];
@@ -158,6 +171,7 @@ let preferenceWrite: Promise<void> | null = null;
 let settingsReadSequence = 0;
 
 export function acceptSettings(settings: AppSettings): void {
+  settings = overlayResource("settings", settings);
   const merged = { ...settings, uiPreferences: { ...settings.uiPreferences, ...pendingPreferences } };
   setGenerationHapticsEnabled(merged.uiPreferences.generationHaptics);
   appStore.set({ settings: merged });
@@ -215,18 +229,72 @@ export async function refreshSettings(): Promise<void> {
   if (sequence === settingsReadSequence) acceptSettings(settings);
 }
 
+const messageReads = new Map<string, number>();
+const messageChanges = new Map<string, number>();
 export async function loadMessages(conversationId: string): Promise<MessageDto[]> {
   if (conversationDeleted(conversationId)) return [];
+  const read = (messageReads.get(conversationId) ?? 0) + 1;
+  messageReads.set(conversationId, read);
+  const change = messageChanges.get(conversationId) ?? 0;
   const messages = normalizeMessages(await endpoints.messages(conversationId));
   if (conversationDeleted(conversationId)) return [];
-  appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: messages } }));
-  persistOfflineMessages(conversationId, messages, true);
-  for (const message of messages) {
-    for (const generation of message.generations) {
-      if (isGenerationActive(generation.status)) trackGeneration(conversationId, message.id, generation.id);
-    }
+  if (messageReads.get(conversationId) !== read) return appStore.get().messages[conversationId] ?? [];
+  const existing = appStore.get().messages[conversationId] ?? [];
+  const next = messages.map((message) => {
+    const current = existing.find((item) => item.id === message.id);
+    const merged = current && change !== (messageChanges.get(conversationId) ?? 0)
+      ? { ...message, generations: [...message.generations.map((generation) => {
+          const live = current.generations.find((item) => item.id === generation.id);
+          return live && (isGenerationActive(generation.status) || !isGenerationActive(live.status)) ? live : generation;
+        }), ...current.generations.filter((generation) => !message.generations.some((item) => item.id === generation.id))] }
+      : message;
+    return overlayResource(`message:${message.id}`, merged);
+  });
+  appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: next } }));
+  persistOfflineMessages(conversationId, next, true);
+  for (const message of next) for (const generation of message.generations) {
+    if (isGenerationActive(generation.status)) trackGeneration(conversationId, message.id, generation.id);
   }
-  return messages;
+  return next;
+}
+
+export function acceptConversation(value: ConversationDto): void {
+  if (conversationDeleted(value.id)) return;
+  appStore.set((state) => ({ conversations: [...state.conversations.filter((item) => item.id !== value.id), overlayResource(`conversation:${value.id}`, value)] }));
+}
+export function saveConversation(id: string, patch: Partial<ConversationDto>, optimistic = patch): Promise<ConversationDto> {
+  const current = appStore.get().conversations.find((item) => item.id === id);
+  if (!current) return Promise.reject(new Error("会话不存在"));
+  return optimisticWrite(`conversation:${id}`, current, (value) => ({ ...value, ...optimistic }),
+    (value) => { if (!conversationDeleted(id)) appStore.set((state) => ({ conversations: state.conversations.map((item) => item.id === id ? value : item) })); },
+    () => endpoints.updateConversation(id, patch));
+}
+export function selectMessageVersion(conversationId: string, messageId: string, generationId: string): Promise<MessageDto> {
+  const current = appStore.get().messages[conversationId]?.find((item) => item.id === messageId);
+  if (!current) return Promise.reject(new Error("消息不存在"));
+  const apply = (value: MessageDto): MessageDto => ({ ...value, activeGenerationId: generationId, generatedModel: null });
+  return optimisticWrite(`message:${messageId}`, current, apply, (value) => upsertMessage(conversationId, value), async () => {
+    await endpoints.selectGeneration(conversationId, messageId, generationId);
+    return apply(appStore.get().messages[conversationId]?.find((item) => item.id === messageId) ?? current);
+  });
+}
+
+const branchVersions = new Map<string, number>();
+export async function selectBranch(conversationId: string, branchId: string): Promise<void> {
+  if (conversationDeleted(branchId)) return;
+  const known = appStore.get().conversations;
+  if (!known.some((item) => item.id === conversationId)) return;
+  const before = location.pathname;
+  const family = appStore.get().conversations.filter((item) => resolveConversationRoot(item, appStore.get().conversations).id === resolveConversationRoot(appStore.get().conversations.find((item) => item.id === conversationId)!, appStore.get().conversations).id);
+  const root = resolveConversationRoot(family[0]!, appStore.get().conversations);
+  const version = (branchVersions.get(root.id) ?? 0) + 1;
+  branchVersions.set(root.id, version);
+  const promise = optimisticWrite(`branch:${root.id}`, family, (items) => items.map((item) => ({ ...item, activeBranchId: branchId })),
+    (items) => appStore.set((state) => ({ conversations: state.conversations.map((item) => items.find((entry) => entry.id === item.id) ?? item) })),
+    async () => { await endpoints.selectConversationBranch(root.id, branchId); return family.map((item) => ({ ...item, activeBranchId: branchId })); });
+  const target = `/c/${branchId}`;
+  navigate(target);
+  try { await promise; } catch (error) { if (branchVersions.get(root.id) === version && location.pathname === target) replaceRoute(before); throw error; }
 }
 
 function normalizeMessages(messages: MessageDto[]): MessageDto[] {
@@ -382,6 +450,7 @@ function findMessage(conversationId: string, messageId: string): MessageDto | un
 }
 
 function applyGeneration(conversationId: string, messageId: string, generation: GenerationDto): void {
+  messageChanges.set(conversationId, (messageChanges.get(conversationId) ?? 0) + 1);
   if (conversationDeleted(conversationId)) return;
   appStore.set((state) => {
     const list = state.messages[conversationId];
@@ -463,6 +532,7 @@ export async function refreshTaskCounts(): Promise<void> {
 
 export function initAuthGate(): void {
   const requireAuth = (event?: Event) => {
+    window.dispatchEvent(new Event("llm-chat:submissions-clear"));
     stopAppEvents();
     void clearOfflineHistory({ logout: true, broadcast: !(event instanceof CustomEvent && event.detail?.remote) }).catch(() => {});
     appStore.set({ auth: "required", messages: {}, conversations: [] });
@@ -511,3 +581,18 @@ window.addEventListener("popstate", () => {
   const id = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
   if (id && conversationDeleted(id)) replaceRoute("/");
 });
+
+window.addEventListener("llm-chat:action-error", (event) => toastError((event as CustomEvent).detail));
+
+export function saveSettings(patch: import("@llm-chat/contracts").AppSettingsUpdate): Promise<AppSettings> {
+  const current = appStore.get().settings!;
+  return optimisticWrite("settings", current, (value) => ({ ...value, ...patch,
+    uiPreferences: { ...value.uiPreferences, ...patch.uiPreferences } } as AppSettings),
+    acceptSettings, () => endpoints.updateSettings(patch));
+}
+
+export function saveModelEnabled(model: ModelDto, enabled: boolean): Promise<ModelDto> {
+  return optimisticWrite(`model:${model.id}`, model, (value) => ({ ...value, enabled }),
+    (value) => appStore.set((state) => ({ models: state.models.map((item) => item.id === model.id ? value : item) })),
+    () => endpoints.updateModel(model.id, { enabled }));
+}

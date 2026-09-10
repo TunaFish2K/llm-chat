@@ -222,7 +222,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  if (current > 39) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  if (current > 40) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1110,6 +1110,17 @@ function migrate(sqlite: DatabaseSyncType): void {
     if (current < 39) {
       migrateOfflineHistory(sqlite);
       sqlite.exec("PRAGMA user_version = 39;");
+    }
+    if (current < 40) {
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS message_submissions (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, input_hash TEXT NOT NULL,
+        conversation_id TEXT NOT NULL, user_message_id TEXT, assistant_message_id TEXT,
+        generation_id TEXT, queued_message_id TEXT, created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_submission_message ON message_submissions(user_message_id);
+      CREATE INDEX IF NOT EXISTS idx_submission_conversation ON message_submissions(conversation_id);
+      CREATE INDEX IF NOT EXISTS idx_submission_queue ON message_submissions(queued_message_id);
+      PRAGMA user_version = 40;`);
     }
     sqlite.exec("COMMIT");
   } catch (error) {
@@ -2289,7 +2300,7 @@ export class Store {
     imageAssetIds?: string[] | undefined;
     modelId: string;
     contextPolicy?: ContextPolicy | undefined;
-  }): ConversationStartedDto {
+  }, submission?: SubmissionInput): ConversationStartedDto {
     return this.transaction(() => {
       const now = Date.now();
       const conversation = this.createConversation({
@@ -2329,6 +2340,7 @@ export class Store {
         this.resolveGeneration(conversation).snapshot,
         input.assetIds ?? input.imageAssetIds ?? []
       );
+      this.saveSubmission(submission, conversation.id, generation);
       return {
         conversation: this.getConversation(conversation.id)!,
         generation
@@ -2717,7 +2729,29 @@ export class Store {
     });
   }
 
-  createMessageGeneration(conversationId: string, text: string, assetIds: string[] = []): GenerationCreatedDto {
+
+  getSubmission(id: string, input?: SubmissionInput): import("@llm-chat/contracts").MessageSubmissionDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM message_submissions WHERE id = ?").get(id);
+    if (!row) return undefined;
+    if (input && (row.kind !== input.kind || row.input_hash !== input.hash)) throw new StoreError("submission_conflict", "请求标识已用于不同的提交内容");
+    const user = textOrNull(row.user_message_id), queue = textOrNull(row.queued_message_id);
+    const exists = this.getConversation(String(row.conversation_id)) && (user
+      ? this.sqlite.prepare("SELECT 1 FROM messages WHERE id = ?").get(user)
+      : queue && this.sqlite.prepare("SELECT 1 FROM queued_messages WHERE id = ?").get(queue));
+    return { clientRequestId: String(row.id), kind: row.kind as "start" | "send" | "queue",
+      conversationId: String(row.conversation_id), userMessageId: user, queuedMessageId: queue,
+      assistantMessageId: textOrNull(row.assistant_message_id), generationId: textOrNull(row.generation_id), deleted: !exists };
+  }
+
+  private saveSubmission(input: SubmissionInput | undefined, conversationId: string, generation?: GenerationCreatedDto, queueId?: string): void {
+    if (!input) return;
+    this.sqlite.prepare(`INSERT INTO message_submissions
+      (id, kind, input_hash, conversation_id, user_message_id, assistant_message_id, generation_id, queued_message_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.id, input.kind, input.hash, conversationId,
+        generation?.userMessageId ?? null, generation?.assistantMessageId ?? null, generation?.generationId ?? null, queueId ?? null, Date.now());
+  }
+
+  createMessageGeneration(conversationId: string, text: string, assetIds: string[] = [], submission?: SubmissionInput): GenerationCreatedDto {
     return this.transaction(() => {
       const conversation = this.getConversation(conversationId);
       if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
@@ -2726,14 +2760,18 @@ export class Store {
         ? "continue"
         : "normal";
       const resolved = this.resolveGeneration(conversation, generationKind);
-      return this.insertMessageGeneration(conversation, text, resolved.snapshot, assetIds);
+      const result = this.insertMessageGeneration(conversation, text, resolved.snapshot, assetIds);
+      this.saveSubmission(submission, conversationId, result);
+      return result;
     });
   }
 
   listQueuedMessages(conversationId: string): import("@llm-chat/contracts").QueuedMessageDto[] {
     if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    const submissions = new Map(this.sqlite.prepare("SELECT id, queued_message_id FROM message_submissions WHERE conversation_id = ?").all(conversationId).map((row) => [String(row.queued_message_id), String(row.id)]));
     return (this.sqlite.prepare("SELECT * FROM queued_messages WHERE conversation_id = ? ORDER BY CASE WHEN mode = 'steer' THEN 0 ELSE 1 END, sequence").all(conversationId) as Row[])
       .map((row) => ({
+        ...(submissions.get(String(row.id)) ? { clientRequestId: submissions.get(String(row.id))! } : {}),
         id: String(row.id), conversationId, text: String(row.text),
         mode: row.mode === "steer" ? "steer" : "queue",
         status: row.status as "pending" | "dispatching" | "failed", error: textOrNull(row.error),
@@ -2743,7 +2781,7 @@ export class Store {
       }));
   }
 
-  enqueueMessage(conversationId: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") {
+  enqueueMessage(conversationId: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue", submission?: SubmissionInput) {
     return this.transaction(() => {
       if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
       this.validateAttachments(assetIds);
@@ -2755,6 +2793,7 @@ export class Store {
       assetIds.forEach((assetId, index) => insert.run(id, assetId, index));
       this.sqlite.prepare("UPDATE queued_messages SET mode = ? WHERE id = ?").run(mode, id);
       this.sqlite.prepare("UPDATE conversations SET draft = '' WHERE id = ?").run(conversationId);
+      this.saveSubmission(submission, conversationId, undefined, id);
       return this.listQueuedMessages(conversationId).find((item) => item.id === id)!;
     });
   }
@@ -2787,6 +2826,8 @@ export class Store {
         const result = this.insertMessageGeneration(conversation, item.text, this.resolveGeneration(conversation).snapshot, ids);
         this.sqlite.prepare("UPDATE conversations SET draft = ? WHERE id = ?").run(conversation.draft, conversationId);
         this.sqlite.prepare("UPDATE queued_messages SET status = 'dispatching', generation_id = ? WHERE id = ?").run(result.generationId, item.id);
+        this.sqlite.prepare("UPDATE message_submissions SET user_message_id = ?, assistant_message_id = ?, generation_id = ? WHERE queued_message_id = ?")
+          .run(result.userMessageId!, result.assistantMessageId, result.generationId, item.id);
         this.sqlite.exec("RELEASE queue_dispatch");
         return result;
       } catch (error) {
@@ -2903,10 +2944,12 @@ export class Store {
 
   listMessages(conversationId: string, includeInactive = false): MessageDto[] {
     const messages = this.sqlite.prepare("SELECT * FROM messages WHERE conversation_id = ? AND (? OR history_active = 1) ORDER BY ordinal").all(conversationId, Number(includeInactive)) as Row[];
+    const submissions = new Map(this.sqlite.prepare("SELECT id, user_message_id FROM message_submissions WHERE conversation_id = ?").all(conversationId).map((row) => [String(row.user_message_id), String(row.id)]));
     return messages.map((message) => {
       const assistant = message.role === "assistant";
       const activeGenerationId = textOrNull(message.active_generation_id);
       return {
+        ...(submissions.get(String(message.id)) ? { clientRequestId: submissions.get(String(message.id))! } : {}),
         id: String(message.id),
         ordinal: Number(message.ordinal),
         role: message.role as "user" | "assistant",
@@ -3679,3 +3722,5 @@ function parse<T>(value: unknown, fallback: T): T {
 function titleFrom(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 60) || "新对话";
 }
+
+export interface SubmissionInput { id: string; kind: "start" | "send" | "queue"; hash: string }

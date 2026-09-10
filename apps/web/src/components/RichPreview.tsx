@@ -1,3 +1,4 @@
+import { ActionButton } from "../lib/action-feedback";
 import { memo, useEffect, useRef, useState } from "react";
 import { useBackLayer } from "../lib/mobile-navigation";
 import { toast, toastError } from "../lib/app-state";
@@ -46,11 +47,11 @@ export const RichPreview = memo(function RichPreview({ part }: { part: RichPart 
   return <section className="rich-preview" data-expanded={expanded || undefined} aria-label={title}>
     <div className="rich-preview-toolbar">
       <span>{title}</span>
-      <button type="button" aria-expanded={sourceOpen} onClick={() => setSourceOpen(!sourceOpen)}>{sourceOpen ? "隐藏源码" : "查看源码"}</button>
-      <button type="button" onClick={() => void copy()}>复制</button>
-      <button type="button" onClick={download}>下载</button>
-      <button type="button" onClick={() => { setReady(false); setLoadFailed(false); setRevision((value) => value + 1); }}>重新运行</button>
-      <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "展开"}</button>
+      <ActionButton type="button" aria-expanded={sourceOpen} onClick={() => setSourceOpen(!sourceOpen)}>{sourceOpen ? "隐藏源码" : "查看源码"}</ActionButton>
+      <ActionButton type="button" onClick={() => copy()}>复制</ActionButton>
+      <ActionButton type="button" onClick={download}>下载</ActionButton>
+      <ActionButton type="button" onClick={() => { setReady(false); setLoadFailed(false); setRevision((value) => value + 1); }}>重新运行</ActionButton>
+      <ActionButton type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "展开"}</ActionButton>
     </div>
     <iframe key={`${part.source}:${revision}`} ref={frame} title={title} src="/render-frame.html" sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" onLoad={initialize} style={{ height: expanded ? "70dvh" : height }} />
     {!ready ? <span className="hint rich-preview-status">{loadFailed ? "预览未能加载，可重新运行或查看源码。" : "正在加载预览…"}</span> : null}

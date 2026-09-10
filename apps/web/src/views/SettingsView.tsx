@@ -1,3 +1,7 @@
+import { optimisticWrite, overlayResource } from "../lib/optimistic-resource";
+import { useLatestRequest } from "../lib/latest-request";
+import { saveSettings } from "../lib/app-state";
+import { ActionGroup, ActionButton, ResourceSaveStatus } from "../lib/action-feedback";
 import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
 import { clearOfflineHistory, offlineStore } from "../lib/offline-history";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -131,12 +135,12 @@ function AppUpdateCard() {
     {pwa.supported ? <>
       <p className="hint" role={pwa.updateStatus === "error" ? "alert" : "status"}>{status}</p>
       <div className="row">
-        <button type="button" className="btn" disabled={busy} onClick={() => void checkForUpdates()}>检查更新</button>
-        {pwa.updateAvailable ? <button type="button" className="btn primary" disabled={busy} onClick={() => void applyUpdate()}>更新并刷新</button> : null}
+        <ActionButton type="button" className="btn" disabled={busy} onClick={() => checkForUpdates()}>检查更新</ActionButton>
+        {pwa.updateAvailable ? <ActionButton type="button" className="btn primary" disabled={busy} onClick={() => applyUpdate()}>更新并刷新</ActionButton> : null}
       </div>
     </> : <>
       <p className="hint">当前浏览器不支持应用更新，可以刷新页面获取服务器上的版本。</p>
-      <button type="button" className="btn" onClick={() => window.location.reload()}>刷新页面</button>
+      <ActionButton type="button" className="btn" onClick={() => window.location.reload()}>刷新页面</ActionButton>
     </>}
   </div>;
 }
@@ -154,23 +158,12 @@ function GeneralSection() {
 
   const patch = (value: Omit<Partial<AppSettings>, "uiPreferences"> & { uiPreferences?: Partial<AppSettings["uiPreferences"]> }) => {
     if (value.uiPreferences) { updateUiPreferences(value.uiPreferences); return; }
-    const revision = ++patchVersion.current;
-    const current = appStore.get().settings ?? settings;
-    const { uiPreferences: _preferences, ...fields } = value;
-    appStore.set({ settings: { ...current, ...fields } });
-    patchSequence.current = patchSequence.current.then(async () => {
-      await endpoints.updateSettings(value);
-      if (revision !== patchVersion.current) return;
-      const saved = await endpoints.settings();
-      if (revision === patchVersion.current) {
-        acceptSettings(saved);
-        toast("success", "设置已保存");
-      }
-    }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
+    void saveSettings(value).catch(toastError);
   };
 
   return (
     <div>
+      <ResourceSaveStatus resource="settings" />
       <OfflineHistorySettings />
       <fieldset disabled={offline} className="offline-settings-fields">
       <div className="card">
@@ -239,7 +232,7 @@ function GeneralSection() {
       <fieldset disabled={offline} className="offline-settings-fields">
       <AppUpdateCard />
       <div className="card"><h3>快速教程</h3><p className="hint">教程观看状态只保存在当前浏览器，不同步到其他设备。</p>
-        <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</button></div>
+        <ActionButton className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</ActionButton></div>
 
       <div className="card">
         <h3>默认 Agent</h3>
@@ -280,9 +273,9 @@ function GeneralSection() {
       <div className="card">
         <h3>工作目录</h3>
         <p className="small muted mono">{settings.lastWorkspacePath ?? "（未设置）"}</p>
-        <button className="btn" onClick={() => setPickingWorkspace(true)}>
+        <ActionButton className="btn" onClick={() => setPickingWorkspace(true)}>
           选择工作目录
-        </button>
+        </ActionButton>
       </div>
 
       {pickingWorkspace ? (
@@ -329,6 +322,7 @@ function SecuritySection() {
     try {
       await clearOfflineHistory({ logout: true });
       await endpoints.logout();
+      window.dispatchEvent(new Event("llm-chat:submissions-clear"));
       window.location.reload();
     } catch (error) {
       toastError(error);
@@ -370,20 +364,20 @@ function SecuritySection() {
             {message}
           </p>
         ) : null}
-        <button
+        <ActionButton
           className="btn primary"
           disabled={offline || busy || password.length < 8 || password !== confirm}
-          onClick={() => void changePassword()}
+          onClick={() => changePassword()}
         >
           修改密码
-        </button>
+        </ActionButton>
       </div>
       <div className="card">
         <h3>退出登录</h3>
         <p className="small muted">退出后需要重新输入访问密码。</p>
-        <button className="btn danger" disabled={busy} onClick={() => void logout()}>
+        <ActionButton className="btn danger" disabled={busy} onClick={() => logout()}>
           退出登录
-        </button>
+        </ActionButton>
       </div>
     </div>
   );
@@ -412,11 +406,14 @@ function ToolsSection() {
     { kind: "tool"; tool: ToolCatalogItemDto } | { kind: "text"; title: string; text: string } | null
   >(null);
 
+  const beginRead = useLatestRequest();
   const load = useCallback(async () => {
+    const currentRead = beginRead();
     setError(null);
     try {
       const [toolSettings, items] = await Promise.all([endpoints.toolSettings(), endpoints.toolCatalog()]);
-      setSettings(toolSettings);
+      if (!currentRead()) return;
+      setSettings(overlayResource("tools", toolSettings));
       setCatalog(items);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
@@ -428,24 +425,19 @@ function ToolsSection() {
   }, [load]);
   useResourceEvents(["tools", "plugins", "skills", "mcp"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !settings) return <ErrorState message={error} onRetry={() => load()} />;
   if (!settings) return <LoadingState />;
 
-  const toggleTool = (name: string, enabled: boolean) => {
-    const next = { ...settings.enabled, [name]: enabled };
-    setSettings({ ...settings, enabled: next });
-    endpoints
-      .updateToolSettings({ enabled: { [name]: enabled } })
-      .catch((cause) => {
-        toastError(cause);
-        void load();
-      });
-  };
+  const patchTools = (patch: import("@llm-chat/contracts").ToolSettingsInput) => optimisticWrite("tools", settings,
+    (value) => ({ ...value, ...patch, enabled: { ...value.enabled, ...patch.enabled } } as ToolSettingsDto),
+    setSettings, () => endpoints.updateToolSettings(patch));
+  const toggleTool = (name: string, enabled: boolean) => patchTools({ enabled: { [name]: enabled } }).catch(toastError);
 
   return (
     <div>
+      {error ? <ErrorState message={error} onRetry={() => load()} /> : null}
       <div className="card">
-        <h3>工具环境</h3>
+        <h3>工具环境</h3><ResourceSaveStatus resource="tools" />
         <div className="environment-value">
           <span>工作区：</span>
           <OverflowText
@@ -467,15 +459,7 @@ function ToolsSection() {
         <Switch
           label="启用工作区 Shell 工具"
           checked={settings.workspaceShellEnabled}
-          onChange={(checked) => {
-              setSettings({ ...settings, workspaceShellEnabled: checked });
-              endpoints
-                .updateToolSettings({ workspaceShellEnabled: checked })
-                .catch((cause) => {
-                  toastError(cause);
-                  void load();
-                });
-          }}
+          onChange={(checked) => { void patchTools({ workspaceShellEnabled: checked }).catch(toastError); }}
         />
       </div>
 
@@ -506,7 +490,7 @@ function ToolsSection() {
               return (
                 <tr key={tool.name}>
                   <td className="tool-summary-cell">
-                    <button
+                    <ActionButton
                       type="button"
                       className="catalog-summary-trigger"
                       aria-label={`查看工具 ${tool.label} 的完整信息`}
@@ -517,7 +501,7 @@ function ToolsSection() {
                       <span className="catalog-summary-id mono">{tool.name}</span>
                       <span className="catalog-summary-description">{tool.description || "无描述"}</span>
                       <Maximize2 className="catalog-summary-icon" size={13} aria-hidden="true" />
-                    </button>
+                    </ActionButton>
                   </td>
                   <td className="tool-meta-cell" data-label="分类">
                     {CATEGORY_LABELS[tool.category] ?? tool.category}
@@ -617,10 +601,13 @@ function SkillsSection() {
   const [inspecting, setInspecting] = useState<SkillDto | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const beginRead = useLatestRequest();
   const load = useCallback(async () => {
+    const currentRead = beginRead();
     setError(null);
     try {
-      setSkills(await endpoints.skills());
+      const next = await endpoints.skills();
+      if (currentRead()) setSkills(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     }
@@ -631,11 +618,12 @@ function SkillsSection() {
   }, [load]);
   useResourceEvents(["skills"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !skills) return <ErrorState message={error} onRetry={() => load()} />;
   if (!skills) return <LoadingState />;
 
   return (
     <div>
+      {error ? <ErrorState message={error} onRetry={() => load()} /> : null}
       <div className="card">
         <h3>安装与发现</h3>
         <div className="row">
@@ -647,12 +635,12 @@ function SkillsSection() {
             value={installPath}
             onChange={(event) => setInstallPath(event.target.value)}
           />
-          <button
+          <ActionButton
             className="btn"
-            disabled={busy || !installPath.trim()}
+            disabled={!installPath.trim()}
             onClick={() => {
               setBusy(true);
-              endpoints
+              return endpoints
                 .installSkill(installPath.trim())
                 .then(async () => {
                   setInstallPath("");
@@ -664,13 +652,12 @@ function SkillsSection() {
             }}
           >
             安装
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             className="btn"
-            disabled={busy}
             onClick={() => {
               setBusy(true);
-              endpoints
+              return endpoints
                 .discoverSkills()
                 .then(async (summary) => {
                   toast(
@@ -684,7 +671,7 @@ function SkillsSection() {
             }}
           >
             重新发现
-          </button>
+          </ActionButton>
         </div>
       </div>
       {skills.length === 0 ? (
@@ -699,7 +686,7 @@ function SkillsSection() {
                 {skill.bundled ? <span className="tag accent">内置</span> : null}
                 <span className="tag mono">{skill.revision.slice(0, 10)}</span>
               </div>
-              <button
+              <ActionButton
                 type="button"
                 className="skill-summary-trigger"
                 aria-label={`查看 Skill ${skill.name} 的完整信息`}
@@ -712,15 +699,14 @@ function SkillsSection() {
                   <span className="skill-tools-summary">依赖工具：{skill.requiredTools.join(", ")}</span>
                 ) : null}
                 <Maximize2 className="skill-summary-icon" size={13} aria-hidden="true" />
-              </button>
+              </ActionButton>
             </div>
-            <div className="list-row-actions">
-              <button
+            <ActionGroup actionKey={`skill:${skill.id}`} className="list-row-actions">
+              <ActionButton
                 className="btn small"
-                disabled={busy}
-                onClick={() => {
+                    onClick={() => {
                   setBusy(true);
-                  endpoints
+                  return endpoints
                     .reloadSkill(skill.id)
                     .then(async () => {
                       toast("success", "已重新加载");
@@ -731,8 +717,8 @@ function SkillsSection() {
                 }}
               >
                 重新加载
-              </button>
-            </div>
+              </ActionButton>
+            </ActionGroup>
           </div>
         ))
       )}
@@ -796,10 +782,13 @@ function PluginsSection() {
   const [removing, setRemoving] = useState<PluginDto | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const beginRead = useLatestRequest();
   const load = useCallback(async () => {
+    const currentRead = beginRead();
     setError(null);
     try {
-      setPlugins(await endpoints.plugins());
+      const next = await endpoints.plugins();
+      if (currentRead()) setPlugins(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     }
@@ -810,11 +799,12 @@ function PluginsSection() {
   }, [load]);
   useResourceEvents(["plugins"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !plugins) return <ErrorState message={error} onRetry={() => load()} />;
   if (!plugins) return <LoadingState />;
 
   return (
     <div>
+      {error ? <ErrorState message={error} onRetry={() => load()} /> : null}
       <div className="card">
         <h3>安装 Plugin</h3>
         <div className="row">
@@ -826,12 +816,12 @@ function PluginsSection() {
             value={installPath}
             onChange={(event) => setInstallPath(event.target.value)}
           />
-          <button
+          <ActionButton
             className="btn primary"
-            disabled={busy || !installPath.trim()}
+            disabled={!installPath.trim()}
             onClick={() => {
               setBusy(true);
-              endpoints
+              return endpoints
                 .installPlugin(installPath.trim())
                 .then(async () => {
                   setInstallPath("");
@@ -843,7 +833,7 @@ function PluginsSection() {
             }}
           >
             安装
-          </button>
+          </ActionButton>
         </div>
       </div>
       {plugins.length === 0 ? (
@@ -861,16 +851,15 @@ function PluginsSection() {
               <div className="sub">{plugin.manifest.description}</div>
               {plugin.error ? <div className="sub" style={{ color: "var(--danger)" }}>{plugin.error}</div> : null}
             </div>
-            <div className="list-row-actions">
-              <button className="btn small" onClick={() => setConfiguring(plugin)}>
+            <ActionGroup actionKey={`plugin:${plugin.id}`} className="list-row-actions">
+              <ActionButton className="btn small" onClick={() => setConfiguring(plugin)}>
                 配置
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
                 className="btn small"
-                disabled={busy}
-                onClick={() => {
+                    onClick={() => {
                   setBusy(true);
-                  endpoints
+                  return endpoints
                     .reloadPlugin(plugin.id)
                     .then(load)
                     .catch(toastError)
@@ -878,14 +867,13 @@ function PluginsSection() {
                 }}
               >
                 重载
-              </button>
+              </ActionButton>
               {plugin.state !== "unloaded" ? (
-                <button
+                <ActionButton
                   className="btn small"
-                  disabled={busy}
-                  onClick={() => {
+                        onClick={() => {
                     setBusy(true);
-                    endpoints
+                    return endpoints
                       .unloadPlugin(plugin.id)
                       .then(load)
                       .catch(toastError)
@@ -893,12 +881,12 @@ function PluginsSection() {
                   }}
                 >
                   卸载
-                </button>
+                </ActionButton>
               ) : null}
-              <button className="btn small danger" onClick={() => setRemoving(plugin)}>
+              <ActionButton className="btn small danger" onClick={() => setRemoving(plugin)}>
                 删除
-              </button>
-            </div>
+              </ActionButton>
+            </ActionGroup>
           </div>
         ))
       )}
@@ -914,10 +902,9 @@ function PluginsSection() {
           onClose={() => setRemoving(null)}
           onConfirm={() => {
             const target = removing;
-            setRemoving(null);
-            endpoints
+            return endpoints
               .removePlugin(target.id)
-              .then(load)
+              .then(() => { setRemoving(null); setPlugins((items) => items?.filter((item) => item.id !== target.id) ?? null); void load(); })
               .catch(toastError);
           }}
         />
@@ -940,7 +927,10 @@ function PluginConfigModal({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const editVersion = useRef(0);
+  useEffect(() => () => { editVersion.current++; }, []);
   const save = async () => {
+    const submittedVersion = editVersion.current;
     let config: Record<string, unknown>;
     try {
       config = JSON.parse(configText || "{}") as Record<string, unknown>;
@@ -952,9 +942,9 @@ function PluginConfigModal({
     setError(null);
     try {
       await endpoints.configurePlugin(plugin.id, config, secrets);
-      await onSaved();
+      void onSaved().catch(toastError);
       toast("success", "Plugin 配置已保存");
-      onClose();
+      if (editVersion.current === submittedVersion) onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败");
     } finally {
@@ -963,17 +953,17 @@ function PluginConfigModal({
   };
 
   return (
-    <Modal
+    <Modal onEdit={() => { editVersion.current++; }}
       title={`配置 ${plugin.manifest.name}`}
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <ActionButton className="btn" onClick={onClose}>
             取消
-          </button>
-          <button className="btn primary" disabled={busy} onClick={() => void save()}>
+          </ActionButton>
+          <ActionButton className="btn primary" disabled={busy} onClick={() => save()}>
             保存
-          </button>
+          </ActionButton>
         </>
       }
     >
@@ -1027,10 +1017,13 @@ function McpSection() {
   const [removing, setRemoving] = useState<McpServerDto | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const beginRead = useLatestRequest();
   const load = useCallback(async () => {
+    const currentRead = beginRead();
     setError(null);
     try {
-      setServers(await endpoints.mcpServers());
+      const next = await endpoints.mcpServers();
+      if (currentRead()) setServers(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     }
@@ -1041,17 +1034,18 @@ function McpSection() {
   }, [load]);
   useResourceEvents(["mcp"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !servers) return <ErrorState message={error} onRetry={() => load()} />;
   if (!servers) return <LoadingState />;
 
   return (
     <div>
+      {error ? <ErrorState message={error} onRetry={() => load()} /> : null}
       <div className="card">
         <h3 className="section-heading-actions">
           MCP 服务
-          <button className="btn small primary" onClick={() => setEditing("new")}>
+          <ActionButton className="btn small primary" onClick={() => setEditing("new")}>
             添加服务
-          </button>
+          </ActionButton>
         </h3>
         {servers.length === 0 ? (
           <EmptyState title="没有 MCP 服务" hint="添加一个远程 MCP 服务以扩展工具目录。" />
@@ -1067,13 +1061,12 @@ function McpSection() {
                 {server.headerNames.length > 0 ? <div className="sub">请求头：{server.headerNames.join(", ")}</div> : null}
                 {server.lastError ? <div className="sub" style={{ color: "var(--danger)" }}>{server.lastError}</div> : null}
               </div>
-              <div className="list-row-actions">
-                <button
+              <ActionGroup actionKey={`mcp:${server.id}`} className="list-row-actions">
+                <ActionButton
                   className="btn small"
-                  disabled={busy}
-                  onClick={() => {
+                        onClick={() => {
                     setBusy(true);
-                    endpoints
+                    return endpoints
                       .testMcpServer(server.id)
                       .then((result) => {
                         if (result.ok) toast("success", `连接正常${result.tools !== undefined ? `，${result.tools} 个工具` : ""}`);
@@ -1084,14 +1077,14 @@ function McpSection() {
                   }}
                 >
                   测试
-                </button>
-                <button className="btn small" onClick={() => setEditing(server)}>
+                </ActionButton>
+                <ActionButton className="btn small" onClick={() => setEditing(server)}>
                   编辑
-                </button>
-                <button className="btn small danger" onClick={() => setRemoving(server)}>
+                </ActionButton>
+                <ActionButton className="btn small danger" onClick={() => setRemoving(server)}>
                   删除
-                </button>
-              </div>
+                </ActionButton>
+              </ActionGroup>
             </div>
           ))
         )}
@@ -1108,10 +1101,9 @@ function McpSection() {
           onClose={() => setRemoving(null)}
           onConfirm={() => {
             const target = removing;
-            setRemoving(null);
-            endpoints
+            return endpoints
               .deleteMcpServer(target.id)
-              .then(load)
+              .then(() => { setRemoving(null); setServers((items) => items?.filter((item) => item.id !== target.id) ?? null); void load(); })
               .catch(toastError);
           }}
         />
@@ -1136,7 +1128,11 @@ function McpEditor({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const savedServer = useRef(server);
+  const editVersion = useRef(0);
+  useEffect(() => () => { editVersion.current++; }, []);
   const save = async () => {
+    const submittedVersion = editVersion.current;
     setBusy(true);
     setError(null);
     try {
@@ -1144,19 +1140,19 @@ function McpEditor({
       for (const header of headers) {
         if (header.name.trim()) headerRecord[header.name.trim()] = header.value;
       }
-      if (server) {
-        await endpoints.updateMcpServer(server.id, {
+      if (savedServer.current) {
+        savedServer.current = await endpoints.updateMcpServer(savedServer.current.id, {
           name: name.trim(),
           url: url.trim(),
           enabled,
           ...(headers.length > 0 ? { headers: headerRecord } : {})
         });
       } else {
-        await endpoints.createMcpServer({ name: name.trim(), url: url.trim(), enabled, headers: headerRecord });
+        savedServer.current = await endpoints.createMcpServer({ name: name.trim(), url: url.trim(), enabled, headers: headerRecord });
       }
-      await onSaved();
+      void onSaved().catch(toastError);
       toast("success", "MCP 服务已保存");
-      onClose();
+      if (editVersion.current === submittedVersion) onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "保存失败");
     } finally {
@@ -1165,17 +1161,17 @@ function McpEditor({
   };
 
   return (
-    <Modal
+    <Modal onEdit={() => { editVersion.current++; }}
       title={server ? `编辑 ${server.name}` : "添加 MCP 服务"}
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
+          <ActionButton className="btn" onClick={onClose}>
             取消
-          </button>
-          <button className="btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={() => void save()}>
+          </ActionButton>
+          <ActionButton className="btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={() => save()}>
             保存
-          </button>
+          </ActionButton>
         </>
       }
     >
@@ -1232,14 +1228,14 @@ function McpEditor({
                 setHeaders(headers.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)))
               }
             />
-            <button className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>
+            <ActionButton className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>
               移除
-            </button>
+            </ActionButton>
           </div>
         ))}
-        <button className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>
+        <ActionButton className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>
           添加请求头
-        </button>
+        </ActionButton>
       </Field>
     </Modal>
   );
@@ -1251,10 +1247,13 @@ function MemoriesSection() {
   const [memories, setMemories] = useState<MemoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const beginRead = useLatestRequest();
   const load = useCallback(async () => {
+    const currentRead = beginRead();
     setError(null);
     try {
-      setMemories(await endpoints.memories());
+      const next = await endpoints.memories();
+      if (currentRead()) setMemories(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     }
@@ -1264,7 +1263,7 @@ function MemoriesSection() {
     void load();
   }, [load]);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !memories) return <ErrorState message={error} onRetry={() => load()} />;
   if (!memories) return <LoadingState />;
 
   return (

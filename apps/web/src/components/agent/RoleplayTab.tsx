@@ -1,3 +1,4 @@
+import { ActionButton } from "../../lib/action-feedback";
 import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Copy, File, Image, Plus, Trash2, Upload } from "lucide-react";
 import type {
@@ -100,13 +101,13 @@ export function RoleplayTab({
                 if (file) void importPreset(file);
               }}
             />
-            <button className="btn small" disabled={busy} onClick={() => input.current?.click()}>
+            <ActionButton className="btn small" disabled={busy} onClick={() => input.current?.click()}>
               <Upload size={15} aria-hidden="true" />导入
-            </button>
-            <button className="btn small" disabled={!preset} onClick={() => preset && duplicatePreset(config, preset, setConfig)}>
+            </ActionButton>
+            <ActionButton className="btn small" disabled={!preset} onClick={() => preset && duplicatePreset(config, preset, setConfig)}>
               <Copy size={15} aria-hidden="true" />复制
-            </button>
-            <button
+            </ActionButton>
+            <ActionButton
               className="btn small danger"
               disabled={!preset || config.presets.length <= 1}
               onClick={() => {
@@ -116,7 +117,7 @@ export function RoleplayTab({
               }}
             >
               <Trash2 size={15} aria-hidden="true" />删除
-            </button>
+            </ActionButton>
           </div>
         </div>
 
@@ -153,7 +154,7 @@ function RegexEditor({ config, setConfig }: { config: AgentRoleplayConfig; setCo
     <section className="card roleplay-resource-section">
       <div className="field-heading">
         <div><h3>安全正则</h3><p className="small muted">使用 RE2 线性时间引擎。导入项默认关闭，不支持回溯引用与环视。</p></div>
-        <button className="btn small" onClick={() => setConfig({ regexScripts: [...config.regexScripts, { id: crypto.randomUUID(), name: "新正则", enabled: false, pattern: "", replacement: "", flags: "gu", scopes: ["display"], runOnEdit: false, importWarning: null }] })}><Plus size={15} />新增</button>
+        <ActionButton className="btn small" onClick={() => setConfig({ regexScripts: [...config.regexScripts, { id: crypto.randomUUID(), name: "新正则", enabled: false, pattern: "", replacement: "", flags: "gu", scopes: ["display"], runOnEdit: false, importWarning: null }] })}><Plus size={15} />新增</ActionButton>
       </div>
       {config.regexScripts.length ? <div className="roleplay-resource-list">{config.regexScripts.map((script) => (
         <details className="roleplay-resource" key={script.id}>
@@ -164,7 +165,7 @@ function RegexEditor({ config, setConfig }: { config: AgentRoleplayConfig; setCo
             <ExpandableTextarea label="匹配表达式" value={script.pattern} onChange={(pattern) => update(script.id, { pattern })} />
             <ExpandableTextarea label="替换内容" value={script.replacement} onChange={(replacement) => update(script.id, { replacement })} />
             <div className="roleplay-trigger-row">{scopes.map(([scope, label]) => <label className="check-row" key={scope}><input type="checkbox" checked={script.scopes.includes(scope)} onChange={(event) => update(script.id, { scopes: event.target.checked ? [...new Set([...script.scopes, scope])] : script.scopes.filter((item) => item !== scope) })} />{label}</label>)}</div>
-            <button className="btn small danger" onClick={() => setConfig({ regexScripts: config.regexScripts.filter((item) => item.id !== script.id) })}><Trash2 size={15} />删除</button>
+            <ActionButton className="btn small danger" onClick={() => setConfig({ regexScripts: config.regexScripts.filter((item) => item.id !== script.id) })}><Trash2 size={15} />删除</ActionButton>
           </div>
         </details>
       ))}</div> : <p className="small muted">没有正则脚本。</p>}
@@ -180,7 +181,7 @@ function QuickRepliesEditor({ config, setConfig }: { config: AgentRoleplayConfig
     <section className="card roleplay-resource-section">
       <div className="field-heading">
         <div><h3>快捷回复与受限脚本</h3><p className="small muted">脚本只可修改当前角色会话的变量、预设、人物、世界书和输入草稿；不能执行 JS、Shell 或网络请求。</p></div>
-        <button className="btn small" onClick={() => setConfig({ quickReplySets: [...config.quickReplySets, { id: crypto.randomUUID(), name: "新快捷组", enabled: true, replies: [] }] })}><Plus size={15} />新增组</button>
+        <ActionButton className="btn small" onClick={() => setConfig({ quickReplySets: [...config.quickReplySets, { id: crypto.randomUUID(), name: "新快捷组", enabled: true, replies: [] }] })}><Plus size={15} />新增组</ActionButton>
       </div>
       {config.quickReplySets.length ? <div className="roleplay-resource-list">{config.quickReplySets.map((set) => (
         <details className="roleplay-resource" key={set.id}>
@@ -194,11 +195,11 @@ function QuickRepliesEditor({ config, setConfig }: { config: AgentRoleplayConfig
                   <div className="grid-3"><Field label="按钮文字"><input className="input" value={reply.label} onChange={(event) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, label: event.target.value } : item) }))} /></Field><Field label="模式"><select className="select" value={reply.mode} onChange={(event) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, mode: event.target.value as typeof reply.mode } : item) }))}><option value="insert">插入草稿</option><option value="send">立即发送</option><option value="script">受限 STscript</option></select></Field><Field label="提示"><input className="input" value={reply.tooltip} onChange={(event) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, tooltip: event.target.value } : item) }))} /></Field></div>
                   <ExpandableTextarea label={reply.mode === "script" ? "脚本" : "内容"} value={reply.content} onChange={(content) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, content } : item) }))} />
                   <div className="roleplay-trigger-row"><label className="check-row"><input type="checkbox" checked={reply.enabled} onChange={(event) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, enabled: event.target.checked } : item) }))} />启用</label><label className="check-row"><input type="checkbox" checked={reply.pinned} onChange={(event) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, pinned: event.target.checked } : item) }))} />固定显示</label>{reply.mode === "script" ? (["new_chat", "before_send", "after_reply", "lore_activated"] as const).map((trigger) => <label className="check-row" key={trigger}><input type="checkbox" checked={reply.autoTriggers.includes(trigger)} onChange={(event) => updateSet(set.id, (value) => ({ ...value, replies: value.replies.map((item, current) => current === index ? { ...item, autoTriggers: event.target.checked ? [...new Set([...item.autoTriggers, trigger])] : item.autoTriggers.filter((value) => value !== trigger) } : item) }))} />{trigger}</label>) : null}</div>
-                  <button className="btn small danger" onClick={() => updateSet(set.id, (value) => ({ ...value, replies: value.replies.filter((_, current) => current !== index) }))}><Trash2 size={15} />删除</button>
+                  <ActionButton className="btn small danger" onClick={() => updateSet(set.id, (value) => ({ ...value, replies: value.replies.filter((_, current) => current !== index) }))}><Trash2 size={15} />删除</ActionButton>
                 </div>
               </details>
             ))}</div>
-            <div className="row compact"><button className="btn small" onClick={() => updateSet(set.id, (value) => ({ ...value, replies: [...value.replies, { id: crypto.randomUUID(), label: "新快捷回复", tooltip: "", mode: "insert", content: "", enabled: true, pinned: false, autoTriggers: [] }] }))}><Plus size={15} />新增快捷回复</button><button className="btn small danger" onClick={() => setConfig({ quickReplySets: config.quickReplySets.filter((item) => item.id !== set.id) })}><Trash2 size={15} />删除组</button></div>
+            <div className="row compact"><ActionButton className="btn small" onClick={() => updateSet(set.id, (value) => ({ ...value, replies: [...value.replies, { id: crypto.randomUUID(), label: "新快捷回复", tooltip: "", mode: "insert", content: "", enabled: true, pinned: false, autoTriggers: [] }] }))}><Plus size={15} />新增快捷回复</ActionButton><ActionButton className="btn small danger" onClick={() => setConfig({ quickReplySets: config.quickReplySets.filter((item) => item.id !== set.id) })}><Trash2 size={15} />删除组</ActionButton></div>
           </div>
         </details>
       ))}</div> : <p className="small muted">没有快捷回复。</p>}
@@ -217,10 +218,10 @@ function PersonasEditor({ config, setConfig }: {
     <section className="card roleplay-resource-section">
       <div className="field-heading">
         <div><h3>人物身份</h3><p className="small muted">仅在当前 Agent 的角色扮演会话中替代全局用户资料。</p></div>
-        <button className="btn small" onClick={() => {
+        <ActionButton className="btn small" onClick={() => {
           const persona: AgentPersona = { id: crypto.randomUUID(), name: "新人物", description: "", avatarAssetId: null };
           setConfig({ personas: [...config.personas, persona], defaultPersonaId: config.defaultPersonaId ?? persona.id });
-        }}><Plus size={15} />新增</button>
+        }}><Plus size={15} />新增</ActionButton>
       </div>
       {config.personas.length ? <div className="roleplay-resource-list">{config.personas.map((persona) => (
         <details className="roleplay-resource" key={persona.id}>
@@ -235,11 +236,11 @@ function PersonasEditor({ config, setConfig }: {
               </select>
             </Field>
             <div className="row compact">
-              <button className="btn small" onClick={() => setConfig({ defaultPersonaId: persona.id })}>设为默认</button>
-              <button className="btn small danger" onClick={() => setConfig({
+              <ActionButton className="btn small" onClick={() => setConfig({ defaultPersonaId: persona.id })}>设为默认</ActionButton>
+              <ActionButton className="btn small danger" onClick={() => setConfig({
                 personas: config.personas.filter((item) => item.id !== persona.id),
                 defaultPersonaId: config.defaultPersonaId === persona.id ? null : config.defaultPersonaId
-              })}><Trash2 size={15} />删除</button>
+              })}><Trash2 size={15} />删除</ActionButton>
             </div>
           </div>
         </details>
@@ -262,13 +263,13 @@ function LorebooksEditor({ config, setConfig }: {
     <section className="card roleplay-resource-section">
       <div className="field-heading">
         <div><h3>附加世界书</h3><p className="small muted">按关键词和预算注入；角色卡内置世界书仍然保留。</p></div>
-        <button className="btn small" onClick={() => {
+        <ActionButton className="btn small" onClick={() => {
           const book: AgentLorebook = {
             id: crypto.randomUUID(), name: "新世界书", enabled: true,
             book: { name: "新世界书", description: "", scan_depth: 4, recursive_scanning: false, extensions: {}, entries: [] }
           };
           setConfig({ lorebooks: [...config.lorebooks, book] });
-        }}><Plus size={15} />新增</button>
+        }}><Plus size={15} />新增</ActionButton>
       </div>
       {config.lorebooks.length ? <div className="roleplay-resource-list">{config.lorebooks.map((book) => (
         <details className="roleplay-resource" key={book.id}>
@@ -294,13 +295,13 @@ function LorebooksEditor({ config, setConfig }: {
                     <label className="check-row"><input type="checkbox" checked={entry.case_sensitive ?? false} onChange={(event) => updateEntry(book, index, { case_sensitive: event.target.checked })} />区分大小写</label>
                   </div>
                   <ExpandableTextarea label="条目内容" value={entry.content} onChange={(content) => updateEntry(book, index, { content })} />
-                  <button className="btn small danger" onClick={() => updateBook(book.id, (value) => ({ ...value, book: { ...value.book, entries: value.book.entries.filter((_, current) => current !== index) } }))}><Trash2 size={15} />删除条目</button>
+                  <ActionButton className="btn small danger" onClick={() => updateBook(book.id, (value) => ({ ...value, book: { ...value.book, entries: value.book.entries.filter((_, current) => current !== index) } }))}><Trash2 size={15} />删除条目</ActionButton>
                 </div>
               </details>
             ))}</div>
             <div className="row compact">
-              <button className="btn small" onClick={() => updateBook(book.id, (value) => ({ ...value, book: { ...value.book, entries: [...value.book.entries, { keys: [], content: "", extensions: {}, enabled: true, insertion_order: value.book.entries.length }] } }))}><Plus size={15} />新增条目</button>
-              <button className="btn small danger" onClick={() => setConfig({ lorebooks: config.lorebooks.filter((item) => item.id !== book.id) })}><Trash2 size={15} />删除世界书</button>
+              <ActionButton className="btn small" onClick={() => updateBook(book.id, (value) => ({ ...value, book: { ...value.book, entries: [...value.book.entries, { keys: [], content: "", extensions: {}, enabled: true, insertion_order: value.book.entries.length }] } }))}><Plus size={15} />新增条目</ActionButton>
+              <ActionButton className="btn small danger" onClick={() => setConfig({ lorebooks: config.lorebooks.filter((item) => item.id !== book.id) })}><Trash2 size={15} />删除世界书</ActionButton>
             </div>
           </div>
         </details>
@@ -328,7 +329,7 @@ function AssetsEditor({ agent, config, onReplace }: { agent: AgentDto; config: A
         <div className="row compact">
           <select className="select compact-select" value={type} onChange={(event) => setType(event.target.value)}><option value="background">背景</option><option value="expression">表情</option><option value="icon">头像</option><option value="audio">音频</option><option value="video">视频</option><option value="asset">其他</option></select>
           <input ref={input} className="sr-only" type="file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} />
-          <button className="btn small" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />上传</button>
+          <ActionButton className="btn small" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />上传</ActionButton>
         </div>
       </div>
       {config.assets.length ? <div className="roleplay-asset-list">{config.assets.map((asset) => (
@@ -336,9 +337,9 @@ function AssetsEditor({ agent, config, onReplace }: { agent: AgentDto; config: A
           {asset.mimeType?.startsWith("image/") ? <img src={asset.uri} alt="" /> : <span className="roleplay-file-icon"><File size={18} /></span>}
           <span className="grow"><strong>{asset.name}</strong><small>{asset.type} · {asset.ext}</small></span>
           <a className="btn ghost icon" href={asset.uri} download={asset.name} aria-label={`下载 ${asset.name}`}>{asset.mimeType?.startsWith("image/") ? <Image size={15} /> : <File size={15} />}</a>
-          <button className="btn ghost icon danger" disabled={busy} aria-label={`删除 ${asset.name}`} onClick={() => void (async () => {
+          <ActionButton className="btn ghost icon danger" disabled={busy} aria-label={`删除 ${asset.name}`} onClick={() => (async () => {
             setBusy(true); try { await endpoints.deleteRoleplayAsset(agent.id, asset.id); const updated = await endpoints.agent(agent.id); onReplace(updated); await refreshAgents(); } catch (error) { toastError(error); } finally { setBusy(false); }
-          })()}><Trash2 size={15} /></button>
+          })()}><Trash2 size={15} /></ActionButton>
         </div>
       ))}</div> : <p className="small muted">没有角色素材。CHARX 内嵌素材会在导入时存入这里。</p>}
     </section>
@@ -389,9 +390,9 @@ function PresetEditor({
             <div className="roleplay-block-heading">
               <Switch label={block.name} checked={block.enabled} onChange={(enabled) => updateBlock(block.id, { enabled })} />
               <div className="row compact">
-                <button className="btn ghost icon" aria-label={`上移 ${block.name}`} disabled={index === 0} onClick={() => moveBlock(index, -1)}><ArrowUp size={15} /></button>
-                <button className="btn ghost icon" aria-label={`下移 ${block.name}`} disabled={index === preset.blocks.length - 1} onClick={() => moveBlock(index, 1)}><ArrowDown size={15} /></button>
-                <button
+                <ActionButton className="btn ghost icon" aria-label={`上移 ${block.name}`} disabled={index === 0} onClick={() => moveBlock(index, -1)}><ArrowUp size={15} /></ActionButton>
+                <ActionButton className="btn ghost icon" aria-label={`下移 ${block.name}`} disabled={index === preset.blocks.length - 1} onClick={() => moveBlock(index, 1)}><ArrowDown size={15} /></ActionButton>
+                <ActionButton
                   className="btn ghost icon danger"
                   aria-label={`删除 ${block.name}`}
                   disabled={block.kind === "history" && preset.blocks.filter((item) => item.kind === "history").length === 1}
@@ -399,7 +400,7 @@ function PresetEditor({
                     ...value,
                     blocks: value.blocks.filter((item) => item.id !== block.id).map((item, order) => ({ ...item, order }))
                   }))}
-                ><Trash2 size={15} /></button>
+                ><Trash2 size={15} /></ActionButton>
               </div>
             </div>
             <div className="roleplay-block-controls">
@@ -441,12 +442,12 @@ function PresetEditor({
           </div>
         ))}
       </div>
-      <button className="btn small" onClick={() => updatePreset((value) => ({
+      <ActionButton className="btn small" onClick={() => updatePreset((value) => ({
         ...value,
         blocks: [...value.blocks, newBlock(value.blocks.length)]
       }))}>
         <Plus size={15} aria-hidden="true" />新增提示块
-      </button>
+      </ActionButton>
     </>
   );
 }

@@ -5,6 +5,7 @@ export { readComposerDraft, writeComposerDraft, preserveDeletedDraft, recoveredD
 
 // Requests outlive the composer. A remount must share the same write ordering.
 const writes = new Map<string, Promise<unknown>>();
+const heldDrafts = new Set<string>();
 const pending = new Map<string, { text: string; timer: ReturnType<typeof setTimeout> }>();
 
 function writeServerDraft(id: string, text: string): Promise<unknown> {
@@ -19,12 +20,12 @@ export function scheduleServerDraft(id: string, text: string): void {
   if (conversationDeleted(id)) return;
   const previous = pending.get(id);
   if (previous) clearTimeout(previous.timer);
-  const timer = setTimeout(() => { void flushServerDraft(id).catch(() => undefined); }, 500);
+  const timer = setTimeout(() => { if (!heldDrafts.has(id)) void flushServerDraft(id).catch(() => undefined); }, 500);
   pending.set(id, { text, timer });
 }
 
 export async function flushServerDraft(id: string): Promise<void> {
-  if (conversationDeleted(id)) return;
+  if (conversationDeleted(id) || heldDrafts.has(id)) return;
   const item = pending.get(id);
   if (item) {
     clearTimeout(item.timer);
@@ -46,4 +47,16 @@ export function removeComposerDraft(id: string): void {
   if (item) clearTimeout(item.timer);
   pending.delete(id);
   removeStoredComposerDraft(id);
+}
+
+export async function holdServerDraft(id: string): Promise<void> {
+  heldDrafts.add(id);
+  const item = pending.get(id);
+  if (item) clearTimeout(item.timer);
+  pending.delete(id);
+  await writes.get(id)?.catch(() => undefined);
+}
+export async function releaseServerDraft(id: string): Promise<void> {
+  heldDrafts.delete(id);
+  await flushServerDraft(id);
 }

@@ -1,3 +1,4 @@
+import { ActionButton } from "../../lib/action-feedback";
 /**
  * The console's primitive layer.
  *
@@ -42,9 +43,9 @@ export function Button({
     .filter(Boolean)
     .join(" ");
   return (
-    <button type="button" {...rest} className={className}>
+    <ActionButton type="button" {...rest} className={className}>
       {children}
-    </button>
+    </ActionButton>
   );
 }
 
@@ -56,7 +57,7 @@ export function IconButton({
   ...rest
 }: ButtonBase & { label: string; danger?: boolean; children: ReactNode }) {
   return (
-    <button
+    <ActionButton
       type="button"
       {...rest}
       className={danger ? "icon-button danger" : "icon-button"}
@@ -64,7 +65,7 @@ export function IconButton({
       title={rest.title ?? label}
     >
       {children}
-    </button>
+    </ActionButton>
   );
 }
 
@@ -94,9 +95,9 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
     <div className="error-box" role="alert">
       <p>{message}</p>
       {onRetry ? (
-        <button type="button" className="btn" onClick={onRetry}>
+        <ActionButton type="button" className="btn" onClick={onRetry}>
           重试
-        </button>
+        </ActionButton>
       ) : null}
     </div>
   );
@@ -185,9 +186,9 @@ export function SearchInput({
         onChange={(event) => onChange(event.target.value)}
       />
       {value ? (
-        <button type="button" className="icon-button" aria-label="清除搜索" onClick={() => onChange("")}>
+        <ActionButton type="button" className="icon-button" aria-label="清除搜索" onClick={() => onChange("")}>
           <X size={13} aria-hidden="true" />
-        </button>
+        </ActionButton>
       ) : null}
     </label>
   );
@@ -237,7 +238,7 @@ export function Segmented<T extends string>({
   return (
     <div className="segmented" role="tablist" aria-label={label}>
       {options.map((option) => (
-        <button
+        <ActionButton
           key={option.value}
           type="button"
           role="tab"
@@ -245,7 +246,7 @@ export function Segmented<T extends string>({
           onClick={() => onChange(option.value)}
         >
           {option.label}
-        </button>
+        </ActionButton>
       ))}
     </div>
   );
@@ -335,9 +336,9 @@ export function Modal({
       >
         <div className="modal-header">
           <h3 id={headingId}>{title}</h3>
-          <button type="button" className="btn ghost icon" onClick={onClose} aria-label="关闭对话框">
+          <ActionButton type="button" className="btn ghost icon" onClick={onClose} aria-label="关闭对话框">
             <X size={17} aria-hidden="true" />
-          </button>
+          </ActionButton>
         </div>
         <div className="modal-body">{children}</div>
         {footer ? <div className="modal-footer">{footer}</div> : null}
@@ -371,17 +372,17 @@ export function ConfirmModal({
       onClose={onClose}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
+          <ActionButton type="button" className="btn" onClick={onClose} disabled={busy}>
             取消
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             type="button"
             className={danger ? "btn danger" : "btn primary"}
             onClick={onConfirm}
             disabled={busy || confirmDisabled}
           >
             {busy ? "处理中…" : confirmLabel}
-          </button>
+          </ActionButton>
         </>
       }
     >

@@ -1,3 +1,4 @@
+import { ActionButton } from "../lib/action-feedback";
 import { ToolCallContent } from "../components/chat/ToolPresentation";
 import { useEffect, useState, type ReactNode } from "react";
 import type { BackgroundTaskEventDto, ContextSummaryDto, ConversationDto, MessageDto } from "@llm-chat/contracts";
@@ -28,8 +29,10 @@ export function InspectorPanel({
   const [contextSummary, setContextSummary] = useState<ContextSummaryDto | null>(null);
 
   useEffect(() => {
+    let current = true;
     setTask(null);
-    if (target?.kind === "task") void endpoints.backgroundTask(target.taskId).then(setTask).catch(toastError);
+    if (target?.kind === "task") void endpoints.backgroundTask(target.taskId).then((task) => { if (current) setTask(task); }).catch((error) => { if (current) toastError(error); });
+    return () => { current = false; };
   }, [target]);
 
   useEffect(() => {
@@ -65,7 +68,7 @@ export function InspectorPanel({
           <strong>{tool ? tool.name : generation ? `生成 v${generation.version}` : task ? "后台任务" : "会话检查器"}</strong>
           <span>{target ? inspectionSubtitle(target) : "有效配置与运行状态"}</span>
         </div>
-        <button className="icon-button" onClick={onClose} aria-label="关闭检查器" title="关闭检查器"><X size={17} /></button>
+        <ActionButton className="icon-button" onClick={onClose} aria-label="关闭检查器" title="关闭检查器"><X size={17} /></ActionButton>
       </header>
       <div className="inspector-scroll">
         {!conversation ? <EmptyState title="选择一个会话以查看详情" /> : null}
@@ -84,7 +87,7 @@ export function InspectorPanel({
             {conversation.forkedFrom ? (
               <InspectorSection title="分支来源" icon={<GitFork size={15} />}>
                 <Definition label="来源会话" value={
-                  <button className="link-button" onClick={() => navigate(routes.chat(conversation.forkedFrom!.conversationId))}>打开</button>
+                  <ActionButton className="link-button" onClick={() => navigate(routes.chat(conversation.forkedFrom!.conversationId))}>打开</ActionButton>
                 } />
                 <Definition label="来源消息" value={conversation.forkedFrom.messageId ?? "会话起点"} mono />
               </InspectorSection>
@@ -150,9 +153,9 @@ export function InspectorPanel({
             </InspectorSection>
             <CodeSection title="命令" value={task.task.command} />
             <TaskEvents events={task.events} />
-            <button className="button secondary full" onClick={() => navigate(routes.conversationTasks(task.task.conversationId, task.task.id))}>
+            <ActionButton className="button secondary full" onClick={() => navigate(routes.conversationTasks(task.task.conversationId, task.task.id))}>
               <ExternalLink size={15} /> 在会话任务中打开
-            </button>
+            </ActionButton>
           </>
         ) : null}
       </div>

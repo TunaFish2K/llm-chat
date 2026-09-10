@@ -1,3 +1,6 @@
+import { PendingSubmissions } from "../components/chat/PendingSubmissions";
+import { ActionButton } from "../lib/action-feedback";
+import { useLatestRequest } from "../lib/latest-request";
 import { isOffline, offlineStore } from "../lib/offline-history";
 import { browseOfflineBranch } from "../lib/app-state";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -10,6 +13,8 @@ import {
   isGenerationActive,
   loadMessages,
   refreshConversations,
+  acceptConversation,
+  selectBranch,
   toast,
   toastError,
   trackGeneration
@@ -76,6 +81,7 @@ export function ChatView({
     conversationId ? state.runningTasksByConversation[conversationId] ?? 0 : 0
   );
   const [loadError, setLoadError] = useState<string | null>(null);
+  const beginRead = useLatestRequest();
   const [editingMessage, setEditingMessage] = useState<MessageDto | null>(null);
   const [branching, setBranching] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -116,8 +122,9 @@ export function ChatView({
   };
 
   const readMessages = (id: string) => {
+    const current = beginRead();
     setLoadError(null);
-    void loadMessages(id).catch((error) => setLoadError(error instanceof Error ? error.message : "消息加载失败"));
+    return loadMessages(id).catch((error) => { if (current()) setLoadError(error instanceof Error ? error.message : "消息加载失败"); });
   };
 
   useEffect(() => {
@@ -126,14 +133,8 @@ export function ChatView({
     setNewGreetingIndex(draft?.greetingIndex ?? 0);
     setPreviewAgentId(draft?.agentId ?? null);
     scroller.reset();
-    if (!conversationId) return;
-    let active = true;
-    void loadMessages(conversationId).catch((error) => {
-      if (active) setLoadError(error instanceof Error ? error.message : "消息加载失败");
-    });
-    return () => {
-      active = false;
-    };
+    if (conversationId) void readMessages(conversationId);
+    return () => { beginRead(); };
   }, [conversationId]);
 
   useEffect(() => {
@@ -167,12 +168,12 @@ export function ChatView({
     setBranching(true);
     try {
       const result = await endpoints.forkConversation(source.id, input);
-      await refreshConversations();
-      await loadMessages(result.conversation.id);
+      acceptConversation(result.conversation);
+      navigate(routes.chat(result.conversation.id));
+      void loadMessages(result.conversation.id).catch(() => toast("error", "分支已创建，消息暂时无法刷新"));
       if (result.generation) {
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
       }
-      navigate(routes.chat(result.conversation.id));
       toast("success", input.mode === "edit" ? "已从修改后的消息创建分支" : "已从检查点创建分支");
       return true;
     } catch (error) {
@@ -190,9 +191,7 @@ export function ChatView({
     if (!conversation) return;
     if (isOffline()) { browseOfflineBranch(branchId); navigate(routes.chat(branchId)); return; }
     try {
-      await endpoints.selectConversationBranch(conversation.id, branchId);
-      await refreshConversations();
-      navigate(routes.chat(branchId));
+      await selectBranch(conversation.id, branchId);
     } catch (error) {
       toastError(error);
     }
@@ -276,7 +275,7 @@ export function ChatView({
                     greetingIndex={newGreetingIndex}
                     onGreetingIndexChange={setNewGreetingIndex}
                   />
-                ) : loadError ? (
+                ) : loadError && messages === null ? (
                   <ErrorState message={loadError} onRetry={() => readMessages(conversationId)} />
                 ) : messages === null ? (
                   <LoadingState label="正在加载消息…" />
@@ -303,10 +302,12 @@ export function ChatView({
                     />
                   ))
                 )}
+                {conversationId && loadError && messages !== null ? <ErrorState message={loadError} onRetry={() => readMessages(conversationId)} /> : null}
+                <PendingSubmissions conversationId={conversationId} />
               </div>
             </div>
             {scroller.detached ? (
-              <button
+              <ActionButton
                 type="button"
                 className="icon-button jump-to-latest"
                 onClick={() => scroller.toBottom("smooth")}
@@ -314,7 +315,7 @@ export function ChatView({
                 title="回到最新消息"
               >
                 <ArrowDown size={17} />
-              </button>
+              </ActionButton>
             ) : null}
       </div>
       <Composer
@@ -332,7 +333,7 @@ export function ChatView({
           userMessageCount >= 3 &&
           (conversation?.contextPolicy === "auto" || conversation?.contextPolicy === "summarize")
         }
-        onCompact={() => void compactContext()}
+        onCompact={() => compactContext()}
         roleplayAvailable={Boolean(conversation && roleplaySession)}
         roleplayAgent={roleplaySession?.agent ?? null}
         roleplayState={roleplaySession?.state ?? null}
@@ -368,7 +369,7 @@ export function ChatView({
           busy={branching}
           onClose={() => setEditingMessage(null)}
           onSubmit={(text, assetIds) => {
-            void (async () => {
+            return (async () => {
               if (
                 await forkConversation({
                   mode: "edit",

@@ -1,4 +1,4 @@
-import { ApiRequestError, httpRequest, uploadFileHttp, type HttpResult } from "./http-client";
+import { ApiRequestError, httpRequest, uploadFileHttp, onAuthRequired, type HttpResult } from "./http-client";
 import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
 import { isOffline, markOffline, offlineRequest } from "./offline-history";
 import type {
@@ -58,7 +58,39 @@ interface RequestContext {
   deletesConversation?: boolean;
 }
 
-async function request<T>(method: string, path: string, body?: unknown, context: RequestContext = {}): Promise<T> {
+const requestsInFlight = new Map<string, Promise<unknown>>();
+const resourceWrites = new Map<string, Promise<unknown>>();
+let requestRevision = 0;
+let requestEpoch = 0;
+const invalidateRequests = () => { requestEpoch++; requestRevision++; requestsInFlight.clear(); resourceWrites.clear(); };
+onAuthRequired(invalidateRequests);
+window.addEventListener("llm-chat:submissions-clear", invalidateRequests);
+export function apiRevision(): number { return requestRevision; }
+function request<T>(method: string, path: string, body?: unknown, context: RequestContext = {}): Promise<T> {
+  const mutation = method !== "GET" && method !== "HEAD";
+  // A read begun before a mutation must not absorb a refresh requested afterwards.
+  const key = JSON.stringify([method, path, body, mutation ? null : requestRevision]);
+  const existing = requestsInFlight.get(key);
+  if (existing) return existing as Promise<T>;
+  if (mutation) requestRevision++;
+  const previous = mutation ? resourceWrites.get(path) : undefined;
+  const queuedEpoch = requestEpoch;
+  const execute = () => {
+    if (queuedEpoch !== requestEpoch) throw new ApiRequestError(0, "request_invalidated", "登录或服务实例已变更，请重新操作");
+    return performScopedRequest<T>(method, path, body, context);
+  };
+  const work = (previous ? previous.catch(() => undefined).then(execute) : execute()).finally(() => {
+    if (requestsInFlight.get(key) === work) requestsInFlight.delete(key);
+    if (resourceWrites.get(path) === work) resourceWrites.delete(path);
+    if (mutation) requestRevision++;
+  });
+  requestsInFlight.set(key, work);
+  if (mutation) resourceWrites.set(path, work);
+  return work;
+}
+
+async function performScopedRequest<T>(method: string, path: string, body?: unknown, context: RequestContext = {}): Promise<T> {
+  const epoch = requestEpoch;
   const { conversationId, deletesConversation: deleting = false } = context;
   if (conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
   if (deleting && conversationId) localDeletions.add(conversationId);
@@ -66,6 +98,7 @@ async function request<T>(method: string, path: string, body?: unknown, context:
   const untrack = conversationId ? trackConversationRequest(conversationId, controller) : () => {};
   try {
     const result = await performRequest<T>(method, path, body, controller.signal);
+    if (epoch !== requestEpoch) throw new ApiRequestError(0, "request_invalidated", "登录或服务实例已变更，请重新操作");
     if (deleting && conversationId && result.status === 204) markConversationsDeleted([conversationId], true);
     if (!deleting && conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
     return result.data;
@@ -121,6 +154,7 @@ export const api = {
 };
 
 export interface BootstrapDto {
+  sourceId?: string;
   settings: AppSettings;
   agents: AgentSummaryDto[];
   connections: ConnectionDto[];
@@ -163,7 +197,7 @@ export const endpoints = {
   queueState: (id: string) => api.get<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue`, { conversationId: id }),
   resumeQueue: (id: string) => api.post<{ ok: true }>(`/api/conversations/${id}/queue/resume`, {}, { conversationId: id }),
   queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`, { conversationId: id }),
-  enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode }, { conversationId: id }),
+  enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue", clientRequestId?: string) => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode, ...(clientRequestId ? { clientRequestId } : {}) }, { conversationId: id }),
   searchConversations: (query: string) => api.get<Array<{ conversationId: string; title: string; snippet: string; updatedAt: number }>>(`/api/conversations/search?query=${encodeURIComponent(query)}`),
   deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`, { conversationId: id }),
   login: (password: string) => api.post<{ ok: true }>("/api/auth/login", { password }),
@@ -259,7 +293,9 @@ export const endpoints = {
     workspacePath?: string | null;
   }) =>
     api.post<ConversationDto>("/api/conversations", input),
+  submission: (id: string) => api.get<import("@llm-chat/contracts").MessageSubmissionDto>(`/api/message-submissions/${id}`),
   startConversation: (input: {
+    clientRequestId?: string;
     text: string;
     assetIds?: string[];
     imageAssetIds?: string[];
@@ -296,9 +332,10 @@ export const endpoints = {
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
   uploadFile,
-  sendMessage: (conversationId: string, text: string, assetIds: string[] = []) =>
+  sendMessage: (conversationId: string, text: string, assetIds: string[] = [], clientRequestId?: string) =>
     api.post<GenerationCreatedDto>(`/api/conversations/${conversationId}/messages`, {
       text,
+      ...(clientRequestId ? { clientRequestId } : {}),
       ...(assetIds.length ? { assetIds } : {})
     }, { conversationId }),
   retryGeneration: (conversationId: string, messageId: string) => api.post<GenerationCreatedDto>(`/api/messages/${messageId}/generations`, {}, { conversationId }),

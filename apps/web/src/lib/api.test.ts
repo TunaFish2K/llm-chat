@@ -9,6 +9,19 @@ function mockResponse(status: number, body: unknown): Response {
 }
 
 describe("api client", () => {
+  it("does not send queued writes after the login or service changes", async () => {
+    let resolve!: (response: Response) => void;
+    const fetchMock = vi.fn(() => new Promise<Response>((done) => { resolve = done; }));
+    vi.stubGlobal("fetch", fetchMock);
+    const first = api.patch("/api/epoch-test", { name: "first" }).catch((error: unknown) => error);
+    const second = api.patch("/api/epoch-test", { name: "second" }).catch((error: unknown) => error);
+    window.dispatchEvent(new Event("llm-chat:submissions-clear"));
+    resolve(mockResponse(200, { name: "first" }));
+    expect(await first).toMatchObject({ code: "request_invalidated" });
+    expect(await second).toMatchObject({ code: "request_invalidated" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("parses JSON responses for GET requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(mockResponse(200, { ok: true }));
     vi.stubGlobal("fetch", fetchMock);

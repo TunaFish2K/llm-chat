@@ -1,3 +1,4 @@
+import { ActionButton } from "../lib/action-feedback";
 import { useEffect, useMemo, useState } from "react";
 import type { BackgroundTaskDto, ConversationDto, GenerationDto, MessageDto } from "@llm-chat/contracts";
 import { ChevronDown, ChevronRight, CircleDot, GitFork, Search, TerminalSquare, Wrench } from "lucide-react";
@@ -66,14 +67,14 @@ export function TrajectoryView({
           return (
             <section className="trajectory-turn" key={turn.id}>
               <div className="trajectory-turn-heading">
-                <button className="trajectory-turn-header" onClick={() => toggle(turn.id)} aria-expanded={!isCollapsed}>
+                <ActionButton className="trajectory-turn-header" onClick={() => toggle(turn.id)} aria-expanded={!isCollapsed}>
                   {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
                   <strong>第 {index + 1} 轮</strong>
                   <time>{formatTime(turn.createdAt)}</time>
                   <span className="grow" />
                   <span>{turn.generations.length} 次生成</span>
-                </button>
-                <button
+                </ActionButton>
+                <ActionButton
                   className="icon-button trajectory-fork"
                   onClick={() => onContinue(turn.assistantMessageId)}
                   disabled={branching}
@@ -81,7 +82,7 @@ export function TrajectoryView({
                   title="从此轮创建分支"
                 >
                   <GitFork size={14} />
-                </button>
+                </ActionButton>
               </div>
               {!isCollapsed ? (
                 <div className="trajectory-turn-body">
@@ -98,11 +99,11 @@ export function TrajectoryView({
                     />
                   ))}
                   {turn.tasks.map((task) => (
-                    <button className="trajectory-node task-node" key={task.id} onClick={() => onInspect({ kind: "task", taskId: task.id })}>
+                    <ActionButton className="trajectory-node task-node" key={task.id} onClick={() => onInspect({ kind: "task", taskId: task.id })}>
                       <TerminalSquare size={15} aria-hidden="true" />
                       <span className="grow"><strong>后台任务</strong><code>{task.command}</code></span>
                       <StatusTag status={task.status} />
-                    </button>
+                    </ActionButton>
                   ))}
                 </div>
               ) : null}
@@ -129,7 +130,7 @@ function GenerationNode({
   ].sort((left, right) => left.stepIndex - right.stepIndex || (left.kind === right.kind ? left.index - right.index : left.kind === "block" ? -1 : 1));
   return (
     <div className="trajectory-generation">
-      <button
+      <ActionButton
         className="trajectory-node generation-node"
         onClick={() => onInspect({ kind: "generation", messageId, generationId: generation.id })}
       >
@@ -140,14 +141,14 @@ function GenerationNode({
         </span>
         <span className="usage-compact">{formatTokens(generation.usage.totalTokens)} tok</span>
         <StatusTag status={generation.status} />
-      </button>
+      </ActionButton>
       {timeline.map((item) => item.kind === "block" ? (
         <div className="trajectory-step" key={item.block.id} data-kind={item.block.type}>
           <span>{item.block.type === "reasoning" ? "推理" : item.block.type === "text" ? "回答" : item.block.type}</span>
           <p>{item.block.content || "（空）"}</p>
         </div>
       ) : (
-        <button
+        <ActionButton
           className="trajectory-step tool-step"
           key={item.call.id}
           onClick={() => onInspect({ kind: "tool", messageId, generationId: generation.id, toolCallId: item.call.id })}
@@ -157,7 +158,7 @@ function GenerationNode({
           <span className="grow" />
           {item.call.startedAt && item.call.completedAt ? <span>{Math.max(0, item.call.completedAt - item.call.startedAt)} ms</span> : null}
           <StatusTag status={item.call.approvalState} />
-        </button>
+        </ActionButton>
       ))}
     </div>
   );

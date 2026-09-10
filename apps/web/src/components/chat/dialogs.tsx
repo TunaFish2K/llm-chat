@@ -193,7 +193,7 @@ export function ExecutionOverridesDialog({
           <Button onClick={onClose} disabled={saving}>
             取消
           </Button>
-          <Button variant="primary" onClick={() => void save()} disabled={saving}>
+          <Button variant="primary" onClick={() => save()} disabled={saving}>
             {saving ? "保存中…" : "保存"}
           </Button>
         </>

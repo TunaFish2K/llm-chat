@@ -20,6 +20,31 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("replays accepted submissions before busy checks and exposes durable authenticated receipts", async () => {
+    const app = await testApp();
+    seedStoreModel(app.store);
+    const start = vi.spyOn(app.runner, "start").mockImplementation(() => {});
+    const clientRequestId = crypto.randomUUID();
+    const payload = { clientRequestId, agentId: app.store.getSettings().defaultAgentId, text: "once" };
+    const [first, duplicate] = await Promise.all([app.inject({ method: "POST", url: "/api/conversations/start", payload }), app.inject({ method: "POST", url: "/api/conversations/start", payload })]);
+    expect(first.statusCode).toBe(202); expect(duplicate.json()).toEqual(first.json());
+    expect(start).toHaveBeenCalledTimes(1);
+    const receipt = await app.inject({ method: "GET", url: `/api/message-submissions/${clientRequestId}` });
+    expect(receipt.json()).toMatchObject({ clientRequestId, deleted: false, conversationId: first.json().conversation.id });
+    const conflict = await app.inject({ method: "POST", url: "/api/conversations/start", payload: { ...payload, text: "different" } });
+    expect(conflict.statusCode).toBe(409);
+    const id = first.json().conversation.id;
+    app.store.finishGeneration(first.json().generation.generationId, "completed", {});
+    const send = { text: "second", clientRequestId: crypto.randomUUID() };
+    const sent = await app.inject({ method: "POST", url: `/api/conversations/${id}/messages`, payload: send });
+    const again = await app.inject({ method: "POST", url: `/api/conversations/${id}/messages`, payload: send });
+    expect(sent.statusCode).toBe(202); expect(again.json()).toEqual(sent.json());
+    expect(start).toHaveBeenCalledTimes(2);
+    app.store.finishGeneration(sent.json().generationId, "completed", {});
+    await app.inject({ method: "DELETE", url: `/api/conversations/${id}` });
+    expect((await app.inject({ method: "POST", url: "/api/conversations/start", payload })).statusCode).toBe(410);
+  });
+
   it("requires a Web artifact before opening the application", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-missing-web-"));
     dirs.push(dir);
