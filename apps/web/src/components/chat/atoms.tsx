@@ -1,4 +1,3 @@
-import { ActionButton } from "../../lib/action-feedback";
 import { useEffect, useState } from "react";
 import { offlineStore } from "../../lib/offline-history";
 import { useStore } from "../../lib/store";
@@ -97,7 +96,7 @@ export function MessageAction({
   children: ReactNode;
 }) {
   return (
-    <ActionButton
+    <button
       type="button"
       className={danger ? "act danger" : "act"}
       onClick={onClick}
@@ -106,7 +105,7 @@ export function MessageAction({
       title={label}
     >
       {children}
-    </ActionButton>
+    </button>
   );
 }
 

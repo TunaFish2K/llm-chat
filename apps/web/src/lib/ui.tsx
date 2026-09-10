@@ -1,4 +1,3 @@
-import { ActionButton } from "./action-feedback";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useBackLayer } from "./mobile-navigation";
 import { X } from "lucide-react";
@@ -26,9 +25,9 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
     <div className="error-box" role="alert">
       <p>{message}</p>
       {onRetry ? (
-        <ActionButton className="btn" onClick={onRetry}>
+        <button className="btn" onClick={onRetry}>
           重试
-        </ActionButton>
+        </button>
       ) : null}
     </div>
   );
@@ -96,8 +95,7 @@ export function Modal({
   children,
   footer,
   wide,
-  fullscreen,
-  onEdit
+  fullscreen
 }: {
   title: string;
   onClose: () => void;
@@ -105,7 +103,6 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
   fullscreen?: boolean;
-  onEdit?: () => void;
 }) {
   useBackLayer(true, onClose);
   const ref = useRef<HTMLDivElement>(null);
@@ -173,11 +170,11 @@ export function Modal({
       >
         <div className="modal-header">
           <h3>{title}</h3>
-          <ActionButton className="btn ghost icon" onClick={onClose} aria-label="关闭对话框">
+          <button className="btn ghost icon" onClick={onClose} aria-label="关闭对话框">
             <X size={18} aria-hidden="true" />
-          </ActionButton>
+          </button>
         </div>
-        <div className="modal-body" onChangeCapture={onEdit}>{children}</div>
+        <div className="modal-body">{children}</div>
         {footer ? <div className="modal-footer">{footer}</div> : null}
       </div>
     </div>
@@ -209,16 +206,16 @@ export function ConfirmModal({
       onClose={onClose}
       footer={
         <>
-          <ActionButton className="btn" onClick={onClose} disabled={busy}>
+          <button className="btn" onClick={onClose} disabled={busy}>
             取消
-          </ActionButton>
-          <ActionButton
+          </button>
+          <button
             className={danger ? "btn danger" : "btn primary"}
             onClick={onConfirm}
             disabled={busy || confirmDisabled}
           >
             {busy ? "处理中…" : confirmLabel}
-          </ActionButton>
+          </button>
         </>
       }
     >

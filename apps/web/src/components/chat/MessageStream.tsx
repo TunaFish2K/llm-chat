@@ -1,5 +1,3 @@
-import { selectMessageVersion } from "../../lib/app-state";
-import { ActionButton } from "../../lib/action-feedback";
 import { useStickToBottom } from "./useStickToBottom";
 import { isOffline, offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
@@ -76,7 +74,7 @@ export function MessageItem({
         {attachments.length ? <AssetGallery assets={attachments} /> : null}
         {message.text ? <div className="msg-bubble">{message.text}</div> : null}
         <MessageFooter metadata={<time>{formatTime(message.createdAt)}</time>}>
-          <MessageAction label="复制消息" onClick={() => copyText(message.text ?? "")}>
+          <MessageAction label="复制消息" onClick={() => void copyText(message.text ?? "")}>
             <Copy size={14} />
           </MessageAction>
           <MessageAction label="编辑并分叉" disabled={callbacks.branching} onClick={() => callbacks.onEdit(message)}>
@@ -109,7 +107,7 @@ export function MessageItem({
         <>
           <Markdown text={message.text} />
           <MessageFooter metadata={<span>{generatedAgent?.name ?? "助手"} · {message.greeting ? "开场白" : "历史回复"} · {formatTime(message.createdAt)}</span>}>
-              <MessageAction label="复制回答" onClick={() => copyText(message.text ?? "")}><Clipboard size={14} /></MessageAction>
+              <MessageAction label="复制回答" onClick={() => void copyText(message.text ?? "")}><Clipboard size={14} /></MessageAction>
                 {message.greeting && message.greeting.variants.length > 1 ? (
                   <VersionSwitcher
                     label="开场白切换"
@@ -154,7 +152,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
           label="停止图片生成"
           danger
           disabled={offline}
-          onClick={() => endpoints.cancelImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+          onClick={() => void endpoints.cancelImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
           <Square size={14} fill="currentColor" />
         </MessageAction>
@@ -162,7 +160,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
         <MessageAction
           label="重试图片生成"
           disabled={offline}
-          onClick={() => endpoints.retryImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+          onClick={() => void endpoints.retryImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
           <RotateCcw size={14} />
         </MessageAction>
@@ -204,7 +202,8 @@ function GenerationTimeline({
       return;
     }
     try {
-      await selectMessageVersion(conversationId, message.id, id);
+      await endpoints.selectGeneration(conversationId, message.id, id);
+      await loadMessages(conversationId);
     } catch (error) {
       toastError(error);
     }
@@ -277,18 +276,18 @@ function GenerationTimeline({
           <span className="reply-identity" title={`${generation.generatedAgent?.name ?? "助手"} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>
             {generation.generatedAgent?.name ?? "助手"} · {message.generatedModel?.connectionName ?? generation.connectionName} / {message.generatedModel?.displayName ?? generation.modelKey}
           </span>
-          <ActionButton type="button" className="usage-summary" aria-label="查看生成用量" onClick={inspectGeneration}>
+          <button type="button" className="usage-summary" aria-label="查看生成用量" onClick={inspectGeneration}>
             {generation.usage.inputTokens !== undefined ? <span>↑ {formatTokens(generation.usage.inputTokens)}</span> : null}
             {generation.usage.outputTokens !== undefined ? <span>↓ {formatTokens(generation.usage.outputTokens)}</span> : null}
             {generation.usage.cachedInputTokens !== undefined ? (
               <span>缓存 {formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens).replace(" tokens", "")}</span>
             ) : null}
             {generation.completedAt ? <span>{(Math.max(0, generation.completedAt - generation.createdAt) / 1000).toFixed(1)}s</span> : null}
-          </ActionButton>
+          </button>
           <time className="reply-timestamp">{formatTime(message.createdAt)}</time>
         </>}>
           {answer ? (
-            <MessageAction label="复制回答" onClick={() => copyText(answer)}>
+            <MessageAction label="复制回答" onClick={() => void copyText(answer)}>
               <Clipboard size={14} />
             </MessageAction>
           ) : null}
@@ -365,7 +364,7 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }:
       </div>
     </details>
     {!open ? tools.filter((call) => call.error && !imageJobs?.get(call.id)?.some((job) => job.error?.message === call.error)).map((call) => <div key={call.id} className="process-error" role="alert">
-      <ActionButton className="link-button" onClick={() => onInspect(call.id)}>{call.name}</ActionButton>：{call.error}{toolStderr(call.output)}
+      <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{call.error}{toolStderr(call.output)}
     </div>) : null}
   </div>;
 }
@@ -395,23 +394,23 @@ export function VersionSwitcher({
   const itemName = label.includes("开场白") ? "条开场白" : label.includes("分支") ? "分支" : "版本";
   return (
     <span className="version-switch" aria-label={label}>
-      <ActionButton
+      <button
         type="button"
         aria-label={`上一${itemName}`}
         disabled={disabled || index <= 0}
         onClick={() => onChange(index - 1)}
       >
         <ChevronLeft size={14} />
-      </ActionButton>
+      </button>
       <span>{index + 1} / {total}</span>
-      <ActionButton
+      <button
         type="button"
         aria-label={`下一${itemName}`}
         disabled={disabled || index >= total - 1}
         onClick={() => onChange(index + 1)}
       >
         <ChevronRight size={14} />
-      </ActionButton>
+      </button>
     </span>
   );
 }
@@ -451,7 +450,7 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
         <span className="grow" />
         {call.approvalState === "pending" ? <span>等待审批</span> : null}
         <StatusTag status={call.approvalState} />
-        <ActionButton
+        <button
           type="button"
           className="act"
           onClick={(event) => {
@@ -462,7 +461,7 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
           title="检查工具调用"
         >
           <Settings2 size={14} />
-        </ActionButton>
+        </button>
         <ChevronDown className="chev" size={14} aria-hidden="true" />
       </summary>
       <div className="tool-call-details">

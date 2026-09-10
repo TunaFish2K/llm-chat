@@ -1,4 +1,3 @@
-import { ActionButton } from "../../lib/action-feedback";
 import { useEffect, useState } from "react";
 import { LoaderCircle, Square } from "lucide-react";
 import { endpoints } from "../../lib/api";
@@ -19,8 +18,8 @@ export function CancelGenerationButton({ conversationId, generationId, className
     }
     catch (error) { setStopping(false); toastError(error); }
   };
-  return <ActionButton type="button" className={className} disabled={stopping} onClick={() => cancel()}
+  return <button type="button" className={className} disabled={stopping} onClick={() => void cancel()}
     aria-label={stopping ? "正在取消" : "停止生成"} title={stopping ? "正在取消" : "停止生成"}>
     {stopping ? <LoaderCircle size={17} className="spin" /> : <Square size={17} fill="currentColor" />}
-  </ActionButton>;
+  </button>;
 }

@@ -1,5 +1,3 @@
-import { saveConversation } from "../lib/app-state";
-import { ActionButton } from "../lib/action-feedback";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { offlineStore } from "../lib/offline-history";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -78,7 +76,8 @@ export function WorkspaceSidebar({
     if (!renaming || !renameValue.trim()) return;
     setBusy(true);
     try {
-      await saveConversation(renaming.id, { title: renameValue.trim() });
+      await endpoints.updateConversation(renaming.id, { title: renameValue.trim() });
+      await refreshConversations();
       setRenaming(null);
       toast("success", "会话已重命名");
     } catch (error) {
@@ -93,7 +92,7 @@ export function WorkspaceSidebar({
     setBusy(true);
     try {
       await endpoints.deleteConversation(deleting.id).catch((error: unknown) => { if (!conversationDeleted(deleting.id)) throw error; });
-      void refreshConversations().catch(toastError);
+      await refreshConversations();
       if (deleting.id === activeId) navigate(routes.chat());
       setDeleting(null);
       toast("success", "会话已删除");
@@ -110,21 +109,21 @@ export function WorkspaceSidebar({
     }} className="workspace-sidebar" data-compact={compact || undefined} aria-label="主导航与会话">
       <header className="sidebar-brand">
         {compact ? (
-          <ActionButton className="sidebar-brand-button" onClick={onToggleCompact} aria-label="展开会话栏" title="展开会话栏">
+          <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label="展开会话栏" title="展开会话栏">
             <img src="/icons/icon-192-v2.png" width={28} height={28} alt="" />
             <PanelLeftOpen className="sidebar-brand-action" size={14} aria-hidden="true" />
-          </ActionButton>
+          </button>
         ) : (
           <>
             <a href="/" onClick={linkClick("/")} aria-label="Chat 首页">
               <img src="/icons/icon-192-v2.png" width={28} height={28} alt="" />
               <span>Chat</span>
             </a>
-            <div className="sidebar-header-actions"><ActionButton className="icon-button" aria-label="搜索会话" title="搜索会话" onClick={() => setSearchOpen(true)}><Search size={18} /></ActionButton>
+            <div className="sidebar-header-actions"><button className="icon-button" aria-label="搜索会话" title="搜索会话" onClick={() => setSearchOpen(true)}><Search size={18} /></button>
             {onClose ? (
-              <ActionButton className="icon-button" onClick={onClose} aria-label="关闭导航" title="关闭导航"><X size={18} /></ActionButton>
+              <button className="icon-button" onClick={onClose} aria-label="关闭导航" title="关闭导航"><X size={18} /></button>
             ) : onToggleCompact ? (
-              <ActionButton className="icon-button sidebar-collapse-button" onClick={onToggleCompact} aria-label="折叠会话栏" title="折叠会话栏"><PanelLeftClose size={18} /></ActionButton>
+              <button className="icon-button sidebar-collapse-button" onClick={onToggleCompact} aria-label="折叠会话栏" title="折叠会话栏"><PanelLeftClose size={18} /></button>
             ) : null}</div>
           </>
         )}
@@ -133,10 +132,10 @@ export function WorkspaceSidebar({
       {compact ? (
         <>
           <nav className="sidebar-rail-primary" aria-label="主要操作">
-            <ActionButton className="sidebar-rail-button" aria-label="搜索会话" title="搜索会话" onClick={() => setSearchOpen(true)}><Search size={18} /></ActionButton>
-            <ActionButton className="sidebar-rail-button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label="新会话" title="新会话">
+            <button className="sidebar-rail-button" aria-label="搜索会话" title="搜索会话" onClick={() => setSearchOpen(true)}><Search size={18} /></button>
+            <button className="sidebar-rail-button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label="新会话" title="新会话">
               <SquarePen size={18} />
-            </ActionButton>
+            </button>
             <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label="聊天" compact />
             <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={18} />} label="Agent" compact />
           </nav>
@@ -144,16 +143,16 @@ export function WorkspaceSidebar({
           <div className="sidebar-rail-utilities">
             <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label="设置" compact />
             {pwa.installAvailable ? (
-              <ActionButton className="sidebar-rail-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={18} /></ActionButton>
+              <button className="sidebar-rail-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={18} /></button>
             ) : null}
           </div>
         </>
       ) : (
         <>
           <div className="sidebar-primary-actions">
-            <ActionButton className="button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label="新会话" title="新会话">
+            <button className="button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label="新会话" title="新会话">
               <Plus size={17} /> {!compact ? <span>新会话</span> : null}
-            </ActionButton>
+            </button>
           </div>
 
 
@@ -187,10 +186,10 @@ export function WorkspaceSidebar({
                         <small>{offline && !cachedIds.includes(conversation.activeBranchId ?? conversation.id) ? "尚未下载" : formatTime(conversation.updatedAt)}</small>
                       </a>
                       <div className="conversation-actions">
-                        <ConversationPopover><Popover.Trigger asChild><ActionButton className="icon-button" aria-label={`会话操作 ${conversation.title}`}><MoreHorizontal size={16} /></ActionButton></Popover.Trigger>
+                        <ConversationPopover><Popover.Trigger asChild><button className="icon-button" aria-label={`会话操作 ${conversation.title}`}><MoreHorizontal size={16} /></button></Popover.Trigger>
                           <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4}>
-                            <Popover.Close asChild><ActionButton disabled={offline} aria-label={`重命名 ${conversation.title}`} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />修改标题</ActionButton></Popover.Close>
-                            <Popover.Close asChild><ActionButton disabled={offline} className="danger-quiet" aria-label={`删除 ${conversation.title}`} onClick={() => setDeleting(conversation)}><Trash2 size={14} />删除会话</ActionButton></Popover.Close>
+                            <Popover.Close asChild><button disabled={offline} aria-label={`重命名 ${conversation.title}`} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />修改标题</button></Popover.Close>
+                            <Popover.Close asChild><button disabled={offline} className="danger-quiet" aria-label={`删除 ${conversation.title}`} onClick={() => setDeleting(conversation)}><Trash2 size={14} />删除会话</button></Popover.Close>
                           </Popover.Content></Popover.Portal>
                         </ConversationPopover>
                       </div>
@@ -211,7 +210,7 @@ export function WorkspaceSidebar({
 
           {pwa.installAvailable ? <footer className="sidebar-status">
             {pwa.installAvailable ? (
-              <ActionButton className="icon-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={15} /></ActionButton>
+              <button className="icon-button" onClick={onInstall} aria-label="安装到设备" title="安装到设备"><Download size={15} /></button>
             ) : null}
           </footer> : null}
         </>
@@ -221,13 +220,13 @@ export function WorkspaceSidebar({
         <Modal
           title="重命名会话"
           onClose={() => setRenaming(null)}
-          footer={<><ActionButton className="button secondary" onClick={() => setRenaming(null)}>取消</ActionButton><ActionButton className="button primary" disabled={busy || !renameValue.trim()} onClick={() => rename()}>保存</ActionButton></>}
+          footer={<><button className="button secondary" onClick={() => setRenaming(null)}>取消</button><button className="button primary" disabled={busy || !renameValue.trim()} onClick={() => void rename()}>保存</button></>}
         >
           <label className="field"><span>会话标题</span><input className="input" aria-label="会话标题" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void rename(); }} /></label>
         </Modal>
       ) : null}
       {deleting ? (
-        <ConfirmModal title="删除会话" message={`删除“${deleting.title}”及其所有分支和消息？此操作无法恢复。`} confirmLabel="删除" danger busy={busy} onClose={() => setDeleting(null)} onConfirm={() => remove()} />
+        <ConfirmModal title="删除会话" message={`删除“${deleting.title}”及其所有分支和消息？此操作无法恢复。`} confirmLabel="删除" danger busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void remove()} />
       ) : null}
     </aside>
   );

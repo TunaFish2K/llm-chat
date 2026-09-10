@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
 import { readComposerDraft, writeComposerDraft } from "../lib/composer-drafts";
-import { ApiRequestError, endpoints } from "../lib/api";
+import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
 import { imageRetryMessages, makeImageJob } from "../../test/image-tool-fixtures";
 import { offlineStore } from "../lib/offline-history";
@@ -120,7 +120,7 @@ describe("ChatView", () => {
 
   it("keeps an unsent draft when the first send fails", async () => {
     seedStore(); vi.stubGlobal("fetch", messageFetch([]));
-    vi.spyOn(endpoints, "startConversation").mockRejectedValue(new ApiRequestError(400, "invalid", "发送失败测试"));
+    vi.spyOn(endpoints, "startConversation").mockRejectedValue(new Error("发送失败测试"));
     const user = userEvent.setup();
     const first = render(<ChatView conversationId={null} />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "失败后保留" } });
@@ -128,9 +128,6 @@ describe("ChatView", () => {
     await waitFor(() => expect(appStore.get().toasts.some((item) => item.text === "发送失败测试")).toBe(true));
     first.unmount();
     render(<ChatView conversationId={null} />);
-    expect(screen.getByLabelText("输入消息")).toHaveValue("");
-    expect(screen.getByText("失败后保留")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "恢复到输入框" }));
     expect(screen.getByLabelText("输入消息")).toHaveValue("失败后保留");
   });
 
@@ -435,7 +432,7 @@ describe("ChatView", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1/messages",
-      expect.objectContaining({ method: "POST", body: expect.stringContaining('"text":"测试消息"') })
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ text: "测试消息" }) })
     ));
   });
 
@@ -472,7 +469,7 @@ describe("ChatView", () => {
       "/api/conversations/conv-1/messages",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringMatching(new RegExp(`"assetIds":\\["${asset.id}"\\]`))
+        body: JSON.stringify({ text: "", assetIds: [asset.id] })
       })
     ));
   });
@@ -759,7 +756,13 @@ describe("ChatView", () => {
       "/api/conversations/start",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringContaining('"executionOverrides":{"modelId":"model-2","reasoningEffort":"high"}')
+        body: JSON.stringify({
+          text: "第一条消息",
+          agentId: "agent-1",
+          greetingIndex: 0,
+          executionOverrides: { modelId: "model-2", reasoningEffort: "high" },
+          workspacePath: null
+        })
       })
     ));
   });

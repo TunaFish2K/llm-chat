@@ -1,4 +1,3 @@
-import { ActionButton } from "../lib/action-feedback";
 import { useState, type FormEvent } from "react";
 import { endpoints } from "../lib/api";
 import { bootstrap } from "../lib/app-state";
@@ -47,9 +46,9 @@ export function LoginView() {
             {error}
           </p>
         ) : null}
-        <ActionButton className="btn primary" type="submit" disabled={busy || !password} style={{ width: "100%" }}>
+        <button className="btn primary" type="submit" disabled={busy || !password} style={{ width: "100%" }}>
           {busy ? "登录中…" : "登录"}
-        </ActionButton>
+        </button>
         <p className="small muted" style={{ marginTop: 16, textAlign: "center" }}>
           首次启动的初始密码会打印在服务端日志中。
         </p>

@@ -1,7 +1,3 @@
-import { saveConversation } from "../../lib/app-state";
-import { beginSubmission, failSubmission, submitPending, takeSubmissionDraft, submissionStore } from "../../lib/message-submissions";
-import { holdServerDraft, releaseServerDraft } from "../../lib/composer-drafts";
-import { ActionButton, ResourceSaveStatus } from "../../lib/action-feedback";
 import { offlineStore } from "../../lib/offline-history";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -30,7 +26,7 @@ import type {
   ToolCallDto
 } from "@llm-chat/contracts";
 import { useBackLayer } from "../../lib/mobile-navigation";
-import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft } from "../../lib/composer-drafts";
+import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
 import { ApiRequestError, endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
@@ -44,7 +40,7 @@ import { ChatTypographySettings } from "../ChatTypographySettings";
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
 import { AgentPicker } from "./AgentPicker";
-import { AttachmentMenu, AttachmentList, PendingAttachmentList, useAttachments } from "./AttachmentEditor";
+import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEditor";
 import { ReasoningPicker } from "./ReasoningPicker";
 import { useMessageQueue, MessageQueueList } from "./MessageQueueList";
 import { useComposerLayout } from "./useComposerLayout";
@@ -127,9 +123,8 @@ export function Composer({
   useBackLayer(settingsOpen, () => setSettingsOpen(false));
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const sendingNow = useRef(false);
   const [savingOverrides, setSavingOverrides] = useState(false);
-  const { attachments, setAttachments, uploading, uploadFiles, pendingUploads, removeUpload } = useAttachments(initialDraft?.attachments ?? [], conversation?.id);
+  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments(initialDraft?.attachments ?? [], conversation?.id);
   const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
   const wasGenerating = useRef(false);
   const currentDraft = useRef("");
@@ -236,14 +231,14 @@ export function Composer({
     }
     const remember = typeof next.modelId === "string" && (explicitSelection || next.modelId !== overrides.modelId);
     try {
-      await (async () => {
+      await serializeModelSelection(effectiveAgentId, async () => {
         if (conversation) {
-          await saveConversation(conversation.id, explicitSelection && typeof next.modelId === "string"
-            ? { modelId: next.modelId } : { executionOverrides: next },
-            { executionOverrides: next, modelId: next.modelId ?? effectiveAgent?.execution.modelId ?? null });
+          await endpoints.updateConversation(conversation.id, explicitSelection && typeof next.modelId === "string"
+            ? { modelId: next.modelId } : { executionOverrides: next });
+          await refreshConversations();
         } else if (remember) await endpoints.selectAgentModel(effectiveAgentId, next.modelId!);
-        if (remember) void refreshAgents().catch(toastError);
-      })();
+        if (remember) await refreshAgents();
+      });
       if (message) toast("success", message);
     } catch (error) {
       toastError(error);
@@ -277,9 +272,8 @@ export function Composer({
       return;
     }
     try {
-      const agent = agents.find((item) => item.id === agentId);
-      setPendingAgent(null);
-      await saveConversation(conversation.id, { agentId }, { agentId, executionOverrides: {}, modelId: agent?.execution.modelId ?? null });
+      await endpoints.updateConversation(conversation.id, { agentId });
+      await refreshConversations();
       setPendingAgent(null);
     } catch (error) {
       toastError(error);
@@ -300,7 +294,8 @@ export function Composer({
       return;
     }
     try {
-      await saveConversation(conversation.id, { workspacePath: path });
+      await endpoints.updateConversation(conversation.id, { workspacePath: path });
+      await refreshConversations();
       toast("success", path ? "工作目录已更新" : "工作目录已清除");
     } catch (error) {
       toastError(error);
@@ -322,21 +317,10 @@ export function Composer({
       toast("error", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
       return;
     }
-    if (sendingNow.current || submissionStore.get().items.some((item) => item.scope === (conversation?.id ?? null) && ["preparing", "sending", "unknown"].includes(item.status))) return;
-    sendingNow.current = true;
     onBeforeSend();
     setSending(true);
-    const scope = conversation?.id ?? null;
-    const draft = { text: content, attachments: [...attachments], agentId: effectiveAgent.id,
-      overrides: { ...overrides }, workspace: conversation ? conversation.workspacePath : newWorkspace, greetingIndex };
-    const kind = !conversation ? "start" : active || (!queuePaused && queuedMessages.some((item) => item.status !== "failed")) ? "queue" : "send";
-    const pending = beginSubmission(scope, draft, kind, steer ? "steer" : "queue", !conversation && Boolean(effectiveAgent.roleplayEnabled));
-    const draftReady = scope ? holdServerDraft(scope) : Promise.resolve();
-    writeComposerDraft(scope, { ...draft, text: "", attachments: [] });
-    setText(""); setAttachments([]);
-    if (scope) scheduleServerDraft(scope, "");
     try {
-      await draftReady;
+      if (conversation) await flushServerDraft(conversation.id);
       if (conversation && roleplayAgent && roleplayState && quickReplies.some((reply) =>
         reply.mode === "script" && reply.autoTriggers.includes("before_send")
       )) {
@@ -344,30 +328,59 @@ export function Composer({
         onRoleplayStateChange(automated.state);
         content = (automated.sendText ?? automated.draft ?? content).trim();
       }
-      if (!content && !draft.attachments.length) throw new Error("发送前脚本清空了消息");
-      await submitPending(pending.id, { text: content, assetIds: draft.attachments.map((asset) => asset.id),
-        agentId: effectiveAgent.id, greetingIndex, executionOverrides: draft.overrides, workspacePath: draft.workspace });
-
+      if (!content && !attachments.length) {
+        toast("error", "发送前脚本清空了消息");
+        return;
+      }
+      if (!conversation) {
+        const result = await endpoints.startConversation({
+          text: content,
+          ...(attachments.length ? { assetIds: attachments.map((asset) => asset.id) } : {}),
+          agentId: effectiveAgent.id,
+          greetingIndex,
+          executionOverrides: newOverrides,
+          workspacePath: newWorkspace
+        });
+        setText("");
+        setAttachments([]);
+        explicitNewModel.current = false;
+        setNewOverrides({});
+        setNewAgentId(null);
+        onGreetingIndexChange(0);
+        appStore.set((state) => ({ settings: state.settings ? { ...state.settings, lastAgentId: effectiveAgent.id } : null }));
+        if (effectiveAgent.roleplayEnabled) {
+          await endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "" })
+            .catch(() => undefined);
+        }
+        await refreshConversations();
+        await loadMessages(result.conversation.id);
+        trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
+        navigate(routes.chat(result.conversation.id));
+      } else if (active || (!queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
+        await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
+        setText(""); setAttachments([]); persistDraft("");
+        await reloadQueue();
+      } else {
+        const result = await endpoints.sendMessage(conversation.id, content, attachments.map((asset) => asset.id)).catch(async (error) => {
+          if (!(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
+          // Another device may have started a turn since this client's last snapshot.
+          await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
+          return null;
+        });
+        setText("");
+        setAttachments([]);
+        persistDraft("");
+        if (!result) await reloadQueue();
+        await loadMessages(conversation.id);
+        if (result) trackGeneration(conversation.id, result.assistantMessageId, result.generationId);
+        await refreshConversations();
+      }
     } catch (error) {
-      failSubmission(pending.id, error, error instanceof ApiRequestError && error.status === 0);
       toastError(error);
     } finally {
-      if (scope) void releaseServerDraft(scope).catch(toastError);
-      sendingNow.current = false;
       setSending(false);
     }
   };
-
-  useEffect(() => {
-    const restore = (event: Event) => {
-      const draft = takeSubmissionDraft((event as CustomEvent<string>).detail);
-      if (!draft) return;
-      setText(draft.text); setAttachments(draft.attachments);
-      persistDraft(draft.text);
-    };
-    window.addEventListener("llm-chat:restore-submission", restore);
-    return () => window.removeEventListener("llm-chat:restore-submission", restore);
-  }, [conversation?.id]);
 
   const useQuickReply = async (reply: (typeof quickReplies)[number]) => {
     if (controlsDisabled) return;
@@ -399,10 +412,8 @@ export function Composer({
     }
   };
 
-  const submissions = useStore(submissionStore, (state) => state.items);
-  const deliveryPending = submissions.some((item) => (item.receipt?.conversationId ?? item.scope) === (conversation?.id ?? null) && ["preparing", "sending", "unknown"].includes(item.status));
   const controlsDisabled = offline || generating || sending || savingOverrides;
-  const sendDisabled = offline || deliveryPending ||
+  const sendDisabled = offline ||
     sending || savingOverrides ||
     uploading ||
     (!text.trim() && !attachments.length) ||
@@ -413,16 +424,14 @@ export function Composer({
   return (
     <div className="composer">
       <div className="composer-inner">
-        {conversation ? <ResourceSaveStatus resource={`conversation:${conversation.id}`} /> : null}
-        <PendingAttachmentList items={pendingUploads} remove={removeUpload} retry={uploadFiles} uploading={uploading} />
-        {isNew && recoveredDraftIds().length > 0 && <ActionButton type="button" className="btn small" onClick={() => {
+        {isNew && recoveredDraftIds().length > 0 && <button type="button" className="btn small" onClick={() => {
           const draft = swapRecoveredDraft();
           if (!draft) return;
           setText(draft.text); setAttachments(draft.attachments); setNewAgentId(draft.agentId);
           setNewOverrides(draft.overrides); setNewWorkspace(draft.workspace);
           explicitNewModel.current = Object.hasOwn(draft.overrides, "modelId");
           onGreetingIndexChange(draft.greetingIndex);
-        }}>切换保留的草稿</ActionButton>}
+        }}>切换保留的草稿</button>}
         <div
           className="composer-surface"
           onDragOver={(event) => {
@@ -454,6 +463,7 @@ export function Composer({
                 }
                 value={text}
                 rows={2}
+                disabled={sending}
                 onChange={(event) => {
                   setText(event.target.value);
                   persistDraft(event.target.value);
@@ -480,9 +490,9 @@ export function Composer({
               {quickReplies.some((reply) => reply.pinned) ? (
                 <div className="quick-reply-row" aria-label="快捷回复">
                   {quickReplies.filter((reply) => reply.pinned).map((reply) => (
-                    <ActionButton type="button" className="quick-reply" key={reply.id} title={reply.tooltip || reply.label} onClick={() => useQuickReply(reply)} disabled={controlsDisabled}>
+                    <button type="button" className="quick-reply" key={reply.id} title={reply.tooltip || reply.label} onClick={() => void useQuickReply(reply)} disabled={controlsDisabled}>
                       {reply.mode === "script" ? <Zap size={13} aria-hidden="true" /> : null}{reply.label}
-                    </ActionButton>
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -507,27 +517,27 @@ export function Composer({
 
                   <Popover.Root modal={false} open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setTypographyOpen(false); }}>
                     {typographyOpen ? <Popover.Anchor virtualRef={inputAreaRef} /> : null}
-                    <Popover.Trigger asChild><ActionButton type="button" className="chip composer-settings-trigger"
+                    <Popover.Trigger asChild><button type="button" className="chip composer-settings-trigger"
                       aria-label="低频设置" title="低频设置">
                       <Settings2 size={26} />
                       {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
-                    </ActionButton></Popover.Trigger>
+                    </button></Popover.Trigger>
                     <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}
                       onInteractOutside={(event) => { if (typographyOpen) event.preventDefault(); }}>
                       {typographyOpen ? <>
-                        <div className="chat-typography-heading"><ActionButton type="button" onClick={() => setTypographyOpen(false)}>返回</ActionButton><strong>聊天排版</strong>
-                          <ActionButton type="button" aria-label="关闭排版面板" onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></ActionButton></div>
+                        <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>返回</button><strong>聊天排版</strong>
+                          <button type="button" aria-label="关闭排版面板" onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
                         <ChatTypographySettings />
                       </> : <>
-                      <ActionButton type="button" onClick={() => setTypographyOpen(true)}><span><strong>聊天排版</strong><small>字号、字间距与行间距</small></span></ActionButton>
+                      <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>聊天排版</strong><small>字号、字间距与行间距</small></span></button>
                       {toolbar.foldAgent ? <AgentPicker menuItem agents={agents} value={effectiveAgentId} disabled={controlsDisabled}
                         onChange={(id) => { setSettingsOpen(false); chooseAgent(id); }} /> : null}
-                      <ActionButton type="button" aria-label="选择工作目录" onClick={() => { setSettingsOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
+                      <button type="button" aria-label="选择工作目录" onClick={() => { setSettingsOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
                         <FolderOpen size={18} /><span><strong>工作目录</strong><small>{workspace ?? "未选择"}</small></span>
-                      </ActionButton>
-                      <ActionButton type="button" aria-label="高级执行设置" onClick={() => { setSettingsOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
+                      </button>
+                      <button type="button" aria-label="高级执行设置" onClick={() => { setSettingsOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
                         <Settings2 size={18} /><span><strong>高级执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
-                      </ActionButton>
+                      </button>
                       </>}
                     </Popover.Content></Popover.Portal>
                   </Popover.Root>
@@ -536,7 +546,7 @@ export function Composer({
                 <div className="composer-action-group">
                   <AttachmentMenu uploadFiles={uploadFiles} disabled={offline || sending || attachments.length >= 8} uploading={uploading} />
 
-                  <ActionButton
+                  <button
                     type="button"
                     className="send-button"
                     onPointerDown={(event) => { if (event.button !== 0) return; event.currentTarget.setPointerCapture?.(event.pointerId); holdSend.start(true); }}
@@ -550,7 +560,7 @@ export function Composer({
                     title={active ? "点击加入轮末队列；长按 Steer，在下次模型请求前发送" : "发送；长按可在生成期间 Steer"}
                   >
                     <Send size={18} />
-                  </ActionButton>
+                  </button>
                 </div>
               </div>
             </>
@@ -561,25 +571,25 @@ export function Composer({
 
       {actionsHost && conversation ? createPortal((<Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
                     <Popover.Trigger asChild>
-                      <ActionButton type="button" className="icon-button" aria-label="会话操作" title="更多">
+                      <button type="button" className="icon-button" aria-label="会话操作" title="更多">
                         <MoreHorizontal size={17} aria-hidden="true" />
-                      </ActionButton>
+                      </button>
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10}>
                         {roleplayAvailable ? (
-                          <ActionButton type="button" aria-label="角色会话设置" onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
+                          <button type="button" aria-label="角色会话设置" onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
                             <Drama size={16} aria-hidden="true" />
                             <span><strong>角色会话</strong><small>预设、人物、世界书与场景</small></span>
-                          </ActionButton>
+                          </button>
                         ) : null}
                         {quickReplies.filter((reply) => !reply.pinned).map((reply) => (
-                          <ActionButton type="button" key={reply.id} title={reply.tooltip || reply.label} onClick={() => { setMoreOpen(false); return useQuickReply(reply); }} disabled={controlsDisabled}>
+                          <button type="button" key={reply.id} title={reply.tooltip || reply.label} onClick={() => { setMoreOpen(false); void useQuickReply(reply); }} disabled={controlsDisabled}>
                             <Zap size={16} aria-hidden="true" />
                             <span><strong>{reply.label}</strong><small>{reply.mode === "insert" ? "插入草稿" : reply.mode === "send" ? "立即发送" : "受限脚本"}</small></span>
-                          </ActionButton>
+                          </button>
                         ))}
-                        <ActionButton
+                        <button
                           type="button"
                           aria-label="立即压缩上下文"
                           onClick={() => { setMoreOpen(false); onCompact(); }}
@@ -588,7 +598,7 @@ export function Composer({
                         >
                           {compacting ? <LoaderCircle className="spin" size={16} /> : <Minimize2 size={16} />}
                           <span><strong>压缩上下文</strong><small>{canCompact ? "立即生成会话摘要" : "当前不可用"}</small></span>
-                        </ActionButton>
+                        </button>
                       </Popover.Content>
                     </Popover.Portal>
                   </Popover.Root>), actionsHost) : null}
@@ -613,7 +623,7 @@ export function Composer({
         />
       ) : null}
       {pendingAgent ? (
-        <AgentSwitchDialog onClose={() => setPendingAgent(null)} onConfirm={() => applyAgent(pendingAgent)} />
+        <AgentSwitchDialog onClose={() => setPendingAgent(null)} onConfirm={() => void applyAgent(pendingAgent)} />
       ) : null}
     </div>
   );
@@ -663,7 +673,7 @@ function ApprovalCard({
           <strong>{item.call.name}</strong>
           <span>第 1 项，共 {count} 项</span>
         </div>
-        <ActionButton
+        <button
           type="button"
           className="icon-button"
           onClick={() =>
@@ -677,7 +687,7 @@ function ApprovalCard({
           aria-label="检查工具调用"
         >
           <Settings2 size={15} />
-        </ActionButton>
+        </button>
       </header>
       <pre>{prettyJson(item.call.arguments)}</pre>
       {error ? (
@@ -697,7 +707,7 @@ function ApprovalCard({
             <Button onClick={() => setDenying(false)} disabled={busy}>
               返回
             </Button>
-            <Button variant="danger" onClick={() => resolve(false)} disabled={busy}>
+            <Button variant="danger" onClick={() => void resolve(false)} disabled={busy}>
               确认拒绝
             </Button>
           </>
@@ -706,7 +716,7 @@ function ApprovalCard({
             <Button onClick={() => setDenying(true)} disabled={busy}>
               拒绝
             </Button>
-            <Button variant="primary" onClick={() => resolve(true)} disabled={busy}>
+            <Button variant="primary" onClick={() => void resolve(true)} disabled={busy}>
               允许
             </Button>
           </>

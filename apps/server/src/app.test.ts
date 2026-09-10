@@ -20,29 +20,31 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
-  it("replays accepted submissions before busy checks and exposes durable authenticated receipts", async () => {
+  it("rejects submissions from an unrefreshed client before writing, while legacy sends still work", async () => {
     const app = await testApp();
     seedStoreModel(app.store);
-    const start = vi.spyOn(app.runner, "start").mockImplementation(() => {});
-    const clientRequestId = crypto.randomUUID();
-    const payload = { clientRequestId, agentId: app.store.getSettings().defaultAgentId, text: "once" };
-    const [first, duplicate] = await Promise.all([app.inject({ method: "POST", url: "/api/conversations/start", payload }), app.inject({ method: "POST", url: "/api/conversations/start", payload })]);
-    expect(first.statusCode).toBe(202); expect(duplicate.json()).toEqual(first.json());
-    expect(start).toHaveBeenCalledTimes(1);
-    const receipt = await app.inject({ method: "GET", url: `/api/message-submissions/${clientRequestId}` });
-    expect(receipt.json()).toMatchObject({ clientRequestId, deleted: false, conversationId: first.json().conversation.id });
-    const conflict = await app.inject({ method: "POST", url: "/api/conversations/start", payload: { ...payload, text: "different" } });
-    expect(conflict.statusCode).toBe(409);
-    const id = first.json().conversation.id;
-    app.store.finishGeneration(first.json().generation.generationId, "completed", {});
-    const send = { text: "second", clientRequestId: crypto.randomUUID() };
-    const sent = await app.inject({ method: "POST", url: `/api/conversations/${id}/messages`, payload: send });
-    const again = await app.inject({ method: "POST", url: `/api/conversations/${id}/messages`, payload: send });
-    expect(sent.statusCode).toBe(202); expect(again.json()).toEqual(sent.json());
-    expect(start).toHaveBeenCalledTimes(2);
-    app.store.finishGeneration(sent.json().generationId, "completed", {});
-    await app.inject({ method: "DELETE", url: `/api/conversations/${id}` });
-    expect((await app.inject({ method: "POST", url: "/api/conversations/start", payload })).statusCode).toBe(410);
+    vi.spyOn(app.runner, "start").mockImplementation(() => {});
+    const conversation = app.store.createConversation({ systemPrompt: "" });
+    const counts = () => ["conversations", "messages", "generations", "queued_messages"].map((table) =>
+      app.store.sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()!.count);
+    const before = counts();
+    for (const url of ["/api/conversations/start", `/api/conversations/${conversation.id}/messages`, `/api/conversations/${conversation.id}/queued-messages`]) {
+      const response = await app.inject({ method: "POST", url, payload: {
+        clientRequestId: "00000000-0000-4000-8000-000000000001", text: "do not duplicate", agentId: app.store.getSettings().defaultAgentId
+      } });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: { code: "client_update_required", message: "版本已回退，请刷新页面后重试" } });
+      expect(counts()).toEqual(before);
+    }
+    const started = await app.inject({ method: "POST", url: "/api/conversations/start", payload: {
+      text: "normal start", agentId: app.store.getSettings().defaultAgentId
+    } });
+    expect(started.statusCode).toBe(202);
+    const sent = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/messages`, payload: { text: "normal send" } });
+    expect(sent.statusCode).toBe(202);
+    const queued = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/queued-messages`, payload: { text: "normal queue" } });
+    expect(queued.statusCode).toBe(202);
+    expect(app.store.listQueuedMessages(conversation.id)).toEqual([expect.objectContaining({ text: "normal queue" })]);
   });
 
   it("requires a Web artifact before opening the application", async () => {

@@ -120,7 +120,7 @@ export function App() {
   const rightTrack = mobile || !showInspector ? 0 : rightWidth;
 
   if (state.auth === "loading") {
-    return <BootScreen error={state.bootError} onRetry={() => bootstrap(initialConversation.current)} />;
+    return <BootScreen error={state.bootError} onRetry={() => void bootstrap(initialConversation.current)} />;
   }
   if (state.auth === "required") return <LoginView />;
 
