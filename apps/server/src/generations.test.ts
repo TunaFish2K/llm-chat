@@ -10,6 +10,12 @@ import type { ImageService } from "./images";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 import type { ServerTool } from "./tools";
 import { ShellError } from "./shell";
+import { ToolRegistry } from "./tool-registry";
+import { TaskManager } from "./background-tasks";
+import { PluginManager } from "./plugins";
+import { SkillManager } from "./skills";
+import { EventHub } from "./events";
+import type { ReadonlyShellManager } from "./readonly-shell";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -319,6 +325,60 @@ describe("GenerationRunner lifecycle", () => {
 });
 
 describe("GenerationRunner tools and approval", () => {
+  it.each(["default", "always", "never", "disabled", "lazy", "unavailable"] as const)("applies %s policy to the registered read-only shell", async (policy) => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const name = "workspace_shell_readonly";
+    const record = store.getGenerationRecord(generation.generationId)!;
+    const toolPolicy = record.agentSnapshot.execution.tools;
+    toolPolicy.defaultEnabled = false;
+    toolPolicy.overrides = { [name]: true };
+    if (["always", "never"].includes(policy)) toolPolicy.approvalOverrides[name] = policy as "always" | "never";
+    if (policy === "disabled") toolPolicy.overrides[name] = false;
+    if (policy === "lazy") toolPolicy.directOverrides = { [name]: false };
+    store.updateGenerationExtensionSnapshot(record.id, record.agentSnapshot);
+    const execute = vi.fn(async () => JSON.stringify({ stdout: "read-only result", stderr: "", exitCode: 0 }));
+    const runtime = { available: policy !== "unavailable", error: policy === "unavailable" ? "Bubblewrap unavailable" : null, execute } as unknown as ReadonlyShellManager;
+    const hub = new EventHub();
+    const tasks = new TaskManager(store, hub);
+    const registry = new ToolRegistry(store, tasks, new PluginManager(store, hub), new SkillManager(store, hub), undefined, undefined, undefined, undefined, undefined, runtime);
+    const scripts: ProviderEvent[][] = [
+      ...(policy === "lazy" ? [[toolCall("discover-readonly", "search_tools", '{"query":"workspace shell readonly"}')]] : []),
+      [toolCall("readonly-call", name, '{"command":"cat attached.txt","workspace":"attachments"}')],
+      [{ type: "complete", stopReason: "stop" }]
+    ];
+    const requests: GenerateRequest[] = [];
+    const runner = makeRunner(store, {
+      buildTools: (_store, saved) => registry.tools(saved),
+      stream: (_protocol, request) => { requests.push(request); return events(scripts.shift()!); }
+    });
+    try {
+      const catalog = await registry.catalog();
+      expect(catalog.find((item) => item.name === name)).toMatchObject({ requiresApproval: false, available: policy !== "unavailable" });
+      runner.start(generation.generationId);
+      if (policy === "always") {
+        await inactiveWithStatus(runner, store, generation, "waiting-approval");
+        expect(execute).not.toHaveBeenCalled();
+        store.updateToolCall("readonly-call", { approvalState: "approved" });
+        runner.start(generation.generationId);
+      }
+      const result = await terminal(store, generation.generationId);
+      expect(result.error).toBeNull();
+      if (policy === "disabled" || policy === "unavailable") {
+        expect(execute).not.toHaveBeenCalled();
+        expect(result.toolCalls.at(-1)).toMatchObject({ approvalState: "failed", error: `Tool ${name} is not available` });
+      } else {
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute.mock.calls[0]).toEqual([expect.objectContaining({ command: "cat attached.txt", workspace: "attachments", timeout: 30000 }), expect.any(AbortSignal)]);
+        expect(result.toolCalls.at(-1)).toMatchObject({ approvalState: "completed", output: expect.stringContaining("read-only result") });
+      }
+      if (policy === "lazy") {
+        expect(requests[0]!.tools?.some((item) => item.name === name)).toBe(false);
+        expect(requests[1]!.tools?.some((item) => item.name === name)).toBe(true);
+      }
+    } finally { await runner.close(); await tasks.close(); registry.close(); }
+  });
+
   it("loads authorized lazy tools through search_tools on the next model step", async () => {
     const store = createStore();
     const generation = seedGeneration(store);

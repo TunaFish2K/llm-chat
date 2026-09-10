@@ -18,9 +18,15 @@ it.each(["timeout", "cancel"])("kills a TERM-resistant foreground process group 
   const pid = Number(error.result.stdout);
   expect(pid).toBeGreaterThan(1);
   const stat = `/proc/${pid}/stat`;
-  // An orphan can briefly remain as a zombie awaiting reaping, but cannot execute.
-  try { expect(readFileSync(stat, "utf8").split(") ")[1]?.[0]).toBe("Z"); }
-  catch (error) { if (!["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error; }
+  // SIGKILL is asynchronous; wait for the kernel to finish delivering it.
+  // An orphan can then briefly remain as a zombie awaiting reaping.
+  await expect.poll(() => {
+    try { return readFileSync(stat, "utf8").split(") ")[1]?.[0] === "Z"; }
+    catch (error) {
+      if (["ENOENT", "ESRCH"].includes((error as NodeJS.ErrnoException).code ?? "")) return true;
+      throw error;
+    }
+  }).toBe(true);
 });
 
 it("bounds output and reports spawn errors and pre-cancellation", async () => {

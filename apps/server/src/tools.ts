@@ -1,6 +1,7 @@
 import { builtinToolFormatters, type ToolFormatters } from "./tool-presentation";
 import { spawn } from "node:child_process";
 import { executeShell } from "./shell";
+import type { ReadonlyShellManager } from "./readonly-shell";
 import type { BrowserFetchManager } from "./browser-fetch";
 import { lookup } from "node:dns/promises";
 import { constants } from "node:fs";
@@ -47,6 +48,7 @@ export interface ToolExecutionContext {
 }
 
 export interface ToolDependencies {
+  readonlyShell?: ReadonlyShellManager;
   browser?: BrowserFetchManager;
   lookup?: typeof lookup;
   taskManager?: TaskManager;
@@ -210,7 +212,24 @@ export async function buildServerTools(
       pattern: stringProperty("File glob relative to the conversation workspace root; defaults to **/* (all files). Legacy /workspace/... patterns are accepted."),
       regex: booleanProperty("Treat query as a JavaScript regular expression")
     }, false, async (input) => grepWorkspace(rootFor(input), input), Boolean(workspace || attachments)),
-    tool("workspace_shell", "运行命令", "workspace", "Run a shell command with its working directory confined to the conversation workspace. Use workspace-relative paths in commands and . for the workspace root. Commands require explicit user approval.", {
+    {
+      ...tool("workspace_shell_readonly", "只读命令", "workspace", "Prefer this tool for local file reading, searching and analysis with shell pipelines, loops, or installed Node/Python scripts. Runs in a Linux sandbox with NO network. The conversation project is read-only at /workspace and attachments at /attachments. Select workspace and use a relative cwd (default .). Only /tmp is writable (64 MiB, erased after each call); return results through stdout. Other host user files are unavailable. Writes to project files fail; never automatically retry them with workspace_shell.", {
+        ...workspaceProperty,
+        command: stringProperty("Shell command for local reading or analysis; no network or host file writes"),
+        cwd: workspacePathProperty("Working directory inside the selected workspace"),
+        timeout: integerProperty("Timeout in seconds, 1 to 120; defaults to 30")
+      }, false, async (input, signal) => {
+        if (!dependencies.readonlyShell) throw new Error("只读 Shell 运行时不可用");
+        return dependencies.readonlyShell.execute({
+          command: requiredString(input, "command"), project: workspace, attachments,
+          workspace: input.workspace === "attachments" ? "attachments" : "project",
+          cwd: optionalString(input, "cwd") ?? ".",
+          timeout: optionalInteger(input, "timeout", 30, 1, 120) * 1000
+        }, signal);
+      }, Boolean((workspace || attachments) && dependencies.readonlyShell?.available)),
+      error: dependencies.readonlyShell?.error ?? (!dependencies.readonlyShell ? "只读 Shell 运行时不可用" : null)
+    },
+    tool("workspace_shell", "运行命令", "workspace", "Run a shell command in the conversation workspace with user approval by default. Prefer workspace_shell_readonly for local reading, searching and analysis. This tool runs without the read-only sandbox. Use workspace-relative paths and . for the workspace root.", {
       ...workspaceProperty, command: stringProperty("Shell command; use paths relative to the conversation workspace root selected by workspace"),
       cwd: workspacePathProperty("Working directory for the command"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
@@ -351,7 +370,8 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_edit_file: "通过精确文本替换修改沙箱工作区文件。",
   workspace_glob: "使用 glob 模式查找沙箱工作区文件。",
   workspace_grep: "按文本或正则表达式搜索沙箱工作区文件。",
-  workspace_shell: "在沙箱工作区目录中运行 Shell 命令，每次执行均需批准。",
+  workspace_shell: "在工作目录中运行未隔离的 Shell 命令，默认需要审批；本地读取和分析优先使用只读命令。",
+  workspace_shell_readonly: "在只读沙箱中读取、搜索和分析当前工作目录及附件；不联网，临时文件在调用结束后销毁。默认免审批。",
   workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
   workspace_publish_file: "把工作区文件导入为不可变应用资产，并返回永久下载链接。发布前需要批准。",
   codex_runtime: "检查本机 Codex 和 app-server 状态。",
@@ -496,7 +516,7 @@ function inferRequired(name: string): string[] {
     eval_javascript: ["code"], fetch_url: ["url"], browser_fetch: ["url"], search_web: [], conversation_search: ["query"], image_generate: [],
     memory_tool: ["action"], workspace_read_file: ["path"], workspace_write_file: ["path", "text"],
     workspace_edit_file: ["path", "old_text", "new_text"], workspace_glob: ["pattern"],
-    workspace_grep: ["query"], workspace_shell: ["command"], use_skill: ["name"],
+    workspace_grep: ["query"], workspace_shell: ["command"], workspace_shell_readonly: ["command"], use_skill: ["name"],
     background_start: ["command"], background_status: ["task_id"], background_read: ["task_id"],
     background_wait: ["task_id"], background_write: ["task_id", "data", "reason"], background_stop: ["task_id", "reason"],
     codex_send: ["session_id", "text"], codex_wait: ["session_id"],

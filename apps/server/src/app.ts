@@ -67,6 +67,7 @@ import { ModelCatalogService } from "./model-catalog";
 import { MessageQueue } from "./message-queue";
 import { ServiceSettings } from "./service-settings";
 import { BrowserFetchManager } from "./browser-fetch";
+import { ReadonlyShellManager } from "./readonly-shell";
 import { AppTools } from "./app-tools";
 import { importSillyTavernPreset } from "./roleplay";
 import { executeRestrictedStscript } from "./stscript";
@@ -152,7 +153,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     events: eventHub, balance: balanceService, catalog: modelCatalog
   });
   const browser = new BrowserFetchManager();
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, codex, browser);
+  const readonlyShell = new ReadonlyShellManager();
+  await readonlyShell.initialize();
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, codex, browser, readonlyShell);
   const runner = new GenerationRunner(store, {
     onStateChange: (id) => publishGenerationState(store, eventHub, id),
     onSettled: (conversationId) => { queue.changed(conversationId); queue.kick(conversationId); },
@@ -1032,6 +1035,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.addHook("onClose", async () => {
     await queue.close();
     await runner.close();
+    await readonlyShell.close();
     await browser.close();
     await imageJobs.close();
     await taskManager.close();
