@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallDto } from "@llm-chat/contracts";
 import { makeGeneration, makeMessage } from "../../../test/fixtures";
+import { imageRetryMessages, makeImageJob } from "../../../test/image-tool-fixtures";
 import {
   activeGeneration,
   userReplyTargets,
   answerText,
   buildTimeline,
   groupTimeline,
+  projectImageJobs,
   prettyJson,
   shortPath,
   withGenerationValue
@@ -52,7 +54,7 @@ describe("chat model helpers", () => {
         { id: "no", stepIndex: 3, index: 0, type: "refusal", content: "refused", complete: true }
       ], toolCalls: [toolCall("t1", 0, 0), toolCall("t2", 2, 0)]
     }));
-    expect(grouped.map((item) => item.kind === "process" ? [item.id, item.entries.length, item.followedByAnswer] : item.block.id))
+    expect(grouped.map((item) => item.kind === "process" ? [item.id, item.entries.length, item.followedByAnswer] : item.kind === "block" ? item.block.id : item.call.id))
       .toEqual([["r1", 2, true], "a1", ["r2", 2, false], "no"]);
     expect(groupTimeline(makeGeneration())).toEqual([]);
   });
@@ -93,6 +95,41 @@ describe("chat model helpers", () => {
     expect(prettyJson("plain text")).toBe("plain text");
     expect(shortPath("/home/tuna/Documents")).toBe("Documents");
     expect(shortPath("/")).toBe("/");
+  });
+});
+
+describe("image task projection", () => {
+  it("places each failed attempt and image before the next answer without rewriting stored messages", () => {
+    const messages = imageRetryMessages();
+    const original = structuredClone(messages);
+    const projected = projectImageJobs(messages);
+    expect(projected.messages.map((message) => message.id)).toEqual(["user", "reply"]);
+    const timeline = groupTimeline(messages[1]!.generations[0]!, projected.imageJobs);
+    expect(timeline.map((item) => item.kind === "block" ? item.block.content : item.kind === "process" ? "tool" : item.jobs[0]!.id))
+      .toEqual(["开始画图", "tool", "job-1", "第一次重试", "tool", "job-2", "第二次重试", "tool", "job-3", "海滩已画好"]);
+    expect(messages).toEqual(original);
+  });
+
+  it("owns jobs across inactive versions and leaves independent or unmatched history visible", () => {
+    const messages = imageRetryMessages();
+    const reply = messages[1]!;
+    reply.generations.push(makeGeneration({ id: "gen-2", version: 2 }));
+    reply.activeGenerationId = "gen-2";
+    const independent = makeMessage({ id: "independent", imageGenerationJob: makeImageJob({ toolCallId: null }) });
+    const orphan = makeMessage({ id: "orphan", imageGenerationJob: makeImageJob({ toolCallId: "missing" }) });
+    const projected = projectImageJobs([...messages, independent, orphan]);
+    expect(projected.messages.map((message) => message.id)).toEqual(["user", "reply", "independent", "orphan"]);
+    expect(groupTimeline(activeGeneration(reply)!, projected.imageJobs)).toEqual([]);
+    expect(groupTimeline(reply.generations[0]!, projected.imageJobs).filter((item) => item.kind === "image-result")).toHaveLength(3);
+  });
+
+  it("reserves image boundaries before job events without splitting model discovery", () => {
+    const generation = imageRetryMessages()[1]!.generations[0]!;
+    const discovery = { ...generation.toolCalls[0]!, id: "discovery", arguments: '{"action":"list_models"}' };
+    generation.toolCalls.unshift(discovery);
+    const timeline = groupTimeline(generation);
+    expect(timeline.filter((item) => item.kind === "image-result").map((item) => item.call.id)).toEqual(["call-1", "call-2", "call-3"]);
+    expect(timeline[1]).toMatchObject({ kind: "process", entries: [{ call: discovery }, { call: generation.toolCalls[1] }] });
   });
 });
 

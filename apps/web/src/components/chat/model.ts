@@ -11,6 +11,7 @@ import type {
   ContextPolicy,
   ConversationExecutionOverrides,
   GenerationDto,
+  ImageGenerationJobDto,
   MessageDto,
   ReasoningEffort,
   ToolCallDto
@@ -28,6 +29,27 @@ export const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "
 
 /** Stable identity so store selectors do not re-render on every read. */
 export const EMPTY_MESSAGES: MessageDto[] = [];
+
+export type ImageJobsByToolCall = ReadonlyMap<string, readonly ImageGenerationJobDto[]>;
+
+/** Keep stored messages intact; only move owned image jobs on the chat surface. */
+export function projectImageJobs(messages: MessageDto[]): {
+  messages: MessageDto[];
+  imageJobs: ImageJobsByToolCall;
+} {
+  const calls = new Set(messages.filter((message) => message.role === "assistant")
+    .flatMap((message) => message.generations.flatMap((generation) => generation.toolCalls.map((call) => call.id))));
+  const imageJobs = new Map<string, ImageGenerationJobDto[]>();
+  const visible = messages.filter((message) => {
+    const job = message.imageGenerationJob;
+    if (message.role !== "assistant" || message.generations.length || message.text || !job?.toolCallId || !calls.has(job.toolCallId)) return true;
+    const jobs = imageJobs.get(job.toolCallId) ?? [];
+    jobs.push(job);
+    imageJobs.set(job.toolCallId, jobs);
+    return false;
+  });
+  return { messages: visible, imageJobs };
+}
 
 export interface GreetingOption {
   sourceIndex: number;
@@ -68,18 +90,33 @@ export function buildTimeline(generation: GenerationDto): TimelineEntry[] {
 }
 
 export type ProcessEntry = TimelineEntry;
-export type DisplayTimelineEntry = Extract<TimelineEntry, { kind: "block" }> | { kind: "process"; id: string; entries: ProcessEntry[]; followedByAnswer: boolean };
+export type DisplayTimelineEntry = Extract<TimelineEntry, { kind: "block" }>
+  | { kind: "image-result"; call: ToolCallDto; jobs: readonly ImageGenerationJobDto[] }
+  | { kind: "process"; id: string; entries: ProcessEntry[]; followedByAnswer: boolean };
+
+function generatesImage(call: ToolCallDto): boolean {
+  if (call.name !== "image_generate") return false;
+  try { return JSON.parse(call.arguments)?.action !== "list_models"; }
+  catch { return false; }
+}
 
 /** Group adjacent processing steps without moving prose across tool calls. */
-export function groupTimeline(generation: GenerationDto): DisplayTimelineEntry[] {
+export function groupTimeline(generation: GenerationDto, imageJobs?: ImageJobsByToolCall): DisplayTimelineEntry[] {
   const result: DisplayTimelineEntry[] = [];
   for (const entry of buildTimeline(generation)) {
     if (entry.kind === "tool" || entry.block.type === "reasoning") {
       const previous = result.at(-1);
       if (previous?.kind === "process") previous.entries.push(entry);
       else result.push({ kind: "process", id: entry.kind === "tool" ? entry.call.id : entry.block.id, entries: [entry], followedByAnswer: false });
+      if (entry.kind === "tool" && (imageJobs?.has(entry.call.id) || generatesImage(entry.call))) {
+        const jobs = imageJobs?.get(entry.call.id) ?? [];
+        const process = result.at(-1)!;
+        if (process.kind === "process" && jobs.length && jobs.every((job) => ["completed", "failed", "cancelled"].includes(job.status))) process.followedByAnswer = true;
+        // Reserve the boundary before the job arrives so streaming cannot regroup later steps.
+        result.push({ kind: "image-result", call: entry.call, jobs });
+      }
     } else {
-      const previous = result.at(-1);
+      const previous = result.at(-1)?.kind === "image-result" ? result.at(-2) : result.at(-1);
       if (previous?.kind === "process" && entry.block.type === "text" && entry.block.content.trim()) previous.followedByAnswer = true;
       result.push(entry);
     }

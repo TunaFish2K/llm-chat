@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
@@ -6,6 +6,8 @@ import { appStore } from "../lib/app-state";
 import { readComposerDraft, writeComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
+import { imageRetryMessages, makeImageJob } from "../../test/image-tool-fixtures";
+import { offlineStore } from "../lib/offline-history";
 import {
   makeAgent,
   makeConnection,
@@ -52,6 +54,32 @@ beforeEach(() => {
 });
 
 describe("ChatView", () => {
+  it("projects image retries into the answer and hides inactive-version jobs during offline version selection", async () => {
+    const messages = imageRetryMessages();
+    const reply = messages[1]!;
+    reply.generations.push(makeGeneration({ id: "gen-2", version: 2, blocks: [{ id: "alternate", stepIndex: 0, index: 0, type: "text", content: "另一版回答", complete: true }] }));
+    messages.push(makeMessage({ id: "standalone", ordinal: 6, imageGenerationJob: makeImageJob({ toolCallId: null, error: { code: "failed", message: "独立任务失败" } }) }));
+    seedStore(messages);
+    vi.stubGlobal("fetch", messageFetch(messages));
+    const { container } = render(<ChatView conversationId="conv-1" />);
+    await waitFor(() => expect(container.querySelectorAll(".msg")).toHaveLength(3));
+    const errors = screen.getAllByRole("alert");
+    expect(errors).toHaveLength(3);
+    expect(errors[0]!.compareDocumentPosition(screen.getByText("第一次重试")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(errors[1]!.compareDocumentPosition(screen.getByText("第二次重试")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("img", { name: "beach.png" }).compareDocumentPosition(screen.getByText("海滩已画好")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(() => offlineStore.set({ offline: true }));
+    fireEvent.click(screen.getByRole("button", { name: "下一版本" }));
+    expect(screen.getByText("另一版回答")).toBeVisible();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("独立任务失败");
+    expect(screen.queryByRole("img", { name: "beach.png" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "上一版本" }));
+    expect(screen.getAllByRole("alert")).toHaveLength(3);
+    expect(screen.getByRole("img", { name: "beach.png" })).toBeVisible();
+    expect(appStore.get().messages["conv-1"]).toHaveLength(messages.length);
+  });
+
   it("uses the remembered model when a new draft resets to follow its Agent", async () => {
     seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
     const agent = makeAgent();

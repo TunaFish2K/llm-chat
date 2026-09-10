@@ -23,7 +23,7 @@ import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
 import { BranchSwitchers, MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
 import { conversationBranchGroups, greetingBranchContext, resolveConversationRoot } from "../lib/conversation-tree";
-import { greetingOptions, userReplyTargets } from "../components/chat/model";
+import { greetingOptions, projectImageJobs, userReplyTargets } from "../components/chat/model";
 import { EditForkDialog } from "../components/chat/dialogs";
 import { RoleplayConversationDialog } from "../components/chat/RoleplayConversationDialog";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
@@ -81,6 +81,7 @@ export function ChatView({
   const [retrying, setRetrying] = useState(false);
   const retryPending = useRef(false);
   const retryTargets = useMemo(() => userReplyTargets(messages ?? []), [messages]);
+  const transcript = useMemo(() => projectImageJobs(messages ?? []), [messages]);
   const [compacting, setCompacting] = useState(false);
   const [actionsHost, setActionsHost] = useState<HTMLDivElement | null>(null);
   const [newGreetingIndex, setNewGreetingIndex] = useState(() => readComposerDraft(conversationId ?? null)?.greetingIndex ?? 0);
@@ -282,11 +283,12 @@ export function ChatView({
                 ) : messages.length === 0 ? (
                   <EmptyState title="这个会话还没有消息" hint="从下方发送第一条消息。" />
                 ) : (
-                  messages.map((message) => (
+                  transcript.messages.map((message) => (
                     <MessageItem
                       key={message.id}
                       conversationId={conversationId}
                       message={message}
+                      imageJobs={transcript.imageJobs}
                       retryTargetId={retryTargets.get(message.id)}
                       branchGroups={branchGroups.filter((group) => group.messageOrdinal === message.ordinal)}
                       callbacks={{

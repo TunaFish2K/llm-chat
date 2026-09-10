@@ -28,7 +28,7 @@ import { Markdown } from "../../lib/markdown";
 import { useStore } from "../../lib/store";
 import { StatusTag } from "../ui";
 import { AssetGallery, copyText, MessageAction } from "./atoms";
-import { activeGeneration, answerText, groupTimeline, type ProcessEntry } from "./model";
+import { activeGeneration, answerText, groupTimeline, type ImageJobsByToolCall, type ProcessEntry } from "./model";
 
 function toolStderr(output: string | null): string {
   if (!output) return "";
@@ -53,12 +53,14 @@ export function MessageItem({
   message,
   branchGroups = [],
   retryTargetId,
+  imageJobs,
   callbacks
 }: {
   conversationId: string;
   message: MessageDto;
   branchGroups?: ConversationBranchGroup[];
   retryTargetId?: string | undefined;
+  imageJobs?: ImageJobsByToolCall | undefined;
   callbacks: StreamCallbacks;
 }) {
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
@@ -97,6 +99,7 @@ export function MessageItem({
           conversationId={conversationId}
           message={message}
           generation={generation}
+          imageJobs={imageJobs}
           branchGroups={branchGroups}
           callbacks={callbacks}
         />
@@ -127,6 +130,7 @@ export function MessageItem({
 }
 
 function ImageGenerationStatus({ conversationId, job }: { conversationId: string; job: ImageGenerationJobDto }) {
+  const offline = useStore(offlineStore, (state) => state.offline);
   const label = job.status === "queued"
     ? "图片任务排队中"
     : job.status === "running"
@@ -141,12 +145,13 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
   const active = job.status === "queued" || job.status === "running" || job.status === "waiting-provider";
   const retryable = job.status === "failed" || job.status === "cancelled";
   return (
-    <div className={job.status === "failed" ? "refusal-block" : "image-job-status"}>
+    <div className={job.status === "failed" ? "refusal-block" : "image-job-status"} role={job.status === "failed" ? "alert" : "status"}>
       <span>{label}</span>
       {active ? (
         <MessageAction
           label="停止图片生成"
           danger
+          disabled={offline}
           onClick={() => void endpoints.cancelImageGeneration(job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
           <Square size={14} fill="currentColor" />
@@ -154,6 +159,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
       ) : retryable ? (
         <MessageAction
           label="重试图片生成"
+          disabled={offline}
           onClick={() => void endpoints.retryImageGeneration(job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
           <RotateCcw size={14} />
@@ -171,12 +177,14 @@ function GenerationTimeline({
   conversationId,
   message,
   generation,
+  imageJobs,
   branchGroups,
   callbacks
 }: {
   conversationId: string;
   message: MessageDto;
   generation: GenerationDto;
+  imageJobs?: ImageJobsByToolCall | undefined;
   branchGroups: ConversationBranchGroup[];
   callbacks: StreamCallbacks;
 }) {
@@ -184,7 +192,7 @@ function GenerationTimeline({
   const collapsePolicy = settings?.uiPreferences.reasoningCollapsePolicy ?? "collapse-on-answer";
   const offline = useStore(offlineStore, (state) => state.offline);
   const busy = !offline && isGenerationActive(generation.status);
-  const timeline = groupTimeline(generation);
+  const timeline = groupTimeline(generation, imageJobs);
   const answer = answerText(generation);
   const versionIndex = message.generations.findIndex((item) => item.id === generation.id);
 
@@ -218,8 +226,17 @@ function GenerationTimeline({
           const first = item.entries[0]!;
           const key = first.kind === "block" ? `block:${first.block.stepIndex}:${first.block.index}` : `tool:${first.call.id}`;
           return <ProcessGroup key={`${generation.id}:${key}`} entries={item.entries} busy={busy} status={generation.status}
+            imageJobs={imageJobs}
             autoOpen={collapsePolicy === "never-auto-collapse" || (collapsePolicy === "collapse-on-answer" && !item.followedByAnswer && busy)}
             onInspect={(toolCallId) => callbacks.onInspect({ kind: "tool", messageId: message.id, generationId: generation.id, toolCallId })} />;
+        }
+        if (item.kind === "image-result") {
+          return item.jobs.length ? <div className="image-tool-results" key={`${generation.id}:image:${item.call.id}`}>
+            {item.jobs.map((job) => <div key={job.id} className="image-tool-result" data-image-job-id={job.id}>
+              {job.status !== "completed" || !job.outputAssets.length ? <ImageGenerationStatus conversationId={conversationId} job={job} /> : null}
+              {job.outputAssets.length ? <AssetGallery assets={job.outputAssets} /> : null}
+            </div>)}
+          </div> : null;
         }
         const { block } = item;
         const blockKey = `${generation.id}:block:${block.stepIndex}:${block.index}`;
@@ -319,8 +336,9 @@ function MessageFooter({ metadata, children, liveAction, busy = false }: {
   </footer>;
 }
 
-function ProcessGroup({ entries, busy, status, autoOpen, onInspect }: {
+function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }: {
   entries: ProcessEntry[]; busy: boolean; status: GenerationDto["status"]; autoOpen: boolean; onInspect: (id: string) => void;
+  imageJobs?: ImageJobsByToolCall | undefined;
 }) {
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const open = manualOpen ?? autoOpen;
@@ -341,11 +359,11 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect }: {
       </summary>
       <div className="process-steps">
         {entries.map((entry) => entry.kind === "tool"
-          ? <ToolCallDisclosure key={entry.call.id} call={entry.call} onInspect={() => onInspect(entry.call.id)} />
+          ? <ToolCallDisclosure key={entry.call.id} call={entry.call} imageJobs={imageJobs?.get(entry.call.id)} onInspect={() => onInspect(entry.call.id)} />
           : <ReasoningContent key={`block:${entry.block.stepIndex}:${entry.block.index}`} content={entry.block.content} open={open} busy={busy} />)}
       </div>
     </details>
-    {!open ? tools.filter((call) => call.error).map((call) => <div key={call.id} className="process-error" role="alert">
+    {!open ? tools.filter((call) => call.error && !imageJobs?.get(call.id)?.some((job) => job.error?.message === call.error)).map((call) => <div key={call.id} className="process-error" role="alert">
       <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{call.error}{toolStderr(call.output)}
     </div>) : null}
   </div>;
@@ -419,7 +437,9 @@ export function BranchSwitchers({
 }
 
 /** Collapsed by default: arguments and output are inspection material, not prose. */
-function ToolCallDisclosure({ call, onInspect }: { call: ToolCallDto; onInspect: () => void }) {
+function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto; onInspect: () => void; imageJobs?: readonly ImageGenerationJobDto[] | undefined }) {
+  const inlineAssets = new Set(imageJobs?.flatMap((job) => job.outputAssets.map((asset) => asset.id)));
+  const artifacts = call.artifacts.filter((asset) => !inlineAssets.has(asset.id));
   return (
     <details className="tool-call" data-state={call.approvalState}>
       <summary>
@@ -446,7 +466,7 @@ function ToolCallDisclosure({ call, onInspect }: { call: ToolCallDto; onInspect:
       </summary>
       <div className="tool-call-details">
         <ToolCallContent key={call.id} call={call} />
-        {call.artifacts.length ? <AssetGallery assets={call.artifacts} /> : null}
+        {artifacts.length ? <AssetGallery assets={artifacts} /> : null}
       </div>
     </details>
   );

@@ -1,8 +1,13 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ImageGenerationJobDto } from "@llm-chat/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { MessageItem, type StreamCallbacks } from "./MessageStream";
 import { makeGeneration, makeMessage, makeSettings } from "../../../test/fixtures";
 import { appStore } from "../../lib/app-state";
+import { endpoints } from "../../lib/api";
+import { offlineStore } from "../../lib/offline-history";
+import { imageRetryMessages, makeImageJob } from "../../../test/image-tool-fixtures";
+import { projectImageJobs } from "./model";
 
 const callbacks: StreamCallbacks = { onInspect: vi.fn(), onEdit: vi.fn(), onRetry: vi.fn(), onContinue: vi.fn(), onGreetingFork: vi.fn(), onBranchChange: vi.fn(), branching: false };
 const reasoning = { id: "reasoning", stepIndex: 0, index: 0, type: "reasoning" as const, content: "Consider the question", complete: false };
@@ -43,6 +48,65 @@ describe("reply processing disclosure", () => {
     render(reply(makeGeneration({ status: "stopped", blocks: [reasoning], toolCalls: [tool] })));
     expect(screen.getByText("处理已停止")).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("Command failed");
+  });
+});
+
+describe("inline image jobs", () => {
+  function imageReply(job: ImageGenerationJobDto) {
+    const message = imageRetryMessages()[1]!;
+    message.generations[0]!.toolCalls = [{ ...message.generations[0]!.toolCalls[0]!, id: job.toolCallId! }];
+    return <MessageItem conversationId="conv-1" message={message} callbacks={callbacks} imageJobs={new Map([[job.toolCallId!, [job]]])} />;
+  }
+
+  it.each([
+    ["queued", "图片任务排队中", "停止图片生成"],
+    ["running", "正在生成图片", "停止图片生成"],
+    ["waiting-provider", "等待图片服务完成", "停止图片生成"],
+    ["failed", "图片生成失败：Upstream request failed", "重试图片生成"],
+    ["cancelled", "图片生成已取消", "重试图片生成"],
+    ["completed", "图片已生成", null]
+  ] as const)("shows %s independently of completed tool status and dispatches its control", async (status, label, control) => {
+    appStore.set({ settings: makeSettings() });
+    const job = makeImageJob({ status });
+    const cancel = vi.spyOn(endpoints, "cancelImageGeneration").mockResolvedValue(job);
+    const retry = vi.spyOn(endpoints, "retryImageGeneration").mockResolvedValue(job);
+    vi.spyOn(endpoints, "messages").mockResolvedValue([]);
+    render(imageReply(job));
+    expect(screen.getByText(label)).toBeVisible();
+    if (control) {
+      fireEvent.click(screen.getByRole("button", { name: control }));
+      await waitFor(() => expect(control === "停止图片生成" ? cancel : retry).toHaveBeenCalledWith(job.id));
+      await waitFor(() => expect(endpoints.messages).toHaveBeenCalledWith("conv-1"));
+    }
+  });
+
+  it("keeps images outside disclosures, deduplicates tool previews, and preserves manual choices as jobs arrive", () => {
+    appStore.set({ settings: makeSettings() });
+    const messages = imageRetryMessages();
+    const message = messages[1]!;
+    const renderReply = (withJobs: boolean) => <MessageItem conversationId="conv-1" message={message} callbacks={callbacks}
+      imageJobs={withJobs ? projectImageJobs(messages).imageJobs : undefined} />;
+    const { container, rerender } = render(renderReply(false));
+    const disclosure = container.querySelectorAll(".process-disclosure")[2]!;
+    fireEvent.click(disclosure.querySelector("summary")!);
+    expect(disclosure).toHaveAttribute("open");
+    rerender(renderReply(true));
+    expect(container.querySelectorAll(".process-disclosure")[2]).toBe(disclosure);
+    expect(disclosure).toHaveAttribute("open");
+    fireEvent.click(disclosure.querySelector(".tool-call > summary")!);
+    expect(screen.getAllByRole("img", { name: "beach.png" })).toHaveLength(1);
+    const image = screen.getByRole("img", { name: "beach.png" });
+    expect(image.closest("details")).toBeNull();
+    fireEvent.click(disclosure.querySelector("summary")!);
+    expect(image).toBeVisible();
+    expect(screen.getAllByRole("alert")).toHaveLength(2);
+  });
+
+  it("renders a saved task offline while disabling task mutations", () => {
+    offlineStore.set({ offline: true });
+    render(imageReply(structuredClone(makeImageJob())));
+    expect(screen.getByRole("alert")).toHaveTextContent("Upstream request failed");
+    expect(screen.getByRole("button", { name: "重试图片生成" })).toBeDisabled();
   });
 });
 
