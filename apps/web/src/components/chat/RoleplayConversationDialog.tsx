@@ -54,7 +54,7 @@ export function RoleplayConversationDialog({
       title="角色会话设置"
       wide
       onClose={onClose}
-      footer={<><Button onClick={onClose}>取消</Button><Button variant="primary" disabled={busy} onClick={() => void save()}>保存</Button></>}
+      footer={<><Button onClick={onClose}>取消</Button><Button variant="primary" disabled={busy} onClick={() => save()}>保存</Button></>}
     >
       <p className="small muted">这些覆盖只属于当前会话；Agent 的默认配置不会改变。</p>
       <div className="grid-2 roleplay-conversation-grid">

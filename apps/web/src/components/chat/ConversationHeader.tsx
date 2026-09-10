@@ -1,3 +1,5 @@
+import { saveConversation } from "../../lib/app-state";
+import { ActionButton } from "../../lib/action-feedback";
 import { requestMobileBack } from "../../lib/mobile-navigation";
 import { useEffect, useState, type RefCallback } from "react";
 import {
@@ -55,8 +57,7 @@ export function ConversationHeader({
   const saveTitle = async () => {
     if (!displayedConversation || !title.trim()) return;
     try {
-      await endpoints.updateConversation(displayedConversation.id, { title: title.trim() });
-      await refreshConversations();
+      await saveConversation(displayedConversation.id, { title: title.trim() });
       setEditing(false);
     } catch (error) {
       toastError(error);
@@ -69,7 +70,7 @@ export function ConversationHeader({
 
   return (
     <header className="conversation-header">
-      {mobile ? <button
+      {mobile ? <ActionButton
         type="button"
         className="icon-button shell-control"
         onClick={view !== "chat" ? requestMobileBack : onToggleSidebar}
@@ -77,7 +78,7 @@ export function ConversationHeader({
         title={mobile ? view !== "chat" ? "返回上一级" : "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
       >
         {mobile ? view !== "chat" ? <ArrowLeft size={20} /> : <Menu size={20} /> : sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-      </button> : null}
+      </ActionButton> : null}
 
       <div className="conversation-heading">
         {editing ? (
@@ -97,7 +98,7 @@ export function ConversationHeader({
             }}
           />
         ) : (
-          <button
+          <ActionButton
             type="button"
             className="conversation-title"
             onDoubleClick={() => displayedConversation && setEditing(true)}
@@ -105,13 +106,13 @@ export function ConversationHeader({
             title={displayedConversation?.title}
           >
             <strong>{displayedConversation?.title || "新会话"}</strong>
-          </button>
+          </ActionButton>
         )}
       </div>
 
       {conversation ? (
         <div className="conversation-projections" aria-label="会话覆盖层">
-          <button
+          <ActionButton
             type="button"
             className="icon-button"
             aria-pressed={view === "trajectory"}
@@ -120,8 +121,8 @@ export function ConversationHeader({
             title={view === "trajectory" ? "关闭运行轨迹" : "运行轨迹"}
           >
             <ListTree size={17} />
-          </button>
-          <button
+          </ActionButton>
+          <ActionButton
             type="button"
             className="icon-button task-projection-button"
             aria-pressed={view === "tasks"}
@@ -131,11 +132,11 @@ export function ConversationHeader({
           >
             <TerminalSquare size={17} />
             {runningTasks ? <b>{runningTasks > 99 ? "99+" : runningTasks}</b> : null}
-          </button>
+          </ActionButton>
         </div>
       ) : null}
 
-      <button
+      <ActionButton
         type="button"
         className="icon-button shell-control"
         onClick={onToggleInspector}
@@ -144,7 +145,7 @@ export function ConversationHeader({
         title={inspectorOpen ? "关闭检查器" : "打开检查器"}
       >
         {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
-      </button>
+      </ActionButton>
       <div className="conversation-action-slot" ref={actionsRef} />
     </header>
   );

@@ -912,6 +912,7 @@ export interface GenerationDto {
 }
 
 export interface MessageDto {
+  clientRequestId?: string;
   id: string;
   ordinal: number;
   role: "user" | "assistant";
@@ -926,6 +927,7 @@ export interface MessageDto {
 }
 
 export interface QueuedMessageDto {
+  clientRequestId?: string;
   mode?: "queue" | "steer";
   id: string;
   conversationId: string;
@@ -942,6 +944,7 @@ const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
 const fileAssetIdsSchema = z.array(z.string().uuid()).max(8);
 
 export const sendMessageSchema = z.object({
+  clientRequestId: z.string().uuid().optional(),
   text: messageTextSchema,
   assetIds: fileAssetIdsSchema.optional(),
   imageAssetIds: imageAssetIdsSchema
@@ -1316,4 +1319,16 @@ export interface OfflineConversationDto {
   revision: number;
   conversation: ConversationDto;
   messages: MessageDto[];
+}
+
+/** A durable receipt refers to accepted work, including work already dispatched from a queue. */
+export interface MessageSubmissionDto {
+  clientRequestId: string;
+  kind: "start" | "send" | "queue";
+  conversationId: string;
+  userMessageId: string | null;
+  assistantMessageId: string | null;
+  generationId: string | null;
+  queuedMessageId: string | null;
+  deleted: boolean;
 }

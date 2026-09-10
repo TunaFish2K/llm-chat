@@ -1,3 +1,5 @@
+import { selectBranch } from "../lib/app-state";
+import { ActionButton } from "../lib/action-feedback";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { isOffline, offlineStore } from "../lib/offline-history";
 import { useEffect, useRef, useState } from "react";
@@ -47,8 +49,9 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
     try {
       if (isOffline()) { browseOfflineBranch(id); onClose(); navigate(routes.chat(id)); return; }
       const conversation = conversations.find((item) => item.id === id);
-      if (conversation) await endpoints.selectConversationBranch(resolveConversationRoot(conversation, conversations).id, id);
-      await refreshConversations(); onClose(); if (!conversationDeleted(id)) navigate(routes.chat(id));
+      onClose();
+      if (conversation) await selectBranch(conversation.id, id);
+      else if (!conversationDeleted(id)) navigate(routes.chat(id));
       window.dispatchEvent(new Event("llm-chat:reveal-conversation"));
     } catch (cause) { toastError(cause); }
   };
@@ -62,9 +65,9 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
         }} />
       <p className="hint">{offline ? "正在搜索本机已同步的记录。" : ""}标题匹配优先，其次按最近更新排序。最多显示 50 个会话。</p>
       {loading ? <p role="status">搜索中…</p> : error ? <p role="alert">{error}</p> : query.trim() && !items.length ? <p>没有匹配的会话。</p> : null}
-      <div ref={results} className="conversation-search-results">{items.map((item, index) => <button className="conversation-search-result" data-selected={index === selected || undefined} key={item.conversationId}
-        onClick={() => void open(item.conversationId)}><strong><Highlight text={item.title} query={query} /></strong>
-        <span><Highlight text={item.snippet || "标题匹配"} query={query} /></span></button>)}</div>
+      <div ref={results} className="conversation-search-results">{items.map((item, index) => <ActionButton className="conversation-search-result" data-selected={index === selected || undefined} key={item.conversationId}
+        onClick={() => open(item.conversationId)}><strong><Highlight text={item.title} query={query} /></strong>
+        <span><Highlight text={item.snippet || "标题匹配"} query={query} /></span></ActionButton>)}</div>
     </div>
   </Modal>;
 }

@@ -1,3 +1,5 @@
+import { useLatestRequest } from "../lib/latest-request";
+import { ActionButton } from "../lib/action-feedback";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackgroundTaskDto, BackgroundTaskEventDto, CodexEventDto, CodexRuntimeDto, CodexSessionDto, CodexThreadDto } from "@llm-chat/contracts";
 import { Bot, Link2, Play, RefreshCw, Send, Square, Unplug, X } from "lucide-react";
@@ -15,9 +17,13 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<BackgroundTaskDto | null>(null);
 
+  const beginListRead = useLatestRequest();
   const load = useCallback(async () => {
+    const isCurrentRead = beginListRead();
     try {
-      setTasks(await endpoints.backgroundTasks(conversationId));
+      const next = await endpoints.backgroundTasks(conversationId);
+      if (!isCurrentRead()) return;
+      setTasks(next);
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载后台任务失败");
@@ -34,19 +40,20 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
 
   return (
     <div className="conversation-tasks-view">
+      {error && tasks ? <ErrorState message={error} onRetry={() => load()} /> : null}
       <CodexPanel conversationId={conversationId} />
       <div className="conversation-tasks-toolbar" role="toolbar" aria-label="后台任务工具栏">
         <span className="small muted">
           {tasks ? `${tasks.length} 个任务${runningTasks ? ` · ${runningTasks} 个运行中` : ""}` : "正在加载任务"}
         </span>
-        <button className="button secondary small" onClick={() => void load()}>
+        <ActionButton className="button secondary small" onClick={() => load()}>
           <RefreshCw size={14} />刷新
-        </button>
+        </ActionButton>
       </div>
       <div className="panel-scroll">
         <div className="panel-inner">
-          {error ? (
-            <ErrorState message={error} onRetry={() => void load()} />
+          {error && !tasks ? (
+            <ErrorState message={error} onRetry={() => load()} />
           ) : tasks === null ? (
             <LoadingState label="加载后台任务…" />
           ) : tasks.length === 0 ? (
@@ -68,9 +75,9 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
                 {tasks.map((task) => (
                   <tr key={task.id} style={task.id === taskId ? { background: "var(--accent-soft)" } : undefined}>
                     <td className="conversation-task-command" data-label="命令">
-                      <button className="btn ghost small mono" onClick={() => navigate(routes.conversationTasks(conversationId, task.id))}>
+                      <ActionButton className="btn ghost small mono" onClick={() => navigate(routes.conversationTasks(conversationId, task.id))}>
                         {task.command.length > 60 ? `${task.command.slice(0, 60)}…` : task.command}
-                      </button>
+                      </ActionButton>
                     </td>
                     <td className="conversation-task-meta" data-label="Agent">{task.agentName}</td>
                     <td className="conversation-task-meta" data-label="状态">
@@ -82,9 +89,9 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
                     <td className="conversation-task-meta" data-label="退出码">{task.exitCode ?? "—"}</td>
                     <td className="conversation-task-actions" data-label="操作">
                       {["queued", "starting", "running"].includes(task.status) ? (
-                        <button className="btn small danger" onClick={() => setStopping(task)}>
+                        <ActionButton className="btn small danger" onClick={() => setStopping(task)}>
                           <Square size={13} />停止
-                        </button>
+                        </ActionButton>
                       ) : null}
                     </td>
                   </tr>
@@ -122,11 +129,14 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
   const [busy, setBusy] = useState(false);
   const cursor = useRef(0);
 
+  const beginListRead = useLatestRequest();
   const load = useCallback(async () => {
+    const isCurrentRead = beginListRead();
     try {
       const [nextRuntime, rawSessions] = await Promise.all([
         endpoints.codexRuntime(), endpoints.codexSessions(conversationId)
       ]);
+      if (!isCurrentRead()) return;
       const nextSessions = Array.isArray(rawSessions) ? rawSessions : [];
       setRuntime(nextRuntime);
       setSessions(nextSessions);
@@ -137,10 +147,13 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
     }
   }, [conversationId]);
 
+  const beginDetailRead = useLatestRequest();
   const loadDetail = useCallback(async () => {
+    const isCurrentRead = beginDetailRead();
     if (!selectedId) return;
     try {
       const detail = await endpoints.codexSession(selectedId, cursor.current);
+      if (!isCurrentRead()) return;
       setSessions((current) => current.map((session) => session.id === detail.session.id ? detail.session : session));
       if (detail.events.length) {
         setEvents((current) => [...current, ...detail.events]);
@@ -208,7 +221,7 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
         <span className={`tag ${runtime?.connected ? "success" : runtime?.error ? "danger" : "muted"}`}>
           {runtime?.connected ? `已连接${runtime.version ? ` · ${runtime.version}` : ""}` : runtime?.error ? "不可用" : "检查中"}
         </span>
-        <button className="btn ghost small" onClick={() => void load()} title="刷新 Codex 状态"><RefreshCw size={14} />刷新</button>
+        <ActionButton className="btn ghost small" onClick={() => load()} title="刷新 Codex 状态"><RefreshCw size={14} />刷新</ActionButton>
       </div>
       <div className="codex-panel-toolbar">
         <select className="select" aria-label="Codex 运行策略" value={profile} onChange={(event) => setProfile(event.target.value as typeof profile)}>
@@ -216,28 +229,28 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
           <option value="trusted-local-yolo">本机 YOLO</option>
         </select>
         <input className="input mono" aria-label="已有 Codex thread ID" placeholder="已有 thread ID（可选）" value={threadId} onChange={(event) => setThreadId(event.target.value)} />
-        <button className="btn small" disabled={busy || !runtime?.available} onClick={() => void create(threadId.trim() || undefined)}>
+        <ActionButton className="btn small" disabled={busy || !runtime?.available} onClick={() => create(threadId.trim() || undefined)}>
           {threadId.trim() ? <Link2 size={14} /> : <Play size={14} />}{threadId.trim() ? "接管" : "启动"}
-        </button>
-        <button className="btn ghost small" disabled={busy || !runtime?.connected} onClick={() => {
-          endpoints.codexThreads(selected?.cwd).then(setThreads).catch(toastError);
-        }}><RefreshCw size={14} />发现已有</button>
+        </ActionButton>
+        <ActionButton className="btn ghost small" disabled={busy || !runtime?.connected} onClick={() => {
+          return endpoints.codexThreads(selected?.cwd).then(setThreads).catch(toastError);
+        }}><RefreshCw size={14} />发现已有</ActionButton>
       </div>
       {threads.length ? (
         <div className="codex-thread-list" aria-label="可接管的 Codex 会话">
           {threads.map((thread) => (
-            <button key={thread.id} className="btn ghost small mono" onClick={() => setThreadId(thread.id)} title={thread.preview || thread.id}>
+            <ActionButton key={thread.id} className="btn ghost small mono" onClick={() => setThreadId(thread.id)} title={thread.preview || thread.id}>
               <Link2 size={13} />{thread.name || thread.preview || thread.id.slice(0, 12)}
-            </button>
+            </ActionButton>
           ))}
         </div>
       ) : null}
       {sessions.length ? (
         <div className="codex-session-tabs" role="tablist" aria-label="Codex 会话">
           {sessions.map((session) => (
-            <button key={session.id} className={`btn small ${session.id === selectedId ? "primary" : "ghost"}`} onClick={() => setSelectedId(session.id)}>
+            <ActionButton key={session.id} className={`btn small ${session.id === selectedId ? "primary" : "ghost"}`} onClick={() => setSelectedId(session.id)}>
               <span className="mono">{session.preview || session.threadId.slice(0, 12)}</span><StatusTag status={session.status} />
-            </button>
+            </ActionButton>
           ))}
         </div>
       ) : <p className="small muted">还没有绑定的 Codex 会话。可以启动新会话，或发现并接管已有 thread。</p>}
@@ -245,12 +258,12 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
         <>
           <div className="small muted codex-session-meta">
             <span className="mono">{selected.cwd}</span> · {selected.profile} · thread <span className="mono">{selected.threadId}</span>
-            <button className="btn ghost small" onClick={() => {
-              endpoints.interruptCodex(selected.id).then(() => void load()).catch(toastError);
-            }}><Square size={13} />中断</button>
-            <button className="btn ghost small" onClick={() => {
-              endpoints.detachCodex(selected.id).then(() => { setSelectedId(null); void load(); }).catch(toastError);
-            }}><Unplug size={13} />解绑</button>
+            <ActionButton className="btn ghost small" onClick={() => {
+              return endpoints.interruptCodex(selected.id).then(() => void load()).catch(toastError);
+            }}><Square size={13} />中断</ActionButton>
+            <ActionButton className="btn ghost small" onClick={() => {
+              return endpoints.detachCodex(selected.id).then(() => { setSelectedId(null); void load(); }).catch(toastError);
+            }}><Unplug size={13} />解绑</ActionButton>
           </div>
           <div className="codex-events" aria-label="Codex 事件">
             {events.length ? events.slice(-80).map((event) => (
@@ -259,12 +272,12 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
                 <span className="mono small">{codexEventText(event)}</span>
                 {event.kind === "approval" ? (
                   <div className="row compact">
-                    <button className="btn small" onClick={() => {
-                      endpoints.respondCodex(selected.id, { requestId: String(event.payload.requestId ?? ""), response: { decision: "accept" } }).then(() => void loadDetail()).catch(toastError);
-                    }}>允许</button>
-                    <button className="btn small danger" onClick={() => {
-                      endpoints.respondCodex(selected.id, { requestId: String(event.payload.requestId ?? ""), response: { decision: "decline" } }).then(() => void loadDetail()).catch(toastError);
-                    }}>拒绝</button>
+                    <ActionButton className="btn small" onClick={() => {
+                      return endpoints.respondCodex(selected.id, { requestId: String(event.payload.requestId ?? ""), response: { decision: "accept" } }).then(() => void loadDetail()).catch(toastError);
+                    }}>允许</ActionButton>
+                    <ActionButton className="btn small danger" onClick={() => {
+                      return endpoints.respondCodex(selected.id, { requestId: String(event.payload.requestId ?? ""), response: { decision: "decline" } }).then(() => void loadDetail()).catch(toastError);
+                    }}>拒绝</ActionButton>
                   </div>
                 ) : null}
               </div>
@@ -272,7 +285,7 @@ function CodexPanel({ conversationId }: { conversationId: string }) {
           </div>
           <div className="codex-composer">
             <textarea className="textarea" rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="给 Codex 发送编码任务…" />
-            <button className="btn primary" disabled={busy || !draft.trim()} onClick={() => void send()}><Send size={15} />发送</button>
+            <ActionButton className="btn primary" disabled={busy || !draft.trim()} onClick={() => send()}><Send size={15} />发送</ActionButton>
           </div>
         </>
       ) : null}
@@ -324,7 +337,7 @@ function StopTaskModal({
       onClose={onClose}
       onConfirm={() => {
         setBusy(true);
-        endpoints
+        return endpoints
           .stopBackgroundTask(task.id, reason.trim())
           .then(() => {
             toast("success", "已请求停止任务");
@@ -348,9 +361,12 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
   const [rows, setRows] = useState("30");
   const terminalRef = useRef<HTMLPreElement>(null);
 
+  const beginDetailRead = useLatestRequest();
   const loadDetail = useCallback(async () => {
+    const isCurrentRead = beginDetailRead();
     try {
       const next = await endpoints.backgroundTask(taskId);
+      if (!isCurrentRead()) return;
       if (next.task.conversationId !== conversationId) {
         replaceRoute(routes.conversationTasks(next.task.conversationId, next.task.id));
         return;
@@ -362,9 +378,12 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
     }
   }, [conversationId, taskId]);
 
+  const beginOutputRead = useLatestRequest();
   const loadOutput = useCallback(async () => {
+    const isCurrentRead = beginOutputRead();
     try {
       const chunk = await endpoints.backgroundTaskOutput(taskId, cursor.current);
+      if (!isCurrentRead()) return;
       if (chunk.gap) {
         setOutput((current) => `${current}\n[日志存在缺口，从最新位置继续]\n`);
       }
@@ -396,7 +415,7 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
     if (el) el.scrollTop = el.scrollHeight;
   }, [output, screen]);
 
-  if (error && !detail) return <ErrorState message={error} onRetry={() => void loadDetail()} />;
+  if (error && !detail) return <ErrorState message={error} onRetry={() => loadDetail()} />;
   if (!detail) return <LoadingState label="加载任务…" />;
 
   const task = detail.task;
@@ -409,12 +428,12 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
           <span className="mono">{task.command}</span>
           <StatusTag status={task.status} />
         </h3>
-        <button
+        <ActionButton
           className="icon-button"
           onClick={() => navigate(routes.conversationTasks(conversationId))}
           aria-label="关闭任务详情"
           title="关闭任务详情"
-        ><X size={16} /></button>
+        ><X size={16} /></ActionButton>
       </div>
       <p className="small muted">
         工作目录 <span className="mono">{task.workspacePath}</span> · 模式 {task.mode} · 日志游标 {task.outputCursor} ·{" "}
@@ -459,17 +478,17 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
               onChange={(event) => setRows(event.target.value)}
             />
           </label>
-          <button
+          <ActionButton
             className="btn small"
             onClick={() => {
-              endpoints
+              return endpoints
                 .resizeBackgroundTask(task.id, Number(columns) || 120, Number(rows) || 30)
                 .then(() => toast("success", "终端尺寸已调整"))
                 .catch(toastError);
             }}
           >
             调整终端尺寸
-          </button>
+          </ActionButton>
         </div>
       ) : null}
 

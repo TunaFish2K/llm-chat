@@ -1623,3 +1623,12 @@
 
 .chat-thread .reply-metadata { max-width: 100%; }
 .chat-thread .markdown :is(h1, h2, h3, h4) { letter-spacing: inherit; }
+
+/* Async feedback preserves button geometry; the spinner never delays completion. */
+[data-action-pending] { opacity: .7; cursor: progress; }
+:where(button[data-action-slow]) { position: relative; }
+[data-action-slow]::after { content: ""; position: absolute; width: 10px; height: 10px; right: 2px; top: 2px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: action-spin .8s linear infinite; }
+@keyframes action-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { [data-action-slow]::after { animation: none; } }
+.submission-status { color: var(--muted); font-size: .85em; }
+.submission-preview { white-space: pre-wrap; overflow-wrap: anywhere; }

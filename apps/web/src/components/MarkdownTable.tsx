@@ -1,3 +1,4 @@
+import { ActionButton } from "../lib/action-feedback";
 import { useContext, useRef, useState, type ComponentProps } from "react";
 import { Clipboard, Download, Maximize2 } from "lucide-react";
 import { Popover } from "radix-ui";
@@ -28,15 +29,15 @@ export function MarkdownTable({ children, node: _node, ...props }: ComponentProp
   };
   const actions = <div className="markdown-table-actions" role="group" aria-label="表格操作">
     {(["copy", "download"] as const).map((action) => <Popover.Root key={action} open={menu === action} onOpenChange={(open) => setMenu(open ? action : null)}>
-      <Popover.Trigger asChild><button type="button" className="btn ghost small" disabled={isAnimating}>
+      <Popover.Trigger asChild><ActionButton type="button" className="btn ghost small" disabled={isAnimating}>
         {action === "copy" ? <Clipboard size={16} /> : <Download size={16} />}{action === "copy" ? "复制" : "下载"}
-      </button></Popover.Trigger>
+      </ActionButton></Popover.Trigger>
       <Popover.Portal><Popover.Content className="composer-more-popover table-format-menu" side="top" align="start" sideOffset={6}>
-        {(action === "copy" ? ["md", "csv", "tsv"] as const : ["md", "csv"] as const).map((format) => <button type="button" key={format}
-          onClick={() => void exportTable(format, action === "download")}>{format === "md" ? "Markdown" : format.toUpperCase()}</button>)}
+        {(action === "copy" ? ["md", "csv", "tsv"] as const : ["md", "csv"] as const).map((format) => <ActionButton type="button" key={format}
+          onClick={() => exportTable(format, action === "download")}>{format === "md" ? "Markdown" : format.toUpperCase()}</ActionButton>)}
       </Popover.Content></Popover.Portal>
     </Popover.Root>)}
-    {!expanded ? <button type="button" className="btn ghost small" disabled={isAnimating} onClick={() => setExpanded(true)}><Maximize2 size={16} />放大</button> : null}
+    {!expanded ? <ActionButton type="button" className="btn ghost small" disabled={isAnimating} onClick={() => setExpanded(true)}><Maximize2 size={16} />放大</ActionButton> : null}
   </div>;
   return <div className="markdown-table" data-streamdown="table-wrapper">
     <div className="markdown-table-scroll"><table {...props} ref={table}>{children}</table></div>

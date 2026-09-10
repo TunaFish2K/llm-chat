@@ -1,3 +1,4 @@
+import { ActionButton } from "../lib/action-feedback";
 import { clearOfflineHistory, offlineStore, setOfflineEnabled, syncOfflineHistory } from "../lib/offline-history";
 import { useStore } from "../lib/store";
 import { formatTime } from "../lib/format";
@@ -6,7 +7,7 @@ export function OfflineBanner() {
   const state = useStore(offlineStore, (value) => value);
   if (!state.offline) return null;
   return <div className="offline-banner" role="status">离线查阅 · {state.lastSync ? `最后同步 ${formatTime(state.lastSync)}` : "仅显示本机已保存的记录"}
-    <button className="btn small" disabled={state.syncing} onClick={() => void syncOfflineHistory()}>重新连接</button>
+    <ActionButton className="btn small" disabled={state.syncing} onClick={() => syncOfflineHistory()}>重新连接</ActionButton>
   </div>;
 }
 export function OfflineHistorySettings() {
@@ -20,8 +21,8 @@ export function OfflineHistorySettings() {
     <p className="hint">{state.lastSync ? `最后完整同步：${formatTime(state.lastSync)}` : "尚未完成首次同步"}{state.imagesMissing ? ` · ${state.imagesMissing} 张图片尚未下载` : ""}</p>
     {state.error ? <p role="alert">{state.error}</p> : null}
     <div className="row">
-      <button className="btn" disabled={!state.enabled || state.syncing} onClick={() => act(syncOfflineHistory())}>立即同步</button>
-      <button className="btn" onClick={() => act(clearOfflineHistory({ disable: true }))}>清除本机记录并关闭</button>
+      <ActionButton className="btn" disabled={!state.enabled || state.syncing} onClick={() => act(syncOfflineHistory())}>立即同步</ActionButton>
+      <ActionButton className="btn" onClick={() => act(clearOfflineHistory({ disable: true }))}>清除本机记录并关闭</ActionButton>
     </div>
   </div>;
 }

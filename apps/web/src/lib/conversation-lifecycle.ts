@@ -41,7 +41,9 @@ function persist(): void {
     localStorage.setItem(KEY, JSON.stringify({ sourceId, ids: [...ids] }));
   } catch {}
 }
+export function conversationSource(): string | null { return sourceId; }
 export function setConversationSource(id: string): void {
+  if (sourceId && sourceId !== id && typeof window.dispatchEvent === "function") window.dispatchEvent(new Event("llm-chat:submissions-clear"));
   if (sourceId && sourceId !== id) { deleted.clear(); revision++; }
   sourceId = id; persist();
 }
