@@ -2,6 +2,7 @@ import type { Store } from "./database";
 import type { GenerationRunner } from "./generations";
 import type { ImageService } from "./images";
 import type { EventHub } from "./events";
+import { publishGenerationState } from "./generation-notifications";
 
 export class MessageQueue {
   private readonly active = new Set<string>();
@@ -60,6 +61,7 @@ export class MessageQueue {
             this.store.finishGeneration(dispatch.generationId, "failed", {
               code: "queue_attachment_failed", message: error instanceof Error ? error.message : "附件准备失败"
             });
+            publishGenerationState(this.store, this.events, dispatch.generationId);
             this.store.sqlite.prepare("UPDATE queued_messages SET status = 'failed', error = ? WHERE id = ?")
               .run(error instanceof Error ? error.message : "附件准备失败", dispatch.id);
             this.changed(conversationId);

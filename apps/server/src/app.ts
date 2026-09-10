@@ -1,4 +1,5 @@
 import { ConversationService } from "./conversations";
+import { activeGenerationNotifications, publishGenerationState } from "./generation-notifications";
 import { assertImageConfiguration } from "./image-configuration";
 import { recoverInterruptedWork } from "./runtime/startup-recovery";
 import { existsSync } from "node:fs";
@@ -153,6 +154,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const browser = new BrowserFetchManager();
   const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, codex, browser);
   const runner = new GenerationRunner(store, {
+    onStateChange: (id) => publishGenerationState(store, eventHub, id),
     onSettled: (conversationId) => { queue.changed(conversationId); queue.kick(conversationId); },
     buildTools: (_currentStore, record) => registry.tools(record),
     prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
@@ -929,8 +931,14 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     // Flush an initial body frame so EventSource reaches `open` immediately
     // even when the event hub has nothing to replay yet.
     reply.raw.write(": connected\n\n");
+    // No SSE id: the snapshot must not replace the replay cursor of other app events.
+    // The synchronous snapshot and subscription have no intervening state changes.
+    reply.raw.write(`event: generation-snapshot\ndata: ${JSON.stringify({
+      type: "generation-snapshot", id: eventHub.cursor, sourceId: offlineSourceId(store), active: activeGenerationNotifications(store)
+    })}\n\n`);
     const lastId = Number(request.headers["last-event-id"] ?? 0);
     const send = (event: { id: number; type: string }) => {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return;
       reply.raw.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     };
     const unsubscribe = eventHub.subscribe(Number.isFinite(lastId) ? lastId : 0, send);
@@ -1014,6 +1022,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
           completedAt: Date.now()
         })!;
     const pending = store.listToolCalls(generationId).some((item) => item.approvalState === "pending");
+    publishGenerationState(store, eventHub, generationId);
     if (!pending) runner.start(generationId);
     return { toolCall: updated, generationId, resumed: !pending };
   });

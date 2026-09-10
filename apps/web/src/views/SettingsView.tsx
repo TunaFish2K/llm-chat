@@ -1,4 +1,6 @@
 import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
+import { NotificationSettings } from "../components/NotificationSettings";
+import { stopNotificationSession } from "../lib/notifications";
 import { clearOfflineHistory, offlineStore } from "../lib/offline-history";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Maximize2 } from "lucide-react";
@@ -172,6 +174,7 @@ function GeneralSection() {
   return (
     <div>
       <OfflineHistorySettings />
+      <NotificationSettings />
       <fieldset disabled={offline} className="offline-settings-fields">
       <div className="card">
         <h3>外观与交互</h3>
@@ -327,6 +330,7 @@ function SecuritySection() {
   const logout = async () => {
     setBusy(true);
     try {
+      await stopNotificationSession();
       await clearOfflineHistory({ logout: true });
       await endpoints.logout();
       window.location.reload();
