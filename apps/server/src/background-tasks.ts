@@ -430,7 +430,10 @@ export class TaskManager {
     const set = this.listeners.get(id) ?? new Set();
     set.add(listener);
     this.listeners.set(id, set);
-    return () => set.delete(listener);
+    return () => {
+      set.delete(listener);
+      if (!set.size) this.listeners.delete(id);
+    };
   }
 
   private notify(id: string): void { for (const listener of this.listeners.get(id) ?? []) listener(); }

@@ -21,22 +21,28 @@ export function subscribeGeneration(
 
   const connect = () => {
     if (closed) return;
-    source = new EventSource(`/api/generations/${generationId}/events`);
+    const current = new EventSource(`/api/generations/${generationId}/events`);
+    source = current;
     let terminal = false;
     const types = ["snapshot", "block-delta", "usage", "tool-call", "vision-analysis", "status", "error"] as const;
     for (const type of types) {
       source.addEventListener(type, (raw) => {
+        // Native connection errors have no data; only named SSE messages carry JSON.
+        if (closed || source !== current || !(raw instanceof MessageEvent)) return;
         const event = JSON.parse((raw as MessageEvent).data as string) as GenerationEvent;
-        if (event.type === "status" && ["waiting-approval", "completed", "stopped", "failed", "interrupted"].includes(event.status)) {
+        const status = event.type === "status" ? event.status : event.type === "snapshot" ? event.generation.status : undefined;
+        if (status && ["waiting-approval", "completed", "stopped", "failed", "interrupted"].includes(status)) {
           terminal = true;
         }
         onEvent(event);
       });
     }
     source.onopen = () => {
+      if (closed || source !== current) return;
       attempts = 0;
     };
     source.onerror = () => {
+      if (closed || source !== current) return;
       source?.close();
       source = null;
       if (closed || terminal) return;
@@ -70,17 +76,18 @@ export function subscribeAppEvents(
 ): Subscription {
   let closed = false;
   const source = new EventSource("/api/events");
-  const types = ["task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
+  const types = ["resync", "task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
   for (const type of types) {
     source.addEventListener(type, (raw) => {
+      if (closed) return;
       const message = raw as MessageEvent;
       onEvent(JSON.parse(message.data as string) as AppEvent);
     });
   }
-  source.onopen = () => onStateChange?.(true);
+  source.onopen = () => { if (!closed) onStateChange?.(true); };
   source.onerror = () => {
     // The browser retries automatically with the last received event id.
-    onStateChange?.(false);
+    if (!closed) onStateChange?.(false);
   };
 
   return {

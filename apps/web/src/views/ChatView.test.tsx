@@ -48,7 +48,7 @@ function messageFetch(messages: MessageDto[]) {
 }
 
 beforeEach(() => {
-  window.history.pushState(null, "", "/");
+  window.history.pushState(null, "", "/c/conv-1");
   vi.spyOn(endpoints, "queueState").mockResolvedValue({ items: [], paused: false });
   vi.spyOn(endpoints, "agents").mockImplementation(async () => appStore.get().agents);
 });

@@ -1276,6 +1276,7 @@ export interface GenerationNotificationState {
 }
 
 export type AppEvent =
+  | { id: number; type: "resync" }
   | { id: number; type: "generation-state"; generation: GenerationNotificationState }
   | { id: number; type: "generation-snapshot"; sourceId: string; active: GenerationNotificationState[] }
   | { id: number; type: "message-queue"; conversationId: string; generation?: GenerationCreatedDto }

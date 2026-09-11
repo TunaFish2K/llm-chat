@@ -30,6 +30,10 @@ describe("subscribeAppEvents", () => {
     subscription.close();
     subscription.close();
     expect(source.closed).toBe(true);
+    onEvent.mockClear(); onState.mockClear();
+    source.emit("resync", { id: 9, type: "resync" });
+    source.onopen?.(); source.onerror?.();
+    expect(onEvent).not.toHaveBeenCalled(); expect(onState).not.toHaveBeenCalled();
   });
 });
 
@@ -46,6 +50,10 @@ describe("subscribeGeneration", () => {
     first.emit("block-delta", { type: "block-delta", blockId: "block", delta: "hi" });
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: "block-delta" }));
 
+    for (const listener of first.listeners.get("error") ?? []) {
+      expect(() => listener(new Event("error") as MessageEvent)).not.toThrow();
+    }
+
     first.onerror?.();
     expect(first.closed).toBe(true);
     expect(onDisconnect).toHaveBeenCalledOnce();
@@ -53,6 +61,11 @@ describe("subscribeGeneration", () => {
     expect(FakeEventSource.instances).toHaveLength(1);
     vi.advanceTimersByTime(1);
     expect(FakeEventSource.instances).toHaveLength(2);
+    onEvent.mockClear();
+    first.emit("status", { type: "status", status: "failed" });
+    first.onerror?.();
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(FakeEventSource.instances[1]!.closed).toBe(false);
     subscription.close();
   });
 
@@ -75,5 +88,15 @@ describe("subscribeGeneration", () => {
     active.close();
     vi.runAllTimers();
     expect(FakeEventSource.instances).toHaveLength(1);
+  });
+
+  it("does not reconnect after receiving a completed snapshot", () => {
+    vi.useFakeTimers();
+    const subscription = subscribeGeneration("finished", vi.fn());
+    const source = FakeEventSource.instances[0]!;
+    source.emit("snapshot", { type: "snapshot", generation: { status: "completed" } });
+    source.onerror?.(); vi.runAllTimers();
+    expect(FakeEventSource.instances).toHaveLength(1);
+    subscription.close();
   });
 });

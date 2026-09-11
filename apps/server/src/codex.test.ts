@@ -90,9 +90,33 @@ lines.on("line", (line) => {
         "thread/start", "turn/start"
       ]);
 
+      const waiters = (manager as unknown as { waiters: Map<string, Set<() => void>> }).waiters;
+      for (let i = 0; i < 30; i++) {
+        const controller = new AbortController();
+        const wait = manager.wait(session.id, running.lastEventId, 120_000, controller.signal);
+        expect(waiters.size).toBe(1);
+        controller.abort();
+        await expect(wait).rejects.toThrow();
+        expect(waiters.size).toBe(0);
+      }
+      await manager.wait(session.id, running.lastEventId, 100);
+      expect(waiters.size).toBe(0);
+      const notified = manager.wait(session.id, running.lastEventId, 120_000);
       const stopped = await manager.interrupt(session.id);
+      await expect(notified).resolves.toMatchObject({ session: { status: "stopped" } });
+      expect(waiters.size).toBe(0);
       expect(stopped).toMatchObject({ status: "stopped", currentTurnId: null });
       expect(manager.detail(session.id, 0).session.lastEventId).toBeGreaterThan(2);
+      const resumed = await manager.send(session.id, { text: "Wait for detach" });
+      const detached = expect(manager.wait(session.id, resumed.lastEventId, 120_000)).rejects.toThrow();
+      manager.detach(session.id);
+      await detached;
+      expect(waiters.size).toBe(0);
+      const next = await manager.create({ conversationId: conversation.id, profile: "server-workspace" });
+      const closing = expect(manager.wait(next.id, next.lastEventId, 120_000)).rejects.toThrow("已关闭");
+      await manager.close();
+      await closing;
+      expect(waiters.size).toBe(0);
     } finally {
       await manager.close();
     }

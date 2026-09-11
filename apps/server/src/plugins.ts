@@ -7,7 +7,7 @@ import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginDto, PluginManifest } from "@llm-chat/contracts";
 import { pluginManifestSchema } from "@llm-chat/contracts";
-import Ajv from "ajv";
+import { toolValidators, validateToolInput, validationErrors } from "./tool-validation";
 import type { Store } from "./database";
 import type { GenerationRecord } from "./generation-types";
 import type { EventHub } from "./events";
@@ -97,7 +97,6 @@ class PluginHost {
 export class PluginManager {
   private readonly hosts = new Map<string, PluginHost>();
   private readonly watchers = new Map<string, FSWatcher>();
-  private readonly ajv = new Ajv({ allErrors: true, strict: false });
   private closed = false;
 
   constructor(private readonly store: Store, private readonly events: EventHub) {}
@@ -178,8 +177,9 @@ export class PluginManager {
   configure(id: string, config: JsonObject, secrets: JsonObject): PluginDto {
     const plugin = this.list().find((item) => item.id === id);
     if (!plugin) throw new Error("Plugin not found");
-    if (plugin.manifest.configSchema && !this.ajv.validate(plugin.manifest.configSchema, config)) {
-      throw new Error(this.ajv.errorsText());
+    if (plugin.manifest.configSchema) {
+      const validate = toolValidators.get(plugin.manifest.configSchema);
+      if (!validate(config)) throw new Error(validationErrors(validate.errors));
     }
     const current = this.secretValues(id);
     const allowedSecrets = Object.fromEntries(Object.entries(secrets).filter(([key]) => plugin.manifest.secretFields.includes(key)));
@@ -228,7 +228,7 @@ export class PluginManager {
       const manifest = await this.revisionManifest(plugin.id, revision);
       const host = await this.host(plugin.id, revision);
       for (const remote of host.tools) {
-        const validate = this.ajv.compile(remote.inputSchema);
+        toolValidators.get(remote.inputSchema);
         const canonical = `plugin__${plugin.id}__${remote.name}`;
         tools.push({
           definition: { name: canonical, description: remote.description, inputSchema: remote.inputSchema },
@@ -242,7 +242,7 @@ export class PluginManager {
             return Boolean(await this.callWithRestart(plugin.id, revision, "approval", remote.name, input, {}));
           },
           execute: async (input, _signal, context) => {
-            if (!validate(input)) throw new Error(this.ajv.errorsText(validate.errors));
+            validateToolInput(canonical, remote.inputSchema, input);
             const result = await this.callWithRestart(plugin.id, revision, "execute", remote.name, input, context ? {
               conversationId: context.conversationId, generationId: context.generationId, toolCallId: context.toolCallId,
               agentId: context.snapshot.agentId, agentRevision: context.snapshot.revision, workspacePath: context.snapshot.workspacePath
@@ -305,7 +305,7 @@ export class PluginManager {
     const names = new Set<string>();
     for (const tool of host.tools) {
       if (names.has(tool.name)) throw new Error(`Duplicate plugin tool: ${tool.name}`);
-      names.add(tool.name); this.ajv.compile(tool.inputSchema);
+      names.add(tool.name); toolValidators.get(tool.inputSchema);
     }
     void revision;
   }

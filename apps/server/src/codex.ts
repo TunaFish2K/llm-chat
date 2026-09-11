@@ -250,6 +250,8 @@ export class CodexManager {
   }
 
   async wait(id: string, after: number, timeoutMs: number, signal?: AbortSignal): Promise<CodexSessionDetailDto> {
+    signal?.throwIfAborted();
+    if (this.closed) throw new Error("Codex manager 已关闭");
     const initial = this.detail(id, after);
     if (initial.events.length || isFinalStatus(initial.session.status)) return initial;
     const sessionWaiters = this.waiters.get(id) ?? new Set<() => void>();
@@ -259,18 +261,21 @@ export class CodexManager {
       const done = () => {
         if (timer) clearTimeout(timer);
         sessionWaiters.delete(done);
+        if (!sessionWaiters.size) this.waiters.delete(id);
         if (signal) signal.removeEventListener("abort", abort);
         resolvePromise();
       };
       const abort = () => {
         if (timer) clearTimeout(timer);
         sessionWaiters.delete(done);
+        if (!sessionWaiters.size) this.waiters.delete(id);
         reject(signal?.reason ?? new Error("Codex wait cancelled"));
       };
       sessionWaiters.add(done);
       timer = setTimeout(done, Math.max(100, Math.min(timeoutMs, 120_000)));
       if (signal) signal.addEventListener("abort", abort, { once: true });
     });
+    if (this.closed) throw new Error("Codex manager 已关闭");
     return this.detail(id, after);
   }
 
@@ -299,11 +304,16 @@ export class CodexManager {
 
   detach(id: string): void {
     this.requireSession(id);
+    for (const done of this.waiters.get(id) ?? []) done();
+    this.waiters.delete(id);
+    for (const [key, request] of this.pendingRequests) if (request.sessionId === id) this.pendingRequests.delete(key);
     this.store.sqlite.prepare("DELETE FROM codex_sessions WHERE id = ?").run(id);
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const waiters of this.waiters.values()) for (const done of waiters) done();
+    this.waiters.clear(); this.pendingRequests.clear();
     this.client?.close();
     this.client = null;
   }

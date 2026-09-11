@@ -827,18 +827,19 @@ describe("server API", () => {
     expect((await app.inject({ method: "GET", url: "/api/mcp/servers" })).json()).toEqual([expect.objectContaining({ id: second.id })]);
   });
 
-  it("sends an SSE snapshot before events buffered during subscription and closes terminal streams", async () => {
+  it("folds large buffered blocks into one SSE snapshot and closes terminal streams", async () => {
     const app = await testApp();
     const model = await createApiModel(app);
     const started = app.store.startConversation({ text: "SSE", modelId: model.id, contextPolicy: "full" });
     const generationId = started.generation.generationId;
     app.store.finishGeneration(generationId, "completed", { stopReason: "stop" });
     const unsubscribe = vi.fn();
+    const content = "buffered".repeat(450_000);
     vi.spyOn(app.runner, "subscribe").mockImplementation((_id, subscriber) => {
       subscriber({
         type: "block-delta",
         generationId,
-        block: { id: `${generationId}:0`, index: 0, stepIndex: 0, type: "text", content: "buffered", complete: true }
+        block: { id: `${generationId}:0`, index: 0, stepIndex: 0, type: "text", content, complete: true }
       });
       return unsubscribe;
     });
@@ -846,9 +847,12 @@ describe("server API", () => {
     const response = await app.inject({ method: "GET", url: `/api/generations/${generationId}/events` });
     expect(response.statusCode).toBe(200);
     expect(response.headers["content-type"]).toContain("text/event-stream");
-    expect(response.body.indexOf("event: snapshot")).toBeLessThan(response.body.indexOf("event: block-delta"));
+    expect(response.body).toContain("event: snapshot");
+    expect(response.body).not.toContain("event: block-delta");
     expect(response.body).toContain('"status":"completed"');
-    expect(response.body).toContain('"content":"buffered"');
+    const snapshot = JSON.parse(response.body.split("data: ")[1]!.trim());
+    expect(snapshot.generation.blocks).toHaveLength(1);
+    expect(snapshot.generation.blocks[0].content).toBe(content);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 

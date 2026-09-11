@@ -60,6 +60,31 @@ async function checkToolbar(page: Page) {
   }
 }
 
+test("生成期间断网，联网后恢复完整回复并清理生成状态", async ({ page, context, request }) => {
+  const provider = await startMockProvider({ firstResponseDelayMs: 2_000, responseText: "断网期间完成的回复" });
+  const fixture = await setup(request, provider.baseUrl);
+  try {
+    await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
+    await page.getByLabel("输入消息").fill("测试生成恢复");
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.locator(".composer-stop-button")).toBeVisible();
+    await context.setOffline(true);
+    await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+    await expect.poll(async () => {
+      const messages = await api(request, APP_URL, "GET", `/api/conversations/${fixture.conversation.id}/messages`);
+      return messages.at(-1)?.generations.at(-1)?.status;
+    }).toBe("completed");
+    await context.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect(page.locator('.msg[data-role="assistant"]').last()).toContainText("断网期间完成的回复");
+    await expect(page.locator(".composer-stop-button")).toHaveCount(0);
+    await expect(page.locator(".offline-banner")).toHaveCount(0);
+  } finally {
+    await context.setOffline(false);
+    await fixture.cleanup(); await provider.close();
+  }
+});
+
 test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌色适配主题", async ({ page, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 60_000 });
   const fixture = await setup(request, provider.baseUrl);

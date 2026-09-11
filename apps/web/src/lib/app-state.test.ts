@@ -5,6 +5,7 @@ import { appStore, loadMessages, refreshTaskCounts, restartGenerationTracking, s
 
 describe("message compatibility", () => {
   it("normalizes attachment and generation arrays omitted by an older server", async () => {
+    history.replaceState(null, "", "/c/conv-legacy");
     const { attachments: _attachments, generations: _generations, ...legacyMessage } = makeMessage({
       id: "legacy-user",
       role: "user",
@@ -37,6 +38,7 @@ describe("event stream lifecycle", () => {
   });
 
   it("opens a fresh generation stream after approval and receives the tool result", () => {
+    history.replaceState(null, "", "/c/approval");
     const generationId = "gen-approval";
     const messageId = "message-approval";
     const pending = {

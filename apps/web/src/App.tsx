@@ -4,7 +4,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { dismissBackLayer, parentRoute, requestMobileBack, useMobileBackGesture } from "./lib/mobile-navigation";
 import { endpoints } from "./lib/api";
-import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents, toast } from "./lib/app-state";
+import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents, stopAppEvents, toast } from "./lib/app-state";
 import type { InspectionTarget } from "./lib/inspection";
 import { applyUpdate, getPwaState, initPwa, promptInstall, subscribePwa } from "./lib/pwa";
 import { navigate, replaceRoute, routes, useRoute, type Route } from "./lib/router";
@@ -74,13 +74,13 @@ export function App() {
   useChatTypography(state.settings);
 
   useEffect(() => {
-    initAuthGate();
+    const disposeAuth = initAuthGate();
     const draftWarning = () => toast("error", "无法保存本地草稿，刷新后可能丢失未发送内容");
     window.addEventListener("llm-chat:draft-storage-unavailable", draftWarning);
     const unsubscribePwa = subscribePwa(setPwa);
     initPwa();
     void bootstrap(initialConversation.current);
-    return () => { unsubscribePwa(); window.removeEventListener("llm-chat:draft-storage-unavailable", draftWarning); };
+    return () => { disposeAuth(); unsubscribePwa(); window.removeEventListener("llm-chat:draft-storage-unavailable", draftWarning); };
   }, []);
 
   useEffect(() => {
@@ -88,6 +88,7 @@ export function App() {
     initOfflineHistory();
     startAppEvents();
     void refreshTaskCounts();
+    return stopAppEvents;
   }, [state.auth]);
 
   useEffect(() => {

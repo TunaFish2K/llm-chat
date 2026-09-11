@@ -1,6 +1,6 @@
 import { formatTool } from "./tool-presentation";
 import type { GenerationEvent, GenerationStatus, ProviderProtocol, UsageDto } from "@llm-chat/contracts";
-import Ajv, { type ValidateFunction } from "ajv";
+import { validateToolInput } from "./tool-validation";
 import {
   adapterFor,
   assertStreamComplete,
@@ -23,8 +23,6 @@ import type { ImageService } from "./images";
 import { ShellError } from "./shell";
 
 type Subscriber = (event: GenerationEvent) => void;
-const schemaValidator = new Ajv({ allErrors: true, strict: false });
-const toolValidators = new WeakMap<ServerTool, ValidateFunction>();
 
 interface LiveJob {
   detached?: boolean;
@@ -84,6 +82,8 @@ export class GenerationRunner {
   constructor(private readonly store: Store, dependencies: Partial<GenerationRunnerDependencies> = {}) {
     this.dependencies = { ...defaultDependencies, ...dependencies };
   }
+
+  get activeCount(): number { return this.jobs.size; }
 
   isConversationActive(conversationId: string): boolean {
     return [...this.jobs.values()].some((job) => job.conversationId === conversationId);
@@ -553,12 +553,7 @@ function parseToolArguments(value: string): Record<string, unknown> {
 }
 
 function validateToolArguments(tool: ServerTool, input: Record<string, unknown>): void {
-  let validate = toolValidators.get(tool);
-  if (!validate) {
-    validate = schemaValidator.compile(tool.definition.inputSchema);
-    toolValidators.set(tool, validate);
-  }
-  if (!validate(input)) throw new Error(`Invalid tool arguments for ${tool.definition.name}: ${schemaValidator.errorsText(validate.errors)}`);
+  validateToolInput(tool.definition.name, tool.definition.inputSchema, input);
 }
 
 function nextStepIndex(calls: ReturnType<Store["listToolCalls"]>): number {

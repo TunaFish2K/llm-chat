@@ -1,3 +1,4 @@
+import { RefreshScheduler } from "./refresh-scheduler";
 import { saveTypography } from "./local-typography";
 import { observeNotificationEvent, startNotificationSession, stopNotificationSession } from "./notifications";
 import { conversationDeleted, deletionRevision, markConversationsDeleted } from "./conversation-lifecycle";
@@ -74,9 +75,11 @@ export function toastError(error: unknown): void {
 
 export async function bootstrap(conversationId?: string, background = false): Promise<void> {
   if (!background) appStore.set({ auth: "loading", bootError: null });
+  const session = messageSession;
   try {
     const knownIds = appStore.get().conversations.map((item) => item.id);
     const data = await endpoints.bootstrap(conversationId);
+    if (session !== messageSession) return;
     if (!isOffline()) reconcileConversations(data.conversations, conversationId ?? null, knownIds);
     data.conversations = data.conversations.filter((item) => !conversationDeleted(item.id));
     if (conversationId && conversationDeleted(conversationId)) { delete data.messages; replaceRoute("/"); }
@@ -90,16 +93,17 @@ export async function bootstrap(conversationId?: string, background = false): Pr
       connections: data.connections,
       models: data.models,
       conversations: data.conversations,
-      ...(conversationId && normalizedMessages ? { messages: background ? { ...appStore.get().messages, ...bootMessages } : bootMessages } : {})
+      ...(conversationId && normalizedMessages ? { messages: retainedMessages({ ...appStore.get().messages, ...bootMessages }) } : {})
     });
     if (conversationId && normalizedMessages) {
       for (const message of normalizedMessages) {
         for (const generation of message.generations) {
-          if (isGenerationActive(generation.status)) trackGeneration(conversationId, message.id, generation.id);
+          if (generating(generation.status)) trackGeneration(conversationId, message.id, generation.id);
         }
       }
     }
   } catch (error) {
+    if (session !== messageSession) return;
     if (error instanceof Error && "status" in error && (error as { status: number }).status === 401) {
       appStore.set({ auth: "required" });
       return;
@@ -129,23 +133,28 @@ export function reconcileConversations(
   if (currentId && conversationDeleted(currentId)) replaceRoute("/");
 }
 export async function refreshConversations(): Promise<void> {
+  const session = messageSession;
   const sequence = ++conversationsReadSequence;
   const revision = deletionRevision();
   const knownIds = appStore.get().conversations.map((item) => item.id);
   const currentId = location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null;
   const conversations = await endpoints.conversations();
-  if (sequence !== conversationsReadSequence) return;
+  if (session !== messageSession || sequence !== conversationsReadSequence) return;
   if (!isOffline() && revision === deletionRevision()) reconcileConversations(conversations, currentId, knownIds);
   appStore.set({ conversations: conversations.filter((item) => !conversationDeleted(item.id)) });
 }
 
 export async function refreshAgents(): Promise<void> {
+  const session = messageSession;
   const agents = await endpoints.agents();
+  if (session !== messageSession) return;
   appStore.set({ agents });
 }
 
 export async function refreshConnectionsAndModels(): Promise<void> {
+  const session = messageSession;
   const [connections, models] = await Promise.all([endpoints.connections(), endpoints.models()]);
+  if (session !== messageSession) return;
   appStore.set({ connections, models });
 }
 
@@ -211,23 +220,62 @@ export function flushUiPreferences(): Promise<void> {
 }
 
 export async function refreshSettings(): Promise<void> {
+  const session = messageSession;
   const sequence = ++settingsReadSequence;
   const settings = await endpoints.settings();
-  if (sequence === settingsReadSequence) acceptSettings(settings);
+  if (session === messageSession && sequence === settingsReadSequence) acceptSettings(settings);
 }
 
-export async function loadMessages(conversationId: string): Promise<MessageDto[]> {
-  if (conversationDeleted(conversationId)) return [];
-  const messages = normalizeMessages(await endpoints.messages(conversationId));
-  if (conversationDeleted(conversationId)) return [];
-  appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: messages } }));
-  persistOfflineMessages(conversationId, messages, true);
-  for (const message of messages) {
-    for (const generation of message.generations) {
-      if (isGenerationActive(generation.status)) trackGeneration(conversationId, message.id, generation.id);
+const messageReads = new Map<string, Promise<MessageDto[]>>();
+let messageSession = 0;
+let eventsSession = 0;
+const eventRefreshes = new RefreshScheduler(toastError);
+const currentConversationId = () => location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null;
+const generating = (status: string) => status === "queued" || status === "running";
+
+function retainedMessages(messages: AppState["messages"]): AppState["messages"] {
+  const current = currentConversationId();
+  const active = new Set([...generationOwners.values()].map((owner) => owner.conversationId));
+  return Object.fromEntries(Object.entries(messages).filter(([id, list]) => !conversationDeleted(id)
+    && (id === current || active.has(id) || list.some((message) => message.generations.some((generation) => generating(generation.status))))));
+}
+export function releaseInactiveMessages(): void {
+  const messages = appStore.get().messages;
+  const retained = retainedMessages(messages);
+  if (Object.keys(retained).length !== Object.keys(messages).length) appStore.set({ messages: retained });
+}
+
+export function loadMessages(conversationId: string): Promise<MessageDto[]> {
+  if (conversationDeleted(conversationId)) return Promise.resolve([]);
+  const existing = messageReads.get(conversationId);
+  if (existing) return existing;
+  const session = messageSession;
+  const read = (async () => {
+    const messages = normalizeMessages(await endpoints.messages(conversationId));
+    if (session !== messageSession || conversationDeleted(conversationId)) return [];
+    appStore.set((state) => ({ messages: retainedMessages({ ...state.messages, [conversationId]: messages }) }));
+    persistOfflineMessages(conversationId, messages, true);
+    for (const message of messages) {
+      for (const generation of message.generations) {
+        if (generating(generation.status)) trackGeneration(conversationId, message.id, generation.id);
+      }
     }
-  }
-  return messages;
+    return messages;
+  })().finally(() => { if (messageReads.get(conversationId) === read) messageReads.delete(conversationId); });
+  messageReads.set(conversationId, read);
+  return read;
+}
+
+export function refreshMessages(conversationId: string): void {
+  if (conversationDeleted(conversationId)) return;
+  const session = eventsSession;
+  eventRefreshes.schedule(`messages:${conversationId}`, async () => {
+    if (conversationId !== currentConversationId() && ![...generationOwners.values()].some((owner) => owner.conversationId === conversationId)) return;
+    // A response begun before this event may be stale. Wait, then fetch once.
+    await messageReads.get(conversationId)?.catch(() => {});
+    if (session !== eventsSession) return;
+    await loadMessages(conversationId);
+  });
 }
 
 function normalizeMessages(messages: MessageDto[]): MessageDto[] {
@@ -261,7 +309,7 @@ export function upsertMessage(conversationId: string, message: MessageDto): void
     const list = state.messages[conversationId] ?? [];
     const index = list.findIndex((item) => item.id === normalized.id);
     const next = index >= 0 ? list.map((item, i) => (i === index ? normalized : item)) : [...list, normalized];
-    return { messages: { ...state.messages, [conversationId]: next } };
+    return { messages: retainedMessages({ ...state.messages, [conversationId]: next }) };
   });
 }
 
@@ -303,12 +351,7 @@ async function handleGenerationEvent(
   event: import("@llm-chat/contracts").GenerationEvent
 ): Promise<void> {
   const owner = generationOwners.get(generationId);
-  if (!owner) {
-    if (event.type === "snapshot") {
-      generationOwners.set(generationId, { conversationId: "", messageId: "" });
-    }
-    return;
-  }
+  if (!owner) { closeGenerationStream(generationId); return; }
   if (event.type === "snapshot") {
     applyGeneration(owner.conversationId, owner.messageId, event.generation);
     if (generationStreamEnded(event.generation.status)) closeGenerationStream(generationId);
@@ -316,7 +359,10 @@ async function handleGenerationEvent(
   }
   const message = findMessage(owner.conversationId, owner.messageId);
   const generation = message?.generations.find((item) => item.id === generationId);
-  if (!message || !generation) return;
+  if (!message || !generation) {
+    if ((event.type === "status" && generationStreamEnded(event.status)) || event.type === "error") closeGenerationStream(generationId);
+    return;
+  }
   const next: GenerationDto = { ...generation };
   if (event.type === "block-delta") {
     const blocks = [...next.blocks];
@@ -357,11 +403,7 @@ async function handleGenerationEvent(
     closeGenerationStream(generationId);
     if (!isGenerationActive(event.status)) {
       // Final status may update message-level fields; re-sync from the server.
-      try {
-        await loadMessages(owner.conversationId);
-      } catch {
-        /* ignore */
-      }
+      if (owner.conversationId === currentConversationId()) refreshMessages(owner.conversationId);
     }
   }
   if (event.type === "error") {
@@ -376,6 +418,8 @@ function generationStreamEnded(status: string): boolean {
 function closeGenerationStream(generationId: string): void {
   generationStreams.get(generationId)?.close();
   generationStreams.delete(generationId);
+  generationOwners.delete(generationId);
+  releaseInactiveMessages();
 }
 
 function findMessage(conversationId: string, messageId: string): MessageDto | undefined {
@@ -411,6 +455,9 @@ export function stopAppEvents(): void {
   appEventsSubscription?.close(); appEventsSubscription = null;
   for (const stream of generationStreams.values()) stream.close();
   generationStreams.clear();
+  generationOwners.clear();
+  eventsSession++; eventRefreshes.clear();
+  releaseInactiveMessages();
 }
 
 export function startAppEvents(): void {
@@ -421,26 +468,67 @@ export function startAppEvents(): void {
   appEventsSubscription = subscribeAppEvents(
     (event) => {
       observeNotificationEvent(event);
-      if (event.type === "message-queue") {
+      if (event.type === "generation-snapshot") {
+        const ids = new Set(event.active.filter((state) => generating(state.status)).map((state) => state.generationId));
+        const previous = new Map(generationOwners);
+        // Going offline releases stream owners but keeps active message data.
+        // Reconcile those messages too when a generation ended while disconnected.
+        for (const [conversationId, messages] of Object.entries(appStore.get().messages)) {
+          for (const message of messages) for (const generation of message.generations) {
+            if (generating(generation.status)) previous.set(generation.id, { conversationId, messageId: message.id });
+          }
+        }
+        for (const [id, owner] of previous) if (!ids.has(id)) {
+          const session = eventsSession;
+          eventRefreshes.schedule(`settled:${id}`, async () => {
+            await messageReads.get(owner.conversationId)?.catch(() => {});
+            if (session !== eventsSession) return;
+            try { await loadMessages(owner.conversationId); } finally { closeGenerationStream(id); }
+          });
+        }
+        for (const state of event.active) {
+          if (generating(state.status)) { trackGeneration(state.conversationId, state.messageId, state.generationId); refreshMessages(state.conversationId); }
+        }
+      } else if (event.type === "generation-state") {
+        const state = event.generation;
+        if (generating(state.status)) { trackGeneration(state.conversationId, state.messageId, state.generationId); refreshMessages(state.conversationId); }
+        else {
+          const existing = findMessage(state.conversationId, state.messageId)?.generations.find((item) => item.id === state.generationId);
+          if (existing) applyGeneration(state.conversationId, state.messageId, { ...existing, status: state.status, stopReason: state.stopReason });
+          closeGenerationStream(state.generationId); refreshMessages(state.conversationId);
+        }
+      } else if (event.type === "resync") {
+        eventRefreshes.schedule("conversations", refreshConversations);
+        eventRefreshes.schedule("settings", refreshSettings);
+        eventRefreshes.schedule("agents", refreshAgents);
+        eventRefreshes.schedule("models", refreshConnectionsAndModels);
+        eventRefreshes.schedule("tasks", refreshTaskCounts);
+        const id = currentConversationId(); if (id) refreshMessages(id);
+        window.dispatchEvent(new Event("llm-chat:queue-reconnect"));
+        for (const resource of ["agents", "conversations", "settings", "connections", "models"]) {
+          window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: { resource } }));
+        }
+      } else if (event.type === "message-queue") {
         window.dispatchEvent(new CustomEvent("llm-chat:message-queue", { detail: event }));
-        void loadMessages(event.conversationId).then(() => {
-          if (event.generation) trackGeneration(event.conversationId, event.generation.assistantMessageId, event.generation.generationId);
-        }).catch(toastError);
+        // Generation snapshots/state events determine which background chats need messages.
+        refreshMessages(event.conversationId);
       } else if (event.type === "task") {
-        void refreshTaskCounts();
+        eventRefreshes.schedule("tasks", refreshTaskCounts);
       } else if (event.type === "image-generation") {
-        void loadMessages(event.conversationId).catch(toastError);
+        refreshMessages(event.conversationId);
       } else if (event.type === "resource-changed") {
-        if (event.resource === "agents") void refreshAgents();
-        if (event.resource === "conversations") void refreshConversations().catch(toastError);
-        if (event.resource === "settings") void refreshSettings();
-        if (event.resource === "connections" || event.resource === "models") void refreshConnectionsAndModels();
-        window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: event }));
+        if (event.resource === "agents") eventRefreshes.schedule("agents", refreshAgents);
+        if (event.resource === "conversations") eventRefreshes.schedule("conversations", refreshConversations);
+        if (event.resource === "settings") eventRefreshes.schedule("settings", refreshSettings);
+        if (event.resource === "connections" || event.resource === "models") eventRefreshes.schedule("models", refreshConnectionsAndModels);
+        eventRefreshes.schedule(`resource:${event.resource}`, async () => {
+          window.dispatchEvent(new CustomEvent("llm-chat:resource-changed", { detail: event }));
+        });
       }
     },
     (connected) => {
-      if (connected) void refreshConversations().catch(toastError);
-      if (connected && hasConnected) void refreshSettings().catch(toastError);
+      if (connected) eventRefreshes.schedule("conversations", refreshConversations);
+      if (connected && hasConnected) eventRefreshes.schedule("settings", refreshSettings);
       if (connected) hasConnected = true;
       if (connected) window.dispatchEvent(new Event("llm-chat:queue-reconnect"));
       appStore.set({
@@ -451,8 +539,10 @@ export function startAppEvents(): void {
 }
 
 export async function refreshTaskCounts(): Promise<void> {
+  const session = messageSession;
   try {
     const tasks = await api.get<Array<{ conversationId: string; status: string }>>("/api/background-tasks?scope=all");
+    if (session !== messageSession) return;
     const runningTasksByConversation: Record<string, number> = {};
     for (const task of tasks) {
       if (conversationDeleted(task.conversationId) || !["queued", "starting", "running"].includes(task.status)) continue;
@@ -464,16 +554,18 @@ export async function refreshTaskCounts(): Promise<void> {
   }
 }
 
-export function initAuthGate(): void {
+export function initAuthGate(): () => void {
   const requireAuth = (event?: Event) => {
+    messageSession++; messageReads.clear();
     stopNotificationSession();
     stopAppEvents();
     void clearOfflineHistory({ logout: true, broadcast: !(event instanceof CustomEvent && event.detail?.remote) }).catch(() => {});
     appStore.set({ auth: "required", messages: {}, conversations: [] });
   };
-  onAuthRequired(requireAuth);
+  const unsubscribeAuth = onAuthRequired(requireAuth);
   window.addEventListener("llm-chat:offline-auth-required", requireAuth);
-  offlineStore.subscribe(() => { if (isOffline()) stopAppEvents(); });
+  const unsubscribeOffline = offlineStore.subscribe(() => { if (isOffline()) stopAppEvents(); });
+  return () => { unsubscribeAuth(); unsubscribeOffline(); window.removeEventListener("llm-chat:offline-auth-required", requireAuth); };
 }
 
 // All deletion signals converge here before routing or accepting another response.
@@ -512,6 +604,7 @@ window.addEventListener("llm-chat:conversation-manifest", (event) => {
   reconcileConversations(conversations, currentId, knownIds);
 });
 window.addEventListener("popstate", () => {
+  releaseInactiveMessages();
   const id = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
   if (id && conversationDeleted(id)) replaceRoute("/");
 });

@@ -15,9 +15,17 @@ describe("TaskManager", () => {
       command: "read line; printf 'got:%s' \"$line\"", mode: "pipe", expectedDurationMs: 50, hardTimeoutMs: 5_000
     });
     await until(() => manager.get(task.id)?.status === "running");
+    const listeners = (manager as unknown as { listeners: Map<string, Set<() => void>> }).listeners;
+    for (let i = 0; i < 30; i++) {
+      await manager.wait(task.id, 0, 1, 0);
+      expect(listeners.size).toBe(0);
+    }
+    const pending = manager.wait(task.id, 0, 120_000, 0);
     manager.write(task.id, "hello\n", "回答测试提示");
     await until(() => manager.get(task.id)?.status === "completed");
     const output = await manager.read(task.id, 0);
+    await pending;
+    expect(listeners.size).toBe(0);
     expect(output.text).toContain("got:hello");
     expect(output.cursor).toBeGreaterThan(0);
     expect(manager.eventsFor(task.id)).toEqual(expect.arrayContaining([
