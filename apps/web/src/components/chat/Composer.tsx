@@ -1,5 +1,5 @@
 import { offlineStore } from "../../lib/offline-history";
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { Popover } from "radix-ui";
 import {
@@ -20,10 +20,7 @@ import type {
   ConversationExecutionOverrides,
   ConversationRoleplayState,
   AgentDto,
-  GenerationDto,
-  MessageDto,
-  ReasoningEffort,
-  ToolCallDto
+  ReasoningEffort
 } from "@llm-chat/contracts";
 import { useBackLayer } from "../../lib/mobile-navigation";
 import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
@@ -35,7 +32,7 @@ import { useStore } from "../../lib/store";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
-import { EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson } from "./model";
+import { createComposerMessageSelector, type ComposerMessageState, EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson } from "./model";
 import { ChatTypographySettings } from "../ChatTypographySettings";
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
@@ -52,7 +49,7 @@ import { useHoldSend } from "./useHoldSend";
  * and model answer it, per-conversation overrides, image attachments, and the
  * approval gate and messages queued for subsequent turns.
  */
-export function Composer({
+export const Composer = memo(function Composer({
   actionsHost = null,
   mobile = false,
   conversation,
@@ -91,8 +88,9 @@ export function Composer({
   const agents = useStore(appStore, (state) => state.agents);
   const models = useStore(appStore, (state) => state.models);
   const connections = useStore(appStore, (state) => state.connections);
-  const messages = useStore(appStore, (state) =>
-    conversation ? state.messages[conversation.id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES
+  const selectMessages = useMemo(() => createComposerMessageSelector(isGenerationActive), [conversation?.id]);
+  const { messageCount, active, pendingApprovals } = useStore(appStore, (state) =>
+    selectMessages(conversation ? state.messages[conversation.id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES)
   );
 
   const [initialDraft] = useState(() => readComposerDraft(conversation?.id ?? null));
@@ -181,22 +179,10 @@ export function Composer({
     }
   }, [isNew, effectiveAgent?.id, greetingIndex, greetings.length]);
 
-  const active = messages
-    .flatMap((message) => message.generations.map((generation) => ({ message, generation })))
-    .find(({ generation }) => isGenerationActive(generation.status));
-  const generating = !offline && Boolean(active && active.generation.status !== "waiting-approval");
+  const generating = !offline && Boolean(active && active.status !== "waiting-approval");
   useEffect(() => {
     if (conversation && !active) { void reloadQueue().catch(toastError); }
-  }, [conversation?.id, active?.generation.id, reloadQueue]);
-  const pendingApprovals = messages
-    .flatMap((message) =>
-      message.generations.flatMap((generation) =>
-        generation.toolCalls
-          .filter((call) => call.approvalState === "pending")
-          .map((call) => ({ message, generation, call }))
-      )
-    )
-    .sort((left, right) => left.call.index - right.call.index);
+  }, [conversation?.id, active?.id, reloadQueue]);
 
   currentDraft.current = text;
   useEffect(() => {
@@ -217,7 +203,7 @@ export function Composer({
         for (const line of result.output.slice(-3)) toast("info", line);
       })
       .catch(toastError);
-  }, [active?.generation.id, conversation?.id]);
+  }, [active?.id, conversation?.id]);
 
   const persistDraft = (value: string) => {
     if (conversation) scheduleServerDraft(conversation.id, value);
@@ -283,7 +269,7 @@ export function Composer({
   /** Switching mid-conversation drops every override, so it needs confirming. */
   const chooseAgent = (agentId: string) => {
     if (agentId === effectiveAgentId) return;
-    if (conversation && messages.length) setPendingAgent(agentId);
+    if (conversation && messageCount) setPendingAgent(agentId);
     else void applyAgent(agentId);
   };
 
@@ -317,8 +303,8 @@ export function Composer({
       toast("error", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
       return;
     }
-    onBeforeSend();
     setSending(true);
+    onBeforeSend();
     try {
       if (conversation) await flushServerDraft(conversation.id);
       if (conversation && roleplayAgent && roleplayState && quickReplies.some((reply) =>
@@ -480,7 +466,7 @@ export function Composer({
                 }}
               />
 
-              {generating && active ? <CancelGenerationButton conversationId={conversation!.id} generationId={active.generation.id} className="composer-stop-button" /> : null}
+              {generating && active ? <CancelGenerationButton conversationId={conversation!.id} generationId={active.id} className="composer-stop-button" /> : null}
               </div>
 
               <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={uploading || sending} />
@@ -627,7 +613,7 @@ export function Composer({
       ) : null}
     </div>
   );
-}
+});
 
 /**
  * Replaces the input while a tool call waits for approval — the reader cannot
@@ -640,7 +626,7 @@ function ApprovalCard({
   onInspect
 }: {
   conversationId: string;
-  item: { message: MessageDto; generation: GenerationDto; call: ToolCallDto };
+  item: ComposerMessageState["pendingApprovals"][number];
   count: number;
   onInspect: (target: InspectionTarget) => void;
 }) {
@@ -655,7 +641,7 @@ function ApprovalCard({
     try {
       const result = await endpoints.resolveToolCall(conversationId, item.call.id, approved, approved ? undefined : reason.trim() || undefined);
       await loadMessages(conversationId);
-      if (result.resumed) restartGenerationTracking(conversationId, item.message.id, result.generationId);
+      if (result.resumed) restartGenerationTracking(conversationId, item.messageId, result.generationId);
       setDenying(false);
       setReason("");
     } catch (cause) {
@@ -679,8 +665,8 @@ function ApprovalCard({
           onClick={() =>
             onInspect({
               kind: "tool",
-              messageId: item.message.id,
-              generationId: item.generation.id,
+              messageId: item.messageId,
+              generationId: item.generationId,
               toolCallId: item.call.id
             })
           }

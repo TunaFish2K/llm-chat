@@ -1,5 +1,5 @@
 import { useBackLayer } from "../../lib/mobile-navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, RefreshCw, Search, Settings2, X } from "lucide-react";
 import type { ConnectionBalanceDto, ConnectionDto, ModelDto } from "@llm-chat/contracts";
@@ -38,23 +38,26 @@ export function ModelPicker({
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const touchLayout = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   const effective = models.find((model) => model.id === effectiveModelId);
-  const eligible = models.filter(
-    (model) => model.enabled && connections.some((connection) => connection.id === model.connectionId)
-  );
-  const normalized = query.trim().toLocaleLowerCase();
-  const groups = connections
-    .map((connection) => ({
-      connection,
-      models: eligible.filter(
-        (model) =>
-          model.connectionId === connection.id &&
-          [model.displayName, model.modelKey, connection.name, connection.protocol]
-            .join(" ")
-            .toLocaleLowerCase()
-            .includes(normalized)
-      )
-    }))
-    .filter((group) => group.models.length);
+  const groups = useMemo(() => {
+    if (!open) return [];
+    const eligible = models.filter(
+      (model) => model.enabled && connections.some((connection) => connection.id === model.connectionId)
+    );
+    const normalized = query.trim().toLocaleLowerCase();
+    return connections
+      .map((connection) => ({
+        connection,
+        models: eligible.filter(
+          (model) =>
+            model.connectionId === connection.id &&
+            [model.displayName, model.modelKey, connection.name, connection.protocol]
+              .join(" ")
+              .toLocaleLowerCase()
+              .includes(normalized)
+        )
+      }))
+      .filter((group) => group.models.length);
+  }, [open, models, connections, query]);
 
   useEffect(() => {
     if (!open) return;
@@ -81,7 +84,7 @@ export function ModelPicker({
           <ModelBrandIcon model={effective} connection={connections.find((item) => item.id === effective?.connectionId)} />
         </button>
       </Popover.Trigger>
-      <Popover.Portal>
+      {open ? <Popover.Portal>
         <Popover.Content
           className="picker-popover"
           side="top"
@@ -176,7 +179,7 @@ export function ModelPicker({
             管理连接与模型
           </button>
         </Popover.Content>
-      </Popover.Portal>
+      </Popover.Portal> : null}
     </Popover.Root>
   );
 }

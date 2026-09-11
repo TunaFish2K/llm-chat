@@ -1,6 +1,6 @@
 import { isOffline, offlineStore } from "../lib/offline-history";
 import { browseOfflineBranch } from "../lib/app-state";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown } from "lucide-react";
 import type { AgentDto, ConversationRoleplayState, ForkConversationInput, MessageDto } from "@llm-chat/contracts";
 import { readComposerDraft } from "../lib/composer-drafts";
@@ -21,9 +21,9 @@ import { EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { AgentAvatar } from "../components/chat/atoms";
 import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
-import { BranchSwitchers, MessageItem, VersionSwitcher } from "../components/chat/MessageStream";
+import { BranchSwitchers, MessageItem, VersionSwitcher, type StreamCallbacks } from "../components/chat/MessageStream";
 import { conversationBranchGroups, greetingBranchContext, resolveConversationRoot } from "../lib/conversation-tree";
-import { greetingOptions, projectImageJobs, userReplyTargets } from "../components/chat/model";
+import { greetingOptions, createTranscriptProjection, EMPTY_MESSAGES, userReplyTargets } from "../components/chat/model";
 import { EditForkDialog } from "../components/chat/dialogs";
 import { RoleplayConversationDialog } from "../components/chat/RoleplayConversationDialog";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
@@ -33,6 +33,9 @@ const TrajectoryView = lazy(() => import("./TrajectoryView").then((module) => ({
 const ConversationTasksView = lazy(() =>
   import("./TasksView").then((module) => ({ default: module.ConversationTasksView }))
 );
+
+const noop = () => undefined;
+const EMPTY_BRANCH_GROUPS: ReturnType<typeof conversationBranchGroups> = [];
 
 interface ChatViewProps {
   conversationId: string | null;
@@ -60,10 +63,10 @@ export function ChatView({
   mobile = false,
   sidebarCollapsed = false,
   inspectorOpen = false,
-  onToggleSidebar = () => undefined,
-  onToggleInspector = () => undefined,
-  onInspect = () => undefined,
-  onViewChange = () => undefined
+  onToggleSidebar = noop,
+  onToggleInspector = noop,
+  onInspect = noop,
+  onViewChange = noop
 }: ChatViewProps) {
   const offline = useStore(offlineStore, (state) => state.offline);
   const conversation = useStore(
@@ -81,7 +84,8 @@ export function ChatView({
   const [retrying, setRetrying] = useState(false);
   const retryPending = useRef(false);
   const retryTargets = useMemo(() => userReplyTargets(messages ?? []), [messages]);
-  const transcript = useMemo(() => projectImageJobs(messages ?? []), [messages]);
+  const projectTranscript = useMemo(createTranscriptProjection, []);
+  const transcript = useMemo(() => projectTranscript(messages ?? EMPTY_MESSAGES), [messages, projectTranscript]);
   const [compacting, setCompacting] = useState(false);
   const [actionsHost, setActionsHost] = useState<HTMLDivElement | null>(null);
   const [newGreetingIndex, setNewGreetingIndex] = useState(() => readComposerDraft(conversationId ?? null)?.greetingIndex ?? 0);
@@ -99,7 +103,7 @@ export function ChatView({
     [conversation, conversations]
   );
 
-  const retryAnswer = async (assistantMessageId: string) => {
+  const retryAnswer = useCallback(async (assistantMessageId: string) => {
     if (!conversationId || busy || branching || retryPending.current) return;
     retryPending.current = true;
     setRetrying(true);
@@ -113,7 +117,7 @@ export function ChatView({
       retryPending.current = false;
       setRetrying(false);
     }
-  };
+  }, [conversationId, busy, branching]);
 
   const readMessages = (id: string) => {
     setLoadError(null);
@@ -161,7 +165,7 @@ export function ChatView({
   }, [conversation?.id, conversation?.agentId, conversations]);
 
   /** Forking always lands the reader on the new branch; the source is untouched. */
-  const forkConversationFrom = async (sourceConversationId: string, input: ForkConversationInput): Promise<boolean> => {
+  const forkConversationFrom = useCallback(async (sourceConversationId: string, input: ForkConversationInput): Promise<boolean> => {
     const source = conversations.find((item) => item.id === sourceConversationId);
     if (!source || branching || busy) return false;
     setBranching(true);
@@ -181,12 +185,12 @@ export function ChatView({
     } finally {
       setBranching(false);
     }
-  };
+  }, [conversations, branching, busy]);
 
-  const forkConversation = (input: ForkConversationInput): Promise<boolean> =>
-    conversation ? forkConversationFrom(conversation.id, input) : Promise.resolve(false);
+  const forkConversation = useCallback((input: ForkConversationInput): Promise<boolean> =>
+    conversation ? forkConversationFrom(conversation.id, input) : Promise.resolve(false), [conversation, forkConversationFrom]);
 
-  const switchBranch = async (branchId: string) => {
+  const switchBranch = useCallback(async (branchId: string) => {
     if (!conversation) return;
     if (isOffline()) { browseOfflineBranch(branchId); navigate(routes.chat(branchId)); return; }
     try {
@@ -196,9 +200,9 @@ export function ChatView({
     } catch (error) {
       toastError(error);
     }
-  };
+  }, [conversation]);
 
-  const switchGreeting = (message: MessageDto, greetingIndex: number) => {
+  const switchGreeting = useCallback((message: MessageDto, greetingIndex: number) => {
     if (!conversation) return;
     const context = greetingBranchContext(conversation, message, conversations);
     const existing = context?.routesByGreetingIndex.get(greetingIndex);
@@ -211,9 +215,9 @@ export function ChatView({
       messageId: context?.sourceMessageId ?? message.id,
       greetingIndex
     });
-  };
+  }, [conversation, conversations, switchBranch, forkConversationFrom]);
 
-  const compactContext = async () => {
+  const compactContext = useCallback(async () => {
     if (!conversation || compacting || busy) return;
     setCompacting(true);
     try {
@@ -225,9 +229,25 @@ export function ChatView({
     } finally {
       setCompacting(false);
     }
-  };
+  }, [conversation, compacting, busy]);
 
-  const continueFrom = (messageId: string) => void forkConversation({ mode: "continue", throughMessageId: messageId });
+  const continueFrom = useCallback((messageId: string) => void forkConversation({ mode: "continue", throughMessageId: messageId }), [forkConversation]);
+  const streamCallbacks = useMemo<StreamCallbacks>(() => ({
+    onInspect, onEdit: setEditingMessage, onRetry: (id) => void retryAnswer(id),
+    onContinue: continueFrom, onGreetingFork: switchGreeting, onBranchChange: (id) => void switchBranch(id),
+    branching: offline || branching || busy || retrying
+  }), [onInspect, retryAnswer, continueFrom, switchGreeting, switchBranch, offline, branching, busy, retrying]);
+  const branchesByOrdinal = useMemo(() => {
+    const result = new Map<number | null, typeof branchGroups>();
+    for (const group of branchGroups) {
+      const groups = result.get(group.messageOrdinal) ?? [];
+      groups.push(group); result.set(group.messageOrdinal, groups);
+    }
+    return result;
+  }, [branchGroups]);
+  const beforeSend = useCallback(() => { scroller.reset(); scroller.scheduleFollow(); }, [scroller.reset, scroller.scheduleFollow]);
+  const updateRoleplayState = useCallback((state: ConversationRoleplayState) => setRoleplaySession((current) => current ? { ...current, state } : current), []);
+  const openRoleplay = useCallback(() => setRoleplayOpen(true), []);
 
   const background = roleplaySession?.agent.roleplay.assets.find((asset) =>
     asset.id === roleplaySession.state.backgroundAssetId && asset.mimeType?.startsWith("image/")
@@ -290,16 +310,8 @@ export function ChatView({
                       message={message}
                       imageJobs={transcript.imageJobs}
                       retryTargetId={retryTargets.get(message.id)}
-                      branchGroups={branchGroups.filter((group) => group.messageOrdinal === message.ordinal)}
-                      callbacks={{
-                        onInspect,
-                        onEdit: setEditingMessage,
-                        onRetry: (id) => void retryAnswer(id),
-                        onContinue: continueFrom,
-                        onGreetingFork: switchGreeting,
-                        onBranchChange: (id) => void switchBranch(id),
-                        branching: offline || branching || busy || retrying
-                      }}
+                      branchGroups={branchesByOrdinal.get(message.ordinal) ?? EMPTY_BRANCH_GROUPS}
+                      callbacks={streamCallbacks}
                     />
                   ))
                 )}
@@ -323,7 +335,7 @@ export function ChatView({
         mobile={mobile}
         conversation={conversation}
         onInspect={onInspect}
-        onBeforeSend={() => scroller.toBottom()}
+        onBeforeSend={beforeSend}
         greetingIndex={newGreetingIndex}
         onGreetingIndexChange={setNewGreetingIndex}
         onPreviewAgentChange={setPreviewAgentId}
@@ -332,12 +344,12 @@ export function ChatView({
           userMessageCount >= 3 &&
           (conversation?.contextPolicy === "auto" || conversation?.contextPolicy === "summarize")
         }
-        onCompact={() => void compactContext()}
+        onCompact={compactContext}
         roleplayAvailable={Boolean(conversation && roleplaySession)}
         roleplayAgent={roleplaySession?.agent ?? null}
         roleplayState={roleplaySession?.state ?? null}
-        onRoleplayStateChange={(state) => setRoleplaySession((current) => current ? { ...current, state } : current)}
-        onOpenRoleplay={() => setRoleplayOpen(true)}
+        onRoleplayStateChange={updateRoleplayState}
+        onOpenRoleplay={openRoleplay}
       />
 
       {expression ? <img className="roleplay-expression" src={expression.uri} alt="" aria-hidden="true" /> : null}

@@ -174,3 +174,17 @@ Fresh-worktree verification passed 112 of 112 web tests in 65.18 seconds, and al
 - No full browser automation or screenshot/layout measurement was available. Responsive composer and Markdown behavior were verified in jsdom and by integration structure, not by pixel-level desktop/mobile rendering.
 - Production background task execution and production plugin installation were not repeated through live APIs; their pipe/PTY/plugin execution paths were covered by isolated node tests using disposable fixtures.
 - Browser observer and notification behavior is represented by shared test doubles; real browser implementations remain outside jsdom coverage.
+
+## Mobile streaming responsiveness — 2026-09-12
+
+The client now publishes the first streamed block immediately and batches subsequent blocks in 50 ms windows. Status, approval, error, and completion events include pending text immediately. Message text no longer rerenders the app shell, composer, or unchanged historical messages. Scroll measurements run in a shared animation-frame callback per scroll area.
+
+In a local production-build comparison with a 390 × 844 mobile Chromium viewport and 4× CPU slowdown, 120 cumulative text updates at 10 ms intervals produced 241 React commits before the change and 27 afterward (89% fewer). This used one conversation and one model, with offline caching disabled to isolate rendering. It does not measure a physical Android phone or provider latency.
+
+Validation passed:
+
+- Type checking, production build, and the web test budget: 273 tests.
+- 17 mobile Chromium browser tests covering reconnects, queued sends and cancellation, draft restoration, touch scrolling, nested reasoning scrolling, typography, retry, and rich previews.
+- The new `e2e/streaming-performance.spec.ts` covers both 1 and 300 configured models. It requires at least 70% fewer commits than the previous two-commits-per-block baseline and input-to-next-frame latency below 100 ms while streaming. It also checks that the complete answer and the next message draft survive completion.
+
+Run the performance regression with `pnpm exec playwright test --project=mobile-chromium e2e/streaming-performance.spec.ts`. Per-run measurements are attached to the test results as `streaming-metrics.json` for reporters that retain attachments.

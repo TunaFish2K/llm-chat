@@ -4,6 +4,8 @@ import { makeGeneration, makeMessage } from "../../../test/fixtures";
 import { imageRetryMessages, makeImageJob } from "../../../test/image-tool-fixtures";
 import {
   activeGeneration,
+  createComposerMessageSelector,
+  createTranscriptProjection,
   userReplyTargets,
   answerText,
   buildTimeline,
@@ -32,6 +34,31 @@ function toolCall(id: string, stepIndex: number, index: number): ToolCallDto {
 }
 
 describe("chat model helpers", () => {
+  it("preserves composer state during text updates but reflects approval and status changes", () => {
+    const select = createComposerMessageSelector((status) => ["running", "waiting-approval"].includes(status));
+    const generation = makeGeneration({ status: "running" });
+    const message = makeMessage({ generations: [generation] });
+    const first = select([message]);
+    expect(select([{ ...message, generations: [{ ...generation, blocks: [{ id: "b", index: 0, stepIndex: 0, type: "text", content: "delta", complete: false }] }] }])).toBe(first);
+    const call = { ...toolCall("call", 0, 0), approvalState: "pending" as const };
+    const pending = select([{ ...message, generations: [{ ...generation, status: "waiting-approval", toolCalls: [call] }] }]);
+    expect(pending).not.toBe(first);
+    expect(pending.active?.status).toBe("waiting-approval");
+    expect(pending.pendingApprovals[0]).toMatchObject({ messageId: message.id, generationId: generation.id, call });
+    expect(select([{ ...message, generations: [{ ...generation, status: "completed" }] }]).active).toBeNull();
+  });
+
+  it("reuses image projections for text changes but updates them for new image results", () => {
+    const project = createTranscriptProjection();
+    const messages = imageRetryMessages();
+    const first = project(messages);
+    expect(project([...messages]).imageJobs).toBe(first.imageJobs);
+    const updated = messages.map((message) => message.imageGenerationJob ? {
+      ...message, imageGenerationJob: { ...message.imageGenerationJob, status: "cancelled" as const }
+    } : message);
+    expect(project(updated).imageJobs).not.toBe(first.imageJobs);
+  });
+
   it("interleaves blocks and tools by step with blocks first on a tie", () => {
     const generation = makeGeneration({
       blocks: [

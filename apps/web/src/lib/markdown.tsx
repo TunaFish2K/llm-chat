@@ -152,6 +152,18 @@ const markdownComponents = {
   img: SafeImage
 } as unknown as Components;
 
+const inlineComponents: Components = {
+  ...markdownComponents,
+  p: "span", div: "span", h1: "span", h2: "span", h3: "span", h4: "span", h5: "span", h6: "span",
+  pre: "span", blockquote: "span", ul: "span", ol: "span", li: "span", br: () => <span> </span>,
+  img: ({ alt }) => <span>{alt}</span>, table: () => null, hr: () => null,
+  details: "span", summary: "span"
+};
+const remarkPlugins = [remarkGfm, remarkMath];
+const plugins = { cjk };
+const blockControls = { code: true, mermaid: false, table: false };
+const inlineControls = { code: false, mermaid: false, table: false };
+
 /** Converts common Character Card wrappers into block elements before HTML parsing. */
 export function normalizeRichHtmlTags(value: string): string {
   const transform = (source: string) => source
@@ -182,29 +194,24 @@ const richHtmlPlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
 ];
 
 /** Streaming-safe GFM, math, highlighted code, and sanitized model-authored HTML. */
-function MarkdownChunk({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
+const MarkdownChunk = memo(function MarkdownChunk({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
   const content = useMemo(() => normalizeRichHtmlTags(normalizeMarkdown(text)), [text]);
   return (
     <div className={`markdown${inline ? " markdown-inline" : ""}`} data-streaming={streaming || undefined}>
       <Streamdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={richHtmlPlugins}
-        plugins={{ cjk }}
-        controls={{ code: !inline, mermaid: false, table: false }}
+        plugins={plugins}
+        controls={inline ? inlineControls : blockControls}
         isAnimating={streaming}
         normalizeHtmlIndentation
-        components={inline ? { ...markdownComponents,
-          p: "span", div: "span", h1: "span", h2: "span", h3: "span", h4: "span", h5: "span", h6: "span",
-          pre: "span", blockquote: "span", ul: "span", ol: "span", li: "span", br: () => <span> </span>,
-          img: ({ alt }) => <span>{alt}</span>, table: () => null, hr: () => null,
-          details: "span", summary: "span"
-        } : markdownComponents}
+        components={inline ? inlineComponents : markdownComponents}
       >
         {content}
       </Streamdown>
     </div>
   );
-}
+});
 
 export const Markdown = memo(function Markdown({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
   const parts = useMemo(() => inline ? [{ start: 0, source: text, kind: "markdown" as const }] : splitRichContent(text, streaming), [text, streaming, inline]);

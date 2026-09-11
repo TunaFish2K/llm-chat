@@ -8,6 +8,8 @@ import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
 import { imageRetryMessages, makeImageJob } from "../../test/image-tool-fixtures";
 import { offlineStore } from "../lib/offline-history";
+import * as modelPicker from "../components/chat/ModelPicker";
+import * as formatting from "../lib/format";
 import {
   makeAgent,
   makeConnection,
@@ -54,6 +56,32 @@ beforeEach(() => {
 });
 
 describe("ChatView", () => {
+  it("does not rerender the composer or unchanged historical messages on text updates", async () => {
+    const picker = vi.spyOn(modelPicker, "ModelPicker");
+    const formatTime = vi.spyOn(formatting, "formatTime");
+    const history = makeMessage({ id: "history", ordinal: 1, text: "已有回答", createdAt: 100 });
+    const live = makeMessage({ id: "live", ordinal: 2, createdAt: 200, generations: [makeGeneration({ status: "running", blocks: [
+      { id: "text", stepIndex: 0, index: 0, type: "text", content: "开始", complete: false }
+    ] })] });
+    seedStore([history, live]);
+    vi.stubGlobal("fetch", messageFetch([history, live]));
+    render(<ChatView conversationId="conv-1" />);
+    await waitFor(() => expect(screen.getByText("开始")).toBeVisible());
+    // Let the initial message read and the queue read settle before measuring updates.
+    await act(async () => { await Promise.resolve(); });
+    picker.mockClear(); formatTime.mockClear();
+    for (let index = 0; index < 10; index++) act(() => {
+      appStore.set((state) => ({ messages: { ...state.messages, "conv-1": state.messages["conv-1"]!.map((message) => message.id !== "live" ? message : {
+        ...message, generations: message.generations.map((generation) => ({ ...generation, blocks: [{ ...generation.blocks[0]!, content: `更新 ${index}` }] }))
+      }) } }));
+    });
+    expect(screen.getByText("更新 9")).toBeVisible();
+    expect(picker).not.toHaveBeenCalled();
+    expect(formatTime.mock.calls.some(([timestamp]) => timestamp === 100)).toBe(false);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "继续输入" } });
+    expect(screen.getByLabelText("输入消息")).toHaveValue("继续输入");
+  });
+
   it("projects image retries into the answer and hides inactive-version jobs during offline version selection", async () => {
     const messages = imageRetryMessages();
     const reply = messages[1]!;
