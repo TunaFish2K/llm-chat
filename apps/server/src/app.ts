@@ -53,6 +53,7 @@ import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./
 import { GenerationRunner } from "./generations";
 import { TaskManager } from "./background-tasks";
 import { EventHub } from "./events";
+import { SseWriter } from "./sse-writer";
 import { closeMcpManager, mcpManager } from "./mcp";
 import { PluginManager } from "./plugins";
 import { SkillManager } from "./skills";
@@ -923,6 +924,24 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     codex.detach(request.params.id);
     return reply.code(204).send();
   });
+  const streams = new Set<SseWriter>();
+  const createEventStream = (reply: FastifyReply): SseWriter => {
+    const stream = new SseWriter(reply.raw, (reason) => {
+      streams.delete(stream);
+      app.log.info({ reason, activeSse: streams.size }, "SSE connection closed");
+    });
+    streams.add(stream);
+    return stream;
+  };
+  const memoryTimer = setInterval(() => {
+    app.log.info({ ...process.memoryUsage(), activeGenerations: runner.activeCount, activeSse: streams.size,
+      sseBufferedBytes: [...streams].reduce((sum, stream) => sum + stream.bufferedBytes, 0) }, "Runtime memory");
+  }, 60_000);
+  memoryTimer.unref();
+  app.addHook("preClose", async () => {
+    clearInterval(memoryTimer);
+    for (const stream of streams) stream.close();
+  });
   app.get("/api/events", async (request, reply) => {
     reply.hijack();
     reply.raw.writeHead(200, {
@@ -933,22 +952,20 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     });
     // Flush an initial body frame so EventSource reaches `open` immediately
     // even when the event hub has nothing to replay yet.
-    reply.raw.write(": connected\n\n");
+    const stream = createEventStream(reply);
+    stream.send(": connected\n\n");
     // No SSE id: the snapshot must not replace the replay cursor of other app events.
     // The synchronous snapshot and subscription have no intervening state changes.
-    reply.raw.write(`event: generation-snapshot\ndata: ${JSON.stringify({
+    stream.send(`event: generation-snapshot\ndata: ${JSON.stringify({
       type: "generation-snapshot", id: eventHub.cursor, sourceId: offlineSourceId(store), active: activeGenerationNotifications(store)
     })}\n\n`);
-    const lastId = Number(request.headers["last-event-id"] ?? 0);
-    const send = (event: { id: number; type: string }) => {
-      if (reply.raw.destroyed || reply.raw.writableEnded) return;
-      reply.raw.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-    };
-    const unsubscribe = eventHub.subscribe(Number.isFinite(lastId) ? lastId : 0, send);
-    const heartbeat = setInterval(() => {
-      if (!reply.raw.destroyed && !reply.raw.writableEnded) reply.raw.write(": heartbeat\n\n");
-    }, 15_000);
-    request.raw.on("close", () => { clearInterval(heartbeat); unsubscribe(); });
+    const header = request.headers["last-event-id"];
+    const lastId = header === undefined ? NaN : Number(header);
+    const replay = eventHub.canReplay(lastId);
+    if (!replay) stream.send(`id: ${eventHub.cursor}\nevent: resync\ndata: ${JSON.stringify({ type: "resync", id: eventHub.cursor })}\n\n`);
+    stream.addCleanup(eventHub.subscribe(replay ? lastId : eventHub.cursor, (event) => {
+      stream.send(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+    }));
   });
   app.patch<{ Params: { id: string } }>("/api/messages/:id/active-generation", async (request) => {
     const value = z.object({ generationId: z.string().uuid() }).parse(request.body);
@@ -972,9 +989,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       connection: "keep-alive",
       "x-accel-buffering": "no"
     });
+    const stream = createEventStream(reply);
     const send = (event: GenerationEvent) => {
-      if (reply.raw.destroyed) return;
-      reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      stream.send(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     };
     const buffered: GenerationEvent[] = [];
     let snapshotSent = false;
@@ -984,24 +1001,26 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
         return;
       }
       send(event);
-      if (event.type === "status" && isStreamEnd(event.status)) reply.raw.end();
+      if (event.type === "status" && isStreamEnd(event.status)) stream.end();
     });
+    stream.addCleanup(unsubscribe);
     const generation = store.getGeneration(request.params.id)!;
+    // subscribe synchronously replays the latest in-memory blocks. Fold them
+    // into the snapshot so a large reply is not queued twice on reconnect.
+    for (const event of buffered) if (event.type === "block-delta") {
+      const index = generation.blocks.findIndex((block) => block.index === event.block.index && block.stepIndex === event.block.stepIndex);
+      if (index < 0) generation.blocks.push(event.block); else generation.blocks[index] = event.block;
+    }
+    generation.blocks.sort((a, b) => a.index - b.index);
     send({ type: "snapshot", generation });
     snapshotSent = true;
-    for (const event of buffered) send(event);
+    for (const event of buffered) if (event.type !== "block-delta") send(event);
+    buffered.length = 0;
     if (isStreamEnd(generation.status)) {
-      unsubscribe();
-      reply.raw.end();
+      stream.end();
       return;
     }
-    const heartbeat = setInterval(() => {
-      if (!reply.raw.destroyed) reply.raw.write(": heartbeat\n\n");
-    }, 15_000);
-    request.raw.on("close", () => {
-      clearInterval(heartbeat);
-      unsubscribe();
-    });
+
   });
   app.post<{ Params: { id: string } }>("/api/generations/:id/cancel", async (request) => {
     const generation = store.getGeneration(request.params.id);

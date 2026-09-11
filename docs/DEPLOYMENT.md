@@ -267,6 +267,17 @@ Firefox。非本机 HTTP 下普通网页可用，但 Service Worker、PWA 安装
 
 ## 故障诊断
 
+启用日志时，服务每 60 秒输出一条 `Runtime memory`，记录 `rss`、`heapTotal`、`heapUsed`、`external`、
+`arrayBuffers`（单位为字节）、`activeGenerations`、`activeSse` 和 `sseBufferedBytes`。
+结合负载消退后的多次采样判断是否持续增长；单次 RSS 上升不能证明泄漏。
+
+`SSE connection closed` 记录断开原因：`client-disconnected` 为客户端断开，`generation-ended` 为生成结束，
+`shutdown` 为服务关闭，`write-error` 为写入失败。`queue-overflow` 表示待发送队列超过 2 MiB，
+`drain-timeout` 表示写缓冲连续 15 秒未排空。单个大快照允许直接写入，后续积压仍受队列上限约束；
+客户端重连后重新读取快照。排查断连时，同时核对代理或隧道日志与进程退出记录。
+
+浏览器历史仍保存在原 IndexedDB 数据库。升级后按记录补齐大小和图片索引，不需要清除历史或迁移数据库版本。
+
 | 现象 | 检查和处理 |
 | --- | --- |
 | 启动报告 Web build artifact missing | 在当前不可变发布目录执行 `pnpm build`，确认 `apps/web/dist/index.html` 存在，并确认管理器使用的是该发布目录。 |

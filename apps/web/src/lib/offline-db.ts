@@ -1,4 +1,5 @@
 import type { OfflineConversationDto, OfflineManifestDto } from "@llm-chat/contracts";
+import { historyImageUrls } from "./offline-assets";
 
 export const OFFLINE_IMAGES_PREFIX = "llm-chat-history-images-";
 export interface OfflineControl { epoch: string; enabled: boolean; authorized: boolean; sourceId: string | null }
@@ -23,13 +24,63 @@ export async function offlineRead<T>(store: "meta" | "conversations", key: IDBVa
     request.onerror = () => reject(request.error);
   });
 }
-export async function offlineConversations(): Promise<OfflineConversationDto[]> {
+/** A fresh transaction per item permits async processing without keeping the
+ * entire history alive or relying on an IndexedDB transaction across awaits. */
+export async function* iterateOfflineConversations(): AsyncGenerator<OfflineConversationDto> {
   const db = await openOfflineDb();
-  return new Promise((resolve, reject) => {
-    const request = db.transaction("conversations").objectStore("conversations").getAll();
-    request.onsuccess = () => resolve(request.result as OfflineConversationDto[]);
-    request.onerror = () => reject(request.error);
-  });
+  let after: IDBValidKey | undefined;
+  while (true) {
+    const item = await new Promise<{ key: IDBValidKey; value: OfflineConversationDto } | undefined>((resolve, reject) => {
+      const request = db.transaction("conversations").objectStore("conversations")
+        .openCursor(after === undefined ? undefined : IDBKeyRange.lowerBound(after, true));
+      request.onsuccess = () => resolve(request.result ? { key: request.result.key, value: request.result.value as OfflineConversationDto } : undefined);
+      request.onerror = () => reject(request.error);
+    });
+    if (!item) return;
+    after = item.key;
+    yield item.value;
+  }
+}
+
+export interface OfflineConversationIndex {
+  id: string; sourceId: string; revision: number; bytes: number; images: string[];
+}
+function conversationIndex(snapshot: OfflineConversationDto): OfflineConversationIndex {
+  return { id: snapshot.conversation.id, sourceId: snapshot.sourceId, revision: snapshot.revision,
+    bytes: new Blob([JSON.stringify(snapshot)]).size, images: historyImageUrls(snapshot.messages) };
+}
+export function putOfflineConversation(tx: IDBTransaction, snapshot: OfflineConversationDto): void {
+  tx.objectStore("conversations").put(snapshot);
+  tx.objectStore("meta").put(conversationIndex(snapshot), `conversation:${snapshot.conversation.id}`);
+}
+export function deleteOfflineConversation(tx: IDBTransaction, id: string): void {
+  tx.objectStore("conversations").delete(id);
+  tx.objectStore("meta").delete(`conversation:${id}`);
+}
+
+/** Old records gain metadata lazily; only one full snapshot is held at a time. */
+export async function offlineConversationIndex(signal?: AbortSignal): Promise<OfflineConversationIndex[]> {
+  const control = await offlineRead<OfflineControl>("meta", "control");
+  const result: OfflineConversationIndex[] = [];
+  for await (const snapshot of iterateOfflineConversations()) {
+    signal?.throwIfAborted();
+    let index = await offlineRead<OfflineConversationIndex>("meta", `conversation:${snapshot.conversation.id}`);
+    if (!index || index.sourceId !== snapshot.sourceId || index.revision !== snapshot.revision || index.revision === -1) {
+      index = conversationIndex(snapshot);
+      if (control) await offlineWrite(control.epoch, (tx) => {
+        // Do not let a migration racing a newer write overwrite its metadata.
+        const current = tx.objectStore("conversations").get(index!.id);
+        current.onsuccess = () => {
+          const value = current.result as OfflineConversationDto | undefined;
+          if (value?.sourceId === snapshot.sourceId && value.revision === snapshot.revision && snapshot.revision !== -1) {
+            tx.objectStore("meta").put(index, `conversation:${index!.id}`);
+          }
+        };
+      });
+    }
+    result.push(index);
+  }
+  return result;
 }
 export async function resetOfflineDb(control: OfflineControl): Promise<void> {
   const db = await openOfflineDb();

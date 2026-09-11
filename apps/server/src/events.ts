@@ -11,6 +11,10 @@ export class EventHub {
 
   get cursor(): number { return this.nextId - 1; }
 
+  canReplay(afterId: number): boolean {
+    return Number.isSafeInteger(afterId) && afterId >= (this.history[0]?.id ?? this.nextId) - 1 && afterId <= this.cursor;
+  }
+
   emit(event: AppEventInput): AppEvent {
     const stored = { ...event, id: this.nextId++ } as AppEvent;
     this.history.push(stored);

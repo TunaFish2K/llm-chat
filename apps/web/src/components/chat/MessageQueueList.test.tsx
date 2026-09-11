@@ -4,7 +4,7 @@ import type { QueuedMessageDto, MessageQueueStateDto } from "@llm-chat/contracts
 import { endpoints } from "../../lib/api";
 import { useMessageQueue } from "./MessageQueueList";
 
-vi.mock("../../lib/app-state", () => ({ loadMessages: vi.fn(async () => {}), toastError: vi.fn() }));
+vi.mock("../../lib/app-state", () => ({ refreshMessages: vi.fn(), toastError: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
 
 it.each(["focus", "pageshow", "llm-chat:queue-reconnect"])("clears sent items after a missed event on %s", async (event) => {

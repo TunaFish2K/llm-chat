@@ -1,9 +1,10 @@
+import { RefreshScheduler } from "../../lib/refresh-scheduler";
 import { conversationDeleted } from "../../lib/conversation-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Trash2, X } from "lucide-react";
 import type { QueuedMessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
-import { loadMessages, toastError } from "../../lib/app-state";
+import { refreshMessages, toastError } from "../../lib/app-state";
 
 export function useMessageQueue(conversationId?: string) {
   const [items, setItems] = useState<QueuedMessageDto[]>([]);
@@ -21,10 +22,11 @@ export function useMessageQueue(conversationId?: string) {
   useEffect(() => {
     setItems([]); setPaused(false);
     void reload().catch(toastError);
+    const refreshes = new RefreshScheduler(toastError);
     const update = (event: Event) => {
       if (event instanceof CustomEvent && event.detail.conversationId !== conversationId) return;
-      void reload().catch(toastError);
-      if (conversationId) void loadMessages(conversationId).catch(toastError);
+      refreshes.schedule("queue", reload);
+      if (conversationId) refreshMessages(conversationId);
     };
     window.addEventListener("llm-chat:message-queue", update);
     window.addEventListener("llm-chat:queue-reconnect", update);
@@ -32,7 +34,7 @@ export function useMessageQueue(conversationId?: string) {
     window.addEventListener("focus", resume);
     window.addEventListener("pageshow", resume);
     document.addEventListener("visibilitychange", resume);
-    return () => { revision.current++; window.removeEventListener("llm-chat:message-queue", update); window.removeEventListener("llm-chat:queue-reconnect", update);
+    return () => { refreshes.clear(); revision.current++; window.removeEventListener("llm-chat:message-queue", update); window.removeEventListener("llm-chat:queue-reconnect", update);
       window.removeEventListener("focus", resume); window.removeEventListener("pageshow", resume); document.removeEventListener("visibilitychange", resume); };
   }, [reload, conversationId]);
   useEffect(() => {
