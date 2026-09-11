@@ -91,6 +91,21 @@ it("resumes if content grows between reaching the bottom and delivery of the scr
   state.element.scrollTop = 600;
   Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
   state.update();
+  act(() => vi.advanceTimersByTime(20));
   expect(state.scroll.detached).toBe(false);
+  expect(state.element.scrollTop).toBe(1000);
+});
+
+it("coalesces message and resize updates into one layout pass outside the render commit", () => {
+  const state = setup();
+  const measure = vi.fn(() => 1400);
+  Object.defineProperty(state.element, "scrollHeight", { configurable: true, get: measure });
+  Object.defineProperty(state.element, "scrollTop", { configurable: true, writable: true, value: 600 });
+  state.update();
+  state.queueResize();
+  state.queueResize();
+  expect(measure).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(20));
+  expect(measure).toHaveBeenCalledOnce();
   expect(state.element.scrollTop).toBe(1000);
 });

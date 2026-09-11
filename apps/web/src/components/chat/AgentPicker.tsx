@@ -1,5 +1,5 @@
 import { useBackLayer } from "../../lib/mobile-navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, Search, X } from "lucide-react";
 import type { AgentSummaryDto } from "@llm-chat/contracts";
@@ -23,8 +23,11 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
   const [query, setQuery] = useState("");
   const search = useRef<HTMLInputElement>(null);
   const selected = agents.find((agent) => agent.id === value);
-  const normalized = query.trim().toLocaleLowerCase();
-  const matches = agents.filter((agent) => `${agent.name}\n${agent.description}`.toLocaleLowerCase().includes(normalized));
+  const matches = useMemo(() => {
+    if (!open) return [];
+    const normalized = query.trim().toLocaleLowerCase();
+    return agents.filter((agent) => `${agent.name}\n${agent.description}`.toLocaleLowerCase().includes(normalized));
+  }, [open, agents, query]);
   useEffect(() => { setOpen(false); setQuery(""); }, [value, disabled]);
   return <Popover.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
     <Popover.Trigger asChild>
@@ -34,7 +37,7 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
         {menuItem ? <span><strong>Agent</strong><small>{selected?.name ?? "未选择"}</small></span> : null}
       </button>
     </Popover.Trigger>
-    <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label="Agent 选择" side="top" align="start" sideOffset={10}
+    {open ? <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label="Agent 选择" side="top" align="start" sideOffset={10}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
         if (!window.matchMedia("(hover: none) and (pointer: coarse)").matches) search.current?.focus();
@@ -54,6 +57,6 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
         </button>)}
         {!matches.length ? <div className="picker-empty">没有匹配的 Agent</div> : null}
       </div>
-    </Popover.Content></Popover.Portal>
+    </Popover.Content></Popover.Portal> : null}
   </Popover.Root>;
 }

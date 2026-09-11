@@ -30,6 +30,37 @@ export const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "
 /** Stable identity so store selectors do not re-render on every read. */
 export const EMPTY_MESSAGES: MessageDto[] = [];
 
+export interface ComposerMessageState {
+  messageCount: number;
+  active: { id: string; status: GenerationDto["status"] } | null;
+  pendingApprovals: { messageId: string; generationId: string; call: ToolCallDto }[];
+}
+
+/** Text deltas do not change any of the composer's controls. */
+export function createComposerMessageSelector(isActive: (status: string) => boolean) {
+  let previousMessages: MessageDto[] | undefined;
+  let previous: ComposerMessageState = { messageCount: 0, active: null, pendingApprovals: [] };
+  return (messages: MessageDto[]): ComposerMessageState => {
+    if (messages === previousMessages) return previous;
+    previousMessages = messages;
+    let active: ComposerMessageState["active"] = null;
+    const pendingApprovals: ComposerMessageState["pendingApprovals"] = [];
+    for (const message of messages) for (const generation of message.generations) {
+      if (!active && isActive(generation.status)) active = { id: generation.id, status: generation.status };
+      for (const call of generation.toolCalls) if (call.approvalState === "pending") {
+        pendingApprovals.push({ messageId: message.id, generationId: generation.id, call });
+      }
+    }
+    pendingApprovals.sort((a, b) => a.call.index - b.call.index);
+    if (previous.messageCount === messages.length && previous.active?.id === active?.id && previous.active?.status === active?.status
+      && previous.pendingApprovals.length === pendingApprovals.length && pendingApprovals.every((item, index) => {
+        const old = previous.pendingApprovals[index]!;
+        return old.messageId === item.messageId && old.generationId === item.generationId && old.call === item.call;
+      })) return previous;
+    return previous = { messageCount: messages.length, active, pendingApprovals };
+  };
+}
+
 export type ImageJobsByToolCall = ReadonlyMap<string, readonly ImageGenerationJobDto[]>;
 
 /** Keep stored messages intact; only move owned image jobs on the chat surface. */
@@ -49,6 +80,20 @@ export function projectImageJobs(messages: MessageDto[]): {
     return false;
   });
   return { messages: visible, imageJobs };
+}
+
+/** Preserve the image projection while only unrelated generation text changes. */
+export function createTranscriptProjection() {
+  let previous: ImageJobsByToolCall = new Map();
+  return (messages: MessageDto[]) => {
+    const result = projectImageJobs(messages);
+    if (result.imageJobs.size === previous.size && [...result.imageJobs].every(([id, jobs]) => {
+      const old = previous.get(id);
+      return old?.length === jobs.length && jobs.every((job, index) => job === old[index]);
+    })) return { ...result, imageJobs: previous };
+    previous = result.imageJobs;
+    return result;
+  };
 }
 
 export interface GreetingOption {

@@ -45,7 +45,12 @@ const SettingsView = lazy(() => import("./views/SettingsView").then((module) => 
  * gates — boot, authentication and route — and delegates everything else.
  */
 export function App() {
-  const state = useStore(appStore, (value) => value);
+  const auth = useStore(appStore, (state) => state.auth);
+  const bootError = useStore(appStore, (state) => state.bootError);
+  const settings = useStore(appStore, (state) => state.settings);
+  const conversations = useStore(appStore, (state) => state.conversations);
+  const agents = useStore(appStore, (state) => state.agents);
+  const toasts = useStore(appStore, (state) => state.toasts);
   const route = useRoute();
   const initialConversation = useRef(route.name === "chat" ? route.conversationId ?? undefined : undefined);
   const mobile = useMediaQuery("(max-width: 767px)");
@@ -59,7 +64,7 @@ export function App() {
     if (parent) navigate(parent);
     else setNavDrawer(true);
   };
-  const backOffset = useMobileBackGesture(mobile && state.auth === "ready", back);
+  const backOffset = useMobileBackGesture(mobile && auth === "ready", back);
   useEffect(() => {
     if (!mobile) return;
     window.addEventListener("llm-chat:back", back);
@@ -70,8 +75,8 @@ export function App() {
   const [rightWidth, setRightWidth] = useStoredNumber("llm-chat.inspector-width", 360, RIGHT_MIN, RIGHT_MAX);
   const [pwa, setPwa] = useState(getPwaState());
   const preferencesApplied = useRef(false);
-  useTheme(state.settings);
-  useChatTypography(state.settings);
+  useTheme(settings);
+  useChatTypography(settings);
 
   useEffect(() => {
     const disposeAuth = initAuthGate();
@@ -84,12 +89,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (state.auth !== "ready") return;
+    if (auth !== "ready") return;
     initOfflineHistory();
     startAppEvents();
     void refreshTaskCounts();
     return stopAppEvents;
-  }, [state.auth]);
+  }, [auth]);
 
   useEffect(() => {
     const reconnect = () => void bootstrap(location.pathname.match(/^\/c\/([^/]+)/)?.[1], true).then(() => { startAppEvents(); });
@@ -101,10 +106,10 @@ export function App() {
 
   /* The stored sidebar preference applies once, then the session owns it. */
   useEffect(() => {
-    if (!state.settings || preferencesApplied.current) return;
+    if (!settings || preferencesApplied.current) return;
     preferencesApplied.current = true;
-    setSidebarCollapsed(state.settings.uiPreferences.sidebarCollapsed);
-  }, [state.settings]);
+    setSidebarCollapsed(settings.uiPreferences.sidebarCollapsed);
+  }, [settings]);
 
   useEffect(() => {
     setNavDrawer(false);
@@ -114,16 +119,16 @@ export function App() {
 
   const conversation =
     route.name === "chat" && route.conversationId
-      ? state.conversations.find((item) => item.id === route.conversationId) ?? null
+      ? conversations.find((item) => item.id === route.conversationId) ?? null
       : null;
   const showInspector = route.name === "chat" && Boolean(conversation) && inspectorOpen;
   const leftTrack = mobile ? 0 : sidebarCollapsed ? RAIL_WIDTH : leftWidth;
   const rightTrack = mobile || !showInspector ? 0 : rightWidth;
 
-  if (state.auth === "loading") {
-    return <BootScreen error={state.bootError} onRetry={() => void bootstrap(initialConversation.current)} />;
+  if (auth === "loading") {
+    return <BootScreen error={bootError} onRetry={() => void bootstrap(initialConversation.current)} />;
   }
-  if (state.auth === "required") return <LoginView />;
+  if (auth === "required") return <LoginView />;
 
   const inspector = (
     <InspectorPanel conversation={conversation} target={inspection} onClose={() => setInspectorOpen(false)} />
@@ -160,7 +165,7 @@ export function App() {
         <OfflineBanner />
         {route.name !== "chat" ? (
           <MobileAppBar
-            title={routeTitle(route, state.conversations, state.agents)}
+            title={routeTitle(route, conversations, agents)}
             onOpenNav={() => setNavDrawer(true)}
             onBack={parentRoute(route) ? requestMobileBack : undefined}
             onOpenInspector={null}
@@ -216,7 +221,7 @@ export function App() {
       {mobile ? <div className="mobile-back-feedback" aria-hidden="true" data-active={backOffset > 0 || undefined}
         data-ready={backOffset >= 64 || undefined} style={{ transform: `translateX(${backOffset - 44}px)` }}><ArrowLeft size={20} /></div> : null}
       <QuickTour />
-      <ToastStack toasts={state.toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
+      <ToastStack toasts={toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
         updating={["checking", "downloading", "applying"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
     </AppFrame>
   );

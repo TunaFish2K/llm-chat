@@ -1,7 +1,7 @@
 import { useStickToBottom } from "./useStickToBottom";
 import { isOffline, offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
-import { useState, type ReactNode } from "react";
+import { memo, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronLeft,
@@ -48,7 +48,7 @@ export interface StreamCallbacks {
 }
 
 /** One turn in the transcript. */
-export function MessageItem({
+export const MessageItem = memo(function MessageItem({
   conversationId,
   message,
   branchGroups = [],
@@ -127,7 +127,7 @@ export function MessageItem({
       )}
     </article>
   );
-}
+});
 
 function ImageGenerationStatus({ conversationId, job }: { conversationId: string; job: ImageGenerationJobDto }) {
   const offline = useStore(offlineStore, (state) => state.offline);

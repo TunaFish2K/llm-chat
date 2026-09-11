@@ -1,4 +1,5 @@
 import { RefreshScheduler } from "./refresh-scheduler";
+import { GenerationBlockBuffer } from "./generation-block-buffer";
 import { saveTypography } from "./local-typography";
 import { observeNotificationEvent, startNotificationSession, stopNotificationSession } from "./notifications";
 import { conversationDeleted, deletionRevision, markConversationsDeleted } from "./conversation-lifecycle";
@@ -319,6 +320,26 @@ export function isGenerationActive(status: string): boolean {
 
 const generationStreams = new Map<string, Subscription>();
 const generationOwners = new Map<string, { conversationId: string; messageId: string }>();
+const generationBlocks = new GenerationBlockBuffer((generationId, blocks) => {
+  const owner = generationOwners.get(generationId);
+  if (!owner) return;
+  const generation = findMessage(owner.conversationId, owner.messageId)?.generations.find((item) => item.id === generationId);
+  if (!generation || !isGenerationActive(generation.status)) return;
+  applyGeneration(owner.conversationId, owner.messageId, withBlocks(generation, blocks));
+});
+
+function withBlocks(generation: GenerationDto, updates: GenerationDto["blocks"]): GenerationDto {
+  if (!updates.length) return generation;
+  const blocks = new Map(generation.blocks.map((block) => [`${block.stepIndex}:${block.index}`, block]));
+  let contentChanged = false;
+  for (const block of updates) {
+    const key = `${block.stepIndex}:${block.index}`;
+    if ((blocks.get(key)?.content ?? "") !== block.content) contentChanged = true;
+    blocks.set(key, block);
+  }
+  if (contentChanged && isGenerationActive(generation.status)) scheduleGenerationHaptic();
+  return { ...generation, blocks: [...blocks.values()].sort((a, b) => a.index - b.index) };
+}
 
 export function trackGeneration(conversationId: string, messageId: string, generationId: string): void {
   if (conversationDeleted(conversationId)) return;
@@ -353,6 +374,7 @@ async function handleGenerationEvent(
   const owner = generationOwners.get(generationId);
   if (!owner) { closeGenerationStream(generationId); return; }
   if (event.type === "snapshot") {
+    generationBlocks.take(generationId);
     applyGeneration(owner.conversationId, owner.messageId, event.generation);
     if (generationStreamEnded(event.generation.status)) closeGenerationStream(generationId);
     return;
@@ -363,18 +385,12 @@ async function handleGenerationEvent(
     if ((event.type === "status" && generationStreamEnded(event.status)) || event.type === "error") closeGenerationStream(generationId);
     return;
   }
-  const next: GenerationDto = { ...generation };
   if (event.type === "block-delta") {
-    const blocks = [...next.blocks];
-    // Stream IDs are synthetic; persisted snapshots use database IDs.
-    const index = blocks.findIndex((block) => block.index === event.block.index && block.stepIndex === event.block.stepIndex);
-    const contentChanged = index < 0 ? Boolean(event.block.content) : blocks[index]!.content !== event.block.content;
-    if (index >= 0) blocks[index] = event.block;
-    else blocks.push(event.block);
-    blocks.sort((a, b) => a.index - b.index);
-    next.blocks = blocks;
-    if (contentChanged && isGenerationActive(generation.status)) scheduleGenerationHaptic();
-  } else if (event.type === "usage") {
+    generationBlocks.push(generationId, event.block);
+    return;
+  }
+  const next: GenerationDto = { ...withBlocks(generation, generationBlocks.take(generationId)) };
+  if (event.type === "usage") {
     next.usage = event.usage;
   } else if (event.type === "tool-call") {
     const calls = [...next.toolCalls];
@@ -416,6 +432,7 @@ function generationStreamEnded(status: string): boolean {
 }
 
 function closeGenerationStream(generationId: string): void {
+  generationBlocks.take(generationId);
   generationStreams.get(generationId)?.close();
   generationStreams.delete(generationId);
   generationOwners.delete(generationId);
@@ -452,6 +469,7 @@ function applyGeneration(conversationId: string, messageId: string, generation: 
 let appEventsSubscription: Subscription | null = null;
 
 export function stopAppEvents(): void {
+  generationBlocks.clear();
   appEventsSubscription?.close(); appEventsSubscription = null;
   for (const stream of generationStreams.values()) stream.close();
   generationStreams.clear();
@@ -494,7 +512,7 @@ export function startAppEvents(): void {
         if (generating(state.status)) { trackGeneration(state.conversationId, state.messageId, state.generationId); refreshMessages(state.conversationId); }
         else {
           const existing = findMessage(state.conversationId, state.messageId)?.generations.find((item) => item.id === state.generationId);
-          if (existing) applyGeneration(state.conversationId, state.messageId, { ...existing, status: state.status, stopReason: state.stopReason });
+          if (existing) applyGeneration(state.conversationId, state.messageId, { ...withBlocks(existing, generationBlocks.take(state.generationId)), status: state.status, stopReason: state.stopReason });
           closeGenerationStream(state.generationId); refreshMessages(state.conversationId);
         }
       } else if (event.type === "resync") {

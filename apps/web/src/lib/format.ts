@@ -1,6 +1,10 @@
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hour12: false
+});
+
 export function formatTime(timestamp: number | null | undefined): string {
   if (!timestamp) return "—";
-  return new Date(timestamp).toLocaleString("zh-CN", { hour12: false });
+  return dateTimeFormatter.format(timestamp);
 }
 
 export function formatTokens(value: number | undefined): string {

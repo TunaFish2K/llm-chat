@@ -10,6 +10,8 @@ export interface StickToBottom {
   toBottom: (behavior?: ScrollBehavior) => void;
   /** Re-arm auto-follow without touching the scroll position yet. */
   reset: () => void;
+  /** Schedule one layout pass after content and controls have rendered. */
+  scheduleFollow: () => void;
 }
 
 /**
@@ -43,29 +45,43 @@ export function useStickToBottom(
     setDetached(false);
     if (!element) return;
     smooth.current = behavior === "smooth";
-    dimensions.current = { height: element.scrollHeight, viewport: element.clientHeight };
+    const height = element.scrollHeight;
+    const viewport = element.clientHeight;
+    const top = element.scrollTop;
+    dimensions.current = { height, viewport };
     if (behavior === "smooth" && typeof element.scrollTo === "function") {
-      previousScrollTop.current = element.scrollTop;
-      element.scrollTo({ top: element.scrollHeight, behavior });
+      previousScrollTop.current = top;
+      element.scrollTo({ top: height, behavior });
     } else {
-      element.scrollTop = element.scrollHeight;
-      previousScrollTop.current = element.scrollTop;
+      const target = Math.max(0, height - viewport);
+      if (top !== target) element.scrollTop = target;
+      previousScrollTop.current = target;
     }
   }, []);
 
   const syncLayout = useCallback(() => {
     const element = ref.current;
-    if (!enabled || !element || !element.clientHeight) return;
+    if (!enabled || !element) return;
+    const viewport = element.clientHeight;
+    if (!viewport) return;
+    const height = element.scrollHeight;
+    const top = element.scrollTop;
     const previous = dimensions.current;
     // A new chunk can arrive after the reader reaches the old bottom but before
     // the browser delivers their scroll event. Preserve that request to resume.
     const returnedToBottom = previousScrollTop.current !== null &&
-      element.scrollTop > previousScrollTop.current &&
-      previous.height > previous.viewport && previous.viewport === element.clientHeight &&
-      element.scrollTop >= previous.height - previous.viewport - 1;
-    if (following.current || returnedToBottom) toBottom();
-    else dimensions.current = { height: element.scrollHeight, viewport: element.clientHeight };
-  }, [enabled, toBottom]);
+      top > previousScrollTop.current &&
+      previous.height > previous.viewport && previous.viewport === viewport &&
+      top >= previous.height - previous.viewport - 1;
+    dimensions.current = { height, viewport };
+    if (following.current || returnedToBottom) {
+      if (!following.current) { following.current = true; setDetached(false); }
+      smooth.current = false;
+      const target = Math.max(0, height - viewport);
+      if (top !== target) element.scrollTop = target;
+      previousScrollTop.current = target;
+    }
+  }, [enabled]);
 
   const follow = useCallback(() => {
     if (!enabled || frame.current !== null) return;
@@ -97,7 +113,7 @@ export function useStickToBottom(
   }, [enabled, follow]);
 
   useLayoutEffect(() => {
-    syncLayout();
+    follow();
     // The caller identifies content changes, including growth inside a capped scroll area.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, ...deps]);
@@ -188,5 +204,5 @@ export function useStickToBottom(
     };
   }, [enabled, toBottom]);
 
-  return { ref, contentRef, detached, onScroll, toBottom, reset };
+  return { ref, contentRef, detached, onScroll, toBottom, reset, scheduleFollow: follow };
 }
