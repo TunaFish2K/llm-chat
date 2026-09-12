@@ -1,4 +1,5 @@
 import { withMessage } from "@llm-chat/i18n";
+import { resolveModelProtocol } from "@llm-chat/contracts";
 import type {
   AgentDto,
   AgentExecutionConfig,
@@ -134,6 +135,7 @@ export function resolveGenerationPlan({ conversation, agent, model, connection, 
     agent.execution.generation,
     conversation.executionOverrides.generation
   );
+  connection = { ...connection, protocol: resolveModelProtocol(model, connection) };
   const settings = buildEffectiveSettings(model, connection.protocol, effort, generation);
   const snapshot: AgentSnapshot = {
     agentId: agent.id,

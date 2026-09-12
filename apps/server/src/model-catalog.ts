@@ -7,6 +7,7 @@ import type {
   ReasoningEffort
 } from "@llm-chat/contracts";
 import type { DiscoveredModel } from "@llm-chat/providers";
+import { knownModelProtocol, providerPreset } from "@llm-chat/contracts";
 
 const CATALOG_URL = "https://models.dev/api.json";
 const CATALOG_TTL_MS = 60 * 60 * 1000;
@@ -31,8 +32,10 @@ interface CatalogEntry {
   completeness: number;
 }
 
+export type CatalogModelInput = ModelInput & { detectedProtocol?: ProviderProtocol | null };
+
 export interface EnrichedDiscoveredModel {
-  input: ModelInput;
+  input: CatalogModelInput;
   matched: boolean;
   catalogMetadata: ModelCatalogMetadata | null;
 }
@@ -84,7 +87,7 @@ export class ModelCatalogService {
     if (!entries) {
       return {
         models: discovered.map((model) => ({
-          input: fallbackModel(connection.id, connection.protocol, model.id, model.displayName),
+          input: this.discoveredDefaults(connection, model, null),
           matched: false,
           catalogMetadata: null
         })),
@@ -93,13 +96,25 @@ export class ModelCatalogService {
     }
     return {
       models: discovered.map((model) => {
-        const fallback = fallbackModel(connection.id, connection.protocol, model.id, model.displayName);
-        const entry = bestMatch(connection, model.id, entries);
+        const exact = entries.find((entry) => connection.providerId !== "custom" && entry.providerId === connection.providerId && entry.modelId === model.id);
+        const fallback = this.discoveredDefaults(connection, model, exact);
+        const entry = exact ?? bestMatch(connection, model.id, entries);
         return entry
           ? { input: applyCatalogEntry(fallback, model, entry, connection.providerId), matched: true, catalogMetadata: catalogMetadata(entry) }
           : { input: fallback, matched: false, catalogMetadata: null };
       })
     };
+  }
+
+  private discoveredDefaults(connection: ConnectionDto, model: DiscoveredModel, exact: CatalogEntry | null | undefined): CatalogModelInput {
+    const sdk = exact && isRecord(exact.meta.provider) ? exact.meta.provider.npm : undefined;
+    const protocols: Record<string, ProviderProtocol> = {
+      "@ai-sdk/openai": "openai-responses", "@ai-sdk/openai-compatible": "openai-chat", "@ai-sdk/anthropic": "anthropic-messages"
+    };
+    const declared = typeof sdk === "string" && Object.hasOwn(protocols, sdk) ? protocols[sdk] : null;
+    const detectedProtocol = declared && providerPreset(connection.providerId).protocols.includes(declared)
+      ? declared : knownModelProtocol(connection.providerId, model.id);
+    return { ...fallbackModel(connection.id, detectedProtocol ?? connection.protocol, model.id, model.displayName), detectedProtocol };
   }
 
   async enrichOne(connection: ConnectionDto, modelKey: string, displayName: string): Promise<EnrichedDiscoveredModel | null> {
@@ -149,11 +164,11 @@ export class ModelCatalogService {
 }
 
 function applyCatalogEntry(
-  fallback: ModelInput,
+  fallback: CatalogModelInput,
   discovered: DiscoveredModel,
   entry: CatalogEntry,
   providerId: ConnectionDto["providerId"]
-): ModelInput {
+): CatalogModelInput {
   const meta = entry.meta;
   const limit = isRecord(meta.limit) ? meta.limit : null;
   const context = limit ? positiveInteger(limit.context) : undefined;

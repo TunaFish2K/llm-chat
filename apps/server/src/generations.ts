@@ -189,7 +189,7 @@ export class GenerationRunner {
     const connection: ProviderConnection = {
       id: secretConnection.id,
       providerId: secretConnection.providerId,
-      protocol: secretConnection.protocol,
+      protocol: record.protocol,
       baseUrl: secretConnection.baseUrl,
       apiKey: secretConnection.apiKey,
       secretHeaders: secretConnection.secretHeaders

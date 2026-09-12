@@ -9,7 +9,7 @@ import type {
   ProviderProtocol
 } from "@llm-chat/contracts";
 import { randomUUID } from "node:crypto";
-import { characterCardV2Schema } from "@llm-chat/contracts";
+import { characterCardV2Schema, resolveModelProtocol } from "@llm-chat/contracts";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import type { Store } from "./database";
 import { StoreError } from "./errors";
@@ -149,12 +149,12 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
     version: 1,
     execution: {
       model: model && connection ? {
-        protocol: connection.protocol,
+        protocol: resolveModelProtocol(model, connection),
         modelKey: model.modelKey,
         connectionName: connection.name
       } : null,
       visionModel: visionModel && visionConnection ? {
-        protocol: visionConnection.protocol,
+        protocol: resolveModelProtocol(visionModel, visionConnection),
         modelKey: visionModel.modelKey,
         connectionName: visionConnection.name
       } : null,
@@ -242,7 +242,7 @@ function resolvePortableModel(
     const connection = store.getConnection(candidate.connectionId);
     return candidate.enabled
       && candidate.modelKey === portable.modelKey
-      && connection?.protocol === portable.protocol
+      && connection && resolveModelProtocol(candidate, connection) === portable.protocol
       && connection.name === portable.connectionName;
   });
   return model?.id ?? null;

@@ -26,6 +26,7 @@ describe("VisionService", () => {
     const vision = store.createModel({
       connectionId: connection.id,
       modelKey: "vision-model",
+      protocol: "openai-responses",
       displayName: "Vision Model",
       contextWindow: 4096,
       maxOutputTokens: 2048,
@@ -74,6 +75,7 @@ describe("VisionService", () => {
     );
     expect(secondPrepared.get(asset.id)?.description).toBe("A terminal showing fastfetch.");
     expect(adapterFor).toHaveBeenCalledTimes(1);
+    expect(adapterFor).toHaveBeenCalledWith("openai-responses");
     expect(store.getGeneration(second.generationId)?.visionAnalyses).toEqual([
       expect.objectContaining({ cached: true, description: "A terminal showing fastfetch." })
     ]);

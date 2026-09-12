@@ -77,3 +77,23 @@ describe("ModelCatalogService", () => {
     });
   });
 });
+
+ it("detects only exact provider/model SDK overrides and falls back to official Go endpoints", async () => {
+  const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+    other: { models: { unknown: { provider: { npm: "@ai-sdk/anthropic" } } } },
+    "opencode-go": { models: {
+      "grok-4.6": { provider: { npm: "@ai-sdk/openai" } },
+      "minimax-m3": { provider: { npm: "@ai-sdk/anthropic" } },
+      "glm-5.3": { provider: { npm: "@ai-sdk/openai-compatible" } },
+      "qwen3.8-max": {}
+    } }
+  }))) as unknown as typeof fetch;
+  const go = { ...connection, providerId: "opencode-go" as const, protocol: "openai-chat" as const };
+  const ids = ["grok-4.6", "minimax-m3", "glm-5.3", "qwen3.8-max", "unknown"];
+  const result = await new ModelCatalogService(fetchImpl).enrich(go, ids.map(id => ({ id, displayName: id })));
+  expect(result.models.map(m => m.input.detectedProtocol)).toEqual(["openai-responses", "anthropic-messages", "openai-chat", "anthropic-messages", null]);
+  const custom = await new ModelCatalogService(fetchImpl).enrich(connection, [{ id: "grok-4.6", displayName: "Grok" }]);
+  expect(custom.models[0]?.input.detectedProtocol).toBeNull();
+  const offline = await new ModelCatalogService(async () => { throw new Error("offline"); }).enrich(go, [{ id: "grok-4.6", displayName: "Grok" }]);
+  expect(offline.models[0]?.input.detectedProtocol).toBe("openai-responses");
+ });

@@ -59,13 +59,16 @@ describe("Character Card V2 import and export", () => {
   it("maps portable model references and falls back when the reference is unavailable", () => {
     const store = createStore();
     const { connection, model } = seedModel(store);
+    store.updateModel(model.id, { protocol: "openai-responses" });
     const defaultAgent = store.getAgent(store.getSettings().defaultAgentId)!;
+    const exported = JSON.parse(Buffer.from(exportCharacterCard(store, defaultAgent, "json").bytes).toString("utf8"));
+    expect(exported.data.extensions.llm_chat.execution.model.protocol).toBe("openai-responses");
     const { modelId: _modelId, ...portableExecution } = defaultAgent.execution;
     const portable = {
       version: 1,
       execution: {
         ...portableExecution,
-        model: { protocol: connection.protocol, modelKey: model.modelKey, connectionName: connection.name }
+        model: { protocol: "openai-responses", modelKey: model.modelKey, connectionName: connection.name }
       },
       userProfile: { displayName: "Portable user" }
     };

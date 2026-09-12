@@ -1436,5 +1436,9 @@
   "runtime.browser_missing": "浏览器尚未安装：运行 pnpm --filter @llm-chat/server exec playwright-core install firefox",
   "runtime.browser_closed": "浏览器已关闭",
   "runtime.browser_canceled": "浏览器抓取已取消",
-  "runtime.browser_timeout": "浏览器抓取超时（30 秒）"
+  "runtime.browser_timeout": "浏览器抓取超时（30 秒）",
+  "ConnectionsView.model_protocol": "模型协议",
+  "ConnectionsView.effective_model_protocol": "当前使用：{{protocol}}。自动模式优先采用模型协议，未知模型沿用连接设置。",
+  "ConnectionsView.automatic_protocol": "自动识别",
+  "error.model_protocol_unsupported": "此提供商不支持所选模型协议"
 }
