@@ -1000,6 +1000,7 @@ function migrate(sqlite: DatabaseSyncType): void {
       `);
     }
     if (current < 31) {
+      // Retained for historical data and schema compatibility after the Codex integration was retired.
       sqlite.exec(`
         CREATE TABLE IF NOT EXISTS codex_sessions (
           id TEXT PRIMARY KEY,

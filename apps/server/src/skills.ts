@@ -27,41 +27,33 @@ export interface SkillManagerOptions {
   agentsSkillsRoot?: string;
 }
 
+const RETIRED_BUNDLED_SKILLS = new Set(["coding-supervisor"]);
+
+function isRetiredBundledSkill(skill: SkillDto): boolean {
+  return skill.sourceKind === "bundled" && RETIRED_BUNDLED_SKILLS.has(skill.id);
+}
+
 const BUNDLED: Array<{ id: string; content: string }> = [
   {
     id: "command-execution-guide",
     content: `---
 id: command-execution-guide
 name: Command Execution Guide
-description: Choose correctly between foreground shell commands and durable background tasks.
-requiredTools: workspace_shell, background_start, background_list, background_status, background_read, background_wait, background_write, background_stop
+description: Complete concrete tasks from the conversation using file tools, shell commands, and background tasks.
+requiredTools: workspace_shell_readonly, workspace_shell, background_start, background_list, background_status, background_read, background_wait, background_write, background_stop
 recommendedApprovals: workspace_shell=always, background_start=always, background_write=never, background_stop=never
 ---
 # Command Execution Guide
 
-Use \`workspace_shell\` for short, non-interactive commands when their complete result is needed before the next reasoning step. It has a maximum timeout of 120 seconds. Examples include \`fastfetch\`, a focused test, reading command output, or a quick build that is expected to finish within the limit.
+Use tools to complete the user's current task, such as looking up information, calculating a result, processing files, or running a batch script. Choose the smallest set of actions that completes the request, and report results only after the corresponding tool returns.
 
-Use \`background_start\` when a command is interactive, may run longer than 120 seconds, starts a server or watcher, must survive the current model step, or needs later input and incremental observation. Use \`pipe\` mode for ordinary long-running commands and services. Use \`pty\` only for a TUI, REPL, coding harness, or another program that genuinely requires a terminal.
+For local reading and analysis, prefer file tools or \`workspace_shell_readonly\` when available. Use \`workspace_shell\` when the task requires writes or capabilities outside the read-only sandbox, following the Agent's existing permissions and approval rules. Foreground shell commands must be non-interactive and finish within their maximum timeout of 120 seconds.
 
-After starting a background task, retain its task id. Prefer \`background_wait\` to wait for new output or a state change, then use \`background_read\` with the returned cursor when more output is needed. Do not repeatedly poll without advancing the cursor. Use \`background_write\` only for an interactive task and include a concrete audit reason. Use \`background_stop\` only when the user requests cancellation, the task is no longer needed, or continuing is unsafe.
+Use \`background_start\` when the requested task needs more time, must continue beyond the current model step, or needs interactive input. Prefer \`pipe\` mode for file processing and batch commands; use \`pty\` only when the requested command requires a terminal. Inspect a command's help before choosing unfamiliar flags.
 
-Do not put a quick command in the background merely because background tools are available. Do not use \`workspace_shell\` for servers, watchers, interactive programs, or work likely to exceed its timeout. Report command results only after the corresponding tool returns.
-`
-  },
-  {
-    id: "coding-supervisor",
-    content: `---
-id: coding-supervisor
-name: Coding Supervisor
-description: Delegate coding work to Codex through structured app-server tools, with generic PTY fallback.
-requiredTools: codex_runtime, codex_sessions, codex_start, codex_send, codex_wait, codex_respond, codex_interrupt, background_start, background_list, background_status, background_read, background_wait, background_write, background_stop
-recommendedApprovals: background_start=always, background_write=never, background_stop=never
----
-# Coding Supervisor
+Retain the task id and wait with \`background_wait\`. Use \`background_read\` with the returned cursor when more output is needed. Avoid repeated polling without advancing the cursor. Use \`background_write\` only when input is needed and include a concrete audit reason. Stop a task when the user requests cancellation, it is no longer needed, or continuing is unsafe.
 
-Prefer \`codex_start\`, \`codex_send\`, and \`codex_wait\` for coding work when Codex is available. Let Codex own code edits, tests, and repository exploration; use the returned structured events to supervise progress and verify the result. Use \`codex_respond\` for requests that fit the configured execution profile and \`codex_interrupt\` when the task is unsafe or no longer needed.
-
-If Codex is unavailable, use generic background tools to supervise another coding harness. Inspect the selected command's help before choosing flags. Start an interactive harness with \`background_start\` in PTY mode, then alternate \`background_wait\` and \`background_read\` until it exits. Use \`background_write\` only when the harness genuinely requires terminal input. Never assume a provider-specific command line.
+Keep execution tied to the user's request. Do not launch an autonomous coding workflow or a persistent service as an unsolicited next step. A background task is complete only when its result has been checked; starting the process alone does not complete the user's task.
 `
   },
   {
@@ -122,6 +114,14 @@ export class SkillManager {
   }
 
   async initialize(): Promise<void> {
+    // Keep the installation row: deleting it would cascade to historical revisions.
+    for (const id of RETIRED_BUNDLED_SKILLS) {
+      const result = this.store.sqlite.prepare(`
+        UPDATE skill_installations SET state = 'unloaded', error = NULL, updated_at = ?
+        WHERE id = ? AND source_kind = 'bundled' AND state != 'unloaded'
+      `).run(Date.now(), id);
+      if (result.changes) this.events.emit({ type: "skill", skillId: id, state: "unloaded" });
+    }
     const bundledRoot = resolve(this.store.dataDir, ".bundled-skills");
     await mkdir(bundledRoot, { recursive: true, mode: 0o700 });
     for (const skill of BUNDLED) {
@@ -140,6 +140,10 @@ export class SkillManager {
   }
 
   list(): SkillDto[] {
+    return this.installedSkills().filter((skill) => !isRetiredBundledSkill(skill));
+  }
+
+  private installedSkills(): SkillDto[] {
     return (this.store.sqlite.prepare(`
       SELECT * FROM skill_installations
       ORDER BY bundled DESC, name COLLATE NOCASE, id
@@ -273,15 +277,17 @@ export class SkillManager {
   }
 
   tool(record?: GenerationRecord): ServerTool {
-    const current = this.list().filter((skill) => skill.state === "loaded" || skill.state === "pending-reload");
-    const available = record ? Object.keys(record.agentSnapshot.skillRevisions).length > 0 : current.length > 0;
-    const selectedIds = record ? new Set(Object.keys(record.agentSnapshot.skillRevisions)) : null;
+    const installed = this.installedSkills();
+    const retiredIds = new Set(installed.filter(isRetiredBundledSkill).map((skill) => skill.id));
+    const current = installed.filter((skill) => !retiredIds.has(skill.id) && (skill.state === "loaded" || skill.state === "pending-reload"));
+    const selectedIds = record ? new Set(Object.keys(record.agentSnapshot.skillRevisions).filter((id) => !retiredIds.has(id))) : null;
+    const available = selectedIds ? selectedIds.size > 0 : current.length > 0;
     const descriptions = current.filter((skill) => !selectedIds || selectedIds.has(skill.id))
       .map((skill) => `${skill.id}: ${skill.description}`).join("; ");
     const pinned = (input: Record<string, unknown>): { id: string; revision: string } => {
       const id = typeof input.id === "string" ? input.id : typeof input.name === "string" ? input.name : "";
       const revision = record?.agentSnapshot.skillRevisions[id] ?? current.find((skill) => skill.id === id)?.revision;
-      if (!revision || (record && !record.agentSnapshot.skillRevisions[id])) {
+      if (!revision || (selectedIds && !selectedIds.has(id))) {
         throw new Error("Skill is not enabled for this Agent snapshot");
       }
       return { id, revision };
@@ -332,7 +338,10 @@ export class SkillManager {
     const content = await readFile(resolve(source, "SKILL.md"), "utf8");
     const fallback = source.split(sep).at(-1) || "skill";
     const metadata = suppliedMetadata ?? parseMetadata(content, fallback, sourceKind);
-    const existing = this.list().find((item) => item.id === metadata.id);
+    if (sourceKind === "bundled" && RETIRED_BUNDLED_SKILLS.has(metadata.id)) {
+      throw new Error("此内置 Skill 已停用");
+    }
+    const existing = this.installedSkills().find((item) => item.id === metadata.id);
     if (existing && existing.sourceKind !== sourceKind) {
       throw new Error(`Skill id ${metadata.id} is already owned by ${existing.sourceKind ?? "manual"}`);
     }

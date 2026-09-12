@@ -16,6 +16,50 @@ const signal = () => new AbortController().signal;
 const tool = (tools: ServerTool[], name: string) => tools.find((item) => item.definition.name === name)!;
 
 describe("server tool catalog", () => {
+  it("preserves image requests and returns generated assets through the generic tool", async () => {
+    const store = createStore();
+    const { model } = seedModel(store);
+    store.updateModel(model.id, {
+      imageProtocol: "openai-images", capabilities: { ...model.capabilities, imageOutput: true }
+    });
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "draw an image");
+    const context = {
+      conversationId: conversation.id, generationId: created.generationId, toolCallId: "image-call",
+      snapshot: store.getGenerationRecord(created.generationId)!.agentSnapshot
+    };
+    const asset = { fileName: "result.png", url: "/api/images/result" };
+    const createAndWait = vi.fn().mockResolvedValue({ id: "image-job", status: "completed", revisedPrompt: null, outputAssets: [asset] });
+    const imageTool = tool(await buildServerTools(store, false, { imageManager: { createAndWait } as never }), "image_generate");
+    const controller = new AbortController();
+    expect(imageTool.requiresApproval({ action: "list_models" })).toBe(false);
+    expect(imageTool.requiresApproval({ prompt: "a landscape" })).toBe(true);
+    expect(JSON.parse(await imageTool.execute({ prompt: "a landscape" }, controller.signal, context))).toMatchObject({
+      jobId: "image-job", status: "completed", assets: [asset], markdown: "![result.png](/api/images/result)"
+    });
+    expect(createAndWait).toHaveBeenLastCalledWith({
+      conversationId: conversation.id, toolCallId: "image-call", input: expect.objectContaining({ modelId: model.id, prompt: "a landscape" })
+    }, controller.signal);
+    const reference = "00000000-0000-4000-8000-000000000001";
+    await imageTool.execute({
+      model_id: "mock/mock-model", prompt: "edit the landscape", operation: "edit", reference_asset_ids: [reference],
+      mask_asset_id: null, negative_prompt: "text", count: 2, aspect_ratio: "16:9", size: "1536x1024",
+      quality: "high", output_format: "webp", seed: 42, strength: 0.5, provider_options: { custom: true }
+    }, controller.signal, context);
+    expect(createAndWait).toHaveBeenLastCalledWith({
+      conversationId: conversation.id, toolCallId: "image-call", input: {
+        modelId: model.id, prompt: "edit the landscape", operation: "edit", referenceAssetIds: [reference],
+        maskAssetId: null, negativePrompt: "text", count: 2, aspectRatio: "16:9", size: "1536x1024",
+        quality: "high", outputFormat: "webp", seed: 42, strength: 0.5, providerOptions: { custom: true }
+      }
+    }, controller.signal);
+    await expect(imageTool.execute({ prompt: "a landscape", count: 5 }, controller.signal, context)).rejects.toThrow("参数无效");
+    expect(createAndWait).toHaveBeenCalledTimes(2);
+    createAndWait.mockResolvedValue({ status: "failed", error: { message: "provider unavailable" } });
+    await expect(imageTool.execute({ prompt: "a landscape" }, controller.signal, context)).rejects.toThrow("provider unavailable");
+    store.close();
+  });
+
   it("lists readable image models and allows discovery with no configured model", async () => {
     const store = createStore();
     const { model } = seedModel(store);

@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventHub } from "./events";
@@ -8,6 +8,62 @@ import { cleanupStores, createStore, seedModel } from "./test-helpers";
 afterEach(() => cleanupStores());
 
 describe("SkillManager", () => {
+  it("retires the old bundled coding supervisor without deleting revisions or rewriting snapshots", async () => {
+    const store = createStore();
+    const source = resolve(store.dataDir, ".bundled-skills", "coding-supervisor");
+    mkdirSync(source, { recursive: true });
+    writeSkill(source, "coding-supervisor", "Old Coding Supervisor", ["requiredTools: codex_start"]);
+    const old = new SkillManager(store, new EventHub());
+    const installed = await old.install(source);
+    old.close();
+    store.sqlite.prepare("UPDATE skill_installations SET bundled = 1, source_kind = 'bundled' WHERE id = ?").run(installed.id);
+    const revision = store.sqlite.prepare("SELECT path FROM skill_revisions WHERE skill_id = ?").get(installed.id) as { path: string };
+    const content = readFileSync(resolve(revision.path, "SKILL.md"), "utf8");
+    const record = generation(store);
+    record.agentSnapshot.execution.enabledSkillIds = [installed.id];
+    record.agentSnapshot.execution.tools.overrides.codex_start = true;
+    record.agentSnapshot.skillRevisions = { [installed.id]: installed.revision };
+    store.updateGenerationExtensionSnapshot(record.id, record.agentSnapshot);
+    const before = store.getGenerationRecord(record.id)!.agentSnapshot;
+    const manager = new SkillManager(store, new EventHub(), { discoveryRoot: resolve(store.dataDir, "agent-skills") });
+    try {
+      await manager.initialize();
+      await manager.initialize();
+      expect(manager.list().some((skill) => skill.id === installed.id)).toBe(false);
+      expect(manager.activeRevisions([installed.id, "command-execution-guide"])).toEqual({
+        "command-execution-guide": expect.any(String)
+      });
+      expect(manager.tool().definition.description).not.toContain(installed.id);
+      expect(manager.tool(record).available).toBe(false);
+      await expect(manager.tool(record).execute({ id: installed.id }, signal())).rejects.toThrow("not enabled");
+      await expect(manager.reload(installed.id)).rejects.toThrow("Skill not found");
+      await expect(manager.install(source, true)).rejects.toThrow("此内置 Skill 已停用");
+      await expect(manager.install(source)).rejects.toThrow("already owned by bundled");
+      expect(store.sqlite.prepare("SELECT state, active_revision FROM skill_installations WHERE id = ?").get(installed.id))
+        .toMatchObject({ state: "unloaded", active_revision: installed.revision });
+      expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM skill_revisions WHERE skill_id = ?").get(installed.id))
+        .toMatchObject({ count: 1 });
+      expect(readFileSync(resolve(revision.path, "SKILL.md"), "utf8")).toBe(content);
+      expect(store.getGenerationRecord(record.id)!.agentSnapshot).toEqual(before);
+    } finally { manager.close(); }
+  });
+
+  it("preserves a user-installed skill that has the retired bundled skill's name", async () => {
+    const store = createStore();
+    const source = resolve(store.dataDir, "custom-supervisor");
+    mkdirSync(source);
+    writeSkill(source, "coding-supervisor", "User Instructions");
+    const manager = new SkillManager(store, new EventHub(), { discoveryRoot: resolve(store.dataDir, "agent-skills") });
+    try {
+      const installed = await manager.install(source);
+      await manager.initialize();
+      expect(manager.list()).toContainEqual(expect.objectContaining({ id: installed.id, sourceKind: "manual", state: "loaded" }));
+      expect(manager.activeRevisions([installed.id])).toEqual({ [installed.id]: installed.revision });
+      await expect(manager.reload(installed.id)).resolves.toMatchObject({ id: installed.id, state: "loaded" });
+      await expect(manager.tool().execute({ id: installed.id }, signal())).resolves.toContain("User Instructions");
+    } finally { manager.close(); }
+  });
+
   it("discovers only direct Agent Skills children and keeps changed revisions pending", async () => {
     const store = createStore();
     const root = resolve(store.dataDir, "agent-skills");
@@ -87,13 +143,14 @@ describe("SkillManager", () => {
     await manager.initialize();
 
     expect(manager.list().map((item) => item.id)).toEqual(expect.arrayContaining([
-      "coding-supervisor", "tool-author", "command-execution-guide", "llm-chat-operator", "legacy-helper"
+      "tool-author", "command-execution-guide", "llm-chat-operator", "legacy-helper"
     ]));
-    expect(manager.list().filter((item) => item.bundled)).toHaveLength(4);
+    expect(manager.list().filter((item) => item.bundled)).toHaveLength(3);
+    expect(manager.list().some((item) => item.id === "coding-supervisor")).toBe(false);
     expect(manager.list().find((item) => item.id === "llm-chat-operator")?.requiredTools).toEqual(
       expect.arrayContaining(["app_agents", "app_conversations", "app_connections", "app_models", "app_skills"])
     );
-    expect(emitted).toEqual(expect.arrayContaining(["coding-supervisor", "tool-author", "command-execution-guide", "llm-chat-operator", "legacy-helper"]));
+    expect(emitted).toEqual(expect.arrayContaining(["tool-author", "command-execution-guide", "llm-chat-operator", "legacy-helper"]));
     manager.close();
   });
 

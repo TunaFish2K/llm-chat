@@ -4,6 +4,15 @@ import type { ToolCallDto } from "@llm-chat/contracts";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 
 const call: ToolCallDto = { id: "call", index: 0, stepIndex: 0, name: "echo", arguments: '{"value":"raw"}', output: "raw result", error: null, approvalState: "completed", requiresApproval: false, startedAt: 1, completedAt: 2, artifacts: [] };
+it("keeps retired Codex tool history readable with saved presentation or raw output", () => {
+  const historical = { ...call, name: "codex_send", output: "historical Codex result" };
+  const { rerender } = render(<ToolCallContent call={{ ...historical, presentation: { result: { detail: "Saved historical result" } } }} />);
+  expect(screen.getByText("Saved historical result")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "查看原始数据" }));
+  expect(screen.getByText("historical Codex result")).toBeVisible();
+  rerender(<ToolCallContent call={historical} />);
+  expect(screen.getByText("historical Codex result")).toBeVisible();
+});
 it("renders Markdown details, switches to original data, and falls back independently", () => {
   const { rerender } = render(<ToolCallContent call={{ ...call, presentation: { arguments: { detail: "**formatted args**" }, result: { summary: "short result" } } }} />);
   expect(screen.getByText("formatted args").closest('[data-streamdown="strong"]')).not.toBeNull();
