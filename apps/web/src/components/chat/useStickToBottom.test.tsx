@@ -62,6 +62,16 @@ it("does not detach when collapsing content clamps the scroll position", () => {
   expect(state.element.scrollTop).toBe(300);
 });
 
+it("keeps following when duplicate scroll events arrive before a content resize is followed", () => {
+  const state = setup();
+  Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
+  fireEvent.scroll(state.element);
+  fireEvent.scroll(state.element);
+  expect(state.scroll.detached).toBe(false);
+  act(() => vi.advanceTimersByTime(20));
+  expect(state.element.scrollTop).toBe(1000);
+});
+
 it("keeps following during a smooth jump and lets the reader interrupt it", () => {
   const state = setup();
   state.element.scrollTop = 200;
@@ -82,6 +92,40 @@ it("disconnects the observer and cancels queued follow work on unmount", () => {
   state.view.unmount();
   expect(state.disconnect).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("finishes an immediate jump despite a trailing inertia event, but allows a new upward gesture", () => {
+  const state = setup();
+  state.element.scrollTop = 200;
+  fireEvent.scroll(state.element);
+  act(() => { state.scroll.toBottom(); state.scroll.scheduleFollow(); });
+  expect(state.element.scrollTop).toBe(600);
+  state.element.scrollTop = 500;
+  fireEvent.scroll(state.element);
+  expect(state.scroll.detached).toBe(false);
+  act(() => vi.advanceTimersByTime(20));
+  expect(state.element.scrollTop).toBe(600);
+  // Compositor scrolling may deliver another event after the layout frame.
+  state.element.scrollTop = 550;
+  fireEvent.scroll(state.element);
+  fireEvent(state.element, new Event("scrollend"));
+  act(() => vi.advanceTimersByTime(20));
+  state.element.scrollTop = 560;
+  fireEvent.scroll(state.element);
+  fireEvent(state.element, new Event("scrollend"));
+  act(() => vi.advanceTimersByTime(40));
+  expect(state.element.scrollTop).toBe(600);
+  expect(state.scroll.detached).toBe(false);
+
+  state.element.scrollTop = 200;
+  fireEvent.scroll(state.element);
+  act(() => { state.scroll.toBottom(); state.scroll.scheduleFollow(); });
+  fireEvent.wheel(state.element, { deltaY: -100 });
+  state.element.scrollTop = 500;
+  fireEvent.scroll(state.element);
+  act(() => vi.advanceTimersByTime(20));
+  expect(state.scroll.detached).toBe(true);
+  expect(state.element.scrollTop).toBe(500);
 });
 
 it("resumes if content grows between reaching the bottom and delivery of the scroll event", () => {

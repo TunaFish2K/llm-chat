@@ -248,7 +248,7 @@ export function ChatView({
     }
     return result;
   }, [branchGroups]);
-  const beforeSend = useCallback(() => { scroller.reset(); scroller.scheduleFollow(); }, [scroller.reset, scroller.scheduleFollow]);
+  const beforeSend = useCallback(() => { scroller.toBottom("auto"); scroller.scheduleFollow(); }, [scroller.toBottom, scroller.scheduleFollow]);
   const updateRoleplayState = useCallback((state: ConversationRoleplayState) => setRoleplaySession((current) => current ? { ...current, state } : current), []);
   const openRoleplay = useCallback(() => setRoleplayOpen(true), []);
 
