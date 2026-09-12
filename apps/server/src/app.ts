@@ -483,14 +483,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(204).send();
   });
   app.get<{ Querystring: { path?: string } }>("/api/filesystem/directories", async (request) => {
-    return userOperation("workspace_invalid", () => listDirectories(request.query.path || parsePath(process.cwd()).root));
+    const query = z.object({ path: z.string().optional() }).parse(request.query);
+    return userOperation("workspace_invalid", () => listDirectories(query.path ?? parsePath(process.cwd()).root));
   });
   app.post("/api/filesystem/directories", async (request, reply) => {
-    const value = z.object({ path: z.string().min(1).max(4096) }).parse(request.body);
+    const value = z.object({ path: z.string() }).parse(request.body);
     return reply.code(201).send({ path: await userOperation("workspace_invalid", () => createDirectory(value.path)) });
   });
   app.post("/api/filesystem/validate", async (request) => {
-    const value = z.object({ path: z.string().min(1).max(4096) }).parse(request.body);
+    const value = z.object({ path: z.string() }).parse(request.body);
     return { path: await userOperation("workspace_invalid", () => canonicalWorkspace(value.path)) };
   });
   app.get("/api/memories", async () => store.listMemories());

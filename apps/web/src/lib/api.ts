@@ -341,7 +341,7 @@ export const endpoints = {
   detachCodex: (id: string) => api.delete<void>(`/api/codex/sessions/${id}`),
 
   listDirectories: (path?: string) =>
-    api.get<DirectoryListingDto>(`/api/filesystem/directories${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+    api.get<DirectoryListingDto>(`/api/filesystem/directories${path !== undefined ? `?path=${encodeURIComponent(path)}` : ""}`),
   createDirectory: (path: string) => api.post<{ path: string }>("/api/filesystem/directories", { path }),
   validatePath: (path: string) => api.post<{ path: string }>("/api/filesystem/validate", { path })
 };
