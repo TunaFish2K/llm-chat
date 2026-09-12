@@ -698,3 +698,26 @@ function streamResponse(chunks: string[]): Response {
     }
   }), { status: 200, headers: { "content-type": "text/event-stream" } });
 }
+
+it.each(["openai-chat", "openai-responses", "anthropic-messages"] as const)("%s sends native values without confusing none with omission", async (protocol) => {
+ const bodies: Array<Record<string, any>> = [];
+ vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+  bodies.push(JSON.parse(String(init?.body)));
+  return streamResponse(protocol === "openai-chat" ? [frame({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }), "data: [DONE]\n\n"] : protocol === "openai-responses" ? [namedFrame("response.output_text.delta", { delta: "ok" }), namedFrame("response.completed", { response: {} })] : [namedFrame("content_block_start", { index: 0, content_block: { type: "text", text: "ok" } }), namedFrame("message_stop", {})]);
+ }));
+ const req = request(protocol);
+ req.capabilities.adaptiveThinking = false;
+ req.capabilities.manualThinking = true;
+ for (const value of ["minimal", "none", "default"]) {
+  req.settings = { ...settings, reasoningSelection: { mode: "effort", value } };
+  await collect(adapterFor(protocol).stream(req));
+  const body = bodies.at(-1)!;
+  expect(protocol === "openai-chat" ? body.reasoning_effort : protocol === "openai-responses" ? body.reasoning.effort : body.output_config.effort).toBe(value);
+  expect(body.thinking).toBeUndefined();
+ }
+ req.settings = { ...settings, reasoningEffort: "max", reasoningSelection: { mode: "default" } };
+ await collect(adapterFor(protocol).stream(req));
+ expect(bodies.at(-1)).not.toHaveProperty("reasoning_effort");
+ expect(bodies.at(-1)).not.toHaveProperty("reasoning");
+ expect(bodies.at(-1)).not.toHaveProperty("output_config");
+});

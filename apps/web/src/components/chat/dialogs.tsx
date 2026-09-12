@@ -1,3 +1,5 @@
+import { effectiveReasoningSelection, legacyReasoningSelection } from "@llm-chat/contracts";
+import { ReasoningSelect } from "../ReasoningControl";
 import { toolLabel, toolDescription } from "../../lib/catalog-i18n";
 import { t, useLocale } from "../../lib/i18n";
 import { useEffect, useState } from "react";
@@ -14,7 +16,7 @@ import type {
 import { endpoints } from "../../lib/api";
 import { toastError } from "../../lib/app-state";
 import { Button, Field, Modal, StatusTag, Toggle } from "../ui";
-import { CONTEXT_POLICIES, INHERIT, NO_MODEL, REASONING_LEVELS, withGenerationValue } from "./model";
+import { CONTEXT_POLICIES, INHERIT, NO_MODEL, withGenerationValue } from "./model";
 import { AttachmentList, AttachmentMenu, useAttachments } from "./AttachmentEditor";
 
 /** Rewrite a user message into a new branch and immediately regenerate. */
@@ -131,6 +133,9 @@ export function ExecutionOverridesDialog({
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
   const [toolQuery, setToolQuery] = useState("");
   const [saving, setSaving] = useState(false);
+  const modelId = Object.hasOwn(draft, "modelId") ? draft.modelId : agent?.execution.modelId ?? agent?.lastSelectedModelId;
+  const selectedModel = models.find(model => model.id === modelId);
+  const selectedReasoning = draft.reasoningSelection ?? (draft.reasoningEffort !== undefined ? legacyReasoningSelection(draft.reasoningEffort) : undefined);
   const common = draft.generation?.common ?? {};
   const protocol = draft.generation?.protocol ?? {};
 
@@ -235,19 +240,14 @@ export function ExecutionOverridesDialog({
             </select>
           </Field>
           <Field label={t("ConnectionsView.reasoning_levels")}>
-            <select
-              className="select"
-              aria-label={t("ConnectionsView.reasoning_levels")}
-              value={draft.reasoningEffort ?? INHERIT}
-              onChange={(event) => setTop("reasoningEffort", event.target.value)}
-            >
-              <option value={INHERIT}>{t("dialogs.follow_agent", { value1: (agent?.execution.reasoningEffort ?? "none") })}</option>
-              {REASONING_LEVELS.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </select>
+            <ReasoningSelect model={selectedModel} value={selectedReasoning} inherited={effectiveReasoningSelection(agent?.execution ?? {})}
+              onChange={selection => setDraft(current => {
+                const next = { ...current };
+                delete next.reasoningEffort;
+                if (selection) next.reasoningSelection = selection;
+                else delete next.reasoningSelection;
+                return next;
+              })} />
           </Field>
         </div>
 

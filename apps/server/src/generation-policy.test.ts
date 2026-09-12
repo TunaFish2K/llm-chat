@@ -101,6 +101,7 @@ describe("generation policy without persistence", () => {
 
 it("rejects unsupported inherited and explicit efforts before generation, preserving native values", () => {
   const input = fixture();
+  input.model = { ...input.model, detectedReasoningEfforts: ["low", "medium", "high", "xhigh"] };
   input.model.catalogMetadata = { providerId: "opencode-go", modelId: "grok-4.6", inputModalities: ["text"], outputModalities: ["text"], reasoningEfforts: ["low", "medium", "high", "xhigh"], fetchedAt: 1 };
   input.agent.execution.reasoningEffort = "max";
   expect(() => resolveGenerationPlan(input)).toThrow("不支持推理强度 max");
@@ -111,6 +112,24 @@ it("rejects unsupported inherited and explicit efforts before generation, preser
   input.conversation.executionOverrides.reasoningEffort = "none";
   expect(resolveGenerationPlan(input).snapshot.execution.settings.reasoningEffort).toBe("none");
   input.model.catalogMetadata.reasoningEfforts = [];
+  input.model = { ...input.model, detectedReasoningEfforts: null };
   input.conversation.executionOverrides.reasoningEffort = "max";
-  expect(resolveGenerationPlan(input).snapshot.execution.settings.reasoningEffort).toBe("max");
+  expect(() => resolveGenerationPlan(input)).toThrow("不支持推理强度");
+});
+
+it("keeps default, native none and custom efforts distinct and rejects unknown declarations", () => {
+ const { model } = fixture();
+ model.reasoningEffortsOverride = ["minimal", "none", "default"];
+ for (const value of model.reasoningEffortsOverride) {
+  const settings = buildEffectiveSettings(model, "openai-responses", "max", {}, { mode: "effort", value });
+  expect(settings.reasoningSelection).toEqual({ mode: "effort", value });
+  expect(settings.resolvedThinkingBudgetTokens).toBeUndefined();
+ }
+ expect(() => buildEffectiveSettings(model, "openai-responses", "none", {}, { mode: "effort", value: "high" })).toThrow("不支持推理强度");
+ model.reasoningEffortsOverride = null;
+ expect(() => buildEffectiveSettings(model, "openai-responses", "none", {}, { mode: "effort", value: "minimal" })).toThrow();
+ expect(buildEffectiveSettings(model, "openai-responses", "max", {}, { mode: "default" }).reasoningSelection).toEqual({ mode: "default" });
+ model.capabilities.reasoning = false;
+ model.reasoningEffortsOverride = ["high"];
+ expect(() => buildEffectiveSettings(model, "openai-responses", "none", {}, { mode: "effort", value: "high" })).toThrow();
 });

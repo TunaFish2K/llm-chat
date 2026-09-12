@@ -1460,5 +1460,13 @@
   "error.reasoning_effort_unsupported": "Model {{model}} does not support reasoning effort {{effort}}. Choose: {{supported}}",
   "ReasoningPicker.unsupported_effort": "{{effort}} (unsupported by this model)",
   "ReasoningPicker.choose_supported_effort": "This model does not support {{effort}}. Choose: {{supported}}.",
-  "ReasoningPicker.provider_default": "none (provider default)"
+  "ReasoningPicker.provider_default": "none (provider default)",
+  "error.reasoning_client_update_required": "Refresh the page before editing reasoning settings",
+  "reasoning.provider_default": "Provider default",
+  "reasoning.unknown_hint": "Native effort levels are unknown. You can enter them in the model settings.",
+  "reasoning.source": "Reasoning levels source",
+  "reasoning.source_hint": "Automatic uses the exact provider and model catalog entry. Rediscovery preserves manual lists.",
+  "reasoning.native_values": "Native reasoning levels",
+  "reasoning.native_values_hint": "Enter one value per line in display order, such as low and high. An empty list offers only Provider default.",
+  "error.reasoning_efforts_unknown": "Model {{model}} does not support reasoning effort {{effort}}. Choose Provider default, or enter native levels in the model settings."
 }

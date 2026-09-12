@@ -24,7 +24,7 @@ describe("Store", () => {
     const conversation = store.createConversation({ systemPrompt: "" });
     const generation = store.createMessageGeneration(conversation.id, "preserve this message");
     store.finishGeneration(generation.generationId, "completed", {});
-    expect(store.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 42 });
+    expect(store.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 43 });
     if (version === 40) {
       store.sqlite.exec(`CREATE TABLE message_submissions (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, input_hash TEXT NOT NULL,
@@ -44,7 +44,7 @@ describe("Store", () => {
     const reopened = new Store(path);
     try {
       expect(reopened.listMessages(conversation.id)).toEqual(messages);
-      expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 42 });
+      expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 43 });
       expect(reopened.sqlite.prepare("PRAGMA quick_check").get()).toMatchObject({ quick_check: "ok" });
       if (version === 40) expect(reopened.sqlite.prepare("SELECT * FROM message_submissions").all()).toEqual([
         expect.objectContaining({ id: "retained-receipt", input_hash: "original-hash", conversation_id: conversation.id, generation_id: generation.generationId })
@@ -475,7 +475,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(42);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(43);
     migrated.close();
   });
 
@@ -556,7 +556,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(42);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(43);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getAgent(store.getSettings().defaultAgentId)?.execution.reasoningEffort).toBe("none");
@@ -586,7 +586,7 @@ describe("Store", () => {
 
     const migrated = new Store(path);
     expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(42);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(43);
     migrated.close();
   });
 
@@ -634,7 +634,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(42);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(43);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -670,7 +670,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(42);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(43);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -705,6 +705,7 @@ describe("Store", () => {
     const store = createStore();
     const { model } = seedModel(store);
     store.updateModel(model.id, {
+      reasoningEffortsOverride: ["high", "xhigh", "max"],
       capabilities: { ...model.capabilities, reasoning: true },
       defaultSettings: { common: { maxOutputTokens: 128, stopSequences: [] }, protocol: {} }
     });
@@ -1083,7 +1084,7 @@ describe("Store", () => {
     recoverInterruptedWork(reopened.sqlite);
     expect(reopened.getGeneration(queued.generationId)?.status).toBe("interrupted");
     expect(reopened.getGeneration(queued.generationId)?.completedAt).not.toBeNull();
-    reopened.sqlite.exec("PRAGMA user_version = 43");
+    reopened.sqlite.exec("PRAGMA user_version = 44");
     reopened.close();
     expect(() => new Store(path)).toThrow("高于当前服务支持的版本");
   });
@@ -1104,7 +1105,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(42);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(43);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

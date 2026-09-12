@@ -4,7 +4,6 @@ import type {
   ModelCapabilities,
   ModelInput,
   ProviderProtocol,
-  ReasoningEffort
 } from "@llm-chat/contracts";
 import type { DiscoveredModel } from "@llm-chat/providers";
 import { knownModelProtocol, providerPreset } from "@llm-chat/contracts";
@@ -13,7 +12,6 @@ const CATALOG_URL = "https://models.dev/api.json";
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
-const REASONING_EFFORTS = new Set<ReasoningEffort>(["none", "low", "medium", "high", "xhigh", "max"]);
 
 const OFFICIAL_PROVIDERS: Readonly<Record<string, string>> = {
   gpt: "openai", o1: "openai", o3: "openai", o4: "openai", o5: "openai", codex: "openai",
@@ -32,7 +30,7 @@ interface CatalogEntry {
   completeness: number;
 }
 
-export type CatalogModelInput = ModelInput & { detectedProtocol?: ProviderProtocol | null };
+export type CatalogModelInput = ModelInput & { detectedProtocol?: ProviderProtocol | null; detectedReasoningEfforts?: string[] | null };
 
 export interface EnrichedDiscoveredModel {
   input: CatalogModelInput;
@@ -114,7 +112,13 @@ export class ModelCatalogService {
     const declared = typeof sdk === "string" && Object.hasOwn(protocols, sdk) ? protocols[sdk] : null;
     const detectedProtocol = declared && providerPreset(connection.providerId).protocols.includes(declared)
       ? declared : knownModelProtocol(connection.providerId, model.id);
-    return { ...fallbackModel(connection.id, detectedProtocol ?? connection.protocol, model.id, model.displayName), detectedProtocol };
+    const hasEfforts = exact && Array.isArray(exact.meta.reasoning_options)
+      && exact.meta.reasoning_options.some(option => isRecord(option) && option.type === "effort");
+    return {
+      ...fallbackModel(connection.id, detectedProtocol ?? connection.protocol, model.id, model.displayName),
+      detectedProtocol,
+      detectedReasoningEfforts: hasEfforts ? reasoningEfforts(exact.meta.reasoning_options) : null
+    };
   }
 
   async enrichOne(connection: ConnectionDto, modelKey: string, displayName: string): Promise<EnrichedDiscoveredModel | null> {
@@ -298,16 +302,16 @@ function normalizeId(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function reasoningEfforts(raw: unknown): ReasoningEffort[] {
+function reasoningEfforts(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
-  const values = new Set<ReasoningEffort>();
+  const values = new Set<string>();
   for (const option of raw) {
     if (!isRecord(option) || option.type !== "effort" || !Array.isArray(option.values)) continue;
-    for (const value of option.values) if (typeof value === "string" && REASONING_EFFORTS.has(value as ReasoningEffort)) {
-      values.add(value as ReasoningEffort);
+    for (const value of option.values) if (typeof value === "string" && value.trim().length > 0 && value.trim().length <= 64) {
+      values.add(value.trim());
     }
   }
-  return [...values];
+  return [...values].slice(0, 20);
 }
 
 function catalogPricing(raw: unknown): ModelCatalogMetadata["pricing"] | undefined {

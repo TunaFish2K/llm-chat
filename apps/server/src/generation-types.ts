@@ -12,6 +12,7 @@ import type {
   ImageAssetDto,
   ProviderProtocol,
   ReasoningEffort,
+  ReasoningSelection,
   RoleplayGenerationTrigger,
   ToolPolicy
 } from "@llm-chat/contracts";
@@ -75,6 +76,7 @@ export interface AgentSnapshot {
     search: AgentSearchConfig;
     contextPolicy: ContextPolicy;
     reasoningEffort: ReasoningEffort;
+    reasoningSelection?: ReasoningSelection;
     settings: GenerationSettings;
     tools: ToolPolicy;
     enabledSkillIds: string[];

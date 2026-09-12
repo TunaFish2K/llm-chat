@@ -1444,5 +1444,13 @@
   "error.reasoning_effort_unsupported": "模型 {{model}} 不支持推理强度 {{effort}}，请选择：{{supported}}",
   "ReasoningPicker.unsupported_effort": "{{effort}}（当前模型不支持）",
   "ReasoningPicker.choose_supported_effort": "当前模型不支持 {{effort}}。请选择：{{supported}}。",
-  "ReasoningPicker.provider_default": "none（使用提供商默认值）"
+  "ReasoningPicker.provider_default": "none（使用提供商默认值）",
+  "error.reasoning_client_update_required": "请刷新页面后修改推理设置",
+  "reasoning.provider_default": "提供商默认",
+  "reasoning.unknown_hint": "未识别到原生档位。可在模型设置中手动补充。",
+  "reasoning.source": "推理档位来源",
+  "reasoning.source_hint": "自动使用此提供商和模型的目录声明。手动列表不会被重新发现覆盖。",
+  "reasoning.native_values": "原生推理档位",
+  "reasoning.native_values_hint": "每行一个值，按显示顺序填写，例如 low、high。空列表仅提供“提供商默认”。",
+  "error.reasoning_efforts_unknown": "模型 {{model}} 不支持推理强度 {{effort}}。请选择提供商默认，或在模型设置中补充原生档位。"
 }

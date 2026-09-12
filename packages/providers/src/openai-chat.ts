@@ -1,3 +1,4 @@
+import { providerReasoningEffort } from "@llm-chat/contracts";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
@@ -10,7 +11,7 @@ export class OpenAiChatAdapter implements ProviderAdapter {
 
   async *stream(request: GenerateRequest): AsyncGenerator<ProviderEvent> {
     const { common } = request.settings;
-    const effort = request.settings.reasoningEffort;
+    const effort = providerReasoningEffort(request.settings);
     const messages: Array<Record<string, unknown>> = [];
     if (request.systemPrompt) messages.push({ role: "system", content: request.systemPrompt });
     for (const message of prepareMessages(request)) {
@@ -59,12 +60,8 @@ export class OpenAiChatAdapter implements ProviderAdapter {
     if (common.temperature !== undefined) body.temperature = common.temperature;
     if (common.topP !== undefined) body.top_p = common.topP;
     if (common.stopSequences.length) body.stop = common.stopSequences;
-    /**
-     * Chat Completions has no explicit "disable reasoning" knob. We
-     * simply omit the field for the unified `null` case; `max` is
-     * clamped to "high" because the protocol has no higher tier.
-     */
-    if (request.capabilities.reasoning && effort !== "none") {
+    // null omits the parameter; native strings, including "none", are sent unchanged.
+    if (request.capabilities.reasoning && effort !== null) {
       body.reasoning_effort = effort;
     }
 

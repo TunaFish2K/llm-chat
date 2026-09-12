@@ -1510,16 +1510,13 @@
 .composer-settings-popover small { white-space: normal; overflow-wrap: anywhere; }
 .conversation-action-slot { display: flex; flex: 0 0 auto; }
 .conversation-action-slot:empty { display: none; }
-.reasoning-popover { z-index: 75; display: grid; grid-template-columns: 24px minmax(140px, 1fr); gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); max-width: calc(100vw - 24px); }
-.reasoning-popover > [role="alert"] { grid-column: 1 / -1; max-width: 260px; margin: 0; color: var(--danger); overflow-wrap: anywhere; }
-.reasoning-slider { position: relative; display: flex; align-items: center; width: 24px; height: min(240px, 55dvh); touch-action: none; user-select: none; }
-.reasoning-track { position: relative; width: 4px; height: 100%; margin: auto; background: var(--border-strong); border-radius: 3px; }
-.reasoning-range { position: absolute; width: 100%; background: var(--accent); }
-.reasoning-thumb { display: block; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface-1); }
-.reasoning-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.reasoning-labels { display: flex; flex-direction: column; justify-content: space-between; min-width: 140px; margin-block: -9px; }
-.reasoning-labels button { background: none; border: none; text-align: left; color: var(--text-muted); min-height: 24px; cursor: pointer; }
+.reasoning-popover { z-index: 75; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); width: 280px; max-width: calc(100vw - 24px); max-height: min(480px, 65dvh); overflow-y: auto; }
+.reasoning-popover > p { margin: 0; overflow-wrap: anywhere; }
+.reasoning-popover > [role="alert"] { color: var(--danger); }
+.reasoning-labels { display: flex; flex-direction: column; gap: 4px; }
+.reasoning-labels button { background: none; border: none; text-align: left; color: var(--text-muted); min-height: 36px; cursor: pointer; overflow-wrap: anywhere; }
 .reasoning-labels button[data-selected] { color: var(--accent); font-weight: 600; }
+.reasoning-labels button:disabled { opacity: 0.5; cursor: default; }
 .attachment-menu { width: 180px; }
 .message-queue { border: 1px solid var(--border); border-radius: var(--radius-md); margin-top: 8px; padding: 6px 10px; font-size: var(--text-sm); }
 .message-queue header, .message-queue li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

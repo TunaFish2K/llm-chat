@@ -1,5 +1,5 @@
 import { withMessage } from "@llm-chat/i18n";
-import { resolveModelProtocol } from "@llm-chat/contracts";
+import { resolveModelProtocol, modelReasoningOptions, type ReasoningSelection } from "@llm-chat/contracts";
 import type {
   AgentDto,
   AgentExecutionConfig,
@@ -39,18 +39,25 @@ export function buildEffectiveSettings(
   model: ModelDto,
   protocol: ProviderProtocol,
   effort: ReasoningEffort,
-  overrides: GenerationOverrides = {}
+  overrides: GenerationOverrides = {},
+  selection?: ReasoningSelection
 ): GenerationSettings {
   const capabilities = model.capabilities;
+  if (selection) effort = "none";
   if (effort !== "none" && !capabilities.reasoning) {
     throw withMessage(new StoreError("reasoning_not_supported", "当前模型不支持推理强度设置"), "error.this_model_does_not_support_reasoning_effort_settings");
   }
-  const advertised = model.catalogMetadata?.reasoningEfforts ?? [];
-  // "none" omits the provider parameter; it does not request an unsupported native value.
-  if (effort !== "none" && advertised.length > 0 && !advertised.includes(effort)) {
-    throw withMessage(new StoreError("reasoning_effort_unsupported",
-      `模型 ${model.displayName} 不支持推理强度 ${effort}，请选择：${advertised.join(" / ")}`),
-    "error.reasoning_effort_unsupported", { model: model.displayName, effort, supported: advertised.join(" / ") });
+  const advertised = modelReasoningOptions(model).values;
+  const nativeEffort = selection?.mode === "effort" ? selection.value : effort !== "none" ? effort : null;
+  const legacyBudget = !selection && protocol === "anthropic-messages" && capabilities.manualThinking && !capabilities.adaptiveThinking;
+  if (nativeEffort !== null && (!capabilities.reasoning || (!legacyBudget && !advertised.includes(nativeEffort)))) {
+    const message = `模型 ${model.displayName} 不支持推理强度 ${nativeEffort}`;
+    if (!advertised.length) {
+      throw withMessage(new StoreError("reasoning_effort_unsupported", `${message}，请使用提供商默认，或在模型设置中补充原生档位`),
+        "error.reasoning_efforts_unknown", { model: model.displayName, effort: nativeEffort });
+    }
+    throw withMessage(new StoreError("reasoning_effort_unsupported", `${message}，请选择：${advertised.join(" / ")}`),
+      "error.reasoning_effort_unsupported", { model: model.displayName, effort: nativeEffort, supported: advertised.join(" / ") });
   }
   const defaults = model.defaultSettings ?? ({} as ModelSettings);
   const common = {
@@ -78,6 +85,7 @@ export function buildEffectiveSettings(
       thinkingBudgetTokens: overrides.protocol?.thinkingBudgetTokens ?? defaults.protocol?.thinkingBudgetTokens
     },
     reasoningEffort: effort,
+    ...(selection ? { reasoningSelection: selection } : {}),
     ...(resolvedThinkingBudgetTokens ? { resolvedThinkingBudgetTokens } : {})
   };
 }
@@ -136,6 +144,8 @@ export function resolveGenerationPlan({ conversation, agent, model, connection, 
   if (!modelId) throw withMessage(new StoreError("conversation_model_required", "请先为 Agent 或会话选择模型"), "error.select_a_model_for_the_agent_or_conversation_first");
   if (!model?.enabled || !connection) throw withMessage(new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择"), "error.the_conversation_s_model_is_unavailable_select_another_model");
   const effort = conversation.executionOverrides.reasoningEffort ?? agent.execution.reasoningEffort;
+  const selection = conversation.executionOverrides.reasoningSelection ?? (conversation.executionOverrides.reasoningEffort !== undefined
+    ? undefined : agent.execution.reasoningSelection);
   const preset = selectedRoleplayPreset(agent.roleplay, roleplayState);
   const generation = mergeGenerationOverrides(
     preset?.generation ?? {},
@@ -143,7 +153,7 @@ export function resolveGenerationPlan({ conversation, agent, model, connection, 
     conversation.executionOverrides.generation
   );
   connection = { ...connection, protocol: resolveModelProtocol(model, connection) };
-  const settings = buildEffectiveSettings(model, connection.protocol, effort, generation);
+  const settings = buildEffectiveSettings(model, connection.protocol, effort, generation, selection);
   const snapshot: AgentSnapshot = {
     agentId: agent.id,
     name: agent.name,
@@ -163,7 +173,8 @@ export function resolveGenerationPlan({ conversation, agent, model, connection, 
       visionModelId: agent.execution.visionModelId,
       search: agent.execution.search,
       contextPolicy: conversation.executionOverrides.contextPolicy ?? agent.execution.contextPolicy,
-      reasoningEffort: effort,
+      reasoningEffort: settings.reasoningEffort,
+      ...(selection ? { reasoningSelection: selection } : {}),
       settings,
       tools: {
         defaultEnabled: agent.execution.tools.defaultEnabled,

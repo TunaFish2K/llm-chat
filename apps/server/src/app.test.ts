@@ -496,6 +496,7 @@ describe("server API", () => {
     const modelInput: ModelInput = {
       connectionId: connection.id,
       modelKey: "mock",
+      reasoningEffortsOverride: ["low", "medium", "high", "xhigh", "max"],
       displayName: "Mock",
       contextWindow: 65536,
       maxOutputTokens: 128,
@@ -607,6 +608,7 @@ describe("server API", () => {
     const model = (await app.inject({ method: "POST", url: "/api/models", payload: {
       connectionId: connection.id,
       modelKey: "mock",
+      reasoningEffortsOverride: ["low", "medium", "high", "xhigh", "max"],
       displayName: "Mock",
       contextWindow: 2048,
       maxOutputTokens: 128,
@@ -1216,7 +1218,7 @@ it("rejects an inherited unsupported reasoning effort before saving messages or 
   const app = await testApp();
   const { model } = seedStoreModel(app.store);
   const updated = app.store.updateModel(model.id, { capabilities: { ...model.capabilities, reasoning: true } })!;
-  app.store.restoreCatalogModel(model.id, updated, {
+  app.store.restoreCatalogModel(model.id, { ...updated, detectedReasoningEfforts: ["low", "medium", "high", "xhigh"] }, {
     providerId: "opencode-go", modelId: "grok-4.6", inputModalities: ["text"], outputModalities: ["text"],
     reasoningEfforts: ["low", "medium", "high", "xhigh"], fetchedAt: 1
   });

@@ -13,7 +13,6 @@ import type {
   GenerationDto,
   ImageGenerationJobDto,
   MessageDto,
-  ReasoningEffort,
   ToolCallDto
 } from "@llm-chat/contracts";
 
@@ -24,7 +23,6 @@ export const INHERIT = "__inherit__";
 /** Sentinel used by the model selects to mean "explicitly no model". */
 export const NO_MODEL = "__none__";
 
-export const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 export const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
 
 /** Stable identity so store selectors do not re-render on every read. */
