@@ -161,6 +161,7 @@ function portableCard(store: Store, agent: AgentDto): CharacterCardV2 {
       baseSystemPrompt: agent.execution.baseSystemPrompt,
       contextPolicy: agent.execution.contextPolicy,
       reasoningEffort: agent.execution.reasoningEffort,
+      ...(agent.execution.reasoningSelection ? { reasoningSelection: agent.execution.reasoningSelection } : {}),
       search: agent.execution.search,
       generation: agent.execution.generation,
       tools: agent.execution.tools,

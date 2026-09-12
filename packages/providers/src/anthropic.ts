@@ -1,3 +1,4 @@
+import { providerReasoningEffort } from "@llm-chat/contracts";
 import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
@@ -24,7 +25,7 @@ export class AnthropicAdapter implements ProviderAdapter {
 
   async *stream(request: GenerateRequest): AsyncGenerator<ProviderEvent> {
     const { common } = request.settings;
-    const effort = request.settings.reasoningEffort;
+    const effort = providerReasoningEffort(request.settings);
     const capabilities = request.capabilities;
     const messages = prepareMessages(request).map((message) => {
       if (message.role === "tool") {
@@ -95,8 +96,11 @@ export class AnthropicAdapter implements ProviderAdapter {
      *      the model has not advertised support for it).
      *  - unified null -> send neither `thinking` nor `output_config`.
      */
-    if (capabilities.reasoning && effort !== "none") {
-      if (capabilities.adaptiveThinking) {
+    if (capabilities.reasoning && effort !== null) {
+      if (request.settings.reasoningSelection?.mode === "effort") {
+        body.output_config = { effort };
+        if (capabilities.adaptiveThinking) body.thinking = { type: "adaptive" };
+      } else if (capabilities.adaptiveThinking) {
         body.thinking = { type: "adaptive" };
         body.output_config = { effort };
       } else if (capabilities.manualThinking) {

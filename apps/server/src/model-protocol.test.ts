@@ -59,6 +59,20 @@ it("migrates v41 models without changing IDs, history or generation protocol sna
   expect(migrated.getModel(model.id)).toMatchObject({ protocol: null, detectedProtocol: null });
   expect(migrated.getGenerationRecord(started.generation.generationId)?.protocol).toBe("openai-chat");
   expect(migrated.listMessages(started.conversation.id).some(m => m.text === "history")).toBe(true);
-  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 42 });
+  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 43 });
  } finally { migrated.close(); }
+});
+
+it("refreshes native efforts independently of catalog management and preserves overrides", () => {
+ const store = createStore(); const { model, connection } = seedModel(store);
+ store.updateModel(model.id, { reasoningEffortsOverride: ["minimal", "none"] });
+ store.upsertDiscoveredModel({ ...model, detectedReasoningEfforts: ["high", "max"] }, null);
+ expect(store.getModel(model.id)).toMatchObject({ reasoningEffortsOverride: ["minimal", "none"], detectedReasoningEfforts: ["high", "max"], catalogManaged: false });
+ store.upsertDiscoveredModel({ ...model, detectedReasoningEfforts: null }, null);
+ expect(store.getModel(model.id)?.detectedReasoningEfforts).toEqual(["high", "max"]);
+ store.updateModel(model.id, { enabled: true });
+ expect(store.getModel(model.id)?.reasoningEffortsOverride).toEqual(["minimal", "none"]);
+ store.updateModel(model.id, { reasoningEffortsOverride: null });
+ store.updateConnection(connection.id, { baseUrl: "https://changed.test/v1" });
+ expect(store.getModel(model.id)).toMatchObject({ reasoningEffortsOverride: null, detectedReasoningEfforts: null });
 });

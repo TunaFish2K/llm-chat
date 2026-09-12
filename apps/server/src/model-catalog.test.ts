@@ -97,3 +97,12 @@ describe("ModelCatalogService", () => {
   const offline = await new ModelCatalogService(async () => { throw new Error("offline"); }).enrich(go, [{ id: "grok-4.6", displayName: "Grok" }]);
   expect(offline.models[0]?.input.detectedProtocol).toBe("openai-responses");
  });
+
+it("keeps exact native values including minimal and ignores fuzzy effort declarations", async () => {
+ const service = new ModelCatalogService(async () => new Response(JSON.stringify({
+  "opencode-go": { models: { "grok-4.6": { reasoning_options: [{ type: "effort", values: ["minimal", "none", "default", "minimal", null, ""] }] } } }
+ })));
+ const go = { ...connection, providerId: "opencode-go" as const };
+ expect((await service.enrich(go, [{ id: "grok-4.6", displayName: "Grok" }])).models[0]?.input.detectedReasoningEfforts).toEqual(["minimal", "none", "default"]);
+ expect((await service.enrich(connection, [{ id: "grok-4.6", displayName: "Grok" }])).models[0]?.input.detectedReasoningEfforts).toBeNull();
+});

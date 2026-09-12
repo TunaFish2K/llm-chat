@@ -1164,3 +1164,25 @@ it("routes three models on one Go connection through their native endpoints, aut
   expect(JSON.stringify(calls[1]!.body)).toContain("tool-result");
  }
 });
+
+it("keeps the native selection through tool approval and later model edits", async () => {
+ const store = createStore(); const { model } = seedModel(store);
+ store.updateModel(model.id, { capabilities: { ...model.capabilities, reasoning: true }, reasoningEffortsOverride: ["minimal"] });
+ const started = store.startConversation({ text: "question", agentId: store.getSettings().defaultAgentId, greetingIndex: 0, executionOverrides: { modelId: model.id, reasoningSelection: { mode: "effort", value: "minimal" } } });
+ let calls = 0;
+ const selections: unknown[] = [];
+ const runner = makeRunner(store, {
+  buildTools: async () => [serverTool("work", async () => "done", true)],
+  stream: (_protocol, request) => {
+   selections.push(request.settings.reasoningSelection);
+   return events(calls++ === 0 ? [toolCall("native-approval", "work", "{}"), { type: "complete", stopReason: "tool_calls" }] : [block(0, "done", true), { type: "complete", stopReason: "stop" }]);
+  }
+ });
+ runner.start(started.generation.generationId);
+ await inactiveWithStatus(runner, store, { generationId: started.generation.generationId, conversationId: started.conversation.id }, "waiting-approval");
+ store.updateModel(model.id, { reasoningEffortsOverride: ["high"] });
+ store.updateToolCall("native-approval", { approvalState: "approved" });
+ runner.start(started.generation.generationId);
+ expect((await terminal(store, started.generation.generationId)).status).toBe("completed");
+ expect(selections).toEqual([{ mode: "effort", value: "minimal" }, { mode: "effort", value: "minimal" }]);
+});

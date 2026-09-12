@@ -1,3 +1,4 @@
+import { effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
 import { useErrorState } from "../../lib/error-display";
 import { t, useLocale, localized } from "../../lib/i18n";
 import { offlineStore } from "../../lib/offline-history";
@@ -22,7 +23,6 @@ import type {
   ConversationExecutionOverrides,
   ConversationRoleplayState,
   AgentDto,
-  ReasoningEffort
 } from "@llm-chat/contracts";
 import { useBackLayer } from "../../lib/mobile-navigation";
 import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
@@ -34,7 +34,7 @@ import { useStore } from "../../lib/store";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
-import { createComposerMessageSelector, type ComposerMessageState, EMPTY_MESSAGES, INHERIT, NO_MODEL, REASONING_LEVELS, greetingOptions, prettyJson } from "./model";
+import { createComposerMessageSelector, type ComposerMessageState, EMPTY_MESSAGES, INHERIT, NO_MODEL, greetingOptions, prettyJson } from "./model";
 import { ChatTypographySettings } from "../ChatTypographySettings";
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
@@ -160,11 +160,8 @@ export const Composer = memo(function Composer({
   const imageConfigured = Boolean(
     effectiveModel?.capabilities.imageInput || (visionModel?.enabled && visionModel.capabilities.imageInput)
   );
-  const reasoning = overrides.reasoningEffort ?? effectiveAgent?.execution.reasoningEffort ?? "none";
-  const advertisedReasoning = effectiveModel?.catalogMetadata?.reasoningEfforts ?? [];
-  const reasoningLevels: ReasoningEffort[] = effectiveModel && !effectiveModel.capabilities.reasoning ? ["none"] : advertisedReasoning.length > 0
-    ? advertisedReasoning
-    : REASONING_LEVELS;
+  const inheritedReasoning = effectiveReasoningSelection(effectiveAgent?.execution ?? {});
+  const selectedReasoning = overrides.reasoningSelection ?? (overrides.reasoningEffort !== undefined ? legacyReasoningSelection(overrides.reasoningEffort) : undefined);
   const workspace = conversation?.workspacePath ?? newWorkspace;
   const greetings = effectiveAgent && settings ? greetingOptions(effectiveAgent, settings) : [];
   const quickReplies = roleplayAgent && roleplayState
@@ -242,10 +239,11 @@ export const Composer = memo(function Composer({
     void saveOverrides(next, undefined, true).catch(() => undefined);
   };
 
-  const chooseReasoning = (value: string) => {
+  const chooseReasoning = (value: ReasoningSelection | undefined) => {
     const next = { ...overrides };
-    if (value === INHERIT) delete next.reasoningEffort;
-    else next.reasoningEffort = value as ReasoningEffort;
+    delete next.reasoningEffort;
+    if (value === undefined) delete next.reasoningSelection;
+    else next.reasoningSelection = value;
     void saveOverrides(next).catch(() => undefined);
   };
 
@@ -501,9 +499,7 @@ export const Composer = memo(function Composer({
                     onChange={chooseModel}
                   />
 
-                  <ReasoningPicker value={overrides.reasoningEffort ?? INHERIT} effective={reasoning}
-                    inherited={effectiveAgent?.execution.reasoningEffort ?? "none"}
-                    levels={reasoningLevels} disabled={controlsDisabled} onChange={chooseReasoning} />
+                  <ReasoningPicker value={selectedReasoning} inherited={inheritedReasoning} model={effectiveModel} disabled={controlsDisabled} onChange={chooseReasoning} />
 
                   <Popover.Root modal={false} open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setTypographyOpen(false); }}>
                     {typographyOpen ? <Popover.Anchor virtualRef={inputAreaRef} /> : null}

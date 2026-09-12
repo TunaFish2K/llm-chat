@@ -817,9 +817,9 @@ describe("ChatView", () => {
 
   it("carries local model and reasoning choices into the first send", async () => {
     const user = userEvent.setup();
-    const models = [makeModel(), makeModel({ id: "model-2", modelKey: "claude-test", displayName: "Claude 测试" })];
+    const models = [makeModel(), makeModel({ id: "model-2", modelKey: "claude-test", reasoningEffortsOverride: ["high"], displayName: "Claude 测试" })];
     seedStore([], { models });
-    const createdConversation = makeConversation({ id: "conv-new", modelId: "model-2", executionOverrides: { modelId: "model-2", reasoningEffort: "high" } });
+    const createdConversation = makeConversation({ id: "conv-new", modelId: "model-2", executionOverrides: { modelId: "model-2", reasoningSelection: { mode: "effort", value: "high" } } });
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       if (url === "/api/conversations/start" && init?.method === "POST") return Promise.resolve(json({ conversation: createdConversation, generation: { userMessageId: "u", assistantMessageId: "a", generationId: "g" } }, 202));
       if (url === "/api/conversations") return Promise.resolve(json([createdConversation]));
@@ -845,7 +845,7 @@ describe("ChatView", () => {
           text: "第一条消息",
           agentId: "agent-1",
           greetingIndex: 0,
-          executionOverrides: { modelId: "model-2", reasoningEffort: "high" },
+          executionOverrides: { modelId: "model-2", reasoningSelection: { mode: "effort", value: "high" } },
           workspacePath: null
         })
       })

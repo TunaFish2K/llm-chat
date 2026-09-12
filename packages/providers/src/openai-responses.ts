@@ -1,3 +1,4 @@
+import { providerReasoningEffort } from "@llm-chat/contracts";
 import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
@@ -6,8 +7,8 @@ import { ProviderError, type GenerateRequest, type ProviderAdapter, type Provide
 
 /**
  * OpenAI Responses unified-effort mapping:
- *   none -> send no reasoning field
- *   every other value is sent unchanged, including non-standard max
+ *   legacy none or provider default -> send no reasoning field
+ *   native values are sent unchanged, including a native "none"
  * `reasoningSummary` (model default) is only honoured when an effort
  * is engaged for this generation.
  */
@@ -18,7 +19,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
 
   async *stream(request: GenerateRequest): AsyncGenerator<ProviderEvent> {
     const { common, protocol } = request.settings;
-    const effort = request.settings.reasoningEffort;
+    const effort = providerReasoningEffort(request.settings);
     const input: unknown[] = [];
     for (const message of prepareMessages(request)) {
       if (message.role === "tool") {
@@ -79,7 +80,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
     if (common.topP !== undefined) body.top_p = common.topP;
 
     const reasoningAllowed = request.capabilities.reasoning;
-    if (reasoningAllowed && effort !== "none") {
+    if (reasoningAllowed && effort !== null) {
       const reasoning: Record<string, unknown> = {
         effort
       };

@@ -1,3 +1,5 @@
+import { effectiveReasoningSelection } from "@llm-chat/contracts";
+import { ReasoningSelect } from "../components/ReasoningControl";
 import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
@@ -9,7 +11,6 @@ import type {
   CharacterBook,
   ContextPolicy,
   GenerationOverrides,
-  ReasoningEffort,
   SkillDto,
   ToolCatalogItemDto,
   ToolPolicy
@@ -23,7 +24,6 @@ import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Switch } fro
 import { ExpandableTextarea } from "../components/ExpandableTextarea";
 import { RoleplayTab } from "../components/agent/RoleplayTab";
 
-const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
 function getTABS() { return [
   ["card", t("AgentEditorView.character_card")],
@@ -500,11 +500,6 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
   const execution = agent.execution;
   const generation = execution.generation ?? {};
   const selectedModel = models.find((model) => model.id === execution.modelId);
-  const advertisedReasoning = selectedModel?.catalogMetadata?.reasoningEfforts ?? [];
-  const reasoningLevels = advertisedReasoning.length > 0
-    ? advertisedReasoning
-    : REASONING_LEVELS;
-
   const setExecution = (patch: Partial<AgentDto["execution"]>) =>
     mutate((draft) => {
       draft.execution = { ...draft.execution, ...patch };
@@ -567,23 +562,8 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
             </select>
           </Field>
           <Field label={t("ConnectionsView.reasoning_levels")}>
-            <select
-              className="select"
-              aria-label={t("ConnectionsView.reasoning_levels")}
-              value={execution.reasoningEffort}
-              onChange={(event) => setExecution({ reasoningEffort: event.target.value as ReasoningEffort })}
-            >
-              {!reasoningLevels.includes(execution.reasoningEffort) ? (
-                <option value={execution.reasoningEffort} disabled>
-                  {execution.reasoningEffort === "none" ? t("ReasoningPicker.provider_default") : t("ReasoningPicker.unsupported_effort", { effort: execution.reasoningEffort })}
-                </option>
-              ) : null}
-              {reasoningLevels.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </select>
+            <ReasoningSelect model={selectedModel} value={effectiveReasoningSelection(execution)}
+              onChange={selection => { if (selection) setExecution({ reasoningSelection: selection, reasoningEffort: "none" }); }} />
           </Field>
         </div>
       </div>

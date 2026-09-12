@@ -523,6 +523,8 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
   const [connectionId, setConnectionId] = useState(model?.connectionId ?? initialConnectionId ?? connections[0]?.id ?? "");
   const [modelKey, setModelKey] = useState(model?.modelKey ?? "");
   const [protocol, setProtocol] = useState<ProviderProtocol | null>(model?.protocol ?? null);
+  const [reasoningManual, setReasoningManual] = useState(model?.reasoningEffortsOverride != null);
+  const [reasoningValues, setReasoningValues] = useState((model?.reasoningEffortsOverride ?? model?.detectedReasoningEfforts ?? []).join("\n"));
   const [displayName, setDisplayName] = useState(model?.displayName ?? "");
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");
   const [maxInputTokens, setMaxInputTokens] = useState(model?.maxInputTokens?.toString() ?? "");
@@ -558,6 +560,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         connectionId,
         modelKey: modelKey.trim(),
         protocol,
+        reasoningEffortsOverride: reasoningManual ? [...new Set(reasoningValues.split(/\r?\n/).map(value => value.trim()).filter(Boolean))] : null,
         displayName: displayName.trim(),
         contextWindow: contextWindow === "" ? null : Number(contextWindow),
         maxInputTokens: maxInputTokens === "" ? null : Number(maxInputTokens),
@@ -700,6 +703,17 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
           onChange={(event) => setModelKey(event.target.value)}
         />
       </Field>
+      <Field label={t("reasoning.source")} hint={t("reasoning.source_hint")}>
+        <select className="select" aria-label={t("reasoning.source")} value={reasoningManual ? "manual" : "auto"}
+          onChange={event => setReasoningManual(event.target.value === "manual")}>
+          <option value="auto">{t("ConnectionsView.automatic_protocol")}</option>
+          <option value="manual">{t("ConnectionsView.manual")}</option>
+        </select>
+      </Field>
+      {reasoningManual ? <Field label={t("reasoning.native_values")} hint={t("reasoning.native_values_hint")}>
+        <textarea className="textarea" aria-label={t("reasoning.native_values")} value={reasoningValues}
+          onChange={event => setReasoningValues(event.target.value)} rows={4} />
+      </Field> : <p className="small muted">{(model?.connectionId === connectionId && model.modelKey === modelKey.trim() ? model.detectedReasoningEfforts?.join(" / ") : null) || t("reasoning.unknown_hint")}</p>}
       <Field label={t("ConnectionsView.model_protocol")} hint={t("ConnectionsView.effective_model_protocol", { protocol: effectiveProtocol ?? "—" })}>
         <select className="select" aria-label={t("ConnectionsView.model_protocol")} value={protocol ?? ""}
           onChange={(event) => setProtocol((event.target.value || null) as ProviderProtocol | null)}>

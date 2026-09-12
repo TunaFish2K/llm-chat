@@ -78,7 +78,8 @@ import {
   providerPresetIdSchema,
   providerPreset,
   resolveModelProtocol,
-  reasoningEffortSchema
+  reasoningEffortSchema,
+  nativeReasoningEffortsSchema
 } from "@llm-chat/contracts";
 import { fallbackModel, type CatalogModelInput } from "./model-catalog";
 import {
@@ -226,7 +227,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 42) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 43) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1128,6 +1129,20 @@ function migrate(sqlite: DatabaseSyncType): void {
       }
       sqlite.exec("PRAGMA user_version = 42;");
     }
+    if (current < 43) {
+      for (const column of ["reasoning_efforts_override_json", "detected_reasoning_efforts_json"]) {
+        if (!hasColumn(sqlite, "models", column)) sqlite.exec(`ALTER TABLE models ADD COLUMN ${column} TEXT`);
+      }
+      const update = sqlite.prepare("UPDATE models SET detected_reasoning_efforts_json = ? WHERE id = ?");
+      for (const row of sqlite.prepare(`SELECT m.id, m.model_key, m.catalog_metadata_json, c.provider_id
+        FROM models m JOIN connections c ON c.id = m.connection_id`).all() as Row[]) {
+        const meta = modelCatalogMetadataSchema.safeParse(parse(row.catalog_metadata_json, null)).data;
+        if (meta && meta.reasoningEfforts.length && row.provider_id !== "custom" && meta.providerId === row.provider_id && meta.modelId === row.model_key) {
+          update.run(json(meta.reasoningEfforts), String(row.id));
+        }
+      }
+      sqlite.exec("PRAGMA user_version = 43;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1471,6 +1486,9 @@ export class Store {
   updateAgent(id: string, patch: OptionalInput<AgentInput>): AgentDto | undefined {
     const current = this.getAgent(id);
     if (!current) return undefined;
+    if (current.execution.reasoningSelection && patch.execution && !patch.execution.reasoningSelection) {
+      throw withMessage(new StoreError("client_update_required", "请刷新页面后修改推理设置"), "error.reasoning_client_update_required");
+    }
     const card = characterCardV2Schema.parse(patch.card ?? current.card);
     const execution = agentExecutionConfigSchema.parse({
       ...(patch.execution ?? current.execution),
@@ -1769,7 +1787,7 @@ export class Store {
       id
     );
     if (providerId !== current.providerId || (input.baseUrl !== undefined && input.baseUrl !== current.baseUrl)) {
-      this.sqlite.prepare("UPDATE models SET detected_protocol = NULL, updated_at = ? WHERE connection_id = ?").run(now, id);
+      this.sqlite.prepare("UPDATE models SET detected_protocol = NULL, detected_reasoning_efforts_json = NULL, updated_at = ? WHERE connection_id = ?").run(now, id);
     }
     return this.listConnections().find((item) => item.id === id);
   }
@@ -1805,7 +1823,8 @@ export class Store {
     source: ModelDto["source"] = "manual",
     catalogMetadata: ModelCatalogMetadata | null = null,
     catalogManaged = source === "discovered",
-    detectedProtocol: ProviderProtocol | null = null
+    detectedProtocol: ProviderProtocol | null = null,
+    detectedReasoningEfforts: string[] | null = null
   ): ModelDto {
     const connection = this.getConnection(input.connectionId);
     if (!connection) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
@@ -1815,18 +1834,20 @@ export class Store {
     this.sqlite.prepare(`
       INSERT INTO models (id, connection_id, model_key, display_name, context_window, max_output_tokens, image_protocol,
         capabilities_json, default_settings_json, source, enabled, created_at, updated_at,
-        max_input_tokens, catalog_managed, catalog_metadata_json, protocol, detected_protocol)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        max_input_tokens, catalog_managed, catalog_metadata_json, protocol, detected_protocol, reasoning_efforts_override_json, detected_reasoning_efforts_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(connection_id, model_key) DO UPDATE SET
         display_name = excluded.display_name,
         protocol = CASE WHEN ? THEN excluded.protocol ELSE models.protocol END,
+        reasoning_efforts_override_json = CASE WHEN ? THEN excluded.reasoning_efforts_override_json ELSE models.reasoning_efforts_override_json END,
         catalog_managed = CASE WHEN excluded.source = 'manual' THEN 0 ELSE models.catalog_managed END,
         updated_at = excluded.updated_at
     `).run(
       id, input.connectionId, input.modelKey, input.displayName, input.contextWindow, input.maxOutputTokens, input.imageProtocol ?? null,
       json(input.capabilities), json(input.defaultSettings), source, input.enabled ? 1 : 0, now, now,
       input.maxInputTokens ?? null, catalogManaged ? 1 : 0, catalogMetadata ? json(catalogMetadata) : null,
-      input.protocol ?? null, detectedProtocol, input.protocol !== undefined ? 1 : 0
+      input.protocol ?? null, detectedProtocol, input.reasoningEffortsOverride != null ? json(input.reasoningEffortsOverride) : null,
+      detectedReasoningEfforts !== null ? json(detectedReasoningEfforts) : null, input.protocol !== undefined ? 1 : 0, input.reasoningEffortsOverride !== undefined ? 1 : 0
     );
     return this.listModels(input.connectionId).find((item) => item.modelKey === input.modelKey)!;
   }
@@ -1837,8 +1858,11 @@ export class Store {
   ): { model: ModelDto; status: "created" | "updated" | "skipped" } {
     const current = this.listModels(input.connectionId).find((model) => model.modelKey === input.modelKey);
     if (!current) {
-      return { model: this.createModel(input, "discovered", catalogMetadata, true, input.detectedProtocol ?? null), status: "created" };
+      return { model: this.createModel(input, "discovered", catalogMetadata, true, input.detectedProtocol ?? null, input.detectedReasoningEfforts ?? null), status: "created" };
     }
+    const reasoningChanged = input.detectedReasoningEfforts != null && json(input.detectedReasoningEfforts) !== json(current.detectedReasoningEfforts);
+    if (reasoningChanged) this.sqlite.prepare("UPDATE models SET detected_reasoning_efforts_json = ?, updated_at = ? WHERE id = ?")
+      .run(json(input.detectedReasoningEfforts), Date.now(), current.id);
     const protocolChanged = input.detectedProtocol != null && input.detectedProtocol !== current.detectedProtocol;
     if (protocolChanged) {
       this.sqlite.prepare("UPDATE models SET detected_protocol = ?, updated_at = ? WHERE id = ?")
@@ -1846,7 +1870,7 @@ export class Store {
     }
     // A transient directory failure or unmatched response must not erase metadata
     // from a model that was enriched successfully on an earlier discovery.
-    if (!current.catalogManaged || !catalogMetadata) return { model: this.getModel(current.id)!, status: protocolChanged ? "updated" : "skipped" };
+    if (!current.catalogManaged || !catalogMetadata) return { model: this.getModel(current.id)!, status: protocolChanged || reasoningChanged ? "updated" : "skipped" };
     this.writeCatalogModel(current.id, input, catalogMetadata);
     return { model: this.getModel(current.id)!, status: "updated" };
   }
@@ -1862,11 +1886,12 @@ export class Store {
     this.sqlite.prepare(`
       UPDATE models SET display_name = ?, context_window = ?, max_input_tokens = ?, max_output_tokens = ?, image_protocol = ?,
         capabilities_json = ?, default_settings_json = ?, source = 'discovered', catalog_managed = 1,
-        catalog_metadata_json = ?, detected_protocol = COALESCE(?, detected_protocol), updated_at = ? WHERE id = ?
+        catalog_metadata_json = ?, detected_protocol = COALESCE(?, detected_protocol),
+        detected_reasoning_efforts_json = COALESCE(?, detected_reasoning_efforts_json), updated_at = ? WHERE id = ?
     `).run(
       input.displayName, input.contextWindow, input.maxInputTokens ?? null, input.maxOutputTokens, input.imageProtocol ?? null,
       json(input.capabilities), json(input.defaultSettings), catalogMetadata ? json(catalogMetadata) : null,
-      input.detectedProtocol ?? null, Date.now(), id
+      input.detectedProtocol ?? null, input.detectedReasoningEfforts != null ? json(input.detectedReasoningEfforts) : null, Date.now(), id
     );
   }
 
@@ -1881,6 +1906,7 @@ export class Store {
       maxInputTokens: input.maxInputTokens === undefined ? current.maxInputTokens : input.maxInputTokens,
       maxOutputTokens: input.maxOutputTokens ?? current.maxOutputTokens,
       protocol: input.protocol === undefined ? current.protocol : input.protocol,
+      reasoningEffortsOverride: input.reasoningEffortsOverride === undefined ? current.reasoningEffortsOverride : input.reasoningEffortsOverride,
       imageProtocol: input.imageProtocol === undefined ? current.imageProtocol : input.imageProtocol,
       capabilities: input.capabilities ?? current.capabilities,
       defaultSettings: input.defaultSettings ?? current.defaultSettings,
@@ -1895,12 +1921,14 @@ export class Store {
     this.sqlite.prepare(`
       UPDATE models SET connection_id = ?, model_key = ?, display_name = ?, context_window = ?, max_output_tokens = ?, image_protocol = ?,
         capabilities_json = ?, default_settings_json = ?, enabled = ?, max_input_tokens = ?, catalog_managed = ?,
-        protocol = ?, detected_protocol = ?, updated_at = ? WHERE id = ?
+        protocol = ?, detected_protocol = ?, reasoning_efforts_override_json = ?, detected_reasoning_efforts_json = ?, updated_at = ? WHERE id = ?
     `).run(
       next.connectionId, next.modelKey, next.displayName, next.contextWindow, next.maxOutputTokens, next.imageProtocol ?? null,
       json(next.capabilities), json(next.defaultSettings), next.enabled ? 1 : 0, next.maxInputTokens ?? null,
       metadataChanged ? 0 : current.catalogManaged ? 1 : 0, next.protocol ?? null,
-      identityChanged ? null : current.detectedProtocol ?? null, Date.now(), id
+      identityChanged ? null : current.detectedProtocol ?? null,
+      next.reasoningEffortsOverride != null ? json(next.reasoningEffortsOverride) : null,
+      identityChanged || current.detectedReasoningEfforts == null ? null : json(current.detectedReasoningEfforts), Date.now(), id
     );
     if (!next.enabled) {
       this.sqlite.prepare("UPDATE conversations SET model_id = NULL WHERE model_id = ?").run(id);
@@ -2397,6 +2425,10 @@ export class Store {
         ...(patch.contextPolicy !== undefined ? { contextPolicy: patch.contextPolicy } : {})
       };
       if (patch.modelId !== undefined && patch.modelId !== null) this.validateAgentModel(patch.modelId);
+      if (!switchingAgent && current.executionOverrides.reasoningSelection && patch.executionOverrides &&
+          !patch.executionOverrides.reasoningSelection && patch.executionOverrides.reasoningEffort !== undefined) {
+        throw withMessage(new StoreError("client_update_required", "请刷新页面后修改推理设置"), "error.reasoning_client_update_required");
+      }
       const executionOverrides = switchingAgent
         ? conversationExecutionOverridesSchema.parse({})
         : conversationExecutionOverridesSchema.parse(patch.executionOverrides ?? legacyOverrides);
@@ -3499,6 +3531,8 @@ function modelDto(row: Row): ModelDto {
     modelKey: String(row.model_key),
     protocol: row.protocol ? row.protocol as ProviderProtocol : null,
     detectedProtocol: row.detected_protocol ? row.detected_protocol as ProviderProtocol : null,
+    reasoningEffortsOverride: nativeReasoningEffortsSchema.nullable().parse(parse(row.reasoning_efforts_override_json, null)),
+    detectedReasoningEfforts: nativeReasoningEffortsSchema.nullable().parse(parse(row.detected_reasoning_efforts_json, null)),
     displayName: String(row.display_name),
     contextWindow: row.context_window === null ? null : Number(row.context_window),
     maxInputTokens: row.max_input_tokens === null || row.max_input_tokens === undefined ? null : Number(row.max_input_tokens),

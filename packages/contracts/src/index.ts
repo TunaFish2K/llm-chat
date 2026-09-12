@@ -156,6 +156,35 @@ export type BlockType = z.infer<typeof blockTypeSchema>;
 export const reasoningEffortSchema = z.enum(["none", "low", "medium", "high", "xhigh", "max"]);
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
+export const nativeReasoningEffortSchema = z.string().trim().min(1).max(64);
+export const nativeReasoningEffortsSchema = z.array(nativeReasoningEffortSchema).max(20)
+  .transform((values) => [...new Set(values)]);
+export const reasoningSelectionSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("default") }),
+  z.object({ mode: z.literal("effort"), value: nativeReasoningEffortSchema })
+]);
+export type ReasoningSelection = z.infer<typeof reasoningSelectionSchema>;
+
+export function legacyReasoningSelection(effort: ReasoningEffort = "none"): ReasoningSelection {
+  return effort === "none" ? { mode: "default" } : { mode: "effort", value: effort };
+}
+
+export function effectiveReasoningSelection(
+  agent: { reasoningSelection?: ReasoningSelection | undefined; reasoningEffort?: ReasoningEffort | undefined },
+  overrides: { reasoningSelection?: ReasoningSelection | undefined; reasoningEffort?: ReasoningEffort | undefined } = {}
+): ReasoningSelection {
+  return overrides.reasoningSelection ?? (overrides.reasoningEffort !== undefined
+    ? legacyReasoningSelection(overrides.reasoningEffort)
+    : agent.reasoningSelection ?? legacyReasoningSelection(agent.reasoningEffort));
+}
+
+/** null means omit the provider parameter; native "none" remains a string. */
+export function providerReasoningEffort(settings: { reasoningSelection?: ReasoningSelection | undefined; reasoningEffort: ReasoningEffort }): string | null {
+  const selection = settings.reasoningSelection ?? legacyReasoningSelection(settings.reasoningEffort);
+  return selection.mode === "effort" ? selection.value : null;
+}
+
+
 export const commonSettingsSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   topP: z.number().min(0).max(1).optional(),
@@ -192,6 +221,7 @@ export type ModelSettings = z.infer<typeof modelSettingsSchema>;
 
 export const generationSettingsSchema = modelSettingsSchema.extend({
   reasoningEffort: reasoningEffortSchema,
+  reasoningSelection: reasoningSelectionSchema.optional(),
   /** Resolved token budget used by Anthropic manual Thinking. */
   resolvedThinkingBudgetTokens: z.number().int().min(1024).optional()
 });
@@ -297,6 +327,7 @@ export const modelInputSchema = z.object({
   maxInputTokens: z.number().int().positive().max(10_000_000).nullable().optional(),
   maxOutputTokens: z.number().int().positive().max(1_000_000),
   protocol: protocolSchema.nullable().optional(),
+  reasoningEffortsOverride: nativeReasoningEffortsSchema.nullable().optional(),
   imageProtocol: imageProviderProtocolSchema.nullable().optional(),
   capabilities: modelCapabilitiesSchema,
   defaultSettings: modelSettingsSchema,
@@ -327,7 +358,7 @@ export const modelCatalogMetadataSchema = z.object({
   releaseDate: z.string().max(40).optional(),
   inputModalities: z.array(z.string().max(40)).max(20).default([]),
   outputModalities: z.array(z.string().max(40)).max(20).default([]),
-  reasoningEfforts: z.array(reasoningEffortSchema).max(20).default([]),
+  reasoningEfforts: nativeReasoningEffortsSchema.default([]),
   pricing: modelCatalogPricingSchema.optional(),
   fetchedAt: z.number().int().nonnegative()
 });
@@ -336,12 +367,21 @@ export type ModelCatalogMetadata = z.infer<typeof modelCatalogMetadataSchema>;
 export interface ModelDto extends Omit<ModelInput, "maxInputTokens"> {
   id: string;
   readonly detectedProtocol?: ProviderProtocol | null;
+  readonly detectedReasoningEfforts?: string[] | null;
   maxInputTokens: number | null;
   source: "manual" | "discovered";
   catalogManaged: boolean;
   catalogMetadata: ModelCatalogMetadata | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** Shared by all editors and new-generation validation. */
+export function modelReasoningOptions(model: Pick<ModelDto, "capabilities" | "reasoningEffortsOverride" | "detectedReasoningEfforts"> | undefined): { values: string[]; source: "manual" | "catalog" | "unknown" | "unsupported" } {
+  if (!model?.capabilities.reasoning) return { values: [], source: model ? "unsupported" : "unknown" };
+  if (model.reasoningEffortsOverride != null) return { values: model.reasoningEffortsOverride, source: "manual" };
+  if (model.detectedReasoningEfforts != null) return { values: model.detectedReasoningEfforts, source: "catalog" };
+  return { values: [], source: "unknown" };
 }
 
 export const characterBookEntrySchema = z.object({
@@ -622,6 +662,7 @@ export const agentExecutionConfigSchema = z.object({
   visionModelId: z.string().min(1).max(200).nullable().default(null),
   contextPolicy: contextPolicySchema,
   reasoningEffort: reasoningEffortSchema,
+  reasoningSelection: reasoningSelectionSchema.optional(),
   search: agentSearchConfigSchema.default({ provider: "searxng", baseUrl: "" }),
   generation: generationOverridesSchema.default({}),
   tools: toolPolicySchema,
@@ -682,6 +723,7 @@ export const conversationExecutionOverridesSchema = z.object({
   modelId: z.string().min(1).max(200).nullable().optional(),
   contextPolicy: contextPolicySchema.optional(),
   reasoningEffort: reasoningEffortSchema.optional(),
+  reasoningSelection: reasoningSelectionSchema.optional(),
   generation: generationOverridesSchema.optional(),
   tools: z.record(z.string(), z.boolean()).optional()
 });
