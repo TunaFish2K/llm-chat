@@ -45,6 +45,13 @@ export function buildEffectiveSettings(
   if (effort !== "none" && !capabilities.reasoning) {
     throw withMessage(new StoreError("reasoning_not_supported", "当前模型不支持推理强度设置"), "error.this_model_does_not_support_reasoning_effort_settings");
   }
+  const advertised = model.catalogMetadata?.reasoningEfforts ?? [];
+  // "none" omits the provider parameter; it does not request an unsupported native value.
+  if (effort !== "none" && advertised.length > 0 && !advertised.includes(effort)) {
+    throw withMessage(new StoreError("reasoning_effort_unsupported",
+      `模型 ${model.displayName} 不支持推理强度 ${effort}，请选择：${advertised.join(" / ")}`),
+    "error.reasoning_effort_unsupported", { model: model.displayName, effort, supported: advertised.join(" / ") });
+  }
   const defaults = model.defaultSettings ?? ({} as ModelSettings);
   const common = {
     ...(defaults.common ?? {}),

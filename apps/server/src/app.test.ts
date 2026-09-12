@@ -1211,3 +1211,24 @@ function sse(events: unknown[]): Response {
     }
   }), { status: 200, headers: { "content-type": "text/event-stream" } });
 }
+
+it("rejects an inherited unsupported reasoning effort before saving messages or contacting the provider", async () => {
+  const app = await testApp();
+  const { model } = seedStoreModel(app.store);
+  const updated = app.store.updateModel(model.id, { capabilities: { ...model.capabilities, reasoning: true } })!;
+  app.store.restoreCatalogModel(model.id, updated, {
+    providerId: "opencode-go", modelId: "grok-4.6", inputModalities: ["text"], outputModalities: ["text"],
+    reasoningEfforts: ["low", "medium", "high", "xhigh"], fetchedAt: 1
+  });
+  const agent = app.store.getAgent(app.store.getSettings().defaultAgentId)!;
+  app.store.updateAgent(agent.id, { execution: { ...agent.execution, reasoningEffort: "max" } });
+  const conversation = app.store.createConversation({ agentId: agent.id });
+  const fetchImpl = vi.fn();
+  vi.stubGlobal("fetch", fetchImpl);
+  const response = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/messages`, payload: { text: "test" } });
+  expect(response.statusCode).toBe(400);
+  expect(response.json().error).toMatchObject({ code: "reasoning_effort_unsupported", i18n: { key: "error.reasoning_effort_unsupported" } });
+  expect(response.json().error.message).toContain("low / medium / high / xhigh");
+  expect(app.store.listMessages(conversation.id)).toEqual([]);
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
