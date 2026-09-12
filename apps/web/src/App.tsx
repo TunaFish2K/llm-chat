@@ -1,3 +1,5 @@
+import { useErrorState } from "./lib/error-display";
+import { t, useLocale, localized } from "./lib/i18n";
 import { initOfflineHistory, isOffline } from "./lib/offline-history";
 import { OfflineBanner } from "./components/OfflineHistorySettings";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -45,6 +47,7 @@ const SettingsView = lazy(() => import("./views/SettingsView").then((module) => 
  * gates — boot, authentication and route — and delegates everything else.
  */
 export function App() {
+  useLocale();
   const auth = useStore(appStore, (state) => state.auth);
   const bootError = useStore(appStore, (state) => state.bootError);
   const settings = useStore(appStore, (state) => state.settings);
@@ -80,7 +83,7 @@ export function App() {
 
   useEffect(() => {
     const disposeAuth = initAuthGate();
-    const draftWarning = () => toast("error", "无法保存本地草稿，刷新后可能丢失未发送内容");
+    const draftWarning = () => toast("error", localized("App.cannot_save_your_draft_locally_unsent_content_may_be_lost"));
     window.addEventListener("llm-chat:draft-storage-unavailable", draftWarning);
     const unsubscribePwa = subscribePwa(setPwa);
     initPwa();
@@ -171,7 +174,7 @@ export function App() {
             onOpenInspector={null}
           />
         ) : null}
-        <Suspense fallback={<LoadingState label="正在加载界面…" />}>
+        <Suspense fallback={<LoadingState label={t("App.loading_the_interface")} />}>
           <RouteView
             route={route}
             mobile={mobile}
@@ -202,7 +205,7 @@ export function App() {
       ) : null}
 
       {mobile && navDrawer ? (
-        <MobileDrawer side="left" closeLabel="关闭导航" onClose={() => setNavDrawer(false)}>
+        <MobileDrawer side="left" closeLabel={t("App.close_navigation")} onClose={() => setNavDrawer(false)}>
           <WorkspaceSidebar
             route={route}
             onClose={() => setNavDrawer(false)}
@@ -213,7 +216,7 @@ export function App() {
         </MobileDrawer>
       ) : null}
       {mobile && showInspector ? (
-        <MobileDrawer side="right" closeLabel="关闭检查器" onClose={() => setInspectorOpen(false)}>
+        <MobileDrawer side="right" closeLabel={t("App.close_inspector")} onClose={() => setInspectorOpen(false)}>
           {inspector}
         </MobileDrawer>
       ) : null}
@@ -244,6 +247,7 @@ function RouteView({
   onToggleInspector: () => void;
   onInspect: (target: InspectionTarget) => void;
 }) {
+  useLocale();
   if (route.name === "agents") {
     return (
       <section className="admin-shell">
@@ -286,7 +290,8 @@ function RouteView({
 
 /** Old `/tasks/:id` links still resolve: look the task up, then rewrite the URL. */
 function LegacyTaskRedirect({ taskId }: { taskId: string | null }) {
-  const [error, setError] = useState<string | null>(null);
+  useLocale();
+  const [error, setError] = useErrorState(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -304,7 +309,7 @@ function LegacyTaskRedirect({ taskId }: { taskId: string | null }) {
         if (active) replaceRoute(routes.conversationTasks(task.conversationId, task.id));
       })
       .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : "任务加载失败");
+        if (active) setError(cause instanceof Error ? cause : t("App.could_not_load_the_task"));
       });
     return () => {
       active = false;
@@ -314,6 +319,6 @@ function LegacyTaskRedirect({ taskId }: { taskId: string | null }) {
   return error ? (
     <ErrorState message={error} onRetry={() => setAttempt((value) => value + 1)} />
   ) : (
-    <LoadingState label="正在打开会话任务…" />
+    <LoadingState label={t("App.opening_conversation_tasks")} />
   );
 }

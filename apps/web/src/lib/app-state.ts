@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "./error-display";
+import { t, type DisplayMessage, localized } from "./i18n";
 import { RefreshScheduler } from "./refresh-scheduler";
 import { GenerationBlockBuffer } from "./generation-block-buffer";
 import { saveTypography } from "./local-typography";
@@ -26,6 +28,7 @@ export interface Toast {
   id: number;
   kind: "info" | "success" | "error";
   text: string;
+  i18n?: DisplayMessage["i18n"];
 }
 
 export type EventsConnectionState = "connecting" | "connected" | "reconnecting";
@@ -60,9 +63,11 @@ export const appStore = createStore<AppState>({
 
 let toastSeq = 0;
 
-export function toast(kind: Toast["kind"], text: string): void {
+export function toast(kind: Toast["kind"], value: string | DisplayMessage): void {
+  const text = typeof value === "string" ? value : value.message;
+  const i18n = typeof value === "string" ? undefined : value.i18n;
   const id = ++toastSeq;
-  appStore.set((state) => ({ toasts: [...state.toasts.slice(-4), { id, kind, text }] }));
+  appStore.set((state) => ({ toasts: [...state.toasts.slice(-4), { id, kind, text, ...(i18n ? { i18n } : {}) }] }));
   setTimeout(() => {
     appStore.set((state) => ({ toasts: state.toasts.filter((item) => item.id !== id) }));
   }, 5_000);
@@ -71,7 +76,7 @@ export function toast(kind: Toast["kind"], text: string): void {
 export function toastError(error: unknown): void {
   if (error instanceof Error && "code" in error && ["conversation_not_found", "conversation_deleted_local"].includes(String(error.code))) return;
   if (isOffline() && error instanceof Error && /网络|联网|fetch|同步/.test(error.message)) return;
-  toast("error", error instanceof Error ? error.message : String(error));
+  toast("error", errorDisplayMessage(error));
 }
 
 export async function bootstrap(conversationId?: string, background = false): Promise<void> {
@@ -109,7 +114,7 @@ export async function bootstrap(conversationId?: string, background = false): Pr
       appStore.set({ auth: "required" });
       return;
     }
-    if (!background) appStore.set({ auth: "loading", bootError: error instanceof Error ? error.message : "加载失败" });
+    if (!background) appStore.set({ auth: "loading", bootError: error instanceof Error ? error.message : t("SettingsView.could_not_load") });
   }
 }
 
@@ -411,7 +416,7 @@ async function handleGenerationEvent(
     if (!isGenerationActive(event.status)) cancelGenerationHaptic();
   } else if (event.type === "error") {
     next.status = "failed";
-    next.error = { code: event.code, message: event.message };
+    next.error = { code: event.code, message: event.message, ...(event.i18n ? { i18n: event.i18n } : {}) };
     cancelGenerationHaptic();
   }
   applyGeneration(owner.conversationId, owner.messageId, next);
@@ -604,7 +609,7 @@ window.addEventListener("llm-chat:conversations-deleted", (event) => {
   if (currentId && removed.has(currentId)) {
     preserveDeletedDraft(currentId);
     replaceRoute("/");
-    if (!local) toast("info", "会话已删除");
+    if (!local) toast("info", localized("WorkspaceSidebar.conversation_deleted"));
   }
   for (const id of removed) removeComposerDraft(id);
   for (const [id, owner] of generationOwners) {

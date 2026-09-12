@@ -1,3 +1,4 @@
+import { withMessage, errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { StoreError } from "./errors";
 import type { ConnectionRecord, ContextMessageRecord, ContextGenerationStep, GenerationRecord, AgentSnapshot } from "./generation-types";
 import { DEFAULT_AGENT_SYSTEM_PROMPT, effectiveModelId, resolveGenerationPlan } from "./generation-policy";
@@ -222,8 +223,8 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
-  // v40 only added submission receipts. Keep that table and version intact during rollback.
-  if (current > 40) throw new Error(`数据库版本 ${current} 高于当前服务支持的版本`);
+  // v40 was previously used for submission receipts; retain those tables when upgrading.
+  if (current > 41) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -805,7 +806,7 @@ function migrate(sqlite: DatabaseSyncType): void {
           created_at INTEGER NOT NULL,
           completed_at INTEGER
         );
-        INSERT INTO vision_analyses_v21 SELECT * FROM vision_analyses;
+        INSERT INTO vision_analyses_v21 SELECT id, asset_id, cache_key, status, model_id, model_display_name, model_key, connection_name, protocol, description, usage_json, error, created_at, completed_at FROM vision_analyses;
         CREATE TABLE generation_vision_analyses_v21 (
           generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
           analysis_id TEXT NOT NULL REFERENCES vision_analyses_v21(id) ON DELETE CASCADE,
@@ -1112,6 +1113,12 @@ function migrate(sqlite: DatabaseSyncType): void {
     if (current < 39) {
       migrateOfflineHistory(sqlite);
       sqlite.exec("PRAGMA user_version = 39;");
+    }
+    if (current < 41) {
+      for (const table of ["generations", "image_generation_jobs", "generation_tool_calls", "vision_analyses", "queued_messages", "background_tasks"]) {
+        if (!hasColumn(sqlite, table, "error_i18n_json")) sqlite.exec(`ALTER TABLE ${table} ADD COLUMN error_i18n_json TEXT`);
+      }
+      sqlite.exec("PRAGMA user_version = 41;");
     }
     sqlite.exec("COMMIT");
   } catch (error) {
@@ -1486,7 +1493,7 @@ export class Store {
   }
 
   updateAgentSearchSecret(agentId: string, provider: AgentSearchProvider, apiKey: string): AgentSearchSecretDto {
-    if (!this.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
+    if (!this.getAgent(agentId)) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
     this.sqlite.prepare(`
       INSERT INTO agent_search_secrets (agent_id, provider, api_key) VALUES (?, ?, ?)
       ON CONFLICT(agent_id, provider) DO UPDATE SET api_key = excluded.api_key
@@ -1508,7 +1515,7 @@ export class Store {
   deleteAgent(id: string): boolean {
     const current = this.getAgent(id);
     if (!current) return false;
-    if (current.protected) throw new StoreError("agent_protected", "默认助手不能删除");
+    if (current.protected) throw withMessage(new StoreError("agent_protected", "默认助手不能删除"), "error.the_default_assistant_cannot_be_deleted");
     const settings = this.getSettings();
     const result = this.sqlite.prepare("DELETE FROM agents WHERE id = ?").run(id);
     if (Number(result.changes) && (settings.defaultAgentId === id || settings.lastAgentId === id)) {
@@ -1522,8 +1529,8 @@ export class Store {
   }
 
   attachFileToAgent(agentId: string, assetId: string): void {
-    if (!this.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
-    if (!this.getFileAsset(assetId)) throw new StoreError("file_asset_not_found", "文件资产不存在");
+    if (!this.getAgent(agentId)) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
+    if (!this.getFileAsset(assetId)) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     this.sqlite.prepare(`
       INSERT OR IGNORE INTO agent_file_assets (agent_id, asset_id, created_at) VALUES (?, ?, ?)
     `).run(agentId, assetId, Date.now());
@@ -1535,10 +1542,10 @@ export class Store {
 
   getConversationRoleplayState(conversationId: string): ConversationRoleplayState {
     const conversation = this.getConversation(conversationId);
-    if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
-    if (!conversation.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
+    if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+    if (!conversation.agentId) throw withMessage(new StoreError("conversation_agent_required", "请先为会话选择 Agent"), "error.select_an_agent_for_this_conversation_first");
     const agent = this.getAgent(conversation.agentId);
-    if (!agent) throw new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择");
+    if (!agent) throw withMessage(new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择"), "error.the_conversation_s_agent_is_unavailable_select_another_agent");
     const row = this.sqlite.prepare(`
       SELECT state_json FROM conversation_agent_roleplay_states
       WHERE conversation_id = ? AND agent_id = ?
@@ -1551,10 +1558,10 @@ export class Store {
     patch: OptionalInput<ConversationRoleplayState>
   ): ConversationRoleplayState {
     const conversation = this.getConversation(conversationId);
-    if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
-    if (!conversation.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
+    if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+    if (!conversation.agentId) throw withMessage(new StoreError("conversation_agent_required", "请先为会话选择 Agent"), "error.select_an_agent_for_this_conversation_first");
     const agent = this.getAgent(conversation.agentId);
-    if (!agent) throw new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择");
+    if (!agent) throw withMessage(new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择"), "error.the_conversation_s_agent_is_unavailable_select_another_agent");
     const current = this.getConversationRoleplayState(conversationId);
     const next = resolveRoleplayState(agent.roleplay, conversationRoleplayStateSchema.parse({ ...current, ...patch }));
     this.sqlite.prepare(`
@@ -1608,7 +1615,7 @@ export class Store {
   }
 
   rememberAgentModel(id: string, modelId: string): AgentDto {
-    if (!this.getAgent(id)) throw new StoreError("agent_not_found", "Agent 不存在");
+    if (!this.getAgent(id)) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
     this.validateAgentModel(modelId);
     this.sqlite.prepare("UPDATE agents SET last_selected_model_id = ? WHERE id = ?").run(modelId, id);
     return this.getAgent(id)!;
@@ -1616,7 +1623,7 @@ export class Store {
 
   newConversationOverrides(agentId: string, input: ConversationExecutionOverrides = {}): ConversationExecutionOverrides {
     const agent = this.getAgent(agentId);
-    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    if (!agent) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
     const overrides = conversationExecutionOverridesSchema.parse(input);
     if (!Object.hasOwn(overrides, "modelId") && !agent.execution.modelId && agent.lastSelectedModelId) {
       const model = this.getModel(agent.lastSelectedModelId);
@@ -1628,8 +1635,8 @@ export class Store {
   private validateAgentModel(modelId: string | null): void {
     if (!modelId) return;
     const model = this.getModel(modelId);
-    if (!model) throw new StoreError("model_not_found", "模型不存在");
-    if (!model.enabled) throw new StoreError("model_disabled", "模型已停用");
+    if (!model) throw withMessage(new StoreError("model_not_found", "模型不存在"), "error.model_not_found");
+    if (!model.enabled) throw withMessage(new StoreError("model_disabled", "模型已停用"), "error.model_disabled");
   }
 
   private validateAgentModels(execution: Pick<AgentExecutionConfig, "modelId" | "visionModelId">): void {
@@ -1638,7 +1645,7 @@ export class Store {
     this.validateAgentModel(execution.visionModelId);
     const visionModel = this.getModel(execution.visionModelId);
     if (!visionModel?.capabilities.imageInput) {
-      throw new StoreError("vision_model_capability_required", "备用识图模型必须启用图片输入能力");
+      throw withMessage(new StoreError("vision_model_capability_required", "备用识图模型必须启用图片输入能力"), "error.the_fallback_vision_model_must_support_image_input");
     }
   }
 
@@ -1981,16 +1988,16 @@ export class Store {
   validateAttachments(assetIds: string[], imageBytesLimit = 15 * 1024 * 1024): void {
     const unique = [...new Set(assetIds)];
     if (unique.length !== assetIds.length || unique.length > 8) {
-      throw new StoreError("file_attachment_invalid", "每条消息最多包含 8 个不重复附件");
+      throw withMessage(new StoreError("file_attachment_invalid", "每条消息最多包含 8 个不重复附件"), "error.each_message_can_contain_up_to_8_unique_attachments");
     }
     const assets = unique.map((id) => this.getFileAsset(id));
-    if (assets.some((asset) => !asset)) throw new StoreError("file_asset_not_found", "文件资产不存在");
+    if (assets.some((asset) => !asset)) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     const total = assets.reduce((sum, asset) => sum + (asset?.byteSize ?? 0), 0);
-    if (total > 128 * 1024 * 1024) throw new StoreError("file_attachments_too_large", "每条消息的附件总大小不能超过 128 MiB");
+    if (total > 128 * 1024 * 1024) throw withMessage(new StoreError("file_attachments_too_large", "每条消息的附件总大小不能超过 128 MiB"), "error.attachments_cannot_exceed_128_mib_per_message");
     const images = assets.filter((asset): asset is ImageAssetDto => asset?.kind === "image");
-    if (images.length > 4) throw new StoreError("image_attachment_invalid", "每条消息最多包含 4 张图片");
+    if (images.length > 4) throw withMessage(new StoreError("image_attachment_invalid", "每条消息最多包含 4 张图片"), "error.each_message_can_contain_up_to_4_images");
     if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > imageBytesLimit) {
-      throw new StoreError("image_attachments_too_large", "每条消息的图片总大小不能超过 15 MiB");
+      throw withMessage(new StoreError("image_attachments_too_large", "每条消息的图片总大小不能超过 15 MiB"), "error.images_cannot_exceed_15_mib_per_message");
     }
   }
 
@@ -1999,7 +2006,7 @@ export class Store {
   }
 
   attachFileToToolCall(toolCallId: string, assetId: string): void {
-    if (!this.getFileAsset(assetId)) throw new StoreError("file_asset_not_found", "文件资产不存在");
+    if (!this.getFileAsset(assetId)) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     const next = this.sqlite.prepare(`
       SELECT COALESCE(MAX(asset_index), -1) + 1 AS value FROM tool_call_file_assets WHERE tool_call_id = ?
     `).get(toolCallId) as Row;
@@ -2017,7 +2024,7 @@ export class Store {
   }
 
   private insertImageAssistantMessage(conversationId: string): string {
-    if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!this.getConversation(conversationId)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     const row = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?")
       .get(conversationId) as Row;
     const id = randomUUID();
@@ -2037,7 +2044,7 @@ export class Store {
     return this.transaction(() => {
       const assistantMessageId = input.assistantMessageId ?? this.insertImageAssistantMessage(input.conversationId);
       const protocol = input.model.imageProtocol;
-      if (!protocol) throw new StoreError("image_protocol_required", "图片模型缺少图片协议");
+      if (!protocol) throw withMessage(new StoreError("image_protocol_required", "图片模型缺少图片协议"), "error.the_image_model_has_no_image_protocol");
       const now = Date.now();
       const id = randomUUID();
       this.sqlite.prepare(`
@@ -2081,7 +2088,7 @@ export class Store {
     providerJobId?: string | null;
     outputAssetIds?: string[];
     revisedPrompt?: string | null;
-    error?: { code: string; message: string } | null;
+    error?: { code: string; message: string; i18n?: LocalizedMessage } | null;
     startedAt?: number | null;
     completedAt?: number | null;
   }): ImageGenerationJobDto | undefined {
@@ -2091,7 +2098,7 @@ export class Store {
     const error = patch.error === undefined ? current.error : patch.error;
     this.sqlite.prepare(`
       UPDATE image_generation_jobs SET status = ?, progress = ?, provider_job_id = ?, output_asset_ids_json = ?,
-        revised_prompt = ?, error_code = ?, error_message = ?, started_at = ?, completed_at = ? WHERE id = ?
+        revised_prompt = ?, error_code = ?, error_message = ?, error_i18n_json = ?, started_at = ?, completed_at = ? WHERE id = ?
     `).run(
       status,
       patch.progress === undefined ? current.progress : patch.progress,
@@ -2100,6 +2107,7 @@ export class Store {
       patch.revisedPrompt === undefined ? current.revisedPrompt : patch.revisedPrompt,
       error?.code ?? null,
       error?.message ?? null,
+      error?.i18n ? json(error.i18n) : null,
       patch.startedAt === undefined ? current.startedAt : patch.startedAt,
       patch.completedAt === undefined ? current.completedAt : patch.completedAt,
       id
@@ -2174,10 +2182,10 @@ export class Store {
     return this.getVisionAnalysis(id)!;
   }
 
-  failVisionAnalysis(id: string, error: string): VisionAnalysisDto {
+  failVisionAnalysis(id: string, error: string, i18n?: LocalizedMessage): VisionAnalysisDto {
     this.sqlite.prepare(`
-      UPDATE vision_analyses SET status = 'failed', error = ?, completed_at = ? WHERE id = ?
-    `).run(error, Date.now(), id);
+      UPDATE vision_analyses SET status = 'failed', error = ?, error_i18n_json = ?, completed_at = ? WHERE id = ?
+    `).run(error, i18n ? json(i18n) : null, Date.now(), id);
     return this.getVisionAnalysis(id)!;
   }
 
@@ -2253,7 +2261,7 @@ export class Store {
     const id = randomUUID();
     const agentId = "agentId" in input ? input.agentId : this.getSettings().defaultAgentId;
     const agent = this.getAgent(agentId);
-    if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+    if (!agent) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
     const overrides = conversationExecutionOverridesSchema.parse("agentId" in input
       ? this.newConversationOverrides(agentId, input.executionOverrides)
       : this.newConversationOverrides(agentId, { contextPolicy: input.contextPolicy }));
@@ -2308,7 +2316,7 @@ export class Store {
       const rawGreetings = [agent.card.data.first_mes, ...agent.card.data.alternate_greetings];
       const selectedSourceIndex = "greetingIndex" in input ? input.greetingIndex : 0;
       const greeting = rawGreetings[selectedSourceIndex];
-      if (greeting === undefined) throw new StoreError("greeting_not_found", "所选开场白不存在");
+      if (greeting === undefined) throw withMessage(new StoreError("greeting_not_found", "所选开场白不存在"), "error.the_selected_opening_message_does_not_exist");
       if ("agentId" in input && greeting.trim()) {
         const userName = this.resolvedUserProfile(agent).displayName;
         const candidates = rawGreetings
@@ -2347,7 +2355,7 @@ export class Store {
       const switchingAgent = patch.agentId !== undefined && patch.agentId !== current.agentId;
       const agentId = patch.agentId === undefined ? current.agentId : patch.agentId;
       const agent = agentId ? this.getAgent(agentId) : undefined;
-      if (agentId && !agent) throw new StoreError("agent_not_found", "Agent 不存在");
+      if (agentId && !agent) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
       const legacyOverrides: ConversationExecutionOverrides = {
         ...current.executionOverrides,
         ...(patch.modelId !== undefined ? { modelId: patch.modelId } : {}),
@@ -2400,7 +2408,7 @@ export class Store {
 
   conversationCacheRevision(id: string): number {
     const row = this.sqlite.prepare("SELECT cache_revision AS revision FROM conversations WHERE id = ?").get(id) as Row | undefined;
-    if (!row) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!row) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     return Number(row.revision);
   }
 
@@ -2433,8 +2441,8 @@ export class Store {
   forkConversation(sourceConversationId: string, input: ForkConversationInput): ConversationForkDto {
     return this.transaction(() => {
       const source = this.getConversation(sourceConversationId);
-      if (!source) throw new StoreError("conversation_not_found", "会话不存在");
-      if (!source.agentId) throw new StoreError("conversation_agent_required", "原会话的 Agent 已不可用");
+      if (!source) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+      if (!source.agentId) throw withMessage(new StoreError("conversation_agent_required", "原会话的 Agent 已不可用"), "error.the_original_conversation_s_agent_is_unavailable");
 
       if (input.mode === "greeting") {
         const message = this.sqlite.prepare(
@@ -2444,15 +2452,15 @@ export class Store {
           ? greetingMessageSchema.safeParse(parse(message.greeting_json, null))
           : null;
         if (!message || message.role !== "assistant" || Number(message.ordinal) !== 1 || !parsed?.success) {
-          throw new StoreError("greeting_not_found", "要切换的开场白不存在");
+          throw withMessage(new StoreError("greeting_not_found", "要切换的开场白不存在"), "error.the_target_opening_message_does_not_exist");
         }
         const text = parsed.data.variants[input.greetingIndex];
-        if (text === undefined) throw new StoreError("greeting_not_found", "所选开场白不存在");
+        if (text === undefined) throw withMessage(new StoreError("greeting_not_found", "所选开场白不存在"), "error.the_selected_opening_message_does_not_exist");
         if (input.greetingIndex === parsed.data.activeIndex) {
-          throw new StoreError("greeting_unchanged", "所选开场白已经生效");
+          throw withMessage(new StoreError("greeting_unchanged", "所选开场白已经生效"), "error.the_selected_opening_message_is_already_active");
         }
         if (this.isConversationBusy(sourceConversationId)) {
-          throw new StoreError("conversation_busy", "会话仍有生成或工具审批未完成");
+          throw withMessage(new StoreError("conversation_busy", "会话仍有生成或工具审批未完成"), "error.this_conversation_has_an_unfinished_generation_or_tool_approval");
         }
         const fork = this.createConversation({
           title: this.rootConversationTitle(source.id),
@@ -2491,7 +2499,7 @@ export class Store {
           "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ? AND history_active = 1"
         ).get(input.messageId, sourceConversationId) as Row | undefined;
         if (!message || message.role !== "user") {
-          throw new StoreError("message_not_found", "要编辑的用户消息不存在");
+          throw withMessage(new StoreError("message_not_found", "要编辑的用户消息不存在"), "error.the_user_message_to_edit_does_not_exist");
         }
         throughOrdinal = Number(message.ordinal) - 1;
         sourceMessageId = String(message.id);
@@ -2501,7 +2509,7 @@ export class Store {
           "SELECT id, ordinal, role FROM messages WHERE id = ? AND conversation_id = ? AND history_active = 1"
         ).get(input.throughMessageId, sourceConversationId) as Row | undefined;
         if (!message || message.role !== "assistant") {
-          throw new StoreError("message_not_found", "分叉检查点不存在");
+          throw withMessage(new StoreError("message_not_found", "分叉检查点不存在"), "error.the_branch_checkpoint_does_not_exist");
         }
         throughOrdinal = Number(message.ordinal);
         sourceMessageId = String(message.id);
@@ -2513,7 +2521,7 @@ export class Store {
         WHERE m.conversation_id = ? AND m.ordinal <= ?
           AND g.status IN ('queued', 'running', 'waiting-approval') LIMIT 1
       `).get(sourceConversationId, throughOrdinal);
-      if (active) throw new StoreError("conversation_busy", "分叉范围内仍有生成或工具审批未完成");
+      if (active) throw withMessage(new StoreError("conversation_busy", "分叉范围内仍有生成或工具审批未完成"), "error.the_branch_range_has_an_unfinished_generation_or_tool_approval");
 
       const fork = this.createConversation({
         title: this.rootConversationTitle(source.id),
@@ -2548,8 +2556,8 @@ export class Store {
     return this.transaction(() => {
       const root = this.rootConversationId(sourceConversationId);
       const branchRoot = this.rootConversationId(branchId);
-      if (!root || !branchRoot) throw new StoreError("conversation_not_found", "会话不存在");
-      if (root !== branchRoot) throw new StoreError("conversation_branch_invalid", "所选分支不属于当前会话");
+      if (!root || !branchRoot) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+      if (root !== branchRoot) throw withMessage(new StoreError("conversation_branch_invalid", "所选分支不属于当前会话"), "error.the_selected_branch_does_not_belong_to_this_conversation");
       this.setFamilyActiveBranch(root, branchId);
       return { activeBranchId: branchId };
     });
@@ -2593,7 +2601,7 @@ export class Store {
 
   private activateConversationBranch(id: string): void {
     const root = this.rootConversationId(id);
-    if (!root) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!root) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     if (root !== id) {
       this.sqlite.prepare("DELETE FROM conversation_family_state WHERE root_conversation_id = ?").run(id);
     }
@@ -2640,7 +2648,7 @@ export class Store {
       if (message.role === "assistant" && message.active_generation_id) {
         const generation = this.sqlite.prepare("SELECT * FROM generations WHERE id = ?")
           .get(String(message.active_generation_id)) as Row | undefined;
-        if (!generation) throw new StoreError("generation_not_found", "分叉历史中的生成不存在");
+        if (!generation) throw withMessage(new StoreError("generation_not_found", "分叉历史中的生成不存在"), "error.a_generation_in_the_branch_history_does_not_exist");
         activeGenerationId = randomUUID();
         this.insertClonedRow("generations", generation, {
           id: activeGenerationId,
@@ -2722,7 +2730,7 @@ export class Store {
   createMessageGeneration(conversationId: string, text: string, assetIds: string[] = []): GenerationCreatedDto {
     return this.transaction(() => {
       const conversation = this.getConversation(conversationId);
-      if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+      if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
       const generationKind = conversation.forkedFrom?.mode === "continue"
         && !this.sqlite.prepare("SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1").get(conversation.id)
         ? "continue"
@@ -2733,12 +2741,13 @@ export class Store {
   }
 
   listQueuedMessages(conversationId: string): import("@llm-chat/contracts").QueuedMessageDto[] {
-    if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!this.getConversation(conversationId)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     return (this.sqlite.prepare("SELECT * FROM queued_messages WHERE conversation_id = ? ORDER BY CASE WHEN mode = 'steer' THEN 0 ELSE 1 END, sequence").all(conversationId) as Row[])
       .map((row) => ({
         id: String(row.id), conversationId, text: String(row.text),
         mode: row.mode === "steer" ? "steer" : "queue",
         status: row.status as "pending" | "dispatching" | "failed", error: textOrNull(row.error),
+        ...(row.error_i18n_json ? { errorI18n: parse<LocalizedMessage>(row.error_i18n_json, undefined!) } : {}),
         generationId: textOrNull(row.generation_id), createdAt: Number(row.created_at),
         attachments: (this.sqlite.prepare("SELECT asset_id FROM queued_message_assets WHERE queue_id = ? ORDER BY asset_index").all(String(row.id)) as Row[])
           .map((entry) => this.getFileAsset(String(entry.asset_id))!).filter(Boolean)
@@ -2747,7 +2756,7 @@ export class Store {
 
   enqueueMessage(conversationId: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") {
     return this.transaction(() => {
-      if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+      if (!this.getConversation(conversationId)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
       this.validateAttachments(assetIds);
       const id = randomUUID();
       this.sqlite.prepare(`INSERT INTO queued_messages(id, sequence, conversation_id, text, created_at)
@@ -2762,9 +2771,9 @@ export class Store {
   }
 
   deleteQueuedMessages(conversationId: string, id?: string): void {
-    if (!this.getConversation(conversationId)) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!this.getConversation(conversationId)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     if (id && this.listQueuedMessages(conversationId).some((item) => item.id === id && item.status === "dispatching")) {
-      throw new StoreError("queue_dispatching", "消息已经开始发送");
+      throw withMessage(new StoreError("queue_dispatching", "消息已经开始发送"), "error.the_message_has_already_started_sending");
     }
     this.sqlite.prepare("DELETE FROM queued_messages WHERE conversation_id = ? AND status != 'dispatching' AND (? IS NULL OR id = ?)")
       .run(conversationId, id ?? null, id ?? null);
@@ -2793,8 +2802,8 @@ export class Store {
         return result;
       } catch (error) {
         this.sqlite.exec("ROLLBACK TO queue_dispatch; RELEASE queue_dispatch");
-        this.sqlite.prepare("UPDATE queued_messages SET status = 'failed', error = ? WHERE id = ?")
-          .run(error instanceof Error ? error.message : "消息发送失败", item.id);
+        this.sqlite.prepare("UPDATE queued_messages SET status = 'failed', error = ?, error_i18n_json = ? WHERE id = ?")
+          .run(error instanceof Error ? error.message : "消息发送失败", errorI18n(error) ? json(errorI18n(error)) : null, item.id);
         return null;
       }
     });
@@ -2803,9 +2812,9 @@ export class Store {
   createRetryGeneration(assistantMessageId: string): GenerationCreatedDto {
     return this.transaction(() => {
       const message = this.sqlite.prepare("SELECT * FROM messages WHERE id = ? AND role = 'assistant' AND history_active = 1").get(assistantMessageId) as Row | undefined;
-      if (!message) throw new StoreError("message_not_found", "助手消息不存在");
+      if (!message) throw withMessage(new StoreError("message_not_found", "助手消息不存在"), "error.assistant_message_not_found");
       const conversation = this.getConversation(String(message.conversation_id));
-      if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+      if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
       const { model, connection, snapshot } = this.resolveGeneration(conversation, "regenerate");
       const max = this.sqlite.prepare("SELECT COALESCE(MAX(version), 0) AS value FROM generations WHERE assistant_message_id = ?").get(assistantMessageId) as Row;
       const generationId = randomUUID();
@@ -2854,7 +2863,7 @@ export class Store {
   ): GenerationCreatedDto {
     const model = this.getModel(snapshot.execution.modelId);
     const connection = model?.enabled ? this.getConnection(model.connectionId) : undefined;
-    if (!model || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
+    if (!model || !connection) throw withMessage(new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择"), "error.the_conversation_s_model_is_unavailable_select_another_model");
     const now = Date.now();
     const max = this.sqlite.prepare("SELECT COALESCE(MAX(ordinal), 0) AS value FROM messages WHERE conversation_id = ?").get(conversation.id) as Row;
     const userMessageId = randomUUID();
@@ -2894,7 +2903,7 @@ export class Store {
 
   isQueuePaused(conversationId: string): boolean {
     const row = this.sqlite.prepare("SELECT queue_paused FROM conversations WHERE id = ?").get(conversationId);
-    if (!row) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!row) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     return Boolean(row.queue_paused);
   }
 
@@ -3136,12 +3145,12 @@ export class Store {
 
   updateToolCall(
     id: string,
-    patch: { presentation?: ToolCallDto["presentation"]; approvalState?: ToolCallDto["approvalState"]; output?: string | null; error?: string | null; startedAt?: number | null; completedAt?: number | null }
+    patch: { errorI18n?: LocalizedMessage; presentation?: ToolCallDto["presentation"]; approvalState?: ToolCallDto["approvalState"]; output?: string | null; error?: string | null; startedAt?: number | null; completedAt?: number | null }
   ): ToolCallDto | undefined {
     const current = this.getToolCall(id);
     if (!current) return undefined;
     this.sqlite.prepare(`
-      UPDATE generation_tool_calls SET approval_state = ?, output = ?, error = ?, started_at = ?, completed_at = ?, presentation_json = ? WHERE id = ?
+      UPDATE generation_tool_calls SET approval_state = ?, output = ?, error = ?, started_at = ?, completed_at = ?, presentation_json = ?, error_i18n_json = ? WHERE id = ?
     `).run(
       patch.approvalState ?? current.approvalState,
       patch.output === undefined ? current.output : patch.output,
@@ -3149,6 +3158,7 @@ export class Store {
       patch.startedAt === undefined ? current.startedAt : patch.startedAt,
       patch.completedAt === undefined ? current.completedAt : patch.completedAt,
       json(patch.presentation ?? current.presentation ?? {}),
+      (patch.errorI18n ?? current.errorI18n) ? json(patch.errorI18n ?? current.errorI18n) : null,
       id
     );
     return this.getToolCall(id);
@@ -3186,12 +3196,12 @@ export class Store {
     this.sqlite.prepare("UPDATE generations SET provider_context_json = ? WHERE id = ?").run(json(payload), id);
   }
 
-  finishGeneration(id: string, status: "completed" | "stopped" | "failed", options: { stopReason?: string; code?: string; message?: string }): void {
+  finishGeneration(id: string, status: "completed" | "stopped" | "failed", options: { stopReason?: string; code?: string; message?: string; i18n?: LocalizedMessage }): void {
     const completedAt = Date.now();
     this.transaction(() => {
       this.sqlite.prepare(`
-        UPDATE generations SET status = ?, stop_reason = ?, error_code = ?, error_message = ?, completed_at = ? WHERE id = ?
-      `).run(status, options.stopReason ?? null, options.code ?? null, options.message ?? null, completedAt, id);
+        UPDATE generations SET status = ?, stop_reason = ?, error_code = ?, error_message = ?, error_i18n_json = ?, completed_at = ? WHERE id = ?
+      `).run(status, options.stopReason ?? null, options.code ?? null, options.message ?? null, options.i18n ? json(options.i18n) : null, completedAt, id);
       const failure = options.stopReason === "cancelled"
         ? "Generation cancelled before tool execution"
         : `Generation ${status} before tool execution completed`;
@@ -3257,13 +3267,13 @@ export class Store {
   updateMemory(id: number, content: string): { id: number; content: string; createdAt: number; updatedAt: number } {
     const result = this.sqlite.prepare("UPDATE memories SET content = ?, updated_at = ? WHERE id = ?")
       .run(content, Date.now(), id);
-    if (!Number(result.changes)) throw new StoreError("memory_not_found", `记忆 #${id} 不存在`);
+    if (!Number(result.changes)) throw withMessage(new StoreError("memory_not_found", `记忆 #${id} 不存在`), "error.memory_not_found", { value1: id });
     return this.listMemories().find((item) => item.id === id)!;
   }
 
   deleteMemory(id: number): void {
     const result = this.sqlite.prepare("DELETE FROM memories WHERE id = ?").run(id);
-    if (!Number(result.changes)) throw new StoreError("memory_not_found", `记忆 #${id} 不存在`);
+    if (!Number(result.changes)) throw withMessage(new StoreError("memory_not_found", `记忆 #${id} 不存在`), "error.memory_not_found", { value1: id });
   }
 
   recentChats(limit: number): Array<{ id: string; title: string; updatedAt: number }> {
@@ -3350,7 +3360,7 @@ export class Store {
 
   private visionAnalysisDto(row: Row, cached: boolean): VisionAnalysisDto {
     const asset = this.getImageAsset(String(row.asset_id));
-    if (!asset) throw new StoreError("image_asset_not_found", "识图记录关联的图片资产不存在");
+    if (!asset) throw withMessage(new StoreError("image_asset_not_found", "识图记录关联的图片资产不存在"), "error.the_image_asset_linked_to_this_vision_record_does_not_exist");
     return {
       id: String(row.id),
       asset,
@@ -3365,6 +3375,7 @@ export class Store {
       description: textOrNull(row.description),
       usage: parse(row.usage_json, {}),
       cached,
+      ...(row.error_i18n_json ? { errorI18n: parse<LocalizedMessage>(row.error_i18n_json, undefined!) } : {}),
       error: textOrNull(row.error),
       createdAt: Number(row.created_at),
       completedAt: row.completed_at === null ? null : Number(row.completed_at)
@@ -3405,7 +3416,7 @@ export class Store {
       visionAnalyses: this.generationVisionAnalyses(String(row.id)),
       usage: parse(row.usage_json, {}),
       stopReason: textOrNull(row.stop_reason),
-      error: row.error_code ? { code: String(row.error_code), message: String(row.error_message) } : null,
+      error: row.error_code ? { code: String(row.error_code), message: String(row.error_message), ...(row.error_i18n_json ? { i18n: parse<LocalizedMessage>(row.error_i18n_json, undefined!) } : {}) } : null,
       context: row.context_json ? parse(row.context_json, null) : null,
       createdAt: Number(row.created_at),
       completedAt: row.completed_at === null ? null : Number(row.completed_at)
@@ -3495,7 +3506,7 @@ function imageGenerationJobDto(row: Row, store: Store): ImageGenerationJobDto {
     providerJobId: textOrNull(row.provider_job_id),
     outputAssets,
     revisedPrompt: textOrNull(row.revised_prompt),
-    error: errorCode && errorMessage ? { code: errorCode, message: errorMessage } : null,
+    error: errorCode && errorMessage ? { code: errorCode, message: errorMessage, ...(row.error_i18n_json ? { i18n: parse<LocalizedMessage>(row.error_i18n_json, undefined!) } : {}) } : null,
     createdAt: Number(row.created_at),
     startedAt: row.started_at === null || row.started_at === undefined ? null : Number(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at)
@@ -3620,6 +3631,7 @@ function toolCallDto(row: Row, artifacts: FileAssetDto[] = []): ToolCallDto {
     stepIndex: Number(row.step_index ?? Math.floor(Number(row.call_index) / 1000)),
     name: String(row.name),
     ...(presentation ? { presentation } : {}),
+    ...(row.error_i18n_json ? { errorI18n: parse<LocalizedMessage>(row.error_i18n_json, undefined!) } : {}),
     arguments: String(row.arguments_json),
     approvalState: row.approval_state as ToolCallDto["approvalState"],
     requiresApproval: Boolean(row.requires_approval),

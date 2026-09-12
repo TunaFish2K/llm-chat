@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type { AgentRegexScript } from "@llm-chat/contracts";
 import { RE2 } from "re2-wasm";
 
@@ -28,7 +29,7 @@ export function applySafeRegex(
 }
 
 function compile(pattern: string, flags: string): RE2 {
-  if (pattern.length > 20_000) throw new Error("正则表达式过长");
+  if (pattern.length > 20_000) throw withMessage(new Error("正则表达式过长"), "error.the_regular_expression_is_too_long");
   const normalized = [...new Set(flags.replace(/[^gimsuy]/g, "").split(""))].join("");
   return new RE2(pattern, normalized.includes("u") ? normalized : `${normalized}u`);
 }

@@ -1,3 +1,4 @@
+import { t, useLocale } from "../../lib/i18n";
 /**
  * The console's primitive layer.
  *
@@ -32,6 +33,7 @@ export function Button({
   iconOnly?: boolean;
   children?: ReactNode;
 }) {
+  useLocale();
   const className = [
     "btn",
     variant === "neutral" ? "" : variant,
@@ -55,6 +57,7 @@ export function IconButton({
   children,
   ...rest
 }: ButtonBase & { label: string; danger?: boolean; children: ReactNode }) {
+  useLocale();
   return (
     <button
       type="button"
@@ -70,7 +73,8 @@ export function IconButton({
 
 /* Feedback --------------------------------------------------------------- */
 
-export function Spinner({ label = "加载中" }: { label?: string }) {
+export function Spinner({ label = t("index.loading") }: { label?: string }) {
+  useLocale();
   return (
     <span role="status" aria-label={label}>
       <span className="spinner" aria-hidden="true" />
@@ -80,6 +84,7 @@ export function Spinner({ label = "加载中" }: { label?: string }) {
 }
 
 export function EmptyState({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+  useLocale();
   return (
     <div className="empty">
       <p>{title}</p>
@@ -90,19 +95,19 @@ export function EmptyState({ title, hint, action }: { title: string; hint?: stri
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  useLocale();
   return (
     <div className="error-box" role="alert">
       <p>{message}</p>
       {onRetry ? (
-        <button type="button" className="btn" onClick={onRetry}>
-          重试
-        </button>
+        <button type="button" className="btn" onClick={onRetry}>{t("NotificationSettings.retry")}</button>
       ) : null}
     </div>
   );
 }
 
-export function LoadingState({ label = "加载中…" }: { label?: string }) {
+export function LoadingState({ label = t("index.loading_2") }: { label?: string }) {
+  useLocale();
   return (
     <div className="loading-box" role="status">
       <span className="spinner" aria-hidden="true" /> <span>{label}</span>
@@ -125,6 +130,7 @@ export function Field({
   htmlFor?: string | undefined;
   wide?: boolean;
 }) {
+  useLocale();
   return (
     <div className={wide ? "field span-2" : "field"}>
       <label htmlFor={htmlFor}>{label}</label>
@@ -145,6 +151,7 @@ export function Toggle({
   onChange: (next: boolean) => void;
   disabled?: boolean;
 }) {
+  useLocale();
   return (
     <label className="check-row">
       <input
@@ -173,6 +180,7 @@ export function SearchInput({
   compact?: boolean;
   autoFocus?: boolean;
 }) {
+  useLocale();
   return (
     <label className={compact ? "search-field compact" : "search-field"}>
       <Search size={14} aria-hidden="true" />
@@ -185,7 +193,7 @@ export function SearchInput({
         onChange={(event) => onChange(event.target.value)}
       />
       {value ? (
-        <button type="button" className="icon-button" aria-label="清除搜索" onClick={() => onChange("")}>
+        <button type="button" className="icon-button" aria-label={t("index.clear_search")} onClick={() => onChange("")}>
           <X size={13} aria-hidden="true" />
         </button>
       ) : null}
@@ -196,6 +204,7 @@ export function SearchInput({
 /* Structure --------------------------------------------------------------- */
 
 export function Card({ title, actions, children }: { title?: ReactNode; actions?: ReactNode; children: ReactNode }) {
+  useLocale();
   return (
     <section className="card">
       {title || actions ? (
@@ -215,6 +224,7 @@ export function Card({ title, actions, children }: { title?: ReactNode; actions?
  * ever being clipped.
  */
 export function ListRow({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+  useLocale();
   return (
     <div className="list-row">
       <div className="list-row-content">{children}</div>
@@ -234,6 +244,7 @@ export function Segmented<T extends string>({
   value: T;
   onChange: (next: T) => void;
 }) {
+  useLocale();
   return (
     <div className="segmented" role="tablist" aria-label={label}>
       {options.map((option) => (
@@ -275,6 +286,7 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
 }) {
+  useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const headingId = useId();
@@ -335,7 +347,7 @@ export function Modal({
       >
         <div className="modal-header">
           <h3 id={headingId}>{title}</h3>
-          <button type="button" className="btn ghost icon" onClick={onClose} aria-label="关闭对话框">
+          <button type="button" className="btn ghost icon" onClick={onClose} aria-label={t("index.close_dialog")}>
             <X size={17} aria-hidden="true" />
           </button>
         </div>
@@ -349,7 +361,7 @@ export function Modal({
 export function ConfirmModal({
   title,
   message,
-  confirmLabel = "确认",
+  confirmLabel = t("index.confirm"),
   danger,
   onConfirm,
   onClose,
@@ -365,22 +377,21 @@ export function ConfirmModal({
   busy?: boolean;
   confirmDisabled?: boolean;
 }) {
+  useLocale();
   return (
     <Modal
       title={title}
       onClose={onClose}
       footer={
         <>
-          <button type="button" className="btn" onClick={onClose} disabled={busy}>
-            取消
-          </button>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>{t("WorkspaceSidebar.cancel")}</button>
           <button
             type="button"
             className={danger ? "btn danger" : "btn primary"}
             onClick={onConfirm}
             disabled={busy || confirmDisabled}
           >
-            {busy ? "处理中…" : confirmLabel}
+            {busy ? t("DirectoryPicker.processing") : confirmLabel}
           </button>
         </>
       }
@@ -393,6 +404,7 @@ export function ConfirmModal({
 /* Status vocabulary ------------------------------------------------------- */
 
 export function StatusDot({ kind, label }: { kind: "ok" | "warn" | "err" | "run" | "idle"; label: string }) {
+  useLocale();
   return (
     <span className="connection-dot">
       <span className={kind === "idle" ? "dot" : `dot ${kind}`} aria-hidden="true" />
@@ -401,20 +413,20 @@ export function StatusDot({ kind, label }: { kind: "ok" | "warn" | "err" | "run"
   );
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  queued: "排队中",
-  running: "运行中",
-  "waiting-approval": "等待审批",
-  completed: "已完成",
-  stopped: "已停止",
-  failed: "失败",
-  interrupted: "已中断",
-  starting: "启动中",
-  timed_out: "超时"
-};
+function getSTATUS_LABELS(): Record<string, string> { return {
+  queued: t("index.queued"),
+  running: t("index.running"),
+  "waiting-approval": t("index.waiting_for_approval"),
+  completed: t("index.completed"),
+  stopped: t("index.stopped"),
+  failed: t("index.failed"),
+  interrupted: t("index.interrupted"),
+  starting: t("index.starting"),
+  timed_out: t("index.timed_out")
+}; }
 
 export function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
+  return getSTATUS_LABELS()[status] ?? status;
 }
 
 export function statusKind(status: string): "ok" | "warn" | "err" | "accent" {
@@ -425,9 +437,11 @@ export function statusKind(status: string): "ok" | "warn" | "err" | "accent" {
 }
 
 export function StatusTag({ status }: { status: string }) {
+  useLocale();
   return <span className={`tag ${statusKind(status)}`}>{statusLabel(status)}</span>;
 }
 
 export function Tag({ tone = "neutral", children }: { tone?: "neutral" | "ok" | "warn" | "err" | "accent"; children: ReactNode }) {
+  useLocale();
   return <span className={tone === "neutral" ? "tag" : `tag ${tone}`}>{children}</span>;
 }

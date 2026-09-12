@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { ProviderError, type GenerateRequest, type ProviderConnection, type ProviderMessage, type ProviderToolCall, type ProviderToolDefinition } from "./types";
 
 /** Project portable history into the content this connection can actually replay. */
@@ -28,7 +29,7 @@ export function validateToolCall(call: ProviderToolCall): void {
   let args: unknown;
   try { args = JSON.parse(call.arguments); } catch { /* Report one stable error below. */ }
   if (!call.id || !call.name || !args || typeof args !== "object" || Array.isArray(args)) {
-    throw new ProviderError("provider_tool_call_invalid", "上游工具调用缺少标识、名称或有效的 JSON 对象参数");
+    throw withMessage(new ProviderError("provider_tool_call_invalid", "上游工具调用缺少标识、名称或有效的 JSON 对象参数"), "error.the_upstream_tool_call_is_missing_an_id_name_or_valid_json");
   }
 }
 
@@ -39,24 +40,24 @@ export function prepareMessages(request: GenerateRequest): ProviderMessage[] {
   for (const message of messages) {
     imageCount += message.images?.length ?? 0;
     if (message.images?.length && message.role !== "user") {
-      throw new ProviderError("provider_message_invalid", "图片必须先转换为带来源说明的用户内容块");
+      throw withMessage(new ProviderError("provider_message_invalid", "图片必须先转换为带来源说明的用户内容块"), "error.convert_images_to_user_content_blocks_with_source_information_first");
     }
     if (message.role === "tool") {
       for (const result of message.toolResults ?? []) {
-        if (!pending.delete(result.callId)) throw new ProviderError("provider_message_invalid", "工具结果没有对应的待完成调用");
+        if (!pending.delete(result.callId)) throw withMessage(new ProviderError("provider_message_invalid", "工具结果没有对应的待完成调用"), "error.the_tool_result_has_no_corresponding_pending_call");
       }
       continue;
     }
-    if (pending.size) throw new ProviderError("provider_message_invalid", "工具调用与结果之间存在其他消息，或工具结果缺失");
+    if (pending.size) throw withMessage(new ProviderError("provider_message_invalid", "工具调用与结果之间存在其他消息，或工具结果缺失"), "error.messages_appear_between_a_tool_call_and_its_results_or_results_are");
     for (const call of message.toolCalls ?? []) {
       validateToolCall(call);
-      if (message.role !== "assistant" || pending.has(call.id)) throw new ProviderError("provider_message_invalid", "工具调用角色或标识无效");
+      if (message.role !== "assistant" || pending.has(call.id)) throw withMessage(new ProviderError("provider_message_invalid", "工具调用角色或标识无效"), "error.invalid_tool_call_role_or_id");
       pending.add(call.id);
     }
   }
-  if (pending.size) throw new ProviderError("provider_message_invalid", "工具调用缺少结果");
+  if (pending.size) throw withMessage(new ProviderError("provider_message_invalid", "工具调用缺少结果"), "error.the_tool_call_has_no_result");
   if (imageCount && (!request.capabilities.imageInput || (request.capabilities.maxImageInputs != null && imageCount > request.capabilities.maxImageInputs))) {
-    throw new ProviderError("provider_image_limit", "请求图片数量超过模型能力，请先执行图片描述转换");
+    throw withMessage(new ProviderError("provider_image_limit", "请求图片数量超过模型能力，请先执行图片描述转换"), "error.the_image_count_exceeds_this_model_s_limit_convert_images_to_descriptions");
   }
   return messages;
 }
@@ -77,6 +78,6 @@ export function estimateMessageTokens(systemPrompt: string, messages: ProviderMe
 }
 
 export function assertStreamComplete(ended: boolean, hasOutput: boolean): void {
-  if (!ended) throw new ProviderError("provider_stream_incomplete", "上游响应流未正常结束，已保留收到的内容");
-  if (!hasOutput) throw new ProviderError("provider_empty_response", "上游响应已结束，但没有返回正文、拒绝、图片或有效工具调用");
+  if (!ended) throw withMessage(new ProviderError("provider_stream_incomplete", "上游响应流未正常结束，已保留收到的内容"), "error.the_upstream_stream_ended_unexpectedly_received_content_has_been_preserved");
+  if (!hasOutput) throw withMessage(new ProviderError("provider_empty_response", "上游响应已结束，但没有返回正文、拒绝、图片或有效工具调用"), "error.the_upstream_response_ended_without_text_a_refusal_images_or_a_valid");
 }

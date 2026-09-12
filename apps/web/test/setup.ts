@@ -1,9 +1,10 @@
+import { setLocalePreference } from "../src/lib/i18n";
 import { typographyStore, CHAT_TYPOGRAPHY_DEFAULTS } from "../src/lib/local-typography";
 import { setConversationSource } from "../src/lib/conversation-lifecycle";
 import { offlineStore } from "../src/lib/offline-history";
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach, vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 const storageValues = new Map<string, string>();
 const memoryStorage: Storage = {
@@ -75,6 +76,8 @@ if (!window.matchMedia) {
     dispatchEvent: () => false
   })) as unknown as typeof window.matchMedia;
 }
+
+beforeEach(() => { setLocalePreference("zh-CN"); });
 
 afterEach(() => {
   offlineStore.set({ offline: false });

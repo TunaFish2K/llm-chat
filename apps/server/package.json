@@ -28,7 +28,8 @@
     "proper-lockfile": "^4.1.2",
     "re2-wasm": "^1.0.2",
     "yaml": "^2.8.1",
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "@llm-chat/i18n": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.5.0"

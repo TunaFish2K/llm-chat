@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 const KEY = "llm-chat.deleted-conversations.v1";
 let sourceId: string | null = null;
 let deleted = new Set<string>();
@@ -64,7 +65,7 @@ export function trackConversationRequest(id: string, controller: AbortController
 export class DeletedConversationError extends Error {
   readonly code = "conversation_deleted_local";
   readonly status = 404;
-  constructor() { super("会话已删除"); }
+  constructor() { super(t("WorkspaceSidebar.conversation_deleted")); }
 }
 if (typeof window !== "undefined") window.addEventListener("storage", (event) => {
   if (event.key !== KEY || !event.newValue) return;

@@ -1,3 +1,7 @@
+import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
+import { useErrorState, displayError } from "../lib/error-display";
+import { LanguagePicker } from "../components/LanguagePicker";
+import { t, useLocale, localized } from "../lib/i18n";
 import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { stopNotificationSession } from "../lib/notifications";
@@ -37,21 +41,22 @@ import { ExpandableTextarea } from "../components/ExpandableTextarea";
 import { applyUpdate, checkForUpdates, getPwaState, subscribePwa } from "../lib/pwa";
 import { ServiceSettingsPanel } from "../components/ServiceSettingsPanel";
 
-const SECTIONS: Array<[string, string]> = [
-  ["general", "通用"],
-  ["security", "安全"],
-  ["connections", "连接与模型"],
-  ["search", "搜索引擎"],
-  ["image-generation", "图片生成"],
-  ["tools", "工具"],
+function getSECTIONS(): Array<[string, string]> { return [
+  ["general", t("SettingsView.general")],
+  ["security", t("SettingsView.security")],
+  ["connections", t("SettingsView.connections_and_models")],
+  ["search", t("SettingsView.search_engines")],
+  ["image-generation", t("SettingsView.image_generation")],
+  ["tools", t("SettingsView.tools")],
   ["skills", "Skill"],
   ["plugins", "Plugin"],
   ["mcp", "MCP"],
-  ["memories", "记忆"]
-];
+  ["memories", t("SettingsView.memory")]
+]; }
 
 
 function useResourceEvents(resources: string[], load: () => Promise<void>): void {
+  useLocale();
   useEffect(() => {
     const listener = (raw: Event) => {
       const resource = (raw as CustomEvent<{ resource?: string }>).detail?.resource;
@@ -63,15 +68,16 @@ function useResourceEvents(resources: string[], load: () => Promise<void>): void
 }
 
 export function SettingsView({ section }: { section: string }) {
+  useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
-  const active = SECTIONS.some(([key]) => key === section) ? section : "general";
+  const active = getSECTIONS().some(([key]) => key === section) ? section : "general";
   return (
     <>
       <div className="page-header mobile-redundant-title settings-page-title">
-        <h2>设置</h2>
+        <h2>{t("WorkspaceSidebar.settings")}</h2>
       </div>
-      <div className="tabs" role="tablist" aria-label="设置分区">
-        {SECTIONS.map(([key, label]) => (
+      <div className="tabs" role="tablist" aria-label={t("SettingsView.settings_sections")}>
+        {getSECTIONS().map(([key, label]) => (
           <a
             key={key}
             role="tab"
@@ -85,7 +91,7 @@ export function SettingsView({ section }: { section: string }) {
         ))}
       </div>
       {offline && !["general", "security"].includes(active) ? (
-        <div className="panel-scroll"><div className="panel-inner"><p className="hint">此设置需要联网后查看和修改。</p></div></div>
+        <div className="panel-scroll"><div className="panel-inner"><p className="hint">{t("SettingsView.connect_to_view_and_change_these_settings")}</p></div></div>
       ) : active === "connections" ? (
         <ConnectionsView embedded />
       ) : (
@@ -108,42 +114,45 @@ export function SettingsView({ section }: { section: string }) {
 }
 
 function ImageGenerationSection() {
+  useLocale();
   return <div>
     <ServiceSettingsPanel kind="image" />
     <div className="card">
-      <p className="hint">直接通过 Responses 对话生图需要模型启用图片输出；工具生图还需要配置图片协议。</p>
-      <a className="btn" href={routes.settings("connections")} onClick={linkClick(routes.settings("connections"))}>配置连接与模型</a>
+      <p className="hint">{t("SettingsView.generating_images_directly_in_responses_requires_image_output_support_the")}</p>
+      <a className="btn" href={routes.settings("connections")} onClick={linkClick(routes.settings("connections"))}>{t("SettingsView.configure_connections_and_models")}</a>
     </div>
   </div>;
 }
 function AppUpdateCard() {
+  useLocale();
   const pwa = useSyncExternalStore(subscribePwa, getPwaState);
   const busy = ["checking", "downloading", "applying"].includes(pwa.updateStatus);
   const status = {
-    idle: "检查此设备上的应用是否有新版本。",
-    checking: "正在检查更新…",
-    downloading: "正在下载新版本…",
-    current: "已是最新版本",
-    ready: "新版本已准备好，更新后将刷新当前页面。",
-    applying: "正在启用新版本…",
-    error: pwa.updateError ?? "更新失败，请重试"
+    idle: t("SettingsView.check_for_a_newer_version_of_the_app_on_this"),
+    checking: t("SettingsView.checking_for_updates"),
+    downloading: t("SettingsView.downloading_the_new_version"),
+    current: t("SettingsView.up_to_date"),
+    ready: t("SettingsView.the_new_version_is_ready_updating_will_refresh_this_page"),
+    applying: t("SettingsView.applying_the_new_version"),
+    error: pwa.updateError ? displayError({ message: pwa.updateError, ...(pwa.updateErrorI18n ? { i18n: pwa.updateErrorI18n } : {}) }) : t("SettingsView.update_failed_try_again")
   }[pwa.updateStatus];
-  return <div className="card" aria-label="应用更新">
-    <h3>应用更新</h3>
+  return <div className="card" aria-label={t("SettingsView.app_updates")}>
+    <h3>{t("SettingsView.app_updates")}</h3>
     {pwa.supported ? <>
       <p className="hint" role={pwa.updateStatus === "error" ? "alert" : "status"}>{status}</p>
       <div className="row">
-        <button type="button" className="btn" disabled={busy} onClick={() => void checkForUpdates()}>检查更新</button>
-        {pwa.updateAvailable ? <button type="button" className="btn primary" disabled={busy} onClick={() => void applyUpdate()}>更新并刷新</button> : null}
+        <button type="button" className="btn" disabled={busy} onClick={() => void checkForUpdates()}>{t("SettingsView.check_for_updates")}</button>
+        {pwa.updateAvailable ? <button type="button" className="btn primary" disabled={busy} onClick={() => void applyUpdate()}>{t("SettingsView.update_and_refresh")}</button> : null}
       </div>
     </> : <>
-      <p className="hint">当前浏览器不支持应用更新，可以刷新页面获取服务器上的版本。</p>
-      <button type="button" className="btn" onClick={() => window.location.reload()}>刷新页面</button>
+      <p className="hint">{t("SettingsView.this_browser_does_not_support_app_updates_refresh_to_get")}</p>
+      <button type="button" className="btn" onClick={() => window.location.reload()}>{t("SettingsView.refresh_page")}</button>
     </>}
   </div>;
 }
 
 function GeneralSection() {
+  useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const settings = useStore(appStore, (s) => s.settings);
   const agents = useStore(appStore, (s) => s.agents);
@@ -166,33 +175,34 @@ function GeneralSection() {
       const saved = await endpoints.settings();
       if (revision === patchVersion.current) {
         acceptSettings(saved);
-        toast("success", "设置已保存");
+        toast("success", localized("SettingsView.settings_saved"));
       }
     }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
   };
 
   return (
     <div>
+      <div className="card"><LanguagePicker /></div>
       <OfflineHistorySettings />
       <NotificationSettings />
       <fieldset disabled={offline} className="offline-settings-fields">
       <div className="card">
-        <h3>外观与交互</h3>
-        <Field label="主题">
+        <h3>{t("SettingsView.appearance_and_interaction")}</h3>
+        <Field label={t("SettingsView.theme")}>
           <select
             className="select"
-            aria-label="主题"
+            aria-label={t("SettingsView.theme")}
             value={settings.theme}
             onChange={(event) => patch({ theme: event.target.value as AppSettings["theme"] })}
           >
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
+            <option value="system">{t("SettingsView.follow_system")}</option>
+            <option value="light">{t("SettingsView.light")}</option>
+            <option value="dark">{t("SettingsView.dark")}</option>
           </select>
         </Field>
         <AccentPicker value={settings.uiPreferences.accentColor ?? null} onChange={(accentColor) => patch({ uiPreferences: { accentColor } })} />
         <label className="checkbox-row"><input type="checkbox" checked={settings.uiPreferences.amoled ?? false}
-          onChange={(event) => patch({ uiPreferences: { amoled: event.target.checked } })} />深色模式使用纯黑背景</label>
+          onChange={(event) => patch({ uiPreferences: { amoled: event.target.checked } })} />{t("SettingsView.use_a_pure_black_background_in_dark_mode")}</label>
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -200,9 +210,7 @@ function GeneralSection() {
             onChange={(event) =>
               patch({ uiPreferences: { sidebarCollapsed: event.target.checked } })
             }
-          />
-          默认折叠侧边栏
-        </label>
+          />{t("SettingsView.collapse_the_sidebar_by_default")}</label>
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -212,14 +220,14 @@ function GeneralSection() {
             })}
           />
           <span className="haptics-label">
-            <span>生成时振动</span>
-            {!hapticsSupported ? <small className="unsupported-hint">当前浏览器不支持振动</small> : null}
+            <span>{t("SettingsView.vibrate_during_generation")}</span>
+            {!hapticsSupported ? <small className="unsupported-hint">{t("SettingsView.this_browser_does_not_support_vibration")}</small> : null}
           </span>
         </label>
-        <Field label="推理块折叠策略">
+        <Field label={t("SettingsView.reasoning_collapse_behavior")}>
           <select
             className="select"
-            aria-label="推理块折叠策略"
+            aria-label={t("SettingsView.reasoning_collapse_behavior")}
             value={settings.uiPreferences.reasoningCollapsePolicy}
             onChange={(event) =>
               patch({
@@ -230,39 +238,39 @@ function GeneralSection() {
               })
             }
           >
-            <option value="always-collapsed">总是折叠</option>
-            <option value="collapse-on-answer">正文出现后折叠</option>
-            <option value="never-auto-collapse">从不自动折叠</option>
+            <option value="always-collapsed">{t("SettingsView.always_collapsed")}</option>
+            <option value="collapse-on-answer">{t("SettingsView.collapse_when_the_answer_starts")}</option>
+            <option value="never-auto-collapse">{t("SettingsView.never_collapse_automatically")}</option>
           </select>
         </Field>
       </div>
 
       </fieldset>
-      <div className="card"><h3>聊天排版</h3><ChatTypographySettings preview /></div>
+      <div className="card"><h3>{t("SettingsView.chat_typography")}</h3><ChatTypographySettings preview /></div>
       <fieldset disabled={offline} className="offline-settings-fields">
       <AppUpdateCard />
-      <div className="card"><h3>快速教程</h3><p className="hint">教程观看状态只保存在当前浏览器，不同步到其他设备。</p>
-        <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>重放快速教程</button></div>
+      <div className="card"><h3>{t("SettingsView.quick_tour")}</h3><p className="hint">{t("SettingsView.tour_progress_is_saved_only_in_this_browser_and_does")}</p>
+        <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
 
       <div className="card">
-        <h3>默认 Agent</h3>
-        <Field label="默认 Agent">
-          <select className="select" aria-label="默认 Agent" value={settings.defaultAgentId}
+        <h3>{t("SettingsView.default_agent")}</h3>
+        <Field label={t("SettingsView.default_agent")}>
+          <select className="select" aria-label={t("SettingsView.default_agent")} value={settings.defaultAgentId}
             onChange={(event) => patch({ defaultAgentId: event.target.value })}>
             {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
         </Field>
-        <p className="hint">模型、上下文、推理档位和系统提示在 Agent 中设置。</p>
+        <p className="hint">{t("SettingsView.configure_models_context_reasoning_and_system_prompts_in_agent_settings")}</p>
         <a className="btn" href={routes.agents(settings.defaultAgentId)}
-          onClick={linkClick(routes.agents(settings.defaultAgentId))}>编辑此 Agent</a>
+          onClick={linkClick(routes.agents(settings.defaultAgentId))}>{t("SettingsView.edit_this_agent")}</a>
       </div>
 
       <div className="card">
-        <h3>用户画像</h3>
-        <Field label="显示名">
+        <h3>{t("SettingsView.user_profile")}</h3>
+        <Field label={t("SettingsView.display_name")}>
           <input
             className="input"
-            aria-label="用户显示名"
+            aria-label={t("SettingsView.user_display_name")}
             defaultValue={settings.userProfile.displayName}
             onBlur={(event) => {
               if (event.target.value !== settings.userProfile.displayName) {
@@ -271,9 +279,9 @@ function GeneralSection() {
             }}
           />
         </Field>
-        <Field label="描述">
+        <Field label={t("SettingsView.description")}>
           <ExpandableTextarea
-            label="用户描述"
+            label={t("SettingsView.user_description")}
             value={settings.userProfile.description}
             onChange={(value) => patch({ userProfile: { ...settings.userProfile, description: value } })}
           />
@@ -281,11 +289,9 @@ function GeneralSection() {
       </div>
 
       <div className="card">
-        <h3>工作目录</h3>
-        <p className="small muted mono">{settings.lastWorkspacePath ?? "（未设置）"}</p>
-        <button className="btn" onClick={() => setPickingWorkspace(true)}>
-          选择工作目录
-        </button>
+        <h3>{t("SettingsView.working_directory")}</h3>
+        <p className="small muted mono">{settings.lastWorkspacePath ?? t("SettingsView.not_set")}</p>
+        <button className="btn" onClick={() => setPickingWorkspace(true)}>{t("SettingsView.choose_working_directory")}</button>
       </div>
 
       {pickingWorkspace ? (
@@ -306,6 +312,7 @@ function GeneralSection() {
 /* ---------- security ---------- */
 
 function SecuritySection() {
+  useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -319,7 +326,7 @@ function SecuritySection() {
       const result = await endpoints.changePassword(password);
       setPassword("");
       setConfirm("");
-      setMessage(`密码已更新，已撤销 ${result.sessionsRevoked} 个旧会话。`);
+      setMessage(t("SettingsView.password_updated_revoked_previous_sessions", { value1: (result.sessionsRevoked) }));
     } catch (error) {
       toastError(error);
     } finally {
@@ -343,8 +350,8 @@ function SecuritySection() {
   return (
     <div>
       <div className="card">
-        <h3>修改访问密码</h3>
-        <Field label="新密码" hint="至少 8 个字符。修改后所有旧会话都会被撤销。" htmlFor="new-password">
+        <h3>{t("SettingsView.change_access_password")}</h3>
+        <Field label={t("SettingsView.new_password")} hint={t("SettingsView.at_least_8_characters_changing_the_password_revokes_all_previous")} htmlFor="new-password">
           <input
             id="new-password"
             className="input"
@@ -354,7 +361,7 @@ function SecuritySection() {
             onChange={(event) => setPassword(event.target.value)}
           />
         </Field>
-        <Field label="确认新密码" htmlFor="confirm-password">
+        <Field label={t("SettingsView.confirm_new_password")} htmlFor="confirm-password">
           <input
             id="confirm-password"
             className="input"
@@ -365,9 +372,7 @@ function SecuritySection() {
           />
         </Field>
         {password && confirm && password !== confirm ? (
-          <p role="alert" className="small" style={{ color: "var(--danger)" }}>
-            两次输入的密码不一致。
-          </p>
+          <p role="alert" className="small" style={{ color: "var(--danger)" }}>{t("SettingsView.the_passwords_do_not_match")}</p>
         ) : null}
         {message ? (
           <p role="status" className="small" style={{ color: "var(--success)" }}>
@@ -378,16 +383,12 @@ function SecuritySection() {
           className="btn primary"
           disabled={offline || busy || password.length < 8 || password !== confirm}
           onClick={() => void changePassword()}
-        >
-          修改密码
-        </button>
+        >{t("SettingsView.change_password")}</button>
       </div>
       <div className="card">
-        <h3>退出登录</h3>
-        <p className="small muted">退出后需要重新输入访问密码。</p>
-        <button className="btn danger" disabled={busy} onClick={() => void logout()}>
-          退出登录
-        </button>
+        <h3>{t("SettingsView.sign_out")}</h3>
+        <p className="small muted">{t("SettingsView.you_will_need_the_access_password_to_sign_in_again")}</p>
+        <button className="btn danger" disabled={busy} onClick={() => void logout()}>{t("SettingsView.sign_out")}</button>
       </div>
     </div>
   );
@@ -395,23 +396,24 @@ function SecuritySection() {
 
 /* ---------- tools ---------- */
 
-const CATEGORY_LABELS: Record<string, string> = {
-  web: "网络",
-  local: "本地",
-  workspace: "工作区",
-  memory: "记忆",
-  conversation: "会话",
+function getCATEGORY_LABELS(): Record<string, string> { return {
+  web: t("SettingsView.web"),
+  local: t("SettingsView.local"),
+  workspace: t("SettingsView.workspace"),
+  memory: t("SettingsView.memory"),
+  conversation: t("SettingsView.conversation"),
   skill: "Skill",
   mcp: "MCP",
-  background: "后台",
+  background: t("SettingsView.background"),
   plugin: "Plugin",
-  app: "网站管理"
-};
+  app: t("SettingsView.app_management")
+}; }
 
 function ToolsSection() {
+  useLocale();
   const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [detail, setDetail] = useState<
     { kind: "tool"; tool: ToolCatalogItemDto } | { kind: "text"; title: string; text: string } | null
   >(null);
@@ -423,7 +425,7 @@ function ToolsSection() {
       setSettings(toolSettings);
       setCatalog(items);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
     }
   }, []);
 
@@ -449,27 +451,27 @@ function ToolsSection() {
   return (
     <div>
       <div className="card">
-        <h3>工具环境</h3>
+        <h3>{t("SettingsView.tool_environment")}</h3>
         <div className="environment-value">
-          <span>工作区：</span>
+          <span>{t("SettingsView.workspace_2")}</span>
           <OverflowText
             text={settings.workspacePath}
-            label="查看完整工作区路径"
+            label={t("SettingsView.view_full_workspace_path")}
             className="mono"
-            onOpen={() => setDetail({ kind: "text", title: "工作区路径", text: settings.workspacePath })}
+            onOpen={() => setDetail({ kind: "text", title: t("SettingsView.workspace_path"), text: settings.workspacePath })}
           />
         </div>
         <div className="environment-value">
-          <span>Skill 目录：</span>
+          <span>{t("SettingsView.skill_directory")}</span>
           <OverflowText
             text={settings.skillsPath}
-            label="查看完整 Skill 目录路径"
+            label={t("SettingsView.view_full_skill_directory_path")}
             className="mono"
-            onOpen={() => setDetail({ kind: "text", title: "Skill 目录路径", text: settings.skillsPath })}
+            onOpen={() => setDetail({ kind: "text", title: t("SettingsView.skill_directory_path"), text: settings.skillsPath })}
           />
         </div>
         <Switch
-          label="启用工作区 Shell 工具"
+          label={t("SettingsView.enable_workspace_shell_tools")}
           checked={settings.workspaceShellEnabled}
           onChange={(checked) => {
               setSettings({ ...settings, workspaceShellEnabled: checked });
@@ -484,7 +486,7 @@ function ToolsSection() {
       </div>
 
       <div className="card">
-        <h3>工具目录</h3>
+        <h3>{t("SettingsView.tool_catalog")}</h3>
         <table className="table tool-catalog-table">
           <colgroup>
             <col className="tool-col-main" />
@@ -496,61 +498,59 @@ function ToolsSection() {
           </colgroup>
           <thead>
             <tr>
-              <th>工具</th>
-              <th>分类</th>
-              <th>来源</th>
-              <th>审批</th>
-              <th>状态</th>
-              <th>启用</th>
+              <th>{t("SettingsView.tools")}</th>
+              <th>{t("SettingsView.category")}</th>
+              <th>{t("SettingsView.source")}</th>
+              <th>{t("SettingsView.approval")}</th>
+              <th>{t("TasksView.status")}</th>
+              <th>{t("SettingsView.enable")}</th>
             </tr>
           </thead>
           <tbody>
             {catalog.map((tool) => {
-              const source = tool.sourceName ?? tool.sourceKind ?? "内置";
+              const source = tool.sourceName ?? tool.sourceKind ?? t("SettingsView.built_in");
               return (
                 <tr key={tool.name}>
                   <td className="tool-summary-cell">
                     <button
                       type="button"
                       className="catalog-summary-trigger"
-                      aria-label={`查看工具 ${tool.label} 的完整信息`}
+                      aria-label={t("SettingsView.view_full_details_for_tool", { value1: (toolLabel(tool)) })}
                       aria-haspopup="dialog"
                       onClick={() => setDetail({ kind: "tool", tool })}
                     >
-                      <span className="catalog-summary-label">{tool.label}</span>
+                      <span className="catalog-summary-label">{toolLabel(tool)}</span>
                       <span className="catalog-summary-id mono">{tool.name}</span>
-                      <span className="catalog-summary-description">{tool.description || "无描述"}</span>
+                      <span className="catalog-summary-description">{toolDescription(tool) || t("SettingsView.no_description")}</span>
                       <Maximize2 className="catalog-summary-icon" size={13} aria-hidden="true" />
                     </button>
                   </td>
-                  <td className="tool-meta-cell" data-label="分类">
-                    {CATEGORY_LABELS[tool.category] ?? tool.category}
+                  <td className="tool-meta-cell" data-label={t("SettingsView.category")}>
+                    {getCATEGORY_LABELS()[tool.category] ?? tool.category}
                   </td>
-                  <td className="tool-meta-cell" data-label="来源">
+                  <td className="tool-meta-cell" data-label={t("SettingsView.source")}>
                     <OverflowText
                       text={source}
-                      label={`查看工具 ${tool.label} 的完整来源`}
+                      label={t("SettingsView.view_full_source_for_tool", { value1: (toolLabel(tool)) })}
                       onOpen={() => setDetail({ kind: "tool", tool })}
                     />
                     {tool.revision ? <span className="tool-revision mono">{tool.revision.slice(0, 10)}</span> : null}
                   </td>
-                  <td className="tool-meta-cell" data-label="审批">
+                  <td className="tool-meta-cell" data-label={t("SettingsView.approval")}>
                     {toolApprovalLabel(tool)}
                   </td>
-                  <td className="tool-meta-cell" data-label="状态">
+                  <td className="tool-meta-cell" data-label={t("TasksView.status")}>
                     {tool.operationalState === "error" ? (
-                      <span className="tag err" title={tool.error ?? ""}>
-                        错误
-                      </span>
+                      <span className="tag err" title={toolError(tool) ?? ""}>{t("SettingsView.error")}</span>
                     ) : tool.available ? (
-                      <span className="tag ok">可用</span>
+                      <span className="tag ok">{t("SettingsView.available")}</span>
                     ) : (
-                      <span className="tag">不可用</span>
+                      <span className="tag">{t("SettingsView.unavailable")}</span>
                     )}
                   </td>
-                  <td className="tool-meta-cell" data-label="启用">
+                  <td className="tool-meta-cell" data-label={t("SettingsView.enable")}>
                     <Switch
-                      label={`启用工具 ${tool.label}`}
+                      label={t("SettingsView.enable_tool", { value1: (toolLabel(tool)) })}
                       hideLabel
                       checked={settings.enabled[tool.name] ?? true}
                       disabled={!tool.available}
@@ -573,31 +573,32 @@ function ToolsSection() {
 }
 
 function toolApprovalLabel(tool: ToolCatalogItemDto): string {
-  return tool.approvalMode === "always" ? "每次审批" : tool.approvalMode === "never" ? "免审批" : "动态";
+  return tool.approvalMode === "always" ? t("SettingsView.always_ask") : tool.approvalMode === "never" ? t("SettingsView.no_approval") : t("SettingsView.dynamic");
 }
 
 function ToolDetailModal({ tool, onClose }: { tool: ToolCatalogItemDto; onClose: () => void }) {
-  const source = tool.sourceName ?? tool.sourceKind ?? "内置";
-  const state = tool.operationalState === "error" ? "错误" : tool.available ? "可用" : "不可用";
+  useLocale();
+  const source = tool.sourceName ?? tool.sourceKind ?? t("SettingsView.built_in");
+  const state = tool.operationalState === "error" ? t("SettingsView.error") : tool.available ? t("SettingsView.available") : t("SettingsView.unavailable");
   return (
-    <Modal title={`工具详情 · ${tool.label}`} onClose={onClose} wide>
+    <Modal title={t("SettingsView.tool_details", { value1: (toolLabel(tool)) })} onClose={onClose} wide>
       <dl className="catalog-detail-grid">
-        <div><dt>工具 ID</dt><dd className="mono">{tool.name}</dd></div>
-        <div><dt>分类</dt><dd>{CATEGORY_LABELS[tool.category] ?? tool.category}</dd></div>
-        <div><dt>来源</dt><dd>{source}</dd></div>
-        <div><dt>审批</dt><dd>{toolApprovalLabel(tool)}</dd></div>
-        <div><dt>状态</dt><dd>{state}</dd></div>
-        {tool.sourceId ? <div><dt>来源 ID</dt><dd className="mono">{tool.sourceId}</dd></div> : null}
-        {tool.revision ? <div><dt>修订</dt><dd className="mono">{tool.revision}</dd></div> : null}
+        <div><dt>{t("SettingsView.tool_id")}</dt><dd className="mono">{tool.name}</dd></div>
+        <div><dt>{t("SettingsView.category")}</dt><dd>{getCATEGORY_LABELS()[tool.category] ?? tool.category}</dd></div>
+        <div><dt>{t("SettingsView.source")}</dt><dd>{source}</dd></div>
+        <div><dt>{t("SettingsView.approval")}</dt><dd>{toolApprovalLabel(tool)}</dd></div>
+        <div><dt>{t("TasksView.status")}</dt><dd>{state}</dd></div>
+        {tool.sourceId ? <div><dt>{t("SettingsView.source_id")}</dt><dd className="mono">{tool.sourceId}</dd></div> : null}
+        {tool.revision ? <div><dt>{t("SettingsView.revision")}</dt><dd className="mono">{tool.revision}</dd></div> : null}
       </dl>
       <section className="catalog-detail-section">
-        <h4>描述</h4>
-        <p>{tool.description || "无描述"}</p>
+        <h4>{t("SettingsView.description")}</h4>
+        <p>{toolDescription(tool) || t("SettingsView.no_description")}</p>
       </section>
-      {tool.error ? (
+      {toolError(tool) ? (
         <section className="catalog-detail-section danger-text">
-          <h4>错误</h4>
-          <p>{tool.error}</p>
+          <h4>{t("SettingsView.error")}</h4>
+          <p>{toolError(tool)}</p>
         </section>
       ) : null}
     </Modal>
@@ -605,6 +606,7 @@ function ToolDetailModal({ tool, onClose }: { tool: ToolCatalogItemDto; onClose:
 }
 
 function TextDetailModal({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
+  useLocale();
   return (
     <Modal title={title} onClose={onClose}>
       <p className="catalog-detail-text mono">{text}</p>
@@ -615,8 +617,9 @@ function TextDetailModal({ title, text, onClose }: { title: string; text: string
 /* ---------- skills ---------- */
 
 function SkillsSection() {
+  useLocale();
   const [skills, setSkills] = useState<SkillDto[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [installPath, setInstallPath] = useState("");
   const [inspecting, setInspecting] = useState<SkillDto | null>(null);
   const [busy, setBusy] = useState(false);
@@ -626,7 +629,7 @@ function SkillsSection() {
     try {
       setSkills(await endpoints.skills());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
     }
   }, []);
 
@@ -641,13 +644,13 @@ function SkillsSection() {
   return (
     <div>
       <div className="card">
-        <h3>安装与发现</h3>
+        <h3>{t("SettingsView.install_and_discover")}</h3>
         <div className="row">
           <input
             className="input mono"
             style={{ flex: 1 }}
-            placeholder="服务端上的 Skill 目录路径"
-            aria-label="Skill 安装路径"
+            placeholder={t("SettingsView.skill_directory_path_on_the_server")}
+            aria-label={t("SettingsView.skill_installation_path")}
             value={installPath}
             onChange={(event) => setInstallPath(event.target.value)}
           />
@@ -660,15 +663,13 @@ function SkillsSection() {
                 .installSkill(installPath.trim())
                 .then(async () => {
                   setInstallPath("");
-                  toast("success", "Skill 已安装");
+                  toast("success", localized("SettingsView.skill_installed"));
                   await load();
                 })
                 .catch(toastError)
                 .finally(() => setBusy(false));
             }}
-          >
-            安装
-          </button>
+          >{t("SettingsView.install")}</button>
           <button
             className="btn"
             disabled={busy}
@@ -679,41 +680,39 @@ function SkillsSection() {
                 .then(async (summary) => {
                   toast(
                     "success",
-                    `发现 ${summary.discovered}，更新 ${summary.updated}，卸载 ${summary.unloaded}，错误 ${summary.errors.length}`
+                    t("SettingsView.discovered_updated_unloaded_errors", { value1: (summary.discovered), value2: (summary.updated), value3: (summary.unloaded), value4: (summary.errors.length) })
                   );
                   await load();
                 })
                 .catch(toastError)
                 .finally(() => setBusy(false));
             }}
-          >
-            重新发现
-          </button>
+          >{t("SettingsView.rediscover")}</button>
         </div>
       </div>
       {skills.length === 0 ? (
-        <EmptyState title="没有 Skill" hint="安装一个 Skill 目录，或运行重新发现。" />
+        <EmptyState title={t("SettingsView.no_skills")} hint={t("SettingsView.install_a_skill_directory_or_run_discovery_again")} />
       ) : (
         skills.map((skill) => (
           <div className="list-row" key={skill.id}>
             <div className="list-row-content">
               <div className="list-row-title">
-                <strong>{skill.name}</strong>
+                <strong>{skillName(skill)}</strong>
                 <SkillStateTag state={skill.state} />
-                {skill.bundled ? <span className="tag accent">内置</span> : null}
+                {skill.bundled ? <span className="tag accent">{t("SettingsView.built_in")}</span> : null}
                 <span className="tag mono">{skill.revision.slice(0, 10)}</span>
               </div>
               <button
                 type="button"
                 className="skill-summary-trigger"
-                aria-label={`查看 Skill ${skill.name} 的完整信息`}
+                aria-label={t("SettingsView.view_full_details_for_skill", { value1: (skillName(skill)) })}
                 aria-haspopup="dialog"
                 onClick={() => setInspecting(skill)}
               >
-                <span className="skill-description-summary">{skill.description || "无描述"}</span>
+                <span className="skill-description-summary">{skillDescription(skill) || t("SettingsView.no_description")}</span>
                 {skill.error ? <span className="skill-error-summary">{skill.error}</span> : null}
                 {skill.requiredTools.length > 0 ? (
-                  <span className="skill-tools-summary">依赖工具：{skill.requiredTools.join(", ")}</span>
+                  <span className="skill-tools-summary">{t("SettingsView.required_tools", { value1: (skill.requiredTools.join(", ")) })}</span>
                 ) : null}
                 <Maximize2 className="skill-summary-icon" size={13} aria-hidden="true" />
               </button>
@@ -727,15 +726,13 @@ function SkillsSection() {
                   endpoints
                     .reloadSkill(skill.id)
                     .then(async () => {
-                      toast("success", "已重新加载");
+                      toast("success", localized("SettingsView.reloaded"));
                       await load();
                     })
                     .catch(toastError)
                     .finally(() => setBusy(false));
                 }}
-              >
-                重新加载
-              </button>
+              >{t("SettingsView.reload")}</button>
             </div>
           </div>
         ))
@@ -746,29 +743,30 @@ function SkillsSection() {
 }
 
 function SkillDetailModal({ skill, onClose }: { skill: SkillDto; onClose: () => void }) {
+  useLocale();
   return (
-    <Modal title={`Skill 详情 · ${skill.name}`} onClose={onClose} wide>
+    <Modal title={t("SettingsView.skill_details", { value1: (skillName(skill)) })} onClose={onClose} wide>
       <dl className="catalog-detail-grid">
-        <div><dt>状态</dt><dd>{skillStateLabel(skill.state)}</dd></div>
-        <div><dt>来源</dt><dd>{skill.bundled ? "内置" : "已安装"}</dd></div>
-        <div><dt>修订</dt><dd className="mono">{skill.revision}</dd></div>
-        <div className="detail-grid-wide"><dt>源目录</dt><dd className="mono">{skill.sourcePath}</dd></div>
+        <div><dt>{t("TasksView.status")}</dt><dd>{skillStateLabel(skill.state)}</dd></div>
+        <div><dt>{t("SettingsView.source")}</dt><dd>{skill.bundled ? t("SettingsView.built_in") : t("SettingsView.installed")}</dd></div>
+        <div><dt>{t("SettingsView.revision")}</dt><dd className="mono">{skill.revision}</dd></div>
+        <div className="detail-grid-wide"><dt>{t("SettingsView.source_directory")}</dt><dd className="mono">{skill.sourcePath}</dd></div>
       </dl>
       <section className="catalog-detail-section">
-        <h4>描述</h4>
-        <p>{skill.description || "无描述"}</p>
+        <h4>{t("SettingsView.description")}</h4>
+        <p>{skillDescription(skill) || t("SettingsView.no_description")}</p>
       </section>
       <section className="catalog-detail-section">
-        <h4>依赖工具</h4>
+        <h4>{t("SettingsView.required_tools_2")}</h4>
         {skill.requiredTools.length > 0 ? (
           <div className="catalog-detail-tools">
             {skill.requiredTools.map((tool) => <code key={tool}>{tool}</code>)}
           </div>
-        ) : <p className="muted">无</p>}
+        ) : <p className="muted">{t("SettingsView.none")}</p>}
       </section>
       {skill.error ? (
         <section className="catalog-detail-section danger-text">
-          <h4>错误</h4>
+          <h4>{t("SettingsView.error")}</h4>
           <p>{skill.error}</p>
         </section>
       ) : null}
@@ -778,14 +776,15 @@ function SkillDetailModal({ skill, onClose }: { skill: SkillDto; onClose: () => 
 
 function skillStateLabel(state: SkillDto["state"]): string {
   return {
-    loaded: "已加载",
-    "pending-reload": "待重载",
-    error: "错误",
-    unloaded: "已卸载"
+    loaded: t("SettingsView.loaded"),
+    "pending-reload": t("SettingsView.reload_pending"),
+    error: t("SettingsView.error"),
+    unloaded: t("SettingsView.unloaded")
   }[state];
 }
 
 function SkillStateTag({ state }: { state: SkillDto["state"] }) {
+  useLocale();
   const kind = state === "loaded" ? "ok" : state === "error" ? "err" : "warn";
   return <span className={`tag ${kind}`}>{skillStateLabel(state)}</span>;
 }
@@ -793,8 +792,9 @@ function SkillStateTag({ state }: { state: SkillDto["state"] }) {
 /* ---------- plugins ---------- */
 
 function PluginsSection() {
+  useLocale();
   const [plugins, setPlugins] = useState<PluginDto[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [installPath, setInstallPath] = useState("");
   const [configuring, setConfiguring] = useState<PluginDto | null>(null);
   const [removing, setRemoving] = useState<PluginDto | null>(null);
@@ -805,7 +805,7 @@ function PluginsSection() {
     try {
       setPlugins(await endpoints.plugins());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
     }
   }, []);
 
@@ -820,13 +820,13 @@ function PluginsSection() {
   return (
     <div>
       <div className="card">
-        <h3>安装 Plugin</h3>
+        <h3>{t("SettingsView.install_plugin")}</h3>
         <div className="row">
           <input
             className="input mono"
             style={{ flex: 1 }}
-            placeholder="服务端上的 Plugin 目录路径"
-            aria-label="Plugin 安装路径"
+            placeholder={t("SettingsView.plugin_directory_path_on_the_server")}
+            aria-label={t("SettingsView.plugin_installation_path")}
             value={installPath}
             onChange={(event) => setInstallPath(event.target.value)}
           />
@@ -839,19 +839,17 @@ function PluginsSection() {
                 .installPlugin(installPath.trim())
                 .then(async () => {
                   setInstallPath("");
-                  toast("success", "Plugin 已安装");
+                  toast("success", localized("SettingsView.plugin_installed"));
                   await load();
                 })
                 .catch(toastError)
                 .finally(() => setBusy(false));
             }}
-          >
-            安装
-          </button>
+          >{t("SettingsView.install")}</button>
         </div>
       </div>
       {plugins.length === 0 ? (
-        <EmptyState title="没有 Plugin" hint="安装一个服务端托管的 Plugin 目录。" />
+        <EmptyState title={t("SettingsView.no_plugins")} hint={t("SettingsView.install_a_server_managed_plugin_directory")} />
       ) : (
         plugins.map((plugin) => (
           <div className="list-row" key={plugin.id}>
@@ -866,9 +864,7 @@ function PluginsSection() {
               {plugin.error ? <div className="sub" style={{ color: "var(--danger)" }}>{plugin.error}</div> : null}
             </div>
             <div className="list-row-actions">
-              <button className="btn small" onClick={() => setConfiguring(plugin)}>
-                配置
-              </button>
+              <button className="btn small" onClick={() => setConfiguring(plugin)}>{t("SettingsView.configure")}</button>
               <button
                 className="btn small"
                 disabled={busy}
@@ -880,9 +876,7 @@ function PluginsSection() {
                     .catch(toastError)
                     .finally(() => setBusy(false));
                 }}
-              >
-                重载
-              </button>
+              >{t("SettingsView.reload_2")}</button>
               {plugin.state !== "unloaded" ? (
                 <button
                   className="btn small"
@@ -895,13 +889,9 @@ function PluginsSection() {
                       .catch(toastError)
                       .finally(() => setBusy(false));
                   }}
-                >
-                  卸载
-                </button>
+                >{t("SettingsView.unload")}</button>
               ) : null}
-              <button className="btn small danger" onClick={() => setRemoving(plugin)}>
-                删除
-              </button>
+              <button className="btn small danger" onClick={() => setRemoving(plugin)}>{t("WorkspaceSidebar.delete_2")}</button>
             </div>
           </div>
         ))
@@ -911,9 +901,9 @@ function PluginsSection() {
       ) : null}
       {removing ? (
         <ConfirmModal
-          title={`删除 Plugin ${removing.manifest.name}`}
-          message="删除后其注册的工具将不可用。"
-          confirmLabel="删除"
+          title={t("SettingsView.delete_plugin", { value1: (removing.manifest.name) })}
+          message={t("SettingsView.its_registered_tools_will_no_longer_be_available")}
+          confirmLabel={t("WorkspaceSidebar.delete_2")}
           danger
           onClose={() => setRemoving(null)}
           onConfirm={() => {
@@ -939,9 +929,10 @@ function PluginConfigModal({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  useLocale();
   const [configText, setConfigText] = useState(() => JSON.stringify(plugin.config, null, 2));
   const [secrets, setSecrets] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
@@ -949,7 +940,7 @@ function PluginConfigModal({
     try {
       config = JSON.parse(configText || "{}") as Record<string, unknown>;
     } catch {
-      setError("配置不是有效的 JSON");
+      setError(localized("SettingsView.configuration_is_not_valid_json"));
       return;
     }
     setBusy(true);
@@ -957,10 +948,10 @@ function PluginConfigModal({
     try {
       await endpoints.configurePlugin(plugin.id, config, secrets);
       await onSaved();
-      toast("success", "Plugin 配置已保存");
+      toast("success", localized("SettingsView.plugin_configuration_saved"));
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_save"));
     } finally {
       setBusy(false);
     }
@@ -968,16 +959,12 @@ function PluginConfigModal({
 
   return (
     <Modal
-      title={`配置 ${plugin.manifest.name}`}
+      title={t("SettingsView.configure_2", { value1: (plugin.manifest.name) })}
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
-            取消
-          </button>
-          <button className="btn primary" disabled={busy} onClick={() => void save()}>
-            保存
-          </button>
+          <button className="btn" onClick={onClose}>{t("WorkspaceSidebar.cancel")}</button>
+          <button className="btn primary" disabled={busy} onClick={() => void save()}>{t("WorkspaceSidebar.save")}</button>
         </>
       }
     >
@@ -986,22 +973,22 @@ function PluginConfigModal({
           {error}
         </p>
       ) : null}
-      <Field label="配置（JSON）">
+      <Field label={t("SettingsView.configuration_json")}>
         <textarea
           className="textarea mono"
           rows={8}
-          aria-label="Plugin 配置 JSON"
+          aria-label={t("SettingsView.plugin_configuration_json")}
           value={configText}
           onChange={(event) => setConfigText(event.target.value)}
         />
       </Field>
       {plugin.manifest.secretFields.length > 0 ? (
         <Field
-          label="秘密字段"
+          label={t("SettingsView.secret_fields")}
           hint={
             plugin.configuredSecretFields.length > 0
-              ? `已配置：${plugin.configuredSecretFields.join(", ")}。留空保持不变。`
-              : "只写入非空字段。"
+              ? t("SettingsView.configured_leave_blank_to_keep_existing_values", { value1: (plugin.configuredSecretFields.join(", ")) })
+              : t("SettingsView.only_nonempty_fields_are_saved")
           }
         >
           {plugin.manifest.secretFields.map((field) => (
@@ -1011,7 +998,7 @@ function PluginConfigModal({
               type="password"
               style={{ marginBottom: 6 }}
               placeholder={field}
-              aria-label={`秘密字段 ${field}`}
+              aria-label={t("SettingsView.secret_field", { value1: (field) })}
               value={secrets[field] ?? ""}
               onChange={(event) => setSecrets({ ...secrets, [field]: event.target.value })}
             />
@@ -1025,8 +1012,9 @@ function PluginConfigModal({
 /* ---------- MCP ---------- */
 
 function McpSection() {
+  useLocale();
   const [servers, setServers] = useState<McpServerDto[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [editing, setEditing] = useState<McpServerDto | "new" | null>(null);
   const [removing, setRemoving] = useState<McpServerDto | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1036,7 +1024,7 @@ function McpSection() {
     try {
       setServers(await endpoints.mcpServers());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
     }
   }, []);
 
@@ -1051,24 +1039,20 @@ function McpSection() {
   return (
     <div>
       <div className="card">
-        <h3 className="section-heading-actions">
-          MCP 服务
-          <button className="btn small primary" onClick={() => setEditing("new")}>
-            添加服务
-          </button>
+        <h3 className="section-heading-actions">{t("SettingsView.mcp_servers")}<button className="btn small primary" onClick={() => setEditing("new")}>{t("SettingsView.add_server")}</button>
         </h3>
         {servers.length === 0 ? (
-          <EmptyState title="没有 MCP 服务" hint="添加一个远程 MCP 服务以扩展工具目录。" />
+          <EmptyState title={t("SettingsView.no_mcp_servers")} hint={t("SettingsView.add_a_remote_mcp_server_to_extend_the_tool_catalog")} />
         ) : (
           servers.map((server) => (
             <div className="list-row" key={server.id}>
               <div className="list-row-content">
                 <div className="list-row-title">
                   <strong>{server.name}</strong>
-                  {server.enabled ? <span className="tag ok">已启用</span> : <span className="tag">已停用</span>}
+                  {server.enabled ? <span className="tag ok">{t("SettingsView.enabled")}</span> : <span className="tag">{t("SettingsView.disabled")}</span>}
                 </div>
                 <div className="sub mono">{server.url}</div>
-                {server.headerNames.length > 0 ? <div className="sub">请求头：{server.headerNames.join(", ")}</div> : null}
+                {server.headerNames.length > 0 ? <div className="sub">{t("SettingsView.headers", { value1: (server.headerNames.join(", ")) })}</div> : null}
                 {server.lastError ? <div className="sub" style={{ color: "var(--danger)" }}>{server.lastError}</div> : null}
               </div>
               <div className="list-row-actions">
@@ -1080,21 +1064,15 @@ function McpSection() {
                     endpoints
                       .testMcpServer(server.id)
                       .then((result) => {
-                        if (result.ok) toast("success", `连接正常${result.tools !== undefined ? `，${result.tools} 个工具` : ""}`);
-                        else toast("error", result.error ?? "连接失败");
+                        if (result.ok) toast("success", localized("SettingsView.connected", { value1: (result.tools !== undefined ? t("detail.tools", { value1: (result.tools) }) : "") }));
+                        else toast("error", result.error ?? t("SettingsView.connection_failed"));
                       })
                       .catch(toastError)
                       .finally(() => setBusy(false));
                   }}
-                >
-                  测试
-                </button>
-                <button className="btn small" onClick={() => setEditing(server)}>
-                  编辑
-                </button>
-                <button className="btn small danger" onClick={() => setRemoving(server)}>
-                  删除
-                </button>
+                >{t("SettingsView.test")}</button>
+                <button className="btn small" onClick={() => setEditing(server)}>{t("SettingsView.edit")}</button>
+                <button className="btn small danger" onClick={() => setRemoving(server)}>{t("WorkspaceSidebar.delete_2")}</button>
               </div>
             </div>
           ))
@@ -1105,9 +1083,9 @@ function McpSection() {
       ) : null}
       {removing ? (
         <ConfirmModal
-          title={`删除 MCP 服务 ${removing.name}`}
-          message="删除后该服务提供的工具将不可用。"
-          confirmLabel="删除"
+          title={t("SettingsView.delete_mcp_server", { value1: (removing.name) })}
+          message={t("SettingsView.tools_provided_by_this_server_will_no_longer_be_available")}
+          confirmLabel={t("WorkspaceSidebar.delete_2")}
           danger
           onClose={() => setRemoving(null)}
           onConfirm={() => {
@@ -1133,11 +1111,12 @@ function McpEditor({
   onClose: () => void;
   onSaved: () => Promise<void>;
 }) {
+  useLocale();
   const [name, setName] = useState(server?.name ?? "");
   const [url, setUrl] = useState(server?.url ?? "");
   const [enabled, setEnabled] = useState(server?.enabled ?? true);
   const [headers, setHeaders] = useState<Array<{ name: string; value: string }>>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [busy, setBusy] = useState(false);
 
   const save = async () => {
@@ -1159,10 +1138,10 @@ function McpEditor({
         await endpoints.createMcpServer({ name: name.trim(), url: url.trim(), enabled, headers: headerRecord });
       }
       await onSaved();
-      toast("success", "MCP 服务已保存");
+      toast("success", localized("SettingsView.mcp_server_saved"));
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_save"));
     } finally {
       setBusy(false);
     }
@@ -1170,16 +1149,12 @@ function McpEditor({
 
   return (
     <Modal
-      title={server ? `编辑 ${server.name}` : "添加 MCP 服务"}
+      title={server ? t("SettingsView.edit_2", { value1: (server.name) }) : t("SettingsView.add_mcp_server")}
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose}>
-            取消
-          </button>
-          <button className="btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={() => void save()}>
-            保存
-          </button>
+          <button className="btn" onClick={onClose}>{t("WorkspaceSidebar.cancel")}</button>
+          <button className="btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={() => void save()}>{t("WorkspaceSidebar.save")}</button>
         </>
       }
     >
@@ -1189,7 +1164,7 @@ function McpEditor({
         </p>
       ) : null}
       <div className="grid-2">
-        <Field label="名称" hint="只能包含英文字母和数字。" htmlFor="mcp-name">
+        <Field label={t("SettingsView.name")} hint={t("SettingsView.use_only_english_letters_and_numbers")} htmlFor="mcp-name">
           <input id="mcp-name" className="input" value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
         <Field label="URL" htmlFor="mcp-url">
@@ -1203,14 +1178,12 @@ function McpEditor({
         </Field>
       </div>
       <label className="checkbox-row">
-        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-        启用
-      </label>
+        <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />{t("SettingsView.enable")}</label>
       <Field
-        label="请求头"
+        label={t("SettingsView.headers_2")}
         hint={
           server && server.headerNames.length > 0
-            ? `当前已配置：${server.headerNames.join(", ")}。留空保持不变。`
+            ? t("SettingsView.currently_configured_leave_blank_to_keep_existing_values", { value1: (server.headerNames.join(", ")) })
             : undefined
         }
       >
@@ -1219,8 +1192,8 @@ function McpEditor({
             <input
               className="input mono"
               style={{ flex: 1 }}
-              placeholder="Header 名称"
-              aria-label={`请求头 ${index + 1} 名称`}
+              placeholder={t("SettingsView.header_name")}
+              aria-label={t("SettingsView.header_name_2", { value1: (index + 1) })}
               value={header.name}
               onChange={(event) =>
                 setHeaders(headers.map((item, i) => (i === index ? { ...item, name: event.target.value } : item)))
@@ -1229,21 +1202,17 @@ function McpEditor({
             <input
               className="input mono"
               style={{ flex: 2 }}
-              placeholder="值"
-              aria-label={`请求头 ${index + 1} 值`}
+              placeholder={t("SettingsView.value")}
+              aria-label={t("SettingsView.header_value", { value1: (index + 1) })}
               value={header.value}
               onChange={(event) =>
                 setHeaders(headers.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)))
               }
             />
-            <button className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>
-              移除
-            </button>
+            <button className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>{t("SettingsView.remove")}</button>
           </div>
         ))}
-        <button className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>
-          添加请求头
-        </button>
+        <button className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>{t("SettingsView.add_header")}</button>
       </Field>
     </Modal>
   );
@@ -1252,15 +1221,16 @@ function McpEditor({
 /* ---------- memories ---------- */
 
 function MemoriesSection() {
+  useLocale();
   const [memories, setMemories] = useState<MemoryItem[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
 
   const load = useCallback(async () => {
     setError(null);
     try {
       setMemories(await endpoints.memories());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "加载失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
     }
   }, []);
 
@@ -1273,16 +1243,16 @@ function MemoriesSection() {
 
   return (
     <div className="card">
-      <h3>长期记忆</h3>
-      <p className="small muted">记忆由模型通过记忆工具写入，此处只读展示。</p>
+      <h3>{t("SettingsView.long_term_memory")}</h3>
+      <p className="small muted">{t("SettingsView.the_model_writes_memories_using_the_memory_tool_this_view")}</p>
       {memories.length === 0 ? (
-        <EmptyState title="还没有记忆" />
+        <EmptyState title={t("SettingsView.no_memories_yet")} />
       ) : (
         memories.map((memory) => (
           <div className="list-row" key={memory.id}>
             <div className="grow">
               <div style={{ whiteSpace: "pre-wrap" }}>{memory.content}</div>
-              <div className="sub">更新于 {formatTime(memory.updatedAt)}</div>
+              <div className="sub">{t("SettingsView.updated", { value1: (formatTime(memory.updatedAt)) })}</div>
             </div>
           </div>
         ))

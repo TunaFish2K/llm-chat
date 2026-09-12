@@ -1,3 +1,5 @@
+import { translate, type Locale, type MessageKey } from "@llm-chat/i18n";
+const t = (key: MessageKey) => translate("zh-CN", key);
 export interface NotificationControl {
   enabled: boolean;
   authorized: boolean;
@@ -15,7 +17,7 @@ function openDb(): Promise<IDBDatabase> {
       request.result.createObjectStore("seen", { keyPath: "key" }).createIndex("at", "at");
     };
     request.onerror = () => reject(request.error);
-    request.onblocked = () => reject(new Error("通知存储被其他页面占用，请关闭旧页面后重试"));
+    request.onblocked = () => reject(new Error(t("notification_db.notification_storage_is_blocked_by_another_page_close_older_pages")));
     request.onsuccess = () => {
       request.result.onversionchange = () => { request.result.close(); database = undefined; };
       resolve(request.result);
@@ -52,7 +54,7 @@ export async function writeNotificationControl(
       store.put(next, "settings");
     };
     tx.oncomplete = () => resolve(next);
-    tx.onabort = tx.onerror = () => reject(tx.error ?? new Error("通知设置已变化，请重试"));
+    tx.onabort = tx.onerror = () => reject(tx.error ?? new Error(t("notification_db.notification_settings_changed_try_again")));
   });
 }
 
@@ -80,6 +82,20 @@ export async function claimNotification(key: string): Promise<boolean> {
       };
     };
     tx.oncomplete = () => resolve(fresh);
+    tx.onabort = tx.onerror = () => reject(tx.error);
+  });
+}
+
+/** Locale is independent of permission revisions and notification deduplication. */
+export async function notificationLocale(locale?: Locale): Promise<Locale> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("control", locale ? "readwrite" : "readonly");
+    const store = tx.objectStore("control");
+    let value: Locale = "zh-CN";
+    if (locale) { value = locale; store.put(locale, "locale"); }
+    else { const request = store.get("locale"); request.onsuccess = () => { if (request.result === "en-US") value = "en-US"; }; }
+    tx.oncomplete = () => resolve(value);
     tx.onabort = tx.onerror = () => reject(tx.error);
   });
 }

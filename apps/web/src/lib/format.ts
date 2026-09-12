@@ -1,10 +1,7 @@
-const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hour12: false
-});
-
+import { t, getLocale } from "./i18n";
 export function formatTime(timestamp: number | null | undefined): string {
   if (!timestamp) return "—";
-  return dateTimeFormatter.format(timestamp);
+  return new Intl.DateTimeFormat(getLocale(), { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" }).format(timestamp);
 }
 
 export function formatTokens(value: number | undefined): string {
@@ -19,7 +16,7 @@ export function formatCachedTokens(cached: number | undefined, input: number | u
   if (cached === undefined || input === undefined || input <= 0) return value;
   const percentage = Math.max(0, Math.min(100, (cached / input) * 100));
   const digits = percentage > 0 && percentage < 1 ? 1 : 0;
-  return `${value}（${percentage.toFixed(digits)}%）`;
+  return getLocale() === "zh-CN" ? `${value}（${percentage.toFixed(digits)}%）` : `${value} (${percentage.toFixed(digits)}%)`;
 }
 
 export function formatBytes(value: number | null | undefined): string {
@@ -32,7 +29,7 @@ export function formatBytes(value: number | null | undefined): string {
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("读取文件失败"));
+    reader.onerror = () => reject(new Error(t("format.could_not_read_the_file")));
     reader.onload = () => {
       const result = String(reader.result ?? "");
       const comma = result.indexOf(",");

@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import type { ContextPolicy, ContextSummaryDto, GenerationDto, GenerationSettings, ModelDto, UsageDto } from "@llm-chat/contracts";
 import { adapterFor, estimateMessageTokens, projectMessages, type ProviderToolDefinition, type ProviderConnection, type ProviderMessage } from "@llm-chat/providers";
@@ -62,7 +63,7 @@ export async function buildContext(
 
   if (policy === "full") {
     if (model.contextWindow && estimated > availableInputBudget(model, record.settings.common.maxOutputTokens)) {
-      throw new ContextError("message_too_large", "完整上下文超过模型可用容量，请调整上下文策略或减少输入");
+      throw withMessage(new ContextError("message_too_large", "完整上下文超过模型可用容量，请调整上下文策略或减少输入"), "error.the_full_context_exceeds_the_model_s_capacity_change_the_context_strategy");
     }
     return {
       systemPrompt: compiled.systemPrompt,
@@ -80,10 +81,10 @@ export async function buildContext(
     };
   }
   if (!model.contextWindow) {
-    throw new ContextError("context_window_required", "裁剪或摘要策略需要先配置模型上下文窗口");
+    throw withMessage(new ContextError("context_window_required", "裁剪或摘要策略需要先配置模型上下文窗口"), "error.trimming_and_summary_strategies_require_a_configured_model_context_window");
   }
   const budget = availableInputBudget(model, record.settings.common.maxOutputTokens);
-  if (budget < 256) throw new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口");
+  if (budget < 256) throw withMessage(new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口"), "error.the_output_limit_fills_the_model_s_entire_context_window");
   if (estimated > budget && examples.length) {
     examples = [];
     providerMessages = composeProviderMessages(rawMessages, preparedImages, compiled, []);
@@ -174,7 +175,7 @@ function trimContext(
   }
   const messages = composeProviderMessages(remaining, preparedImages, compiled, []);
   const finalEstimate = estimateTokens(countedPrompt, messages, compiled.tools);
-  if (finalEstimate > budget) throw new ContextError("message_too_large", "最新消息超过模型可用上下文容量");
+  if (finalEstimate > budget) throw withMessage(new ContextError("message_too_large", "最新消息超过模型可用上下文容量"), "error.the_latest_message_exceeds_the_model_s_context_capacity");
   return {
     systemPrompt: compiled.systemPrompt,
     messages,
@@ -219,7 +220,7 @@ async function summarizeContext(
 
   while (estimateTokens(countedSystem(), composeProviderMessages(remaining, preparedImages, compiled, []), compiled.tools) > budget) {
     const nextUser = remaining.findIndex((message, index) => index > 0 && message.role === "user");
-    if (nextUser < 0) throw new ContextError("message_too_large", "最近一轮对话超过模型可用上下文容量");
+    if (nextUser < 0) throw withMessage(new ContextError("message_too_large", "最近一轮对话超过模型可用上下文容量"), "error.the_latest_conversation_turn_exceeds_the_model_s_context_capacity");
     const chunk = remaining.slice(0, nextUser);
     remaining = remaining.slice(nextUser);
     const result = await generateSummary(
@@ -269,32 +270,32 @@ export async function compactConversationContext(
   signal: AbortSignal
 ): Promise<ContextSummaryDto> {
   const conversation = store.getConversation(conversationId);
-  if (!conversation) throw new ContextError("conversation_not_found", "会话不存在");
+  if (!conversation) throw withMessage(new ContextError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
   const resolved = store.resolveGeneration(conversation);
   const policy = resolved.snapshot.execution.contextPolicy;
   if (policy !== "auto" && policy !== "summarize") {
-    throw new ContextError("context_compaction_disabled", "当前上下文策略不使用摘要压缩");
+    throw withMessage(new ContextError("context_compaction_disabled", "当前上下文策略不使用摘要压缩"), "error.the_current_context_strategy_does_not_use_summary_compaction");
   }
   if (!resolved.model.contextWindow) {
-    throw new ContextError("context_window_required", "压缩上下文需要先配置模型上下文窗口");
+    throw withMessage(new ContextError("context_window_required", "压缩上下文需要先配置模型上下文窗口"), "error.configure_the_model_context_window_before_compacting_context");
   }
   const availableBudget = availableInputBudget(
     resolved.model,
     resolved.snapshot.execution.settings.common.maxOutputTokens
   );
   if (availableBudget < 256) {
-    throw new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口");
+    throw withMessage(new ContextError("context_budget_invalid", "最大输出已占满模型上下文窗口"), "error.the_output_limit_fills_the_model_s_entire_context_window");
   }
 
   const allMessages = store.allContextMessages(conversationId);
   const userMessages = allMessages.filter((message) => message.role === "user");
   if (userMessages.length < 3) {
-    throw new ContextError("context_compaction_not_needed", "至少需要三个完整对话轮次才能手动压缩");
+    throw withMessage(new ContextError("context_compaction_not_needed", "至少需要三个完整对话轮次才能手动压缩"), "error.manual_compaction_requires_at_least_three_complete_conversation_turns");
   }
   const keepFromOrdinal = userMessages.at(-2)!.ordinal;
   const eligible = allMessages.filter((message) => message.ordinal < keepFromOrdinal);
   if (!eligible.some((message) => message.role === "user")) {
-    throw new ContextError("context_compaction_not_needed", "没有可压缩的较早对话");
+    throw withMessage(new ContextError("context_compaction_not_needed", "没有可压缩的较早对话"), "error.no_earlier_conversation_turns_to_compact");
   }
 
   let previous = store.getLatestSummary(conversationId);
@@ -397,7 +398,7 @@ async function generateSummary(
   const summaryMessages: ProviderMessage[] = [{ role: "user", text: prompt, ...(summaryImages.length ? { images: summaryImages } : {}) }];
   if (model.contextWindow && estimateTokens("你负责压缩对话上下文。只输出摘要正文。", summaryMessages)
       > availableInputBudget(model, summarySettings.common.maxOutputTokens)) {
-    throw new ContextError("summary_input_too_large", "待摘要内容超过模型上下文容量，原文已保留");
+    throw withMessage(new ContextError("summary_input_too_large", "待摘要内容超过模型上下文容量，原文已保留"), "error.the_content_to_summarize_exceeds_the_model_s_context_capacity_the_original");
   }
   for await (const event of adapterFor(connection.protocol).stream({
     connection,
@@ -412,7 +413,7 @@ async function generateSummary(
     if (event.type === "block" && event.blockType === "text") text = event.content;
     if (event.type === "usage") usage = { ...usage, ...event.usage };
   }
-  if (!text.trim()) throw new ContextError("summary_empty", "上下文摘要模型没有返回文本");
+  if (!text.trim()) throw withMessage(new ContextError("summary_empty", "上下文摘要模型没有返回文本"), "error.the_context_summary_model_returned_no_text");
   return { text: text.trim(), usage };
 }
 

@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type { ImageProviderProtocol } from "@llm-chat/contracts";
 import { ProviderError, type GeneratedImage, type ImageGenerationAdapter, type ImageGenerationCompleted, type ImageGenerationPollResult, type ImageGenerationRequest, type ImageGenerationStart } from "./types";
 
@@ -37,7 +38,7 @@ export class OpenAiImageAdapter implements ImageGenerationAdapter {
     if (request.options.providerOptions) appendFormOptions(form, request.options.providerOptions);
     if (request.operation === "variation") {
       const image = request.referenceImages[0];
-      if (!image) throw new ProviderError("image_input_required", "图片变体需要一张参考图片");
+      if (!image) throw withMessage(new ProviderError("image_input_required", "图片变体需要一张参考图片"), "error.image_variations_require_a_reference_image");
       form.append("image", blobFor(image), image.fileName ?? "reference.png");
     } else {
       for (const [index, image] of request.referenceImages.entries()) {
@@ -53,7 +54,7 @@ export class GoogleImagenAdapter implements ImageGenerationAdapter {
   readonly protocol = "google-imagen" as const;
 
   async start(request: ImageGenerationRequest): Promise<ImageGenerationStart> {
-    if (request.operation !== "generate") throw new ProviderError("image_operation_unsupported", "Imagen 仅支持文本生图");
+    if (request.operation !== "generate") throw withMessage(new ProviderError("image_operation_unsupported", "Imagen 仅支持文本生图"), "error.imagen_supports_text_to_image_generation_only");
     const root = googleRoot(request.connection.baseUrl);
     const url = `${root}/models/${encodeURIComponent(request.modelKey)}:predict`;
     const parameters = {
@@ -107,7 +108,7 @@ export class StabilityImageAdapter implements ImageGenerationAdapter {
 
   async start(request: ImageGenerationRequest): Promise<ImageGenerationStart> {
     if (request.operation === "variation" && !request.referenceImages.length) {
-      throw new ProviderError("image_input_required", "图片变体需要一张参考图片");
+      throw withMessage(new ProviderError("image_input_required", "图片变体需要一张参考图片"), "error.image_variations_require_a_reference_image");
     }
     const form = new FormData();
     form.append("prompt", request.prompt);
@@ -134,7 +135,7 @@ export class StabilityImageAdapter implements ImageGenerationAdapter {
     const images = collectImages(record);
     if (images.length) return { status: "completed", images };
     if (typeof record.id === "string") return { status: "pending", providerJobId: record.id, pollAfterMs: 2_000 };
-    throw new ProviderError("image_response_invalid", "Stability 返回中没有图片结果");
+    throw withMessage(new ProviderError("image_response_invalid", "Stability 返回中没有图片结果"), "error.stability_returned_no_images");
   }
 
   async poll(request: ImageGenerationRequest, providerJobId: string): Promise<ImageGenerationPollResult> {
@@ -184,12 +185,12 @@ async function responsePayload(response: Response): Promise<unknown> {
   }
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.startsWith("image/")) return new Uint8Array(await response.arrayBuffer());
-  try { return await response.json(); } catch { throw new ProviderError("image_response_invalid", "图片服务返回了无法解析的响应"); }
+  try { return await response.json(); } catch { throw withMessage(new ProviderError("image_response_invalid", "图片服务返回了无法解析的响应"), "error.the_image_service_returned_an_unreadable_response"); }
 }
 
 function parseOpenAiResponse(payload: unknown): ImageGenerationCompleted {
   const data = asRecord(payload).data;
-  if (!Array.isArray(data)) throw new ProviderError("image_response_invalid", "OpenAI 图片响应缺少 data");
+  if (!Array.isArray(data)) throw withMessage(new ProviderError("image_response_invalid", "OpenAI 图片响应缺少 data"), "error.the_openai_image_response_is_missing_data");
   const images = data.map((item) => {
     const record = asRecord(item);
     const encoded = typeof record.b64_json === "string" ? record.b64_json : null;
@@ -199,18 +200,18 @@ function parseOpenAiResponse(payload: unknown): ImageGenerationCompleted {
     if (typeof record.url === "string" && /^https?:\/\//i.test(record.url)) {
       return { url: record.url, mimeType: "image/png" as const, ...(typeof record.revised_prompt === "string" ? { revisedPrompt: record.revised_prompt } : {}) };
     }
-    throw new ProviderError("image_response_invalid", "OpenAI 图片响应缺少图片数据");
+    throw withMessage(new ProviderError("image_response_invalid", "OpenAI 图片响应缺少图片数据"), "error.the_openai_image_response_is_missing_image_data");
   });
   return { status: "completed", images, ...(typeof asRecord(data[0]).revised_prompt === "string" ? { revisedPrompt: String(asRecord(data[0]).revised_prompt) } : {}) };
 }
 
 function parseGoogleImagen(payload: unknown): ImageGenerationCompleted {
   const predictions = asRecord(payload).predictions;
-  if (!Array.isArray(predictions)) throw new ProviderError("image_response_invalid", "Imagen 响应缺少 predictions");
+  if (!Array.isArray(predictions)) throw withMessage(new ProviderError("image_response_invalid", "Imagen 响应缺少 predictions"), "error.the_imagen_response_is_missing_predictions");
   const images = predictions.map((item) => {
     const record = asRecord(item);
     const encoded = typeof record.bytesBase64Encoded === "string" ? record.bytesBase64Encoded : typeof record.imageBytes === "string" ? record.imageBytes : null;
-    if (!encoded) throw new ProviderError("image_response_invalid", "Imagen 响应缺少图片数据");
+    if (!encoded) throw withMessage(new ProviderError("image_response_invalid", "Imagen 响应缺少图片数据"), "error.the_imagen_response_is_missing_image_data");
     return { data: Uint8Array.from(Buffer.from(encoded, "base64")), mimeType: normalizeMime(record.mimeType) };
   });
   return { status: "completed", images };
@@ -218,7 +219,7 @@ function parseGoogleImagen(payload: unknown): ImageGenerationCompleted {
 
 function parseGoogleInteraction(payload: unknown): ImageGenerationCompleted {
   const images = collectImages(asRecord(payload));
-  if (!images.length) throw new ProviderError("image_response_invalid", "Gemini 图片响应缺少图片数据");
+  if (!images.length) throw withMessage(new ProviderError("image_response_invalid", "Gemini 图片响应缺少图片数据"), "error.the_gemini_image_response_is_missing_image_data");
   return { status: "completed", images };
 }
 

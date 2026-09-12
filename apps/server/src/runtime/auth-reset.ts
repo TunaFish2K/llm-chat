@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resetPassword } from "../auth";
@@ -11,7 +12,7 @@ async function main(): Promise<void> {
   const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
   const selection = selectRuntimeConfig(process.argv.slice(2), projectRoot);
   if (selection.remainingArgs.length !== 1 || selection.remainingArgs[0] !== CONFIRMATION_FLAG) {
-    throw new Error(`拒绝重置：必须传入 ${CONFIRMATION_FLAG}，且只能额外使用 --config <path>`);
+    throw withMessage(new Error(`拒绝重置：必须传入 ${CONFIRMATION_FLAG}，且只能额外使用 --config <path>`), "error.reset_refused_pass_with_only_config_path_as_an_optional_extra", { value1: CONFIRMATION_FLAG });
   }
 
   const { config } = await loadRuntimeConfig(selection.configPath, projectRoot, false);

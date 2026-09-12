@@ -69,7 +69,7 @@ for (const entry of ["settings", "chat"] as const) {
       }).toBe(target);
     } finally {
       if (conversationId) await api(request, APP_URL, "DELETE", `/api/conversations/${conversationId}`);
-      if (entry === "settings") await api(request, APP_URL, "PATCH", "/api/settings", { lastWorkspacePath: previous.lastWorkspacePath });
+      await api(request, APP_URL, "PATCH", "/api/settings", { lastWorkspacePath: previous.lastWorkspacePath });
       await rm(root, { recursive: true, force: true });
     }
   });

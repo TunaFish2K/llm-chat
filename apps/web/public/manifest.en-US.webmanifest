@@ -1,0 +1,35 @@
+{
+  "id": "/",
+  "name": "Chat",
+  "short_name": "Chat",
+  "description": "Chat is a personal AI assistant for everyday conversations and lightweight tasks.",
+  "lang": "en-US",
+  "theme_color": "#0d100e",
+  "background_color": "#0d100e",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icons/icon-192-v2.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512-v2.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-1024-v2.png",
+      "sizes": "1024x1024",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-maskable-512-v2.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

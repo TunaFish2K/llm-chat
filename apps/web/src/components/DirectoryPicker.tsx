@@ -1,10 +1,12 @@
+import { displayError } from "../lib/error-display";
+import { t, useLocale } from "../lib/i18n";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { DirectoryListingDto } from "@llm-chat/contracts";
 import { ApiRequestError, endpoints } from "../lib/api";
 import { ErrorState, LoadingState, Modal } from "../lib/ui";
 
 interface DirectoryError {
-  message: string;
+  message: unknown;
   invalidPath: boolean;
   retry?: () => void;
 }
@@ -22,6 +24,7 @@ export function DirectoryPicker({
   onSelect: (path: string | null) => void;
   onClose: () => void;
 }) {
+  useLocale();
   const [listing, setListing] = useState<DirectoryListingDto | null>(null);
   const [pathInput, setPathInput] = useState(initialPath ?? "");
   const [error, setError] = useState<DirectoryError | null>(null);
@@ -39,7 +42,7 @@ export function DirectoryPicker({
     setError(null);
     setLoading(false);
     if (path !== undefined && !path.trim()) {
-      setError({ message: "请输入目录路径", invalidPath: true });
+      setError({ message: t("DirectoryPicker.enter_a_directory_path"), invalidPath: true });
       return;
     }
     setLoading(true);
@@ -52,7 +55,7 @@ export function DirectoryPicker({
     } catch (cause) {
       if (id !== requestId.current) return;
       setError({
-        message: cause instanceof Error ? cause.message : "无法读取目录，请重试",
+        message: cause instanceof Error ? cause : t("DirectoryPicker.could_not_read_the_directory_try_again"),
         invalidPath: isPathError(cause),
         retry: () => void load(path)
       });
@@ -84,7 +87,7 @@ export function DirectoryPicker({
     } catch (cause) {
       if (id !== requestId.current) return;
       setError({
-        message: cause instanceof Error ? cause.message : "无法校验工作目录，请重试",
+        message: cause instanceof Error ? cause : t("DirectoryPicker.could_not_validate_the_working_directory_try_again"),
         invalidPath: isPathError(cause),
         retry: () => void select()
       });
@@ -107,7 +110,7 @@ export function DirectoryPicker({
       await load(result.path);
     } catch (cause) {
       if (id !== requestId.current) return;
-      setError({ message: cause instanceof Error ? cause.message : "无法新建目录，请重试", invalidPath: false });
+      setError({ message: cause instanceof Error ? cause : t("DirectoryPicker.could_not_create_the_directory_try_again"), invalidPath: false });
     } finally {
       if (id === requestId.current) setBusy(false);
     }
@@ -115,33 +118,29 @@ export function DirectoryPicker({
 
   return (
     <Modal
-      title="选择工作目录"
+      title={t("SettingsView.choose_working_directory")}
       onClose={close}
       footer={
         <>
           {initialPath !== null ? (
-            <button className="btn" disabled={busy} onClick={() => { ++requestId.current; onSelect(null); }}>
-              清除目录
-            </button>
+            <button className="btn" disabled={busy} onClick={() => { ++requestId.current; onSelect(null); }}>{t("DirectoryPicker.clear_directory")}</button>
           ) : null}
-          <button className="btn" onClick={close}>
-            取消
-          </button>
+          <button className="btn" onClick={close}>{t("WorkspaceSidebar.cancel")}</button>
           <button className="btn primary" disabled={!canUseDirectory} onClick={() => void select()}>
-            {busy ? "处理中…" : "使用当前目录"}
+            {busy ? t("DirectoryPicker.processing") : t("DirectoryPicker.use_this_directory")}
           </button>
         </>
       }
     >
       <form onSubmit={(event) => { event.preventDefault(); if (!busy) void load(pathInput); }}>
-        <label htmlFor={pathId}>目录路径</label>
+        <label htmlFor={pathId}>{t("DirectoryPicker.directory_path")}</label>
         <div className="directory-path-row">
           <input
             id={pathId}
             className="input mono"
             value={pathInput}
             disabled={busy}
-            placeholder="输入服务端绝对目录路径"
+            placeholder={t("DirectoryPicker.enter_an_absolute_directory_path_on_the_server")}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="none"
@@ -158,27 +157,21 @@ export function DirectoryPicker({
               if (event.key === "Enter" && (event.nativeEvent.isComposing || event.keyCode === 229)) event.preventDefault();
             }}
           />
-          <button className="btn" type="submit" disabled={busy}>打开</button>
+          <button className="btn" type="submit" disabled={busy}>{t("InspectorPanel.open")}</button>
         </div>
-        <p id={hintId} className="small muted">
-          输入服务端绝对路径，打开后再确认选择。{!currentPathOpened && listing ? "请先打开输入的路径。" : ""}
-        </p>
+        <p id={hintId} className="small muted">{t("DirectoryPicker.enter_an_absolute_server_path_open_it_then_confirm_your", { value1: (!currentPathOpened && listing ? t("detail.open_the_entered_path_first") : "") })}</p>
       </form>
-      {error ? <div id={errorId}><ErrorState message={error.message} {...(error.retry ? { onRetry: error.retry } : {})} /></div> : null}
-      {loading ? <LoadingState label="读取目录…" /> : null}
+      {error ? <div id={errorId}><ErrorState message={displayError(error.message)} {...(error.retry ? { onRetry: error.retry } : {})} /></div> : null}
+      {loading ? <LoadingState label={t("DirectoryPicker.reading_directory")} /> : null}
       {!listing && error ? (
-        <button className="btn" disabled={busy} onClick={() => void load()}>打开根目录</button>
+        <button className="btn" disabled={busy} onClick={() => void load()}>{t("DirectoryPicker.open_root_directory")}</button>
       ) : null}
       {listing ? (
         <>
-          <p className="small mono muted" style={{ wordBreak: "break-all" }}>
-            当前目录：{listing.path}
-          </p>
-          <div className="dir-list" role="listbox" aria-label="目录列表">
+          <p className="small mono muted" style={{ wordBreak: "break-all" }}>{t("DirectoryPicker.current_directory", { value1: (listing.path) })}</p>
+          <div className="dir-list" role="listbox" aria-label={t("DirectoryPicker.directory_list")}>
             {listing.parentPath !== null ? (
-              <button className="dir-row" disabled={busy} onClick={() => void load(listing.parentPath ?? undefined)}>
-                ⬅ 上级目录
-              </button>
+              <button className="dir-row" disabled={busy} onClick={() => void load(listing.parentPath ?? undefined)}>{t("DirectoryPicker.parent_directory")}</button>
             ) : null}
             {listing.entries
               .filter((entry) => entry.directory)
@@ -188,16 +181,14 @@ export function DirectoryPicker({
                 </button>
               ))}
             {listing.entries.filter((entry) => entry.directory).length === 0 ? (
-              <p className="muted small" style={{ padding: "8px 12px" }}>
-                此目录没有子目录。
-              </p>
+              <p className="muted small" style={{ padding: "8px 12px" }}>{t("DirectoryPicker.this_directory_has_no_subdirectories")}</p>
             ) : null}
           </div>
           <div className="directory-path-row">
             <input
               className="input"
-              placeholder="新目录名称"
-              aria-label="新目录名称"
+              placeholder={t("DirectoryPicker.new_directory_name")}
+              aria-label={t("DirectoryPicker.new_directory_name")}
               value={newDirName}
               disabled={busy || loading || !currentPathOpened}
               autoComplete="off"
@@ -206,9 +197,7 @@ export function DirectoryPicker({
               spellCheck={false}
               onChange={(event) => { setNewDirName(event.target.value); setError(null); }}
             />
-            <button className="btn" disabled={!canUseDirectory || !newDirName.trim()} onClick={() => void mkdir()}>
-              新建目录
-            </button>
+            <button className="btn" disabled={!canUseDirectory || !newDirName.trim()} onClick={() => void mkdir()}>{t("DirectoryPicker.create_directory")}</button>
           </div>
         </>
       ) : null}

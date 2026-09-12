@@ -1,3 +1,5 @@
+import { displayError } from "../../lib/error-display";
+import { t, useLocale } from "../../lib/i18n";
 import { useStickToBottom } from "./useStickToBottom";
 import { isOffline, offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
@@ -63,6 +65,7 @@ export const MessageItem = memo(function MessageItem({
   imageJobs?: ImageJobsByToolCall | undefined;
   callbacks: StreamCallbacks;
 }) {
+  useLocale();
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
   const imageJob = message.imageGenerationJob ?? null;
   const generation = message.role === "assistant" ? activeGeneration(message) : null;
@@ -74,14 +77,14 @@ export const MessageItem = memo(function MessageItem({
         {attachments.length ? <AssetGallery assets={attachments} /> : null}
         {message.text ? <div className="msg-bubble">{message.text}</div> : null}
         <MessageFooter metadata={<time>{formatTime(message.createdAt)}</time>}>
-          <MessageAction label="复制消息" onClick={() => void copyText(message.text ?? "")}>
+          <MessageAction label={t("MessageStream.copy_message")} onClick={() => void copyText(message.text ?? "")}>
             <Copy size={14} />
           </MessageAction>
-          <MessageAction label="编辑并分叉" disabled={callbacks.branching} onClick={() => callbacks.onEdit(message)}>
+          <MessageAction label={t("dialogs.edit_and_branch")} disabled={callbacks.branching} onClick={() => callbacks.onEdit(message)}>
             <Pencil size={14} />
           </MessageAction>
-          <span title={retryTargetId ? "重新生成对应回答" : "尚无可重试的回答"}>
-            <MessageAction label="重试回答" disabled={callbacks.branching || !retryTargetId} onClick={() => retryTargetId && callbacks.onRetry(retryTargetId)}>
+          <span title={retryTargetId ? t("MessageStream.regenerate_the_corresponding_reply") : t("MessageStream.no_reply_to_retry_yet")}>
+            <MessageAction label={t("MessageStream.retry_reply")} disabled={callbacks.branching || !retryTargetId} onClick={() => retryTargetId && callbacks.onRetry(retryTargetId)}>
               <RotateCcw size={14} />
             </MessageAction>
           </span>
@@ -92,7 +95,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   return (
-    <article className="msg" data-role="assistant" aria-label={generatedAgent?.name ?? "助手回复"}>
+    <article className="msg" data-role="assistant" aria-label={generatedAgent?.name ?? t("MessageStream.assistant_reply")}>
       {attachments.length ? <AssetGallery assets={attachments} /> : null}
       {generation ? (
         <GenerationTimeline
@@ -106,11 +109,11 @@ export const MessageItem = memo(function MessageItem({
       ) : message.text ? (
         <>
           <Markdown text={message.text} />
-          <MessageFooter metadata={<span>{generatedAgent?.name ?? "助手"} · {message.greeting ? "开场白" : "历史回复"} · {formatTime(message.createdAt)}</span>}>
-              <MessageAction label="复制回答" onClick={() => void copyText(message.text ?? "")}><Clipboard size={14} /></MessageAction>
+          <MessageFooter metadata={<span>{generatedAgent?.name ?? t("MessageStream.assistant")} · {message.greeting ? t("ChatView.greeting") : t("MessageStream.previous_reply")} · {formatTime(message.createdAt)}</span>}>
+              <MessageAction label={t("MessageStream.copy_reply")} onClick={() => void copyText(message.text ?? "")}><Clipboard size={14} /></MessageAction>
                 {message.greeting && message.greeting.variants.length > 1 ? (
                   <VersionSwitcher
-                    label="开场白切换"
+                    label={t("ChatView.greeting_selector")}
                     index={message.greeting.activeIndex}
                     total={message.greeting.variants.length}
                     disabled={callbacks.branching}
@@ -123,25 +126,26 @@ export const MessageItem = memo(function MessageItem({
       ) : attachments.length ? null : imageJob ? (
         <ImageGenerationStatus conversationId={conversationId} job={imageJob} />
       ) : (
-        <p className="muted">（无生成内容）</p>
+        <p className="muted">{t("MessageStream.no_content_generated")}</p>
       )}
     </article>
   );
 });
 
 function ImageGenerationStatus({ conversationId, job }: { conversationId: string; job: ImageGenerationJobDto }) {
+  useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const label = job.status === "queued"
-    ? "图片任务排队中"
+    ? t("MessageStream.image_task_queued")
     : job.status === "running"
-    ? "正在生成图片"
+    ? t("MessageStream.generating_image")
     : job.status === "waiting-provider"
-    ? "等待图片服务完成"
+    ? t("MessageStream.waiting_for_the_image_service")
     : job.status === "failed"
-    ? `图片生成失败：${job.error?.message ?? "未知错误"}`
+    ? t("MessageStream.image_generation_failed", { value1: (job.error ? displayError(job.error) : t("detail.unknown_error")) })
     : job.status === "cancelled"
-    ? "图片生成已取消"
-    : "图片已生成";
+    ? t("MessageStream.image_generation_canceled")
+    : t("MessageStream.image_generated");
   const active = job.status === "queued" || job.status === "running" || job.status === "waiting-provider";
   const retryable = job.status === "failed" || job.status === "cancelled";
   return (
@@ -149,7 +153,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
       <span>{label}</span>
       {active ? (
         <MessageAction
-          label="停止图片生成"
+          label={t("MessageStream.stop_image_generation")}
           danger
           disabled={offline}
           onClick={() => void endpoints.cancelImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
@@ -158,7 +162,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
         </MessageAction>
       ) : retryable ? (
         <MessageAction
-          label="重试图片生成"
+          label={t("MessageStream.retry_image_generation")}
           disabled={offline}
           onClick={() => void endpoints.retryImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
         >
@@ -188,6 +192,7 @@ function GenerationTimeline({
   branchGroups: ConversationBranchGroup[];
   callbacks: StreamCallbacks;
 }) {
+  useLocale();
   const settings = useStore(appStore, (state) => state.settings);
   const collapsePolicy = settings?.uiPreferences.reasoningCollapsePolicy ?? "collapse-on-answer";
   const offline = useStore(offlineStore, (state) => state.offline);
@@ -217,7 +222,7 @@ function GenerationTimeline({
       {busy && timeline.length === 0 ? (
         <div className="stream-pending" role="status">
           <LoaderCircle className="spin" size={15} />
-          <span>{generation.status === "queued" ? "等待模型响应" : "正在生成"}</span>
+          <span>{generation.status === "queued" ? t("MessageStream.waiting_for_the_model") : t("MessageStream.generating")}</span>
         </div>
       ) : null}
 
@@ -243,61 +248,59 @@ function GenerationTimeline({
         if (block.type === "refusal") {
           return (
             <div className="refusal-block" role="alert" key={blockKey}>
-              <strong>模型拒绝回答</strong>
+              <strong>{t("MessageStream.the_model_refused_to_answer")}</strong>
               <p>{block.content}</p>
             </div>
           );
         }
         if (block.type === "unsupported") {
           return (
-            <div className="unsupported-block" key={blockKey}>
-              不支持的内容块：{block.content}
-            </div>
+            <div className="unsupported-block" key={blockKey}>{t("MessageStream.unsupported_content_block", { value1: (block.content) })}</div>
           );
         }
         return <Markdown key={blockKey} text={block.content} streaming={!block.complete} />;
       })}
 
       {!busy && !generation.error && generation.status !== "completed" ? <div role="status"><StatusTag status={generation.status} /></div> : null}
-      {!busy && !timeline.length && !generation.error && generation.status === "completed" ? <p className="small muted">（无生成内容）</p> : null}
+      {!busy && !timeline.length && !generation.error && generation.status === "completed" ? <p className="small muted">{t("MessageStream.no_content_generated")}</p> : null}
       {generation.error ? (
         <div className="refusal-block" role="alert">
-          <strong>生成失败（{generation.error.code}）</strong>
-          <p>{generation.error.message}</p>
+          <strong>{t("MessageStream.generation_failed", { value1: (generation.error.code) })}</strong>
+          <p>{displayError(generation.error)}</p>
         </div>
       ) : null}
       {generation.stopReason && generation.status !== "completed" ? (
-        <p className="muted small">停止原因：{generation.stopReason}</p>
+        <p className="muted small">{t("MessageStream.stop_reason", { value1: (generation.stopReason) })}</p>
       ) : null}
 
-      {offline && isGenerationActive(generation.status) ? <p className="hint">截至上次同步，生成状态尚未更新</p> : null}
+      {offline && isGenerationActive(generation.status) ? <p className="hint">{t("MessageStream.generation_status_has_not_changed_since_the_last_sync")}</p> : null}
       <MessageFooter busy={busy} liveAction={busy ? <CancelGenerationButton conversationId={conversationId} generationId={generation.id} className="act danger" /> : null}
         metadata={<>
-          <span className="reply-identity" title={`${generation.generatedAgent?.name ?? "助手"} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>
-            {generation.generatedAgent?.name ?? "助手"} · {message.generatedModel?.connectionName ?? generation.connectionName} / {message.generatedModel?.displayName ?? generation.modelKey}
+          <span className="reply-identity" title={`${generation.generatedAgent?.name ?? t("MessageStream.assistant")} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>
+            {generation.generatedAgent?.name ?? t("MessageStream.assistant")} · {message.generatedModel?.connectionName ?? generation.connectionName} / {message.generatedModel?.displayName ?? generation.modelKey}
           </span>
-          <button type="button" className="usage-summary" aria-label="查看生成用量" onClick={inspectGeneration}>
+          <button type="button" className="usage-summary" aria-label={t("MessageStream.view_generation_usage")} onClick={inspectGeneration}>
             {generation.usage.inputTokens !== undefined ? <span>↑ {formatTokens(generation.usage.inputTokens)}</span> : null}
             {generation.usage.outputTokens !== undefined ? <span>↓ {formatTokens(generation.usage.outputTokens)}</span> : null}
             {generation.usage.cachedInputTokens !== undefined ? (
-              <span>缓存 {formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens).replace(" tokens", "")}</span>
+              <span>{t("MessageStream.cached", { value1: (formatCachedTokens(generation.usage.cachedInputTokens, generation.usage.inputTokens).replace(" tokens", "")) })}</span>
             ) : null}
             {generation.completedAt ? <span>{(Math.max(0, generation.completedAt - generation.createdAt) / 1000).toFixed(1)}s</span> : null}
           </button>
           <time className="reply-timestamp">{formatTime(message.createdAt)}</time>
         </>}>
           {answer ? (
-            <MessageAction label="复制回答" onClick={() => void copyText(answer)}>
+            <MessageAction label={t("MessageStream.copy_reply")} onClick={() => void copyText(answer)}>
               <Clipboard size={14} />
             </MessageAction>
           ) : null}
           {!busy ? (
             <>
-              <MessageAction label="重试" disabled={callbacks.branching} onClick={() => callbacks.onRetry(message.id)}>
+              <MessageAction label={t("NotificationSettings.retry")} disabled={callbacks.branching} onClick={() => callbacks.onRetry(message.id)}>
                 <RotateCcw size={14} />
               </MessageAction>
               <MessageAction
-                label="从此处继续"
+                label={t("MessageStream.continue_from_here")}
                 disabled={callbacks.branching}
                 onClick={() => callbacks.onContinue(message.id)}
               >
@@ -305,12 +308,12 @@ function GenerationTimeline({
               </MessageAction>
             </>
           ) : null}
-          <MessageAction label="检查生成" onClick={inspectGeneration}>
+          <MessageAction label={t("MessageStream.inspect_generation")} onClick={inspectGeneration}>
             <Settings2 size={14} />
           </MessageAction>
           {message.generations.length > 1 ? (
             <VersionSwitcher
-              label="生成版本切换"
+              label={t("MessageStream.switch_generation_version")}
               index={versionIndex}
               total={message.generations.length}
               onChange={(index) => {
@@ -328,6 +331,7 @@ function GenerationTimeline({
 function MessageFooter({ metadata, children, liveAction, busy = false }: {
   metadata: ReactNode; children: ReactNode; liveAction?: ReactNode; busy?: boolean;
 }) {
+  useLocale();
   return <footer className="reply-footer">
     <div className="reply-inline">
       <div className="reply-metadata">{metadata}</div>
@@ -340,6 +344,7 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }:
   entries: ProcessEntry[]; busy: boolean; status: GenerationDto["status"]; autoOpen: boolean; onInspect: (id: string) => void;
   imageJobs?: ImageJobsByToolCall | undefined;
 }) {
+  useLocale();
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const open = manualOpen ?? autoOpen;
   const tools = entries.flatMap((entry) => entry.kind === "tool" ? [entry.call] : []);
@@ -348,13 +353,13 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }:
   const thinking = entries.some((entry) => entry.kind === "block" && !entry.block.complete);
   const active = busy && Boolean(pending || activeTool || thinking);
   const incomplete = thinking || Boolean(activeTool);
-  const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? "处理失败" : "处理已停止") : pending ? "等待审批" : activeTool && busy ? `正在调用 ${activeTool.name}` : active ? "正在推理" : "推理过程";
+  const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? t("MessageStream.processing_failed") : t("MessageStream.processing_stopped")) : pending ? t("index.waiting_for_approval") : activeTool && busy ? t("MessageStream.calling", { value1: (activeTool.name) }) : active ? t("MessageStream.reasoning") : t("MessageStream.reasoning_process");
   return <div className="process-group">
     <details className="process-disclosure" open={open}>
       <summary onClick={(event) => { event.preventDefault(); setManualOpen(!open); }}>
         {active ? <LoaderCircle size={13} className="spin" /> : <Gauge size={13} />}
         <span role={active ? "status" : undefined}>{label}</span>
-        {tools.length ? <span className="process-count">{tools.length} 次工具调用</span> : null}
+        {tools.length ? <span className="process-count">{t("MessageStream.tool_calls", { count: Number((tools.length)), value1: (tools.length) })}</span> : null}
         <ChevronDown size={13} className="chev" />
       </summary>
       <div className="process-steps">
@@ -364,15 +369,16 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }:
       </div>
     </details>
     {!open ? tools.filter((call) => call.error && !imageJobs?.get(call.id)?.some((job) => job.error?.message === call.error)).map((call) => <div key={call.id} className="process-error" role="alert">
-      <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{call.error}{toolStderr(call.output)}
+      <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{toolError(call)}{toolStderr(call.output)}
     </div>) : null}
   </div>;
 }
 
 function ReasoningContent({ content, open, busy }: { content: string; open: boolean; busy: boolean }) {
+  useLocale();
   const scroll = useStickToBottom([content], open, { initialFollowing: busy, preservePosition: true });
   return <div className="process-reasoning">
-    <div ref={scroll.ref} onScroll={scroll.onScroll} data-following-bottom={!scroll.detached || undefined} tabIndex={0} role="region" aria-label="推理内容">
+    <div ref={scroll.ref} onScroll={scroll.onScroll} data-following-bottom={!scroll.detached || undefined} tabIndex={0} role="region" aria-label={t("MessageStream.reasoning_content")}>
       <div ref={scroll.contentRef}>{content}</div>
     </div>
   </div>;
@@ -391,12 +397,13 @@ export function VersionSwitcher({
   disabled?: boolean;
   onChange: (index: number) => void;
 }) {
-  const itemName = label.includes("开场白") ? "条开场白" : label.includes("分支") ? "分支" : "版本";
+  useLocale();
+  const itemName = label.includes(t("ChatView.greeting")) ? t("MessageStream.opening_messages") : label.includes(t("MessageStream.branch")) ? t("MessageStream.branch") : t("MessageStream.version");
   return (
     <span className="version-switch" aria-label={label}>
       <button
         type="button"
-        aria-label={`上一${itemName}`}
+        aria-label={t("MessageStream.previous", { value1: (itemName) })}
         disabled={disabled || index <= 0}
         onClick={() => onChange(index - 1)}
       >
@@ -405,7 +412,7 @@ export function VersionSwitcher({
       <span>{index + 1} / {total}</span>
       <button
         type="button"
-        aria-label={`下一${itemName}`}
+        aria-label={t("MessageStream.next", { value1: (itemName) })}
         disabled={disabled || index >= total - 1}
         onClick={() => onChange(index + 1)}
       >
@@ -422,10 +429,11 @@ export function BranchSwitchers({
   groups: ConversationBranchGroup[];
   onChange: (conversationId: string) => void;
 }) {
+  useLocale();
   return groups.length ? groups.map((group) => (
     <VersionSwitcher
       key={group.id}
-      label="对话分支切换"
+      label={t("MessageStream.switch_conversation_branch")}
       index={group.activeIndex}
       total={group.conversationIds.length}
       onChange={(index) => {
@@ -438,6 +446,7 @@ export function BranchSwitchers({
 
 /** Collapsed by default: arguments and output are inspection material, not prose. */
 function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto; onInspect: () => void; imageJobs?: readonly ImageGenerationJobDto[] | undefined }) {
+  useLocale();
   const inlineAssets = new Set(imageJobs?.flatMap((job) => job.outputAssets.map((asset) => asset.id)));
   const artifacts = call.artifacts.filter((asset) => !inlineAssets.has(asset.id));
   return (
@@ -446,9 +455,9 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
         <Wrench size={15} aria-hidden="true" />
         <code className="tool-call-name" title={call.name}>{call.name}</code>
         <ToolCallSummary call={call} />
-        {call.error ? <span className="tool-error-summary" title={call.error}>{call.error}{toolStderr(call.output)}</span> : null}
+        {call.error ? <span className="tool-error-summary" title={toolError(call)}>{toolError(call)}{toolStderr(call.output)}</span> : null}
         <span className="grow" />
-        {call.approvalState === "pending" ? <span>等待审批</span> : null}
+        {call.approvalState === "pending" ? <span>{t("index.waiting_for_approval")}</span> : null}
         <StatusTag status={call.approvalState} />
         <button
           type="button"
@@ -457,8 +466,8 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
             event.preventDefault();
             onInspect();
           }}
-          aria-label="检查工具调用"
-          title="检查工具调用"
+          aria-label={t("MessageStream.inspect_tool_call")}
+          title={t("MessageStream.inspect_tool_call")}
         >
           <Settings2 size={14} />
         </button>
@@ -471,3 +480,5 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
     </details>
   );
 }
+
+function toolError(call: ToolCallDto): string { return displayError({ message: call.error ?? "", ...(call.errorI18n ? { i18n: call.errorI18n } : {}) }); }

@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { chmod, mkdir, open, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 import lockfile from "proper-lockfile";
@@ -38,20 +39,20 @@ export async function acquireInstanceLock(
       stale: LOCK_STALE_MS,
       update: LOCK_UPDATE_MS,
       onCompromised(error) {
-        onCompromised(new InstanceLockError(
+        onCompromised(withMessage(new InstanceLockError(
           `数据目录实例锁已失效 (${dataDir})，服务将关闭以避免并发写入`,
           { cause: error }
-        ));
+        ), "error.the_data_directory_lock_is_no_longer_valid_the_service_will_stop", { value1: dataDir }));
       }
     });
   } catch (error) {
     if (isLockHeldError(error)) {
-      throw new InstanceLockError(
+      throw withMessage(new InstanceLockError(
         `数据目录已被另一个 llm-chat 进程占用 (${dataDir})。请先停止正在运行的服务后再重试。`,
         { cause: error }
-      );
+      ), "error.another_llm_chat_process_is_using_the_data_directory_stop_that_service", { value1: dataDir });
     }
-    throw new InstanceLockError(`无法锁定数据目录 (${dataDir})`, { cause: error });
+    throw withMessage(new InstanceLockError(`无法锁定数据目录 (${dataDir})`, { cause: error }), "error.cannot_lock_the_data_directory", { value1: dataDir });
   }
 
   let released = false;

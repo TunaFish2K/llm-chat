@@ -1,3 +1,5 @@
+import { displayError } from "../../lib/error-display";
+import { t, useLocale } from "../../lib/i18n";
 /**
  * The application shell: the three-column frame, its resize affordances, the
  * mobile drawers, and the toast stack. Nothing here knows about conversations
@@ -32,6 +34,7 @@ export function useStoredNumber(
   min: number,
   max: number
 ): [number, (value: number) => void] {
+  useLocale();
   const [value, setValue] = useState(() => {
     const raw = localStorage.getItem(key);
     if (raw === null) return fallback;
@@ -50,6 +53,7 @@ export function useStoredNumber(
 }
 
 export function useMediaQuery(query: string): boolean {
+  useLocale();
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
     const media = window.matchMedia(query);
@@ -64,6 +68,7 @@ export function useMediaQuery(query: string): boolean {
 /* Frame ------------------------------------------------------------------- */
 
 export function BootScreen({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+  useLocale();
   return (
     <div className="boot-screen">
       <div className="boot-state">
@@ -72,9 +77,9 @@ export function BootScreen({ error, onRetry }: { error: string | null; onRetry: 
           <strong>Chat</strong>
         </div>
         {error ? (
-          <ErrorState message={`无法连接服务：${error}`} onRetry={onRetry} />
+          <ErrorState message={t("index.could_not_connect_to_the_service", { value1: (error) })} onRetry={onRetry} />
         ) : (
-          <LoadingState label="正在启动 Chat…" />
+          <LoadingState label={t("index.starting_chat")} />
         )}
       </div>
     </div>
@@ -94,6 +99,7 @@ export function AppFrame({
   inspectorOpen: boolean;
   children: ReactNode;
 }) {
+  useLocale();
   return (
     <div
       className="app-frame"
@@ -125,6 +131,7 @@ export function ResizeHandle({
   max: number;
   onChange: (value: number) => void;
 }) {
+  useLocale();
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
@@ -148,7 +155,7 @@ export function ResizeHandle({
       data-side={side}
       style={side === "left" ? { left: position - 2 } : { right: position - 2 }}
       role="separator"
-      aria-label={side === "left" ? "调整会话栏宽度" : "调整检查器宽度"}
+      aria-label={side === "left" ? t("index.resize_conversation_sidebar") : t("index.resize_inspector")}
       aria-orientation="vertical"
       aria-valuemin={min}
       aria-valuemax={max}
@@ -178,16 +185,17 @@ export function MobileAppBar({
   onOpenInspector: (() => void) | null;
   onBack?: (() => void) | undefined;
 }) {
+  useLocale();
   return (
     <header className="mobile-appbar">
-      <IconButton label={onBack ? "返回上一级" : "打开导航"} onClick={onBack ?? onOpenNav}>
+      <IconButton label={onBack ? t("index.go_back") : t("index.open_navigation")} onClick={onBack ?? onOpenNav}>
         {onBack ? <ArrowLeft size={20} /> : <Menu size={20} />}
       </IconButton>
       <strong role="heading" aria-level={2}>
         {title}
       </strong>
       {onOpenInspector ? (
-        <IconButton label="打开检查器" onClick={onOpenInspector}>
+        <IconButton label={t("index.open_inspector")} onClick={onOpenInspector}>
           <PanelRightOpen size={19} />
         </IconButton>
       ) : (
@@ -208,6 +216,7 @@ export function MobileDrawer({
   onClose: () => void;
   children: ReactNode;
 }) {
+  useLocale();
   useBackLayer(true, onClose, 10);
   const panelRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; at: number; dragging: boolean } | null>(null);
@@ -292,15 +301,14 @@ export function ToastStack({
   updating?: boolean;
   updateError?: string | null;
 }) {
+  useLocale();
   return (
     <div className="toast-stack" aria-live="polite">
       {updateAvailable ? (
         <div className="toast info">
           <RefreshCw size={16} aria-hidden="true" />
-          <span role={updateError ? "alert" : "status"}>{updateError ?? (updating ? "正在启用新版本…" : "新版本已准备好")}</span>
-          <Button variant="primary" size="sm" onClick={onApplyUpdate} disabled={updating}>
-            更新并刷新
-          </Button>
+          <span role={updateError ? "alert" : "status"}>{updateError ?? (updating ? t("SettingsView.applying_the_new_version") : t("index.new_version_ready"))}</span>
+          <Button variant="primary" size="sm" onClick={onApplyUpdate} disabled={updating}>{t("SettingsView.update_and_refresh")}</Button>
         </div>
       ) : null}
       {toasts.map((item) => (
@@ -309,7 +317,7 @@ export function ToastStack({
           className={`toast ${item.kind}`}
           role={item.kind === "error" ? "alert" : "status"}
         >
-          {item.text}
+          {displayError({ message: item.text, ...(item.i18n ? { i18n: item.i18n } : {}) })}
         </div>
       ))}
     </div>
@@ -324,15 +332,15 @@ export function routeTitle(
   agents: ReadonlyArray<{ id: string; name: string }>
 ): string {
   if (route.name === "chat") {
-    if (!route.conversationId) return "新会话";
+    if (!route.conversationId) return t("WorkspaceSidebar.new_conversation");
     const conversation = conversations.find((item) => item.id === route.conversationId);
-    if (!conversation) return "会话";
+    if (!conversation) return t("SettingsView.conversation");
     return resolveConversationRoot(conversation, conversations).title;
   }
   if (route.name === "agents") {
     if (!route.agentId) return "Agent";
     return agents.find((item) => item.id === route.agentId)?.name ?? "Agent";
   }
-  if (route.name === "tasks") return "后台任务";
-  return "设置";
+  if (route.name === "tasks") return t("TrajectoryView.background_tasks");
+  return t("WorkspaceSidebar.settings");
 }

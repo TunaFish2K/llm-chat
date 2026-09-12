@@ -1,3 +1,4 @@
+import { t, useLocale, localized } from "../../lib/i18n";
 import { useEffect, useState } from "react";
 import { offlineStore } from "../../lib/offline-history";
 import { useStore } from "../../lib/store";
@@ -17,6 +18,7 @@ export function AgentAvatar({
   label?: string;
   size?: "large";
 }) {
+  useLocale();
   const className = size === "large" ? "agent-avatar large" : "agent-avatar";
   if (agent?.hasAvatar) {
     return (
@@ -33,15 +35,17 @@ export function AgentAvatar({
 }
 
 export function OfflineAwareImage({ src, alt, ...props }: React.ComponentProps<"img">) {
+  useLocale();
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
   const offline = useStore(offlineStore, (state) => state.offline);
-  if (failed && offline) return <span className="image-unavailable">{alt || "图片"} · 尚未下载，联网后可查看</span>;
+  if (failed && offline) return <span className="image-unavailable">{t("atoms.not_downloaded_connect_to_view_it", { value1: (alt || t("ModelPicker.images")) })}</span>;
   return <img {...props} src={src} alt={alt} onLoad={() => setFailed(false)} onError={() => setFailed(true)} />;
 }
 
 /** Images always open through the server-issued URL, never a data: blob. */
 export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
+  useLocale();
   return (
     <div className="message-images">
       {assets.map((asset) => (
@@ -60,6 +64,7 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
 }
 
 export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
+  useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const images = assets.filter((asset): asset is ImageAssetDto => asset.kind === "image");
   const files = assets.filter((asset) => asset.kind === "file");
@@ -71,7 +76,7 @@ export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
           {files.map((asset) => (
             <a key={asset.id} className="message-file" href={offline ? undefined : asset.url} aria-disabled={offline} download={asset.fileName}>
               <FileText size={18} aria-hidden="true" />
-              <span><strong>{asset.fileName}</strong><small>{offline ? "联网后可下载 · " : ""}{formatBytes(asset.byteSize)}</small></span>
+              <span><strong>{asset.fileName}</strong><small>{offline ? t("atoms.connect_to_download") : ""}{formatBytes(asset.byteSize)}</small></span>
               <Download size={16} aria-hidden="true" />
             </a>
           ))}
@@ -95,6 +100,7 @@ export function MessageAction({
   disabled?: boolean;
   children: ReactNode;
 }) {
+  useLocale();
   return (
     <button
       type="button"
@@ -110,6 +116,7 @@ export function MessageAction({
 }
 
 export function CodeField({ label, value, danger = false }: { label: string; value: string; danger?: boolean }) {
+  useLocale();
   return (
     <section className="tool-code-field">
       <strong>{label}</strong>
@@ -120,5 +127,5 @@ export function CodeField({ label, value, danger = false }: { label: string; val
 
 export async function copyText(value: string): Promise<void> {
   await navigator.clipboard?.writeText(value);
-  toast("success", "已复制");
+  toast("success", localized("atoms.copied"));
 }

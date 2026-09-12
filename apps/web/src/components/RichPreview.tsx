@@ -1,9 +1,11 @@
+import { t, useLocale, localized } from "../lib/i18n";
 import { memo, useEffect, useRef, useState } from "react";
 import { useBackLayer } from "../lib/mobile-navigation";
 import { toast, toastError } from "../lib/app-state";
 import type { RichPart } from "../lib/rich-content";
 
 export const RichPreview = memo(function RichPreview({ part }: { part: RichPart }) {
+  useLocale();
   const frame = useRef<HTMLIFrameElement>(null);
   const initializedFrame = useRef<HTMLIFrameElement | null>(null);
   const channel = useRef<MessageChannel | null>(null);
@@ -20,7 +22,7 @@ export const RichPreview = memo(function RichPreview({ part }: { part: RichPart 
   }, [ready, revision]);
   useBackLayer(expanded, () => setExpanded(false), 30);
   useEffect(() => () => { channel.current?.port1.close(); channel.current?.port2.close(); }, []);
-  const title = part.kind === "svg" ? "SVG 预览" : "HTML 预览";
+  const title = part.kind === "svg" ? t("RichPreview.svg_preview") : t("RichPreview.html_preview");
   const initialize = () => {
     if (!frame.current || initializedFrame.current === frame.current) return;
     initializedFrame.current = frame.current;
@@ -37,7 +39,7 @@ export const RichPreview = memo(function RichPreview({ part }: { part: RichPart 
       : '<!doctype html><html><head><meta charset="utf-8">' + defaults + '</head><body>' + content + '</body></html>';
     frame.current?.contentWindow?.postMessage({ type: "llm-chat:render", html }, "*", [next.port2]);
   };
-  const copy = async () => { try { await navigator.clipboard.writeText(part.source); toast("success", "源码已复制"); } catch (error) { toastError(error); } };
+  const copy = async () => { try { await navigator.clipboard.writeText(part.source); toast("success", localized("RichPreview.source_copied")); } catch (error) { toastError(error); } };
   const download = () => {
     const url = URL.createObjectURL(new Blob([part.source], { type: part.kind === "svg" ? "image/svg+xml;charset=utf-8" : "text/html;charset=utf-8" }));
     const link = document.createElement("a"); link.href = url; link.download = `preview.${part.kind === "svg" ? "svg" : "html"}`; link.click();
@@ -46,14 +48,14 @@ export const RichPreview = memo(function RichPreview({ part }: { part: RichPart 
   return <section className="rich-preview" data-expanded={expanded || undefined} aria-label={title}>
     <div className="rich-preview-toolbar">
       <span>{title}</span>
-      <button type="button" aria-expanded={sourceOpen} onClick={() => setSourceOpen(!sourceOpen)}>{sourceOpen ? "隐藏源码" : "查看源码"}</button>
-      <button type="button" onClick={() => void copy()}>复制</button>
-      <button type="button" onClick={download}>下载</button>
-      <button type="button" onClick={() => { setReady(false); setLoadFailed(false); setRevision((value) => value + 1); }}>重新运行</button>
-      <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "展开"}</button>
+      <button type="button" aria-expanded={sourceOpen} onClick={() => setSourceOpen(!sourceOpen)}>{sourceOpen ? t("RichPreview.hide_source") : t("RichPreview.view_source")}</button>
+      <button type="button" onClick={() => void copy()}>{t("RichPreview.copy")}</button>
+      <button type="button" onClick={download}>{t("RichPreview.download")}</button>
+      <button type="button" onClick={() => { setReady(false); setLoadFailed(false); setRevision((value) => value + 1); }}>{t("RichPreview.run_again")}</button>
+      <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? t("RichPreview.collapse") : t("RichPreview.expand")}</button>
     </div>
     <iframe key={`${part.source}:${revision}`} ref={frame} title={title} src="/render-frame.html" sandbox="allow-scripts allow-same-origin" referrerPolicy="no-referrer" onLoad={initialize} style={{ height: expanded ? "70dvh" : height }} />
-    {!ready ? <span className="hint rich-preview-status">{loadFailed ? "预览未能加载，可重新运行或查看源码。" : "正在加载预览…"}</span> : null}
+    {!ready ? <span className="hint rich-preview-status">{loadFailed ? t("RichPreview.preview_could_not_load_run_it_again_or_view_the") : t("RichPreview.loading_preview")}</span> : null}
     {sourceOpen ? <pre className="rich-preview-source"><code>{part.source}</code></pre> : null}
   </section>;
 });

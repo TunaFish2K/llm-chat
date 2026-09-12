@@ -1,10 +1,14 @@
+import { useErrorState } from "../lib/error-display";
+import { LanguagePicker } from "../components/LanguagePicker";
+import { t, useLocale } from "../lib/i18n";
 import { useState, type FormEvent } from "react";
 import { endpoints } from "../lib/api";
 import { bootstrap } from "../lib/app-state";
 
 export function LoginView() {
+  useLocale();
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {
@@ -16,7 +20,7 @@ export function LoginView() {
       await endpoints.login(password);
       await bootstrap();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "登录失败");
+      setError(cause instanceof Error ? cause : t("LoginView.sign_in_failed"));
       setBusy(false);
     }
   };
@@ -28,8 +32,9 @@ export function LoginView() {
           <img src="/icons/icon-192-v2.png" alt="" width={36} height={36} />
           Chat
         </div>
+        <LanguagePicker />
         <div className="field">
-          <label htmlFor="login-password">访问密码</label>
+          <label htmlFor="login-password">{t("LoginView.access_password")}</label>
           <input
             id="login-password"
             className="input"
@@ -38,7 +43,7 @@ export function LoginView() {
             autoFocus
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="输入共享访问密码"
+            placeholder={t("LoginView.enter_the_shared_access_password")}
           />
         </div>
         {error ? (
@@ -47,11 +52,9 @@ export function LoginView() {
           </p>
         ) : null}
         <button className="btn primary" type="submit" disabled={busy || !password} style={{ width: "100%" }}>
-          {busy ? "登录中…" : "登录"}
+          {busy ? t("LoginView.signing_in") : t("LoginView.sign_in")}
         </button>
-        <p className="small muted" style={{ marginTop: 16, textAlign: "center" }}>
-          首次启动的初始密码会打印在服务端日志中。
-        </p>
+        <p className="small muted" style={{ marginTop: 16, textAlign: "center" }}>{t("LoginView.the_initial_password_is_printed_in_the_server_log_on")}</p>
       </form>
     </div>
   );

@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { createHash, randomBytes, randomInt, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import type { Store } from "./database";
 
@@ -56,7 +57,7 @@ export class AuthManager {
   async login(password: string, now = Date.now()): Promise<{ token: string }> {
     const row = this.passwordRow();
     if (!row || !await verifyPassword(password, row)) {
-      throw new AuthError(401, "password_invalid", "密码错误");
+      throw withMessage(new AuthError(401, "password_invalid", "密码错误"), "error.incorrect_password");
     }
     return { token: this.issueSession(now) };
   }
@@ -89,7 +90,7 @@ export class AuthManager {
       SELECT id FROM auth_password_sessions
       WHERE id = ? AND revoked_at IS NULL AND expires_at > ?
     `).get(sessionId, now);
-    if (!session) throw new AuthError(401, "authentication_required", "请重新登录");
+    if (!session) throw withMessage(new AuthError(401, "authentication_required", "请重新登录"), "error.sign_in_again");
     const encoded = await encodePassword(password);
     const token = randomSecret();
     this.store.sqlite.exec("BEGIN IMMEDIATE");

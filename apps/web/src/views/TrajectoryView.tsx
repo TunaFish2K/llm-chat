@@ -1,3 +1,4 @@
+import { t, useLocale } from "../lib/i18n";
 import { useEffect, useMemo, useState } from "react";
 import type { BackgroundTaskDto, ConversationDto, GenerationDto, MessageDto } from "@llm-chat/contracts";
 import { ChevronDown, ChevronRight, CircleDot, GitFork, Search, TerminalSquare, Wrench } from "lucide-react";
@@ -21,6 +22,7 @@ export function TrajectoryView({
   onContinue?: (messageId: string) => void;
   branching?: boolean;
 }) {
+  useLocale();
   const messages = useStore(appStore, (state) => state.messages[conversation.id] ?? EMPTY_MESSAGES);
   const [tasks, setTasks] = useState<BackgroundTaskDto[]>([]);
   const [query, setQuery] = useState("");
@@ -45,22 +47,22 @@ export function TrajectoryView({
 
   return (
     <div className="trajectory-view">
-      <div className="trajectory-toolbar" role="toolbar" aria-label="运行轨迹工具栏">
+      <div className="trajectory-toolbar" role="toolbar" aria-label={t("TrajectoryView.activity_toolbar")}>
         <label className="search-field compact">
           <Search size={15} aria-hidden="true" />
           <input
             type="search"
-            aria-label="搜索运行轨迹"
-            placeholder="搜索消息、模型、工具或任务"
+            aria-label={t("TrajectoryView.search_activity")}
+            placeholder={t("TrajectoryView.search_messages_models_tools_or_tasks")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </label>
-        <span className="muted small">{turns.length} 轮 · {tasks.length} 个后台任务</span>
+        <span className="muted small">{t("TrajectoryView.turns_background_tasks", { value1: (turns.length), value2: (tasks.length) })}</span>
       </div>
       <div className="trajectory-scroll">
         {filtered.length === 0 ? (
-          <EmptyState title={turns.length ? "没有匹配的轨迹" : "还没有运行轨迹"} />
+          <EmptyState title={turns.length ? t("TrajectoryView.no_matching_activity") : t("TrajectoryView.no_activity_yet")} />
         ) : filtered.map((turn, index) => {
           const isCollapsed = collapsed.has(turn.id);
           return (
@@ -68,17 +70,17 @@ export function TrajectoryView({
               <div className="trajectory-turn-heading">
                 <button className="trajectory-turn-header" onClick={() => toggle(turn.id)} aria-expanded={!isCollapsed}>
                   {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                  <strong>第 {index + 1} 轮</strong>
+                  <strong>{t("TrajectoryView.turn", { value1: (index + 1) })}</strong>
                   <time>{formatTime(turn.createdAt)}</time>
                   <span className="grow" />
-                  <span>{turn.generations.length} 次生成</span>
+                  <span>{t("TrajectoryView.generations", { value1: (turn.generations.length) })}</span>
                 </button>
                 <button
                   className="icon-button trajectory-fork"
                   onClick={() => onContinue(turn.assistantMessageId)}
                   disabled={branching}
-                  aria-label={`从第 ${index + 1} 轮继续`}
-                  title="从此轮创建分支"
+                  aria-label={t("TrajectoryView.continue_from_turn", { value1: (index + 1) })}
+                  title={t("TrajectoryView.create_a_branch_from_this_turn")}
                 >
                   <GitFork size={14} />
                 </button>
@@ -87,7 +89,7 @@ export function TrajectoryView({
                 <div className="trajectory-turn-body">
                   <div className="trajectory-node user-node">
                     <CircleDot size={15} aria-hidden="true" />
-                    <div><strong>用户</strong><p>{turn.userText}</p></div>
+                    <div><strong>{t("TrajectoryView.user")}</strong><p>{turn.userText}</p></div>
                   </div>
                   {turn.generations.map((generation) => (
                     <GenerationNode
@@ -100,7 +102,7 @@ export function TrajectoryView({
                   {turn.tasks.map((task) => (
                     <button className="trajectory-node task-node" key={task.id} onClick={() => onInspect({ kind: "task", taskId: task.id })}>
                       <TerminalSquare size={15} aria-hidden="true" />
-                      <span className="grow"><strong>后台任务</strong><code>{task.command}</code></span>
+                      <span className="grow"><strong>{t("TrajectoryView.background_tasks")}</strong><code>{task.command}</code></span>
                       <StatusTag status={task.status} />
                     </button>
                   ))}
@@ -123,6 +125,7 @@ function GenerationNode({
   messageId: string;
   onInspect: (target: InspectionTarget) => void;
 }) {
+  useLocale();
   const timeline = [
     ...generation.blocks.map((block) => ({ kind: "block" as const, stepIndex: block.stepIndex, index: block.index, block })),
     ...generation.toolCalls.map((call) => ({ kind: "tool" as const, stepIndex: call.stepIndex, index: call.index, call }))
@@ -135,7 +138,7 @@ function GenerationNode({
       >
         <CircleDot size={15} aria-hidden="true" />
         <span className="grow">
-          <strong>生成 v{generation.version}</strong>
+          <strong>{t("TrajectoryView.generation_v", { value1: (generation.version) })}</strong>
           <small>{generation.connectionName} / {generation.modelKey}</small>
         </span>
         <span className="usage-compact">{formatTokens(generation.usage.totalTokens)} tok</span>
@@ -143,8 +146,8 @@ function GenerationNode({
       </button>
       {timeline.map((item) => item.kind === "block" ? (
         <div className="trajectory-step" key={item.block.id} data-kind={item.block.type}>
-          <span>{item.block.type === "reasoning" ? "推理" : item.block.type === "text" ? "回答" : item.block.type}</span>
-          <p>{item.block.content || "（空）"}</p>
+          <span>{item.block.type === "reasoning" ? t("TrajectoryView.reasoning") : item.block.type === "text" ? t("TrajectoryView.answer") : item.block.type}</span>
+          <p>{item.block.content || t("TrajectoryView.empty")}</p>
         </div>
       ) : (
         <button

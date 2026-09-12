@@ -1,4 +1,6 @@
 /// <reference lib="webworker" />
+import { translate, resolveLocale, type MessageKey } from "@llm-chat/i18n";
+const t = (key: MessageKey) => translate(resolveLocale(self.navigator.languages), key);
 
 import { clientsClaim } from "workbox-core";
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
@@ -26,7 +28,7 @@ registerRoute(({ url }) => /^\/api\/(images\/|files\/|image-proxy$)/.test(url.pa
       const cached = await (await caches.open(OFFLINE_IMAGES_PREFIX + control.epoch)).match(request);
       if (cached) return cached;
     }
-    return new Response("图片尚未下载，联网后可查看", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
+    return new Response(t("sw.this_image_has_not_been_downloaded_connect_to_view_it"), { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
   }
 });
 
@@ -38,7 +40,7 @@ self.addEventListener("message", (event) => {
   if (event.data?.type === "CHAT_NOTIFICATIONS" && event.source && "id" in event.source) {
     event.waitUntil(conversationNotifications.handle(event.data.command, event.source.id).then(
       () => event.ports[0]?.postMessage({ ok: true }),
-      () => event.ports[0]?.postMessage({ ok: false, error: "无法显示通知，请检查浏览器权限或重试" })
+      () => event.ports[0]?.postMessage({ ok: false, error: t("sw.could_not_show_the_notification_check_browser_permissions_or_try") })
     ));
   }
 });

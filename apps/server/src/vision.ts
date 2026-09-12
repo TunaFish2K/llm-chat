@@ -1,3 +1,4 @@
+import { errorI18n, withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import type { GeneratedModelDto, ImageAssetDto, ModelDto, VisionAnalysisDto } from "@llm-chat/contracts";
 import { adapterFor, type ProviderImage } from "@llm-chat/providers";
@@ -75,12 +76,12 @@ export class VisionService {
       const limitHint = maxImageInputs == null || !mainModel.capabilities.imageInput
         ? "当前模型不支持图片"
         : `当前模型最多接受 ${maxImageInputs} 张图片`;
-      throw new VisionError("vision_model_required", `${limitHint}，请先为 Agent 配置备用识图模型`);
+      throw withMessage(new VisionError("vision_model_required", `${limitHint}，请先为 Agent 配置备用识图模型`), "error.configure_a_fallback_vision_model_for_the_agent_first", { value1: limitHint });
     }
     const visionModel = this.store.getModel(visionModelId);
     const connection = visionModel?.enabled ? this.store.getConnection(visionModel.connectionId) : undefined;
     if (!visionModel || !connection || !visionModel.capabilities.imageInput) {
-      throw new VisionError("vision_model_unavailable", "Agent 配置的备用识图模型不可用或未启用图片输入");
+      throw withMessage(new VisionError("vision_model_unavailable", "Agent 配置的备用识图模型不可用或未启用图片输入"), "error.the_agent_s_fallback_vision_model_is_unavailable_or_does_not_support");
     }
 
     for (const asset of descriptionAssets) {
@@ -167,16 +168,18 @@ export class VisionService {
         if (event.type === "block" && event.blockType === "text") text = event.content;
         if (event.type === "usage") usage = { ...usage, ...event.usage };
       }
-      if (!text.trim()) throw new Error("备用识图模型没有返回图片说明");
+      if (!text.trim()) throw withMessage(new Error("备用识图模型没有返回图片说明"), "error.the_fallback_vision_model_did_not_return_an_image_description");
       const completed = this.store.finishVisionAnalysis(started.id, text.trim(), usage);
       onAnalysis(completed);
       return completed;
     } catch (error) {
       if (signal.aborted) throw error;
       const message = error instanceof Error ? error.message : "识图调用失败";
-      const failed = this.store.failVisionAnalysis(started.id, message);
+      const failed = this.store.failVisionAnalysis(started.id, message, errorI18n(error));
       onAnalysis(failed);
-      throw new VisionError("vision_preprocessing_failed", message);
+      const wrapped = new VisionError("vision_preprocessing_failed", message);
+      const descriptor = errorI18n(error);
+      throw descriptor ? withMessage(wrapped, descriptor.key, descriptor.params) : wrapped;
     }
   }
 }

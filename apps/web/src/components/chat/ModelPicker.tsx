@@ -1,3 +1,4 @@
+import { t, useLocale, getLocale } from "../../lib/i18n";
 import { useBackLayer } from "../../lib/mobile-navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Popover } from "radix-ui";
@@ -32,6 +33,7 @@ export function ModelPicker({
   disabled: boolean;
   onChange: (value: string) => void;
 }) {
+  useLocale();
   const [open, setOpen] = useState(false);
   useBackLayer(open, () => setOpen(false));
   const [query, setQuery] = useState("");
@@ -80,7 +82,7 @@ export function ModelPicker({
       }}
     >
       <Popover.Trigger asChild>
-        <button type="button" className="model-trigger" disabled={disabled} aria-label="选择模型" title={effective?.displayName ?? "选择模型"}>
+        <button type="button" className="model-trigger" disabled={disabled} aria-label={t("ModelPicker.select_model")} title={effective?.displayName ?? t("ModelPicker.select_model")}>
           <ModelBrandIcon model={effective} connection={connections.find((item) => item.id === effective?.connectionId)} />
         </button>
       </Popover.Trigger>
@@ -96,10 +98,10 @@ export function ModelPicker({
         >
           <header>
             <div>
-              <strong>模型</strong>
-              <span>无默认模型的 Agent 会记住选择</span>
+              <strong>{t("InspectorPanel.model")}</strong>
+              <span>{t("ModelPicker.agents_without_a_default_model_remember_your_selection")}</span>
             </div>
-            <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="关闭模型选择">
+            <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label={t("ModelPicker.close_model_picker")}>
               <X size={15} />
             </button>
           </header>
@@ -110,8 +112,8 @@ export function ModelPicker({
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索模型、连接或协议"
-              aria-label="搜索模型"
+              placeholder={t("ModelPicker.search_models_connections_or_protocols")}
+              aria-label={t("ModelPicker.search_models")}
             />
           </label>
           <div className="picker-list">
@@ -126,8 +128,8 @@ export function ModelPicker({
             >
               <Bot size={18} aria-hidden="true" />
               <span>
-                <strong>跟随 Agent</strong>
-                <small>{models.find((model) => model.id === agentModelId)?.displayName ?? "Agent 未配置模型"}</small>
+                <strong>{t("dialogs.follow_agent_2")}</strong>
+                <small>{models.find((model) => model.id === agentModelId)?.displayName ?? t("ModelPicker.no_model_configured_for_this_agent")}</small>
               </span>
               {explicitValue === INHERIT ? <Check size={15} aria-hidden="true" /> : null}
             </button>
@@ -155,17 +157,17 @@ export function ModelPicker({
                       <small>{model.modelKey}</small>
                     </span>
                     <span className="model-badges">
-                      {model.capabilities.imageInput ? <i>图片</i> : null}
-                      {model.capabilities.imageOutput ? <i>生图</i> : null}
-                      {model.capabilities.tools ? <i>工具</i> : null}
-                      {model.capabilities.reasoning ? <i>推理</i> : null}
+                      {model.capabilities.imageInput ? <i>{t("ModelPicker.images")}</i> : null}
+                      {model.capabilities.imageOutput ? <i>{t("ModelPicker.image_generation")}</i> : null}
+                      {model.capabilities.tools ? <i>{t("SettingsView.tools")}</i> : null}
+                      {model.capabilities.reasoning ? <i>{t("TrajectoryView.reasoning")}</i> : null}
                     </span>
                     {effectiveModelId === model.id ? <Check size={15} aria-hidden="true" /> : null}
                   </button>
                 ))}
               </section>
             ))}
-            {!groups.length ? <div className="picker-empty">没有匹配的可用模型</div> : null}
+            {!groups.length ? <div className="picker-empty">{t("ModelPicker.no_matching_available_models")}</div> : null}
           </div>
           <button
             type="button"
@@ -175,9 +177,7 @@ export function ModelPicker({
               navigate(routes.settings("connections"));
             }}
           >
-            <Settings2 size={15} aria-hidden="true" />
-            管理连接与模型
-          </button>
+            <Settings2 size={15} aria-hidden="true" />{t("ModelPicker.manage_connections_and_models")}</button>
         </Popover.Content>
       </Popover.Portal> : null}
     </Popover.Root>
@@ -185,8 +185,9 @@ export function ModelPicker({
 }
 
 function Balance({ value }: { value: BalanceState | undefined }) {
+  useLocale();
   if (!value) return null;
   if (value === "loading") return <RefreshCw size={12} className="spin" aria-hidden="true" />;
-  if (value === "error") return <small className="danger-text">余额失败</small>;
-  return <small>余额 {new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(value.value)}</small>;
+  if (value === "error") return <small className="danger-text">{t("ModelPicker.balance_check_failed")}</small>;
+  return <small>{t("ModelPicker.balance", { value1: (new Intl.NumberFormat(getLocale(), { maximumFractionDigits: 4 }).format(value.value)) })}</small>;
 }

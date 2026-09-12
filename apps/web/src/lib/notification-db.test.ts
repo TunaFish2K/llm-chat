@@ -44,3 +44,17 @@ it("closes an old connection when the database version changes", async () => {
   });
   expect((await db.readNotificationControl()).revision).toBe("initial");
 });
+
+it("persists locale independently of authorization revisions and seen events", async () => {
+  const db = await import("./notification-db");
+  const control = await db.writeNotificationControl({ enabled: true, authorized: true });
+  expect(await db.claimNotification("already-seen")).toBe(true);
+  expect(await db.notificationLocale()).toBe("zh-CN");
+  expect(await db.notificationLocale("en-US")).toBe("en-US");
+  vi.resetModules();
+  const reloaded = await import("./notification-db");
+  expect(await reloaded.notificationLocale()).toBe("en-US");
+  expect(await reloaded.readNotificationControl()).toEqual(control);
+  expect(await reloaded.claimNotification("already-seen")).toBe(false);
+  expect(await reloaded.notificationLocale("zh-CN")).toBe("zh-CN");
+});

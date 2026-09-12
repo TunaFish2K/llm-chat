@@ -14,9 +14,10 @@ export default defineConfig({
       registerType: "prompt",
       injectRegister: false,
       manifest: {
+        id: "/",
         name: "Chat",
         short_name: "Chat",
-        description: "单用户 LLM 聊天与 Agent 工作台",
+        description: "Chat 是用于日常对话和轻任务的个人 AI 助手。",
         lang: "zh-CN",
         theme_color: "#0d100e",
         background_color: "#0d100e",

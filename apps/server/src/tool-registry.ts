@@ -129,6 +129,7 @@ export class ToolRegistry {
       name: entry.definition.name, label: entry.label, description: entry.definition.description,
       category: entry.category, requiresApproval: await entry.requiresApproval({}), available: entry.available,
       approvalMode: "dynamic", sourceKind: entry.sourceKind ?? (entry.category === "mcp" ? "mcp" : "builtin"),
+      ...(entry.errorI18n ? { errorI18n: entry.errorI18n } : {}),
       ...(entry.error ? { error: entry.error, operationalState: "error" as const } : {}),
       ...(entry.sourceId ? { sourceId: entry.sourceId } : {}), ...(entry.sourceName ? { sourceName: entry.sourceName } : {}),
       ...(entry.revision ? { revision: entry.revision } : {})

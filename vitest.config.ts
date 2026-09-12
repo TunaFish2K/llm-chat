@@ -42,7 +42,8 @@ export default defineConfig({
         "apps/server/src/**/*.{ts,tsx}",
         "apps/web/src/**/*.{ts,tsx}",
         "packages/providers/src/**/*.{ts,tsx}",
-        "packages/contracts/src/**/*.{ts,tsx}"
+        "packages/contracts/src/**/*.{ts,tsx}",
+        "packages/i18n/src/**/*.{ts,tsx}"
       ],
       exclude: [
         "**/*.test.{ts,tsx}",

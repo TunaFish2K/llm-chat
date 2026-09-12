@@ -6,6 +6,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "zod": "^4.1.0"
+    "zod": "^4.1.0",
+    "@llm-chat/i18n": "workspace:*"
   }
 }

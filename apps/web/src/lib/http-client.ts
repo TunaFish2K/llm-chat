@@ -1,3 +1,6 @@
+import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
+import { displayError } from "./error-display";
+import { t } from "./i18n";
 import type { FileAssetDto } from "@llm-chat/contracts";
 
 export class ApiRequestError extends Error {
@@ -5,10 +8,13 @@ export class ApiRequestError extends Error {
     readonly status: number,
     readonly code: string,
     message: string,
-    readonly details?: unknown
+    readonly details?: unknown,
+    readonly i18n?: LocalizedMessage
   ) {
     super(message);
     this.name = "ApiRequestError";
+    const raw = message;
+    Object.defineProperty(this, "message", { configurable: true, get: () => displayError({ message: raw, ...(i18n ? { i18n } : {}) }) });
   }
 }
 
@@ -40,14 +46,16 @@ export async function httpRequest<T>(method: string, path: string, body: unknown
       body: body !== undefined ? JSON.stringify(body) : null
     });
   } catch (error) {
-    throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : "网络请求失败");
+    throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : t("http_client.network_request_failed"));
   }
   if (response.status === 401) {
     const text = await response.text();
-    let serverMessage = "请输入访问密码";
+    let serverMessage = t("http_client.enter_the_access_password");
     let serverCode = "authentication_required";
+    let descriptor: LocalizedMessage | undefined;
     try {
       const parsed = JSON.parse(text) as { error?: { code?: string; message?: string } };
+      descriptor = errorI18n(parsed.error);
       serverCode = parsed.error?.code ?? serverCode;
       serverMessage = parsed.error?.message ?? serverMessage;
     } catch {
@@ -56,7 +64,7 @@ export async function httpRequest<T>(method: string, path: string, body: unknown
     // Only a missing/expired session invalidates global auth state. Other 401s
     // (e.g. a wrong password on the login form) stay local to the caller.
     if (serverCode === "authentication_required") emitAuthRequired();
-    throw new ApiRequestError(401, serverCode, serverMessage);
+    throw new ApiRequestError(401, serverCode, serverMessage, undefined, descriptor);
   }
   if (response.status === 204) {
     return { data: undefined as T, status: response.status };
@@ -67,7 +75,7 @@ export async function httpRequest<T>(method: string, path: string, body: unknown
     try {
       data = JSON.parse(text);
     } catch {
-      throw new ApiRequestError(response.status, "invalid_response", "服务端返回了无法解析的响应");
+      throw new ApiRequestError(response.status, "invalid_response", t("http_client.the_server_returned_a_response_that_could_not_be_parsed"));
     }
   }
   if (!response.ok) {
@@ -75,8 +83,9 @@ export async function httpRequest<T>(method: string, path: string, body: unknown
     throw new ApiRequestError(
       response.status,
       error?.code ?? "request_failed",
-      error?.message ?? `请求失败（HTTP ${response.status}）`,
-      error?.details
+      error?.message ?? t("http_client.request_failed_http", { value1: (response.status) }),
+      error?.details,
+      errorI18n(error)
     );
   }
   return { data: data as T, status: response.status };
@@ -98,7 +107,7 @@ export async function uploadFileHttp(file: File): Promise<FileAssetDto> {
   const data = await response.json() as FileAssetDto | { error?: { code?: string; message?: string } };
   if (!response.ok) {
     const error = (data as { error?: { code?: string; message?: string } }).error;
-    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? "文件上传失败");
+    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? t("http_client.file_upload_failed"), undefined, errorI18n(error));
   }
   return data as FileAssetDto;
 }

@@ -1,3 +1,4 @@
+import { errorI18n } from "@llm-chat/i18n";
 import type { Store } from "./database";
 import type { GenerationRunner } from "./generations";
 import type { ImageService } from "./images";
@@ -59,11 +60,12 @@ export class MessageQueue {
           } catch (error) {
             if (this.store.getGeneration(dispatch.generationId)?.status !== "queued") continue;
             this.store.finishGeneration(dispatch.generationId, "failed", {
+              ...(errorI18n(error) ? { i18n: errorI18n(error)! } : {}),
               code: "queue_attachment_failed", message: error instanceof Error ? error.message : "附件准备失败"
             });
             publishGenerationState(this.store, this.events, dispatch.generationId);
-            this.store.sqlite.prepare("UPDATE queued_messages SET status = 'failed', error = ? WHERE id = ?")
-              .run(error instanceof Error ? error.message : "附件准备失败", dispatch.id);
+            this.store.sqlite.prepare("UPDATE queued_messages SET status = 'failed', error = ?, error_i18n_json = ? WHERE id = ?")
+              .run(error instanceof Error ? error.message : "附件准备失败", errorI18n(error) ? JSON.stringify(errorI18n(error)) : null, dispatch.id);
             this.changed(conversationId);
             continue;
           }

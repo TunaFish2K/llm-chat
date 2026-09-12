@@ -1,3 +1,4 @@
+import { type LocalizedMessage } from "@llm-chat/i18n";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -341,17 +342,17 @@ export class TaskManager {
     const error = status === "failed"
       ? live.failure ?? `进程退出码 ${exitCode ?? "unknown"}`
       : status === "interrupted" ? "服务关闭" : null;
-    this.finish(id, status, exitCode, error);
+    this.finish(id, status, exitCode, error, status === "failed" && !live.failure ? { key: "background.exit_code", params: { code: exitCode ?? "unknown" } } : status === "interrupted" ? { key: "background.service_stopped" } : undefined);
   }
 
-  private finish(id: string, status: BackgroundTaskDto["status"], exitCode: number | null, error: string | null): void {
+  private finish(id: string, status: BackgroundTaskDto["status"], exitCode: number | null, error: string | null, i18n?: LocalizedMessage): void {
     const live = this.runtime.get(id);
     if (live?.timeout) clearTimeout(live.timeout);
     this.runtime.delete(id);
     this.store.sqlite.prepare(`
-      UPDATE background_tasks SET status = ?, exit_code = ?, error = ?, completed_at = ?
+      UPDATE background_tasks SET status = ?, exit_code = ?, error = ?, error_i18n_json = ?, completed_at = ?
       WHERE id = ? AND status NOT IN ('completed','failed','stopped','timed_out','interrupted')
-    `).run(status, exitCode, error, Date.now(), id);
+    `).run(status, exitCode, error, i18n ? JSON.stringify(i18n) : null, Date.now(), id);
     this.event(id, "state", null, { status, exitCode, error });
     this.publish(id);
     this.notify(id);
@@ -462,6 +463,7 @@ function taskDto(row: Row): BackgroundTaskDto {
     command: String(row.command), mode: row.mode as "pipe" | "pty", workspacePath: String(row.workspace_path), status,
     expectedDurationMs: expected, hardTimeoutMs: nullableNumber(row.hard_timeout_ms),
     overdue: expected !== null && startedAt !== null && !TERMINAL_STATES.has(status) && Date.now() > startedAt + expected,
+    ...(row.error_i18n_json ? { errorI18n: JSON.parse(String(row.error_i18n_json)) as LocalizedMessage } : {}),
     exitCode: nullableNumber(row.exit_code), error: textOrNull(row.error), outputCursor: Number(row.output_cursor),
     earliestCursor: Number(row.earliest_cursor), createdAt: Number(row.created_at), startedAt,
     completedAt: nullableNumber(row.completed_at)
