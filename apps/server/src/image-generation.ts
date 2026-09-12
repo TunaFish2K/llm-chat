@@ -1,3 +1,4 @@
+import { errorI18n, withMessage } from "@llm-chat/i18n";
 import type { ImageGenerationInput, ImageGenerationJobDto, ImageGenerationJobStatus } from "@llm-chat/contracts";
 import {
   imageAdapter,
@@ -39,17 +40,17 @@ export class ImageGenerationManager {
 
   create(input: CreateImageGenerationInput): ImageGenerationJobDto {
     const conversation = this.store.getConversation(input.conversationId);
-    if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+    if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     const model = this.store.getModel(input.input.modelId);
-    if (!model?.enabled) throw new StoreError("image_model_not_found", "图片模型不存在或已停用");
+    if (!model?.enabled) throw withMessage(new StoreError("image_model_not_found", "图片模型不存在或已停用"), "error.the_image_model_does_not_exist_or_is_disabled");
     if (!model.capabilities.imageOutput || !model.imageProtocol) {
-      throw new StoreError("image_model_unsupported", "所选模型不支持图片生成");
+      throw withMessage(new StoreError("image_model_unsupported", "所选模型不支持图片生成"), "error.the_selected_model_does_not_support_image_generation");
     }
     if (!new ServiceSettings(this.store).images().some((item) => item.modelId === model.id && item.available)) {
-      throw new StoreError("image_model_disabled", "此图片模型未在全局图片工具设置中启用");
+      throw withMessage(new StoreError("image_model_disabled", "此图片模型未在全局图片工具设置中启用"), "error.this_image_model_is_not_enabled_in_the_global_image_tool_settings");
     }
     const connection = this.store.getConnection(model.connectionId);
-    if (!connection) throw new StoreError("connection_not_found", "模型连接不存在");
+    if (!connection) throw withMessage(new StoreError("connection_not_found", "模型连接不存在"), "error.model_connection_not_found");
     this.assertInputsBelongToConversation(input.conversationId, input.input);
     return this.store.createImageGenerationJob({
       conversationId: input.conversationId,
@@ -85,7 +86,7 @@ export class ImageGenerationManager {
     while (true) {
       signal?.throwIfAborted();
       const job = this.store.getImageGenerationJob(jobId);
-      if (!job) throw new StoreError("image_generation_not_found", "图片生成任务不存在");
+      if (!job) throw withMessage(new StoreError("image_generation_not_found", "图片生成任务不存在"), "error.image_generation_task_not_found");
       if (isTerminal(job.status)) return job;
       await delay(250, signal);
     }
@@ -93,12 +94,12 @@ export class ImageGenerationManager {
 
   cancel(jobId: string): ImageGenerationJobDto {
     const job = this.store.getImageGenerationJob(jobId);
-    if (!job) throw new StoreError("image_generation_not_found", "图片生成任务不存在");
+    if (!job) throw withMessage(new StoreError("image_generation_not_found", "图片生成任务不存在"), "error.image_generation_task_not_found");
     if (!isTerminal(job.status)) {
-      this.controllers.get(jobId)?.abort(new Error("图片生成已取消"));
+      this.controllers.get(jobId)?.abort(withMessage(new Error("图片生成已取消"), "error.image_generation_canceled"));
       const updated = this.store.updateImageGenerationJob(jobId, {
         status: "cancelled",
-        error: { code: "image_generation_cancelled", message: "图片生成已取消" },
+        error: { code: "image_generation_cancelled", message: "图片生成已取消", i18n: { key: "error.image_generation_canceled" } },
         completedAt: Date.now()
       });
       if (updated) this.emit(updated);
@@ -108,7 +109,7 @@ export class ImageGenerationManager {
 
   async close(): Promise<void> {
     this.closing = true;
-    for (const controller of this.controllers.values()) controller.abort(new Error("图片生成管理器已关闭"));
+    for (const controller of this.controllers.values()) controller.abort(withMessage(new Error("图片生成管理器已关闭"), "error.the_image_generation_manager_is_closed"));
     await Promise.allSettled([...this.runs.values()]);
   }
 
@@ -122,7 +123,7 @@ export class ImageGenerationManager {
       const model = this.store.getModel(job.modelId);
       const connection = model ? this.store.getConnection(model.connectionId) : undefined;
       if (!input || !model?.enabled || !connection || model.imageProtocol !== job.imageProtocol) {
-        throw new StoreError("image_generation_config_invalid", "图片生成任务的模型配置已失效");
+        throw withMessage(new StoreError("image_generation_config_invalid", "图片生成任务的模型配置已失效"), "error.the_image_task_s_model_configuration_is_no_longer_valid");
       }
       this.assertInputsBelongToConversation(job.conversationId, input);
       const request = await this.requestFor(job, input, connection, controller.signal);
@@ -136,7 +137,7 @@ export class ImageGenerationManager {
       } else {
         const result = await adapter.start(request);
         if (result.status === "pending") {
-          if (!adapter.poll) throw new ProviderError("image_async_unsupported", "图片服务返回了异步任务，但未提供轮询接口");
+          if (!adapter.poll) throw withMessage(new ProviderError("image_async_unsupported", "图片服务返回了异步任务，但未提供轮询接口"), "error.the_image_service_returned_an_asynchronous_task_without_a_polling_interface");
           this.update(jobId, { status: "waiting-provider", progress: 0.1, providerJobId: result.providerJobId });
           completed = await this.poll(adapter, request, jobId, result.providerJobId, result.pollAfterMs);
         } else {
@@ -153,7 +154,7 @@ export class ImageGenerationManager {
       const message = error instanceof Error ? error.message : "图片生成失败";
       const failed = this.update(jobId, {
         status: "failed",
-        error: { code, message },
+        error: { code, message, ...(errorI18n(error) ? { i18n: errorI18n(error)! } : {}) },
         completedAt: Date.now()
       });
       if (failed) this.emit(failed);
@@ -224,7 +225,7 @@ export class ImageGenerationManager {
   }
 
   private async complete(jobId: string, result: ImageGenerationCompleted): Promise<void> {
-    if (!result.images.length) throw new ProviderError("image_response_invalid", "图片服务没有返回图片");
+    if (!result.images.length) throw withMessage(new ProviderError("image_response_invalid", "图片服务没有返回图片"), "error.the_image_service_returned_no_images");
     const job = this.store.getImageGenerationJob(jobId);
     if (!job || isTerminal(job.status)) return;
     const assets = [];
@@ -238,7 +239,7 @@ export class ImageGenerationManager {
             this.controllers.get(jobId)?.signal
           )).bytes
           : null);
-      if (!bytes) throw new ProviderError("image_response_invalid", "图片结果缺少数据或 URL");
+      if (!bytes) throw withMessage(new ProviderError("image_response_invalid", "图片结果缺少数据或 URL"), "error.the_image_result_has_neither_data_nor_a_url");
       assets.push(await this.images.importGeneratedBytes(`${job.modelKey}-${index + 1}.${extension}`, bytes));
       this.controllers.get(jobId)?.signal.throwIfAborted();
     }
@@ -270,7 +271,7 @@ export class ImageGenerationManager {
   private assertInputsBelongToConversation(conversationId: string, input: ImageGenerationInput): void {
     for (const assetId of [...input.referenceAssetIds, ...(input.maskAssetId ? [input.maskAssetId] : [])]) {
       if (!this.store.getImageAsset(assetId) || !this.store.imageAssetBelongsToConversation(conversationId, assetId)) {
-        throw new StoreError("image_asset_not_allowed", "引用图片不属于当前会话");
+        throw withMessage(new StoreError("image_asset_not_allowed", "引用图片不属于当前会话"), "error.the_reference_image_does_not_belong_to_this_conversation");
       }
     }
   }
@@ -281,12 +282,12 @@ function isTerminal(status: ImageGenerationJobStatus): boolean {
 }
 
 function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  if (signal?.aborted) return Promise.reject(signal.reason ?? new Error("操作已取消"));
+  if (signal?.aborted) return Promise.reject(signal.reason ?? withMessage(new Error("操作已取消"), "error.operation_canceled"));
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, Math.max(0, milliseconds));
     const abort = () => {
       clearTimeout(timer);
-      reject(signal?.reason ?? new Error("操作已取消"));
+      reject(signal?.reason ?? withMessage(new Error("操作已取消"), "error.operation_canceled"));
     };
     signal?.addEventListener("abort", abort, { once: true });
   });

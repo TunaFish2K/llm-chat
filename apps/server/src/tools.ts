@@ -1,3 +1,4 @@
+import { withMessage, type LocalizedMessage } from "@llm-chat/i18n";
 import { builtinToolFormatters, type ToolFormatters } from "./tool-presentation";
 import { spawn } from "node:child_process";
 import { executeShell } from "./shell";
@@ -26,6 +27,7 @@ type JsonObject = Record<string, unknown>;
 
 export interface ServerTool extends ToolFormatters {
   error?: string | null;
+  errorI18n?: LocalizedMessage;
   definition: ProviderToolDefinition;
   label: string;
   category: ToolCatalogItemDto["category"];
@@ -85,9 +87,10 @@ export async function buildServerTools(
       ...tool("browser_fetch", "浏览器读取网页", "web", "Load a public webpage in an isolated headless Firefox browser, execute page JavaScript and return readable text. Use for pages that need a real browser. Does not solve CAPTCHAs or log in. Private addresses are blocked.", {
         url: stringProperty("Public HTTP or HTTPS URL")
       }, false, async (input, signal) => {
-        if (!dependencies.browser) throw new Error("浏览器运行时不可用");
+        if (!dependencies.browser) throw withMessage(new Error("浏览器运行时不可用"), "error.browser_runtime_unavailable");
         return dependencies.browser.fetch(requiredString(input, "url"), signal);
       }, dependencies.browser?.available ?? false),
+      ...(dependencies.browser?.errorI18n ? { errorI18n: dependencies.browser.errorI18n } : {}),
       error: dependencies.browser?.error ?? null
     },
     tool("get_time_info", "当前时间", "local", "Get the server's current local date, time, timezone, UTC offset, and Unix timestamp.", {}, false,
@@ -154,7 +157,7 @@ export async function buildServerTools(
         if (issue?.path[0] === "modelId") {
           throw new Error("Choose a model_id returned by action=list_models.");
         }
-        throw new Error(`image_generate 参数无效：${parsed.error.issues.map((item) => `${item.path.join(".") || "input"} ${item.message}`).join("；")}`);
+        throw withMessage(new Error(`image_generate 参数无效：${parsed.error.issues.map((item) => `${item.path.join(".") || "input"} ${item.message}`).join("；")}`), "error.invalid_image_generate_arguments", { value1: parsed.error.issues.map((item) => `${item.path.join(".") || "input"} ${item.message}`).join("；") });
       }
       const request = parsed.data;
       const job = await dependencies.imageManager.createAndWait({
@@ -217,7 +220,7 @@ export async function buildServerTools(
         cwd: workspacePathProperty("Working directory inside the selected workspace"),
         timeout: integerProperty("Timeout in seconds, 1 to 120; defaults to 30")
       }, false, async (input, signal) => {
-        if (!dependencies.readonlyShell) throw new Error("只读 Shell 运行时不可用");
+        if (!dependencies.readonlyShell) throw withMessage(new Error("只读 Shell 运行时不可用"), "error.read_only_shell_runtime_unavailable");
         return dependencies.readonlyShell.execute({
           command: requiredString(input, "command"), project: workspace, attachments,
           workspace: input.workspace === "attachments" ? "attachments" : "project",
@@ -225,6 +228,7 @@ export async function buildServerTools(
           timeout: optionalInteger(input, "timeout", 30, 1, 120) * 1000
         }, signal);
       }, Boolean((workspace || attachments) && dependencies.readonlyShell?.available)),
+      ...(dependencies.readonlyShell?.errorI18n ? { errorI18n: dependencies.readonlyShell.errorI18n } : {}),
       error: dependencies.readonlyShell?.error ?? (!dependencies.readonlyShell ? "只读 Shell 运行时不可用" : null)
     },
     tool("workspace_shell", "运行命令", "workspace", "Run a shell command in the conversation workspace with user approval by default. Prefer workspace_shell_readonly for local reading, searching and analysis. This tool runs without the read-only sandbox. Use workspace-relative paths and . for the workspace root.", {

@@ -1,3 +1,5 @@
+import { useErrorState } from "../lib/error-display";
+import { t, useLocale, localized } from "../lib/i18n";
 import { isOffline, offlineStore } from "../lib/offline-history";
 import { browseOfflineBranch } from "../lib/app-state";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
@@ -68,6 +70,7 @@ export function ChatView({
   onInspect = noop,
   onViewChange = noop
 }: ChatViewProps) {
+  useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const conversation = useStore(
     appStore,
@@ -78,7 +81,7 @@ export function ChatView({
   const runningTasks = useStore(appStore, (state) =>
     conversationId ? state.runningTasksByConversation[conversationId] ?? 0 : 0
   );
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useErrorState(null);
   const [editingMessage, setEditingMessage] = useState<MessageDto | null>(null);
   const [branching, setBranching] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -121,7 +124,7 @@ export function ChatView({
 
   const readMessages = (id: string) => {
     setLoadError(null);
-    void loadMessages(id).catch((error) => setLoadError(error instanceof Error ? error.message : "消息加载失败"));
+    void loadMessages(id).catch((error) => setLoadError(error instanceof Error ? error : t("ChatView.could_not_load_messages")));
   };
 
   useEffect(() => {
@@ -133,7 +136,7 @@ export function ChatView({
     if (!conversationId) return;
     let active = true;
     void loadMessages(conversationId).catch((error) => {
-      if (active) setLoadError(error instanceof Error ? error.message : "消息加载失败");
+      if (active) setLoadError(error instanceof Error ? error : t("ChatView.could_not_load_messages"));
     });
     return () => {
       active = false;
@@ -177,7 +180,7 @@ export function ChatView({
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
       }
       navigate(routes.chat(result.conversation.id));
-      toast("success", input.mode === "edit" ? "已从修改后的消息创建分支" : "已从检查点创建分支");
+      toast("success", input.mode === "edit" ? t("ChatView.created_a_branch_from_the_edited_message") : t("ChatView.created_a_branch_from_the_checkpoint"));
       return true;
     } catch (error) {
       toastError(error);
@@ -222,7 +225,7 @@ export function ChatView({
     setCompacting(true);
     try {
       const summary = await endpoints.compactContext(conversation.id);
-      toast("success", `已压缩到消息 #${summary.throughOrdinal}`);
+      toast("success", localized("ChatView.compacted_through_message", { value1: (summary.throughOrdinal) }));
       window.dispatchEvent(new Event("llm-chat:context-summary"));
     } catch (error) {
       toastError(error);
@@ -281,7 +284,7 @@ export function ChatView({
               onScroll={scroller.onScroll}
               data-following-bottom={!scroller.detached || undefined}
               aria-live="polite"
-              aria-label="消息列表"
+              aria-label={t("ChatView.message_list")}
             >
               <div className="chat-thread" ref={scroller.contentRef}>
                 <div className="root-branch-controls">
@@ -299,9 +302,9 @@ export function ChatView({
                 ) : loadError ? (
                   <ErrorState message={loadError} onRetry={() => readMessages(conversationId)} />
                 ) : messages === null ? (
-                  <LoadingState label="正在加载消息…" />
+                  <LoadingState label={t("ChatView.loading_messages")} />
                 ) : messages.length === 0 ? (
-                  <EmptyState title="这个会话还没有消息" hint="从下方发送第一条消息。" />
+                  <EmptyState title={t("ChatView.this_conversation_has_no_messages_yet")} hint={t("ChatView.send_your_first_message_below")} />
                 ) : (
                   transcript.messages.map((message) => (
                     <MessageItem
@@ -322,8 +325,8 @@ export function ChatView({
                 type="button"
                 className="icon-button jump-to-latest"
                 onClick={() => scroller.toBottom("smooth")}
-                aria-label="回到最新消息"
-                title="回到最新消息"
+                aria-label={t("ChatView.go_to_latest_message")}
+                title={t("ChatView.go_to_latest_message")}
               >
                 <ArrowDown size={17} />
               </button>
@@ -355,14 +358,14 @@ export function ChatView({
       {expression ? <img className="roleplay-expression" src={expression.uri} alt="" aria-hidden="true" /> : null}
 
       {view !== "chat" && conversation ? (
-        <section className="conversation-overlay" aria-label={view === "tasks" ? "后台任务" : "运行轨迹"}>
-          <h2 className="sr-only">{view === "tasks" ? "后台任务" : "运行轨迹"}</h2>
+        <section className="conversation-overlay" aria-label={view === "tasks" ? t("TrajectoryView.background_tasks") : t("ChatView.activity")}>
+          <h2 className="sr-only">{view === "tasks" ? t("TrajectoryView.background_tasks") : t("ChatView.activity")}</h2>
           {view === "tasks" ? (
-            <Suspense fallback={<LoadingState label="正在加载后台任务…" />}>
+            <Suspense fallback={<LoadingState label={t("ChatView.loading_background_tasks")} />}>
               <ConversationTasksView conversationId={conversation.id} taskId={taskId} />
             </Suspense>
           ) : (
-            <Suspense fallback={<LoadingState label="正在生成轨迹…" />}>
+            <Suspense fallback={<LoadingState label={t("ChatView.building_activity_view")} />}>
               <TrajectoryView
                 conversation={conversation}
                 onInspect={onInspect}
@@ -418,6 +421,7 @@ function NewConversationWelcome({
   greetingIndex: number;
   onGreetingIndexChange: (index: number) => void;
 }) {
+  useLocale();
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
   const selected =
@@ -435,14 +439,14 @@ function NewConversationWelcome({
           <AgentAvatar agent={selected} label={selected.name} />
           <div className="msg-identity">
             <strong>{selected.name}</strong>
-            <span>开场白</span>
+            <span>{t("ChatView.greeting")}</span>
           </div>
         </div>
         <Markdown text={greeting.text} />
         {greetings.length > 1 ? (
           <footer className="stream-footer greeting-footer">
             <VersionSwitcher
-              label="开场白切换"
+              label={t("ChatView.greeting_selector")}
               index={activeIndex}
               total={greetings.length}
               onChange={(index) => {
@@ -457,9 +461,9 @@ function NewConversationWelcome({
   }
   return (
     <div className="welcome">
-      <AgentAvatar agent={selected} size="large" label={selected?.name ?? "新会话"} />
-      <h1>{selected?.name ?? "新会话"}</h1>
-      <p>{selected?.description || "选择 Agent 和模型，然后开始对话。"}</p>
+      <AgentAvatar agent={selected} size="large" label={selected?.name ?? t("WorkspaceSidebar.new_conversation")} />
+      <h1>{selected?.name ?? t("WorkspaceSidebar.new_conversation")}</h1>
+      <p>{selected?.description || t("ChatView.choose_an_agent_and_model_then_start_a_conversation")}</p>
     </div>
   );
 }

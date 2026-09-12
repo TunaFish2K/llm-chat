@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
@@ -128,7 +129,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
         if (item.type === "image_generation_call") {
           if (typeof item.id === "string") providerItems.push({ type: item.type, id: item.id });
           if (typeof item.result !== "string" || !item.result) {
-            throw new ProviderError("image_generation_result_missing", "Responses 未返回生成图片数据");
+            throw withMessage(new ProviderError("image_generation_result_missing", "Responses 未返回生成图片数据"), "error.responses_did_not_return_generated_image_data");
           }
           hasOutput = true;
           yield { type: "image", dataBase64: item.result };

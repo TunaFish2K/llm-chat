@@ -1,3 +1,4 @@
+import { withMessage, errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { existsSync } from "node:fs";
 import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
@@ -34,7 +35,7 @@ export async function browserResource(url: URL, headers: Record<string, string>,
       let size = 0;
       response.on("data", (chunk: Buffer) => {
         size += chunk.length;
-        if (size > MAX_BYTES) { request.destroy(new Error("网页资源超过 2 MiB")); return; }
+        if (size > MAX_BYTES) { request.destroy(withMessage(new Error("网页资源超过 2 MiB"), "error.the_web_resource_exceeds_2_mib")); return; }
         parts.push(chunk);
       });
       response.on("error", reject);
@@ -55,6 +56,8 @@ export class BrowserFetchManager {
   private closing = false;
   private readonly shutdown = new AbortController();
   private lastError: string | null = null;
+  private lastErrorI18n: LocalizedMessage | undefined;
+  get errorI18n(): LocalizedMessage | undefined { return !existsSync(this.executablePath) ? { key: "runtime.browser_missing" } : this.lastErrorI18n; }
   get executablePath(): string { return firefox.executablePath(); }
   get error(): string | null {
     return !existsSync(this.executablePath)
@@ -65,13 +68,14 @@ export class BrowserFetchManager {
 
   async fetch(rawUrl: string, callerSignal: AbortSignal): Promise<string> {
     callerSignal.throwIfAborted();
-    if (!this.available) throw new Error(this.error ?? "浏览器已关闭");
-    if (this.active >= 2) throw new Error("浏览器并发已达上限，请稍后重试");
+    if (!this.available) { const descriptor = this.errorI18n ?? { key: "runtime.browser_closed" as const }; throw withMessage(new Error(this.error ?? "浏览器已关闭"), descriptor.key, descriptor.params); }
+    if (this.active >= 2) throw withMessage(new Error("浏览器并发已达上限，请稍后重试"), "error.the_browser_concurrency_limit_has_been_reached_try_again_later");
     this.active++;
     const signal = AbortSignal.any([callerSignal, this.shutdown.signal, AbortSignal.timeout(30_000)]);
     let browser: Browser | undefined;
     let context: BrowserContext | undefined;
     let resourceError: string | undefined;
+    let resourceI18n: LocalizedMessage | undefined;
     const abort = () => { void browser?.close().catch(() => {}); };
     signal.addEventListener("abort", abort, { once: true });
     try {
@@ -97,10 +101,10 @@ export class BrowserFetchManager {
           }
           const resource = await browserResource(new URL(request.url()), await request.allHeaders(), signal);
           bytes += resource.body.length;
-          if (bytes > 8 * MAX_BYTES) throw new Error("网页资源总量超过 16 MiB");
+          if (bytes > 8 * MAX_BYTES) throw withMessage(new Error("网页资源总量超过 16 MiB"), "error.web_resources_exceed_16_mib_in_total");
           await route.fulfill(resource);
         } catch (error) {
-          if (route.request().isNavigationRequest()) resourceError = error instanceof Error ? error.message : "网页请求失败";
+          if (route.request().isNavigationRequest()) { resourceError = error instanceof Error ? error.message : "网页请求失败"; resourceI18n = errorI18n(error); }
           await route.abort().catch(() => {});
         } finally {
           inFlight--;
@@ -113,12 +117,15 @@ export class BrowserFetchManager {
       if (resourceError) throw new Error(resourceError);
       const text = await page.locator("body").innerText({ timeout: 3000 });
       this.lastError = null;
+      this.lastErrorI18n = undefined;
       return JSON.stringify({ url: page.url(), title: await page.title(), status: response?.status(),
         contentType: response?.headers()["content-type"] ?? "text/html", text: text.slice(0, 32 * 1024), truncated: text.length > 32 * 1024 });
     } catch (error) {
-      if (signal.aborted) throw new Error(callerSignal.aborted ? "浏览器抓取已取消" : this.closing ? "浏览器已关闭" : "浏览器抓取超时（30 秒）");
+      if (signal.aborted) throw withMessage(new Error(callerSignal.aborted ? "浏览器抓取已取消" : this.closing ? "浏览器已关闭" : "浏览器抓取超时（30 秒）"), callerSignal.aborted ? "runtime.browser_canceled" : this.closing ? "runtime.browser_closed" : "runtime.browser_timeout");
       this.lastError = resourceError ?? (error instanceof Error ? error.message : "浏览器抓取失败");
-      throw new Error(this.lastError);
+      this.lastErrorI18n = resourceI18n ?? errorI18n(error);
+      const wrapped = new Error(this.lastError);
+      throw this.lastErrorI18n ? withMessage(wrapped, this.lastErrorI18n.key, this.lastErrorI18n.params) : wrapped;
     } finally {
       signal.removeEventListener("abort", abort);
       if (context) this.contexts.delete(context);

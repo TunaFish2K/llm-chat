@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { constants } from "node:fs";
@@ -53,7 +54,7 @@ export class ImageService {
       throw new StoreError("image_too_large", sizeMessage);
     }
     const mimeType = sniffImage(bytes);
-    if (!mimeType) throw new StoreError("image_type_invalid", "仅支持 JPEG、PNG、WebP 和 GIF 图片");
+    if (!mimeType) throw withMessage(new StoreError("image_type_invalid", "仅支持 JPEG、PNG、WebP 和 GIF 图片"), "error.only_jpeg_png_webp_and_gif_images_are_supported");
     const sha256 = createHash("sha256").update(bytes).digest("hex");
     const storageKey = `${sha256}.${extensionFor(mimeType)}`;
     await this.storeBlob(storageKey, bytes);
@@ -69,7 +70,7 @@ export class ImageService {
 
   async importFile(fileName: string, declaredMimeType: string, bytes: Uint8Array): Promise<FileAssetDto> {
     if (!bytes.byteLength || bytes.byteLength > MAX_FILE_BYTES) {
-      throw new StoreError("file_too_large", "文件必须小于 64 MiB");
+      throw withMessage(new StoreError("file_too_large", "文件必须小于 64 MiB"), "error.the_file_must_be_smaller_than_64_mib");
     }
     const imageType = sniffImage(bytes);
     if (imageType) return this.importBytes(fileName, bytes);
@@ -87,15 +88,15 @@ export class ImageService {
   }
 
   async importWorkspaceImage(workspaceRoot: string, inputPath: string): Promise<ImageAssetDto> {
-    if (!inputPath.trim() || isAbsolute(inputPath)) throw new StoreError("workspace_image_path_invalid", "图片路径必须相对工作区");
+    if (!inputPath.trim() || isAbsolute(inputPath)) throw withMessage(new StoreError("workspace_image_path_invalid", "图片路径必须相对工作区"), "error.the_image_path_must_be_relative_to_the_workspace");
     const canonicalRoot = await realpath(workspaceRoot);
     const candidate = resolve(canonicalRoot, inputPath);
     if (candidate !== canonicalRoot && !candidate.startsWith(`${canonicalRoot}${sep}`)) {
-      throw new StoreError("workspace_image_path_invalid", "图片路径必须相对工作区且不能越界");
+      throw withMessage(new StoreError("workspace_image_path_invalid", "图片路径必须相对工作区且不能越界"), "error.the_image_path_must_be_relative_to_and_stay_within_the_workspace");
     }
     const canonical = await realpath(candidate);
     if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) {
-      throw new StoreError("workspace_image_path_invalid", "图片路径解析到了工作区之外");
+      throw withMessage(new StoreError("workspace_image_path_invalid", "图片路径解析到了工作区之外"), "error.the_image_path_resolves_outside_the_workspace");
     }
     const bytes = new Uint8Array(await readFile(canonical));
     return this.importBytes(basename(canonical), bytes);
@@ -104,19 +105,19 @@ export class ImageService {
   async importWorkspaceFile(workspaceRoot: string, inputPath: string, declaredMimeType = "application/octet-stream"): Promise<FileAssetDto> {
     const canonical = await workspaceFile(workspaceRoot, inputPath);
     const info = await import("node:fs/promises").then(({ stat }) => stat(canonical));
-    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new StoreError("file_too_large", "文件必须小于 64 MiB");
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw withMessage(new StoreError("file_too_large", "文件必须小于 64 MiB"), "error.the_file_must_be_smaller_than_64_mib");
     return this.importFile(basename(canonical), declaredMimeType, new Uint8Array(await readFile(canonical)));
   }
 
   async readFileAsset(id: string): Promise<{ asset: FileAssetDto; bytes: Uint8Array }> {
     const record = this.store.getFileAssetRecord(id);
-    if (!record) throw new StoreError("file_asset_not_found", "文件资产不存在");
+    if (!record) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     return { asset: toDto(record), bytes: new Uint8Array(await readFile(resolve(this.root, record.storageKey))) };
   }
 
   async readAsset(id: string): Promise<{ asset: ImageAssetDto; bytes: Uint8Array }> {
     const loaded = await this.readFileAsset(id);
-    if (loaded.asset.kind !== "image") throw new StoreError("image_asset_not_found", "图片资产不存在");
+    if (loaded.asset.kind !== "image") throw withMessage(new StoreError("image_asset_not_found", "图片资产不存在"), "error.image_asset_not_found");
     return loaded as { asset: ImageAssetDto; bytes: Uint8Array };
   }
 
@@ -172,21 +173,21 @@ export class ImageService {
       });
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
-        if (!location) throw new StoreError("image_proxy_redirect_invalid", "图片重定向缺少 Location");
+        if (!location) throw withMessage(new StoreError("image_proxy_redirect_invalid", "图片重定向缺少 Location"), "error.the_image_redirect_has_no_location_header");
         current = new URL(location, current);
         continue;
       }
-      if (!response.ok) throw new StoreError("image_proxy_failed", `图片服务器返回 HTTP ${response.status}`);
+      if (!response.ok) throw withMessage(new StoreError("image_proxy_failed", `图片服务器返回 HTTP ${response.status}`), "error.the_image_server_returned_http", { value1: response.status });
       const declared = Number(response.headers.get("content-length") ?? 0);
-      if (declared > MAX_IMAGE_BYTES) throw new StoreError("image_too_large", "远程图片超过 5 MiB");
+      if (declared > MAX_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "远程图片超过 5 MiB"), "error.the_remote_image_exceeds_5_mib");
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > MAX_IMAGE_BYTES) throw new StoreError("image_too_large", "远程图片超过 5 MiB");
+      if (bytes.byteLength > MAX_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "远程图片超过 5 MiB"), "error.the_remote_image_exceeds_5_mib");
       const mimeType = sniffImage(bytes);
-      if (!mimeType) throw new StoreError("image_type_invalid", "远程响应不是受支持的图片");
+      if (!mimeType) throw withMessage(new StoreError("image_type_invalid", "远程响应不是受支持的图片"), "error.the_remote_response_is_not_a_supported_image");
       this.addCache(normalized, { bytes, mimeType, expiresAt: Date.now() + CACHE_TTL_MS, lastUsedAt: Date.now() });
       return { bytes, mimeType };
     }
-    throw new StoreError("image_proxy_redirect_invalid", "图片重定向次数过多");
+    throw withMessage(new StoreError("image_proxy_redirect_invalid", "图片重定向次数过多"), "error.too_many_image_redirects");
   }
 
   async fetchPublicFile(rawUrl: string, maxBytes = 10 * 1024 * 1024, signal?: AbortSignal): Promise<{ bytes: Uint8Array; fileName: string; mimeType: string }> {
@@ -197,15 +198,15 @@ export class ImageService {
       const response = await fetch(current, { redirect: "manual", signal: combined, headers: { "user-agent": "llm-chat-file-fetch/1.0" } });
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
-        if (!location) throw new StoreError("file_redirect_invalid", "文件重定向缺少 Location");
+        if (!location) throw withMessage(new StoreError("file_redirect_invalid", "文件重定向缺少 Location"), "error.the_file_redirect_has_no_location_header");
         current = new URL(location, current);
         continue;
       }
-      if (!response.ok) throw new StoreError("file_fetch_failed", `文件服务器返回 HTTP ${response.status}`);
+      if (!response.ok) throw withMessage(new StoreError("file_fetch_failed", `文件服务器返回 HTTP ${response.status}`), "error.the_file_server_returned_http", { value1: response.status });
       const declared = Number(response.headers.get("content-length") ?? 0);
-      if (declared > maxBytes) throw new StoreError("file_too_large", "远程文件超过大小限制");
+      if (declared > maxBytes) throw withMessage(new StoreError("file_too_large", "远程文件超过大小限制"), "error.the_remote_file_exceeds_the_size_limit");
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > maxBytes) throw new StoreError("file_too_large", "远程文件超过大小限制");
+      if (bytes.byteLength > maxBytes) throw withMessage(new StoreError("file_too_large", "远程文件超过大小限制"), "error.the_remote_file_exceeds_the_size_limit");
       let remoteName = "file";
       try {
         remoteName = decodeURIComponent(current.pathname.split("/").at(-1) || "file");
@@ -218,7 +219,7 @@ export class ImageService {
         mimeType: cleanMimeType(response.headers.get("content-type") ?? "application/octet-stream")
       };
     }
-    throw new StoreError("file_redirect_invalid", "文件重定向次数过多");
+    throw withMessage(new StoreError("file_redirect_invalid", "文件重定向次数过多"), "error.too_many_file_redirects");
   }
 
   async cleanupOrphans(now = Date.now()): Promise<void> {
@@ -304,15 +305,15 @@ function cleanMimeType(value: string): string {
 }
 
 async function workspaceFile(workspaceRoot: string, inputPath: string): Promise<string> {
-  if (!inputPath.trim() || isAbsolute(inputPath)) throw new StoreError("workspace_file_path_invalid", "文件路径必须相对工作区");
+  if (!inputPath.trim() || isAbsolute(inputPath)) throw withMessage(new StoreError("workspace_file_path_invalid", "文件路径必须相对工作区"), "error.the_file_path_must_be_relative_to_the_workspace");
   const canonicalRoot = await realpath(workspaceRoot);
   const candidate = resolve(canonicalRoot, inputPath);
   if (candidate !== canonicalRoot && !candidate.startsWith(`${canonicalRoot}${sep}`)) {
-    throw new StoreError("workspace_file_path_invalid", "文件路径必须相对工作区且不能越界");
+    throw withMessage(new StoreError("workspace_file_path_invalid", "文件路径必须相对工作区且不能越界"), "error.the_file_path_must_be_relative_to_and_stay_within_the_workspace");
   }
   const canonical = await realpath(candidate);
   if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) {
-    throw new StoreError("workspace_file_path_invalid", "文件路径解析到了工作区之外");
+    throw withMessage(new StoreError("workspace_file_path_invalid", "文件路径解析到了工作区之外"), "error.the_file_path_resolves_outside_the_workspace");
   }
   return canonical;
 }
@@ -322,12 +323,12 @@ export function attachmentFileName(asset: Pick<FileAssetDto, "id" | "fileName">)
 }
 
 async function assertPublicUrl(url: URL): Promise<void> {
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new StoreError("image_proxy_url_invalid", "只允许 HTTP 和 HTTPS 图片");
-  if (url.username || url.password) throw new StoreError("image_proxy_url_invalid", "图片 URL 不能包含凭据");
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw withMessage(new StoreError("image_proxy_url_invalid", "只允许 HTTP 和 HTTPS 图片"), "error.only_http_and_https_images_are_allowed");
+  if (url.username || url.password) throw withMessage(new StoreError("image_proxy_url_invalid", "图片 URL 不能包含凭据"), "error.image_urls_cannot_contain_credentials");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true });
   if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
-    throw new StoreError("image_proxy_private_address", "不允许代理私网或回环地址");
+    throw withMessage(new StoreError("image_proxy_private_address", "不允许代理私网或回环地址"), "error.private_and_loopback_addresses_cannot_be_proxied");
   }
 }
 

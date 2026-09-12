@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type {
   AgentDto,
   AgentExecutionConfig,
@@ -31,7 +32,7 @@ interface PortableExtension {
 }
 
 export function importCharacterCard(store: Store, fileName: string, bytes: Uint8Array): AgentDto {
-  if (bytes.byteLength > MAX_CARD_BYTES) throw new StoreError("card_too_large", "角色卡不能超过 10 MiB");
+  if (bytes.byteLength > MAX_CARD_BYTES) throw withMessage(new StoreError("card_too_large", "角色卡不能超过 10 MiB"), "error.the_character_card_cannot_exceed_10_mib");
   const png = isPng(bytes);
   const archive = !png && isZip(bytes) ? decodeCharx(bytes) : undefined;
   const raw = png ? extractPngCard(bytes) : archive?.raw ?? decodeJson(bytes);
@@ -97,7 +98,7 @@ export function exportCharacterCard(
     };
   }
   const avatar = store.getAgentAvatar(agent.id);
-  if (!avatar || !isPng(avatar)) throw new StoreError("agent_png_avatar_required", "PNG 导出需要先设置 PNG 头像");
+  if (!avatar || !isPng(avatar)) throw withMessage(new StoreError("agent_png_avatar_required", "PNG 导出需要先设置 PNG 头像"), "error.set_a_png_avatar_before_exporting_png");
   return {
     fileName: `${safeName}.png`,
     contentType: "image/png",
@@ -282,7 +283,7 @@ function decodeJson(bytes: Uint8Array): unknown {
   try {
     return JSON.parse(Buffer.from(bytes).toString("utf8"));
   } catch {
-    throw new StoreError("card_invalid_json", "角色卡 JSON 无法解析");
+    throw withMessage(new StoreError("card_invalid_json", "角色卡 JSON 无法解析"), "error.the_character_card_json_could_not_be_parsed");
   }
 }
 
@@ -310,17 +311,17 @@ function decodeCharx(bytes: Uint8Array): {
         count += 1;
         expanded += file.originalSize;
         if (count > MAX_ARCHIVE_ENTRIES || expanded > MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
-          throw new StoreError("card_archive_too_large", "CHARX 解包后超过安全限制");
+          throw withMessage(new StoreError("card_archive_too_large", "CHARX 解包后超过安全限制"), "error.the_extracted_charx_archive_exceeds_the_safety_limit");
         }
         return file.originalSize <= MAX_CARD_BYTES && !unsafeArchivePath(file.name);
       }
     });
   } catch (error) {
     if (error instanceof StoreError) throw error;
-    throw new StoreError("card_invalid_archive", "CHARX 文件无法安全解包");
+    throw withMessage(new StoreError("card_invalid_archive", "CHARX 文件无法安全解包"), "error.the_charx_archive_could_not_be_extracted_safely");
   }
   const cardPath = Object.keys(entries).find((name) => /(^|\/)card\.json$/i.test(name));
-  if (!cardPath) throw new StoreError("card_missing_archive_metadata", "CHARX 中没有 card.json");
+  if (!cardPath) throw withMessage(new StoreError("card_missing_archive_metadata", "CHARX 中没有 card.json"), "error.the_charx_archive_has_no_card_json");
   const raw = decodeJson(entries[cardPath]!);
   const data = raw && typeof raw === "object" && (raw as Record<string, unknown>).data;
   const manifest = data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).assets)
@@ -371,10 +372,10 @@ function extractPngCard(bytes: Uint8Array): unknown {
       const json = Buffer.from(chunk.data.subarray(separator + 1).toString("latin1"), "base64").toString("utf8");
       return JSON.parse(json);
     } catch {
-      throw new StoreError("card_invalid_png_metadata", "PNG 中的角色卡数据无法解析");
+      throw withMessage(new StoreError("card_invalid_png_metadata", "PNG 中的角色卡数据无法解析"), "error.the_character_card_data_in_the_png_could_not_be_parsed");
     }
   }
-  throw new StoreError("card_missing_png_metadata", "PNG 中没有 chara 角色卡数据");
+  throw withMessage(new StoreError("card_missing_png_metadata", "PNG 中没有 chara 角色卡数据"), "error.the_png_has_no_chara_character_card_data");
 }
 
 function embedPngCard(bytes: Uint8Array, card: CharacterCardV2): Uint8Array {
@@ -396,14 +397,14 @@ function embedPngCard(bytes: Uint8Array, card: CharacterCardV2): Uint8Array {
 }
 
 function parsePngChunks(bytes: Uint8Array): Array<{ type: string; data: Buffer }> {
-  if (!isPng(bytes)) throw new StoreError("card_invalid_png", "文件不是有效的 PNG");
+  if (!isPng(bytes)) throw withMessage(new StoreError("card_invalid_png", "文件不是有效的 PNG"), "error.the_file_is_not_a_valid_png");
   const buffer = Buffer.from(bytes);
   const chunks: Array<{ type: string; data: Buffer }> = [];
   let offset = PNG_SIGNATURE.length;
   while (offset + 12 <= buffer.length) {
     const length = buffer.readUInt32BE(offset);
     if (length > MAX_CARD_BYTES || offset + 12 + length > buffer.length) {
-      throw new StoreError("card_invalid_png", "PNG 数据块损坏");
+      throw withMessage(new StoreError("card_invalid_png", "PNG 数据块损坏"), "error.the_png_contains_a_corrupt_data_chunk");
     }
     const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
     const data = buffer.subarray(offset + 8, offset + 8 + length);
@@ -411,7 +412,7 @@ function parsePngChunks(bytes: Uint8Array): Array<{ type: string; data: Buffer }
     offset += length + 12;
     if (type === "IEND") return chunks;
   }
-  throw new StoreError("card_invalid_png", "PNG 缺少 IEND 数据块");
+  throw withMessage(new StoreError("card_invalid_png", "PNG 缺少 IEND 数据块"), "error.the_png_is_missing_its_iend_chunk");
 }
 
 function encodeChunk(type: string, data: Uint8Array): Buffer {

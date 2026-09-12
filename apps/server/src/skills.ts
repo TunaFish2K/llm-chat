@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { createHash, randomUUID } from "node:crypto";
 import { watch, type Dirent, type FSWatcher } from "node:fs";
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
@@ -339,7 +340,7 @@ export class SkillManager {
     const fallback = source.split(sep).at(-1) || "skill";
     const metadata = suppliedMetadata ?? parseMetadata(content, fallback, sourceKind);
     if (sourceKind === "bundled" && RETIRED_BUNDLED_SKILLS.has(metadata.id)) {
-      throw new Error("此内置 Skill 已停用");
+      throw withMessage(new Error("此内置 Skill 已停用"), "error.this_built_in_skill_is_disabled");
     }
     const existing = this.installedSkills().find((item) => item.id === metadata.id);
     if (existing && existing.sourceKind !== sourceKind) {

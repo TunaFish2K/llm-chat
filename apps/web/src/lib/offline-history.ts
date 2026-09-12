@@ -1,3 +1,5 @@
+import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
+import { t, localizedError } from "./i18n";
 import { historyImageUrls } from "./offline-assets";
 export { historyImageUrls } from "./offline-assets";
 import { conversationDeleted, deletedConversationIds, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
@@ -8,7 +10,7 @@ import { OFFLINE_IMAGES_PREFIX, offlineConversationIndex, iterateOfflineConversa
 
 export const offlineStore = createStore({
   offline: false, enabled: true, syncing: false, synced: 0, total: 0,
-  lastSync: 0, bytes: 0, imagesMissing: 0, error: "", cachedIds: [] as string[]
+  lastSync: 0, bytes: 0, imagesMissing: 0, errorI18n: undefined as LocalizedMessage | undefined, error: "", cachedIds: [] as string[]
 });
 let run: Promise<void> | null = null;
 let syncAgain = false;
@@ -22,7 +24,7 @@ const pendingMessages = new Map<string, MessageDto[]>();
 
 function enabledPreference(): boolean { try { return localStorage.getItem("llm-chat.offline-enabled") !== "false"; } catch { return true; } }
 function failure(error: unknown): void {
-  offlineStore.set({ error: error instanceof DOMException && error.name === "QuotaExceededError" ? "存储空间不足，部分记录或图片尚未保存" : error instanceof Error ? error.message : "离线记录保存失败" });
+  offlineStore.set({ errorI18n: error instanceof DOMException && error.name === "QuotaExceededError" ? { key: "offline_history.storage_is_full_some_records_or_images_have_not_been" } : errorI18n(error), error: error instanceof DOMException && error.name === "QuotaExceededError" ? t("offline_history.storage_is_full_some_records_or_images_have_not_been") : error instanceof Error ? error.message : t("offline_history.could_not_save_offline_history") });
 }
 export function markOffline(): void {
   offlineStore.set({ offline: true });
@@ -33,13 +35,13 @@ export function isOffline(): boolean { return offlineStore.get().offline; }
 
 async function fetchJson<T>(path: string, signal: AbortSignal): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), cache: "no-store" });
-  if (response.status === 401) { window.dispatchEvent(new Event("llm-chat:offline-auth-required")); throw new Error("请重新登录"); }
+  if (response.status === 401) { window.dispatchEvent(new Event("llm-chat:offline-auth-required")); throw localizedError("offline_history.sign_in_again"); }
   if (response.status === 404) {
     const body = await response.clone().json().catch(() => null);
     const id = path.match(/^\/api\/offline\/conversations\/([^/]+)/)?.[1];
     if (id && body?.error?.code === "conversation_not_found") markConversationsDeleted([id]);
   }
-  if (!response.ok) throw new Error(`同步失败（HTTP ${response.status}）`);
+  if (!response.ok) throw localizedError("offline_history.sync_failed_http", { value1: (response.status) });
   return response.json() as Promise<T>;
 }
 async function controlFor(sourceId: string, signal: AbortSignal): Promise<OfflineControl> {
@@ -141,7 +143,7 @@ export function syncOfflineHistory(): Promise<void> {
           if (!index || index.revision !== conversation.cacheRevision || index.sourceId !== manifest.sourceId) {
             try {
               const snapshot = await fetchJson<OfflineConversationDto>(`/api/offline/conversations/${conversation.id}`, signal);
-              if (snapshot.sourceId !== manifest.sourceId) throw new Error("数据来源已改变，请重新同步");
+              if (snapshot.sourceId !== manifest.sourceId) throw localizedError("offline_history.the_data_source_changed_sync_again");
               if (!await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversation.id)) putOfflineConversation(tx, snapshot); })) return;
               index = { id: conversation.id, sourceId: snapshot.sourceId, revision: snapshot.revision, bytes: 0, images: historyImageUrls(snapshot.messages) };
             } catch (error) {
@@ -172,7 +174,7 @@ export function syncOfflineHistory(): Promise<void> {
           try {
             const response = await fetch(url, { credentials: "same-origin", signal });
             if (response.status === 401) window.dispatchEvent(new Event("llm-chat:offline-auth-required"));
-            if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) throw new Error("图片尚未下载");
+            if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) throw localizedError("offline_history.image_not_downloaded");
             signal.throwIfAborted();
             const blob = await response.blob();
             signal.throwIfAborted();
@@ -276,7 +278,7 @@ async function flushOfflineMessages(): Promise<void> {
 
 export async function offlineRequest(path: string): Promise<unknown> {
   const manifest = await readOfflineManifest();
-  if (!manifest) throw new Error("本机尚未保存离线记录，请联网后同步");
+  if (!manifest) throw localizedError("offline_history.no_offline_history_is_saved_on_this_device_connect_to");
   manifest.conversations = manifest.conversations.filter((item) => !conversationDeleted(item.id));
   const url = new URL(path, location.origin);
   const route = url.pathname;
@@ -317,11 +319,11 @@ export async function offlineRequest(path: string): Promise<unknown> {
   if (messageMatch) {
     const snapshot = await offlineRead<OfflineConversationDto>("conversations", messageMatch[1]!);
     if (snapshot?.sourceId === manifest.sourceId && !conversationDeleted(messageMatch[1]!)) return snapshot.messages;
-    throw new Error("此会话尚未完成离线同步，请联网后再试");
+    throw localizedError("offline_history.this_conversation_has_not_finished_syncing_connect_and_try_again");
   }
   if (/\/queue$/.test(route)) return { items: [], paused: true };
   if (/\/queued-messages$/.test(route) || route === "/api/background-tasks") return [];
-  throw new Error("此内容需要联网查看");
+  throw localizedError("offline_history.connect_to_view_this_content");
 }
 
 /** Read and delete in one transaction so a stale manifest cannot overwrite newer cache metadata. */

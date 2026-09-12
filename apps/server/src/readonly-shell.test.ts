@@ -14,6 +14,7 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 it("reports a missing runtime and never falls back to an ordinary shell", async () => {
   vi.stubEnv("PATH", "");
   const manager = new ReadonlyShellManager();
+  expect(manager.errorI18n?.key).toBe("runtime.shell_initializing");
   try {
     await manager.initialize();
     expect(manager.available).toBe(false);
@@ -21,6 +22,7 @@ it("reports a missing runtime and never falls back to an ordinary shell", async 
     await expect(manager.execute({ command: "printf should-not-run", project: "/tmp", attachments: null,
       workspace: "project", cwd: ".", timeout: 1000 }, new AbortController().signal)).rejects.toThrow(/不可用/);
   } finally { await manager.close(); vi.unstubAllEnvs(); }
+  expect(manager.errorI18n?.key).toBe("runtime.shell_closed");
 });
 
 // Real Linux isolation is a required test dependency, not a mocked success path.
@@ -44,6 +46,7 @@ describe.skipIf(process.platform !== "linux")("real read-only sandbox", () => {
     await manager.initialize();
     expect(manager.error, "Install Bubblewrap and enable unprivileged user namespaces for this test").toBeNull();
     expect(manager.available).toBe(true);
+    expect(manager.errorI18n).toBeUndefined();
   });
   afterEach(async () => { await manager?.close(); if (directory) await rm(directory, { recursive: true, force: true }); });
 

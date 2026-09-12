@@ -1,3 +1,4 @@
+import type { LocalizedMessage } from "@llm-chat/i18n";
 import { z } from "zod";
 export * from "./history-services";
 
@@ -783,10 +784,11 @@ export const toolApprovalStateSchema = z.enum([
 export type ToolApprovalState = z.infer<typeof toolApprovalStateSchema>;
 
 export interface ToolMarkdown { summary?: string; detail?: string; }
-export interface ToolPresentation { arguments?: ToolMarkdown; result?: ToolMarkdown; }
+export interface ToolPresentation { builtin?: { name: string; version: 1 }; arguments?: ToolMarkdown; result?: ToolMarkdown; }
 export interface ToolResultFormatInput { input: Record<string, unknown>; output: string | null; error: string | null; }
 
 export interface ToolCallDto {
+  errorI18n?: LocalizedMessage;
   presentation?: ToolPresentation;
   id: string;
   /** Provider-visible call ID; differs from id for cloned branch history. */
@@ -862,13 +864,14 @@ export interface ImageGenerationJobDto {
   providerJobId: string | null;
   outputAssets: ImageAssetDto[];
   revisedPrompt: string | null;
-  error: { code: string; message: string } | null;
+  error: { code: string; message: string; i18n?: LocalizedMessage } | null;
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
 }
 
 export interface VisionAnalysisDto {
+  errorI18n?: LocalizedMessage;
   id: string;
   asset: ImageAssetDto;
   status: "running" | "completed" | "failed";
@@ -897,7 +900,7 @@ export interface GenerationDto {
   visionAnalyses: VisionAnalysisDto[];
   usage: UsageDto;
   stopReason: string | null;
-  error: { code: string; message: string } | null;
+  error: { code: string; message: string; i18n?: LocalizedMessage } | null;
   context: {
     policy: ContextPolicy;
     strategy?: "raw" | "full" | "trim" | "summary" | "summary-trim";
@@ -926,6 +929,7 @@ export interface MessageDto {
 }
 
 export interface QueuedMessageDto {
+  errorI18n?: LocalizedMessage;
   mode?: "queue" | "steer";
   id: string;
   conversationId: string;
@@ -1036,12 +1040,13 @@ export type GenerationEvent =
   | { type: "tool-call"; generationId: string; toolCall: ToolCallDto }
   | { type: "vision-analysis"; generationId: string; analysis: VisionAnalysisDto }
   | { type: "status"; generationId: string; status: GenerationStatus; stopReason?: string }
-  | { type: "error"; generationId: string; code: string; message: string };
+  | { type: "error"; generationId: string; code: string; message: string; i18n?: LocalizedMessage };
 
 export const apiErrorSchema = z.object({
   error: z.object({
     code: z.string(),
     message: z.string(),
+    i18n: z.object({ key: z.string(), params: z.record(z.string(), z.union([z.string(), z.number()])).optional() }).optional(),
     details: z.unknown().optional()
   })
 });
@@ -1066,6 +1071,7 @@ export interface ToolSettingsDto {
 }
 
 export interface ToolCatalogItemDto {
+  errorI18n?: LocalizedMessage;
   name: string;
   label: string;
   description: string;
@@ -1143,6 +1149,7 @@ export const backgroundTaskStatusSchema = z.enum([
 export type BackgroundTaskStatus = z.infer<typeof backgroundTaskStatusSchema>;
 
 export interface BackgroundTaskDto {
+  errorI18n?: LocalizedMessage;
   id: string;
   conversationId: string;
   generationId: string;

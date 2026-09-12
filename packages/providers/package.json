@@ -6,6 +6,7 @@
   "type": "module",
   "exports": "./src/index.ts",
   "dependencies": {
-    "@llm-chat/contracts": "workspace:*"
+    "@llm-chat/contracts": "workspace:*",
+    "@llm-chat/i18n": "workspace:*"
   }
 }

@@ -1,3 +1,4 @@
+import { t, useLocale } from "../lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { Maximize2 } from "lucide-react";
 import { Modal } from "../lib/ui";
@@ -17,6 +18,7 @@ export function ExpandableTextarea({
   mono?: boolean;
   disabled?: boolean;
 }) {
+  useLocale();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value);
   const editor = useRef<HTMLTextAreaElement>(null);
@@ -26,7 +28,7 @@ export function ExpandableTextarea({
   }, [open, value]);
 
   const close = () => {
-    if (draft !== value && !window.confirm("放弃尚未应用的编辑内容？")) return;
+    if (draft !== value && !window.confirm(t("ExpandableTextarea.discard_edits_that_have_not_been_applied"))) return;
     setOpen(false);
   };
   const apply = () => {
@@ -44,9 +46,9 @@ export function ExpandableTextarea({
           setOpen(true);
         }}
         disabled={disabled}
-        aria-label={`展开编辑${label}`}
+        aria-label={t("ExpandableTextarea.expand_editor", { value1: (label) })}
       >
-        <span className={value ? "" : "muted"}>{value || placeholder || "点击展开编辑"}</span>
+        <span className={value ? "" : "muted"}>{value || placeholder || t("ExpandableTextarea.click_to_expand_editor")}</span>
         <Maximize2 size={16} aria-hidden="true" />
       </button>
       {open ? (
@@ -56,9 +58,9 @@ export function ExpandableTextarea({
           fullscreen
           footer={
             <>
-              <span className="small muted fullscreen-editor-hint">Ctrl/⌘ + Enter 应用</span>
-              <button className="btn" onClick={close}>取消</button>
-              <button className="btn primary" onClick={apply}>应用</button>
+              <span className="small muted fullscreen-editor-hint">{t("ExpandableTextarea.ctrl_enter_to_apply")}</span>
+              <button className="btn" onClick={close}>{t("WorkspaceSidebar.cancel")}</button>
+              <button className="btn primary" onClick={apply}>{t("ExpandableTextarea.apply")}</button>
             </>
           }
         >

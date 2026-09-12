@@ -1,0 +1,14 @@
+{
+  "name": "@llm-chat/i18n",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Unlicense",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tool-presentation": "./src/tool-presentation.ts"
+  },
+  "dependencies": {
+    "i18next": "^26.4.2"
+  }
+}

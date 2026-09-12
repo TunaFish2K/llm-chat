@@ -1,5 +1,5 @@
 /// <reference lib="webworker" />
-import { claimNotification, readNotificationControl } from "./notification-db";
+import { claimNotification, readNotificationControl, notificationLocale } from "./notification-db";
 import { conversationPath, generationNotices, type ConversationNotification, type NotificationCommand } from "./notification-protocol";
 
 interface NotificationEnvironment {
@@ -37,6 +37,7 @@ export function createNotificationWorker(env: NotificationEnvironment) {
   async function handle(command: NotificationCommand, senderId: string): Promise<void> {
     const sender = await env.clients.get(senderId);
     if (!sender || sender.type !== "window" || sender.frameType !== "top-level" || new URL(sender.url).origin !== env.origin) return;
+    const locale = await notificationLocale(command.locale === "zh-CN" || command.locale === "en-US" ? command.locale : undefined);
     const control = await readNotificationControl();
     const current = await notifications();
     if (!control.enabled || !control.authorized) { current.forEach((item) => item.close()); return; }
@@ -49,7 +50,7 @@ export function createNotificationWorker(env: NotificationEnvironment) {
       current.filter((item) => paths.has(conversationPath(item.data?.conversationId))).forEach((item) => item.close()); return;
     }
     if (command.kind !== "generation" || command.revision !== control.revision) return;
-    const candidates = generationNotices(command.sourceId, command.state);
+    const candidates = generationNotices(command.sourceId, command.state, locale);
     for (const item of current) {
       if (item.data?.sourceId === command.sourceId && item.data?.generationId === command.state.generationId
         && item.data?.kind === "approval" && !candidates.some((notice) => prefix + notice.key === item.tag)) item.close();

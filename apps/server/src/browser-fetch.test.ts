@@ -156,3 +156,24 @@ it("cancels even when DNS resolution never returns", async () => {
   await expect(result).rejects.toThrow("已取消");
   expect(mocks.launch).not.toHaveBeenCalled();
 });
+
+it("preserves localizable runtime errors through availability checks and failed navigation", async () => {
+  const { withMessage, renderMessage } = await import("@llm-chat/i18n");
+  const manager = new BrowserFetchManager();
+  expect(manager.errorI18n).toBeUndefined();
+  mocks.exists.mockReturnValue(false);
+  expect(renderMessage("en-US", { message: manager.error!, i18n: manager.errorI18n! })).toContain("Browser not installed");
+  const missing = await manager.fetch("https://example.com", new AbortController().signal).catch((error: Error) => error);
+  expect(renderMessage("en-US", missing as Error)).toContain("Browser not installed");
+  mocks.exists.mockReturnValue(true);
+  const fixture = browserFixture();
+  fixture.page.goto.mockRejectedValueOnce(withMessage(new Error("网页资源超过 2 MiB"), "error.the_web_resource_exceeds_2_mib"));
+  const failure = await manager.fetch("https://example.com", new AbortController().signal).catch((error: Error) => error);
+  expect(renderMessage("en-US", failure as Error)).toBe("The web resource exceeds 2 MiB");
+  expect(manager.errorI18n?.key).toBe("error.the_web_resource_exceeds_2_mib");
+  await manager.fetch("https://example.com", new AbortController().signal);
+  expect(manager.errorI18n).toBeUndefined();
+  await manager.close();
+  const closed = await manager.fetch("https://example.com", new AbortController().signal).catch((error: Error) => error);
+  expect(renderMessage("en-US", closed as Error)).toBe("Browser is closed");
+});

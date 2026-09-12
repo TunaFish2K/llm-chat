@@ -1,3 +1,5 @@
+import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
+import { withMessage } from "@llm-chat/i18n";
 import { formatTool } from "./tool-presentation";
 import type { GenerationEvent, GenerationStatus, ProviderProtocol, UsageDto } from "@llm-chat/contracts";
 import { validateToolInput } from "./tool-validation";
@@ -181,7 +183,7 @@ export class GenerationRunner {
     const model = this.store.getModel(record.modelId);
     const secretConnection = this.store.getConnection(record.connectionId);
     if (!model || !secretConnection) {
-      this.fail(generationId, "configuration_missing", "模型或连接已被删除");
+      this.fail(generationId, "configuration_missing", "模型或连接已被删除", { key: "error.configuration_missing" });
       return;
     }
     const connection: ProviderConnection = {
@@ -303,7 +305,7 @@ export class GenerationRunner {
         request.messages = prepareMessages(request);
         const estimated = estimateMessageTokens([request.systemPrompt, request.postHistoryInstructions].filter(Boolean).join("\n\n"), request.messages, tools);
         if (model.contextWindow && estimated > Math.min(model.contextWindow - record.settings.common.maxOutputTokens, model.maxInputTokens ?? Infinity)) {
-          throw new ContextError("message_too_large", "本轮上下文超过模型可用容量，工具结果已保留");
+          throw withMessage(new ContextError("message_too_large", "本轮上下文超过模型可用容量，工具结果已保留"), "error.this_turn_exceeds_the_model_s_context_capacity_tool_results_have_been");
         }
         for await (const event of this.dependencies.stream(record.protocol, request)) {
           job.controller.signal.throwIfAborted();
@@ -335,7 +337,7 @@ export class GenerationRunner {
             calls.push(event.call);
           } else if (event.type === "image") {
             if (event.dataBase64) hasOutput = true;
-            if (!this.dependencies.imageService) throw new Error("图片服务不可用");
+            if (!this.dependencies.imageService) throw withMessage(new Error("图片服务不可用"), "error.image_service_unavailable");
             const asset = await this.dependencies.imageService.importGeneratedBytes(
               `${record.modelKey}-response-${++generatedImageIndex}`,
               Buffer.from(event.dataBase64, "base64")
@@ -383,7 +385,7 @@ export class GenerationRunner {
           let saved = this.store.upsertToolCall(generationId, call, stepIndex * 1000 + index, stepIndex, requiresApproval);
           const formatted = await formatTool(definition?.formatArguments, args);
           job.controller.signal.throwIfAborted();
-          saved = this.store.updateToolCall(saved.id, { presentation: formatted ? { arguments: formatted } : {} })!;
+          saved = this.store.updateToolCall(saved.id, { presentation: { ...(formatted ? { arguments: formatted } : {}), ...(definition && (!definition.sourceKind || definition.sourceKind === "builtin") ? { builtin: { name: call.name, version: 1 as const } } : {}) } })!;
           this.emit(generationId, { type: "tool-call", generationId, toolCall: saved });
           persisted.push(saved);
         }
@@ -410,7 +412,7 @@ export class GenerationRunner {
         return;
       }
       const normalized = normalizeError(error);
-      this.fail(generationId, normalized.code, normalized.message);
+      this.fail(generationId, normalized.code, normalized.message, normalized.i18n);
     }
   }
 
@@ -477,6 +479,7 @@ export class GenerationRunner {
         const failed = this.store.updateToolCall(call.id, {
           approvalState: "failed",
           error: message,
+          ...(errorI18n(error) ? { errorI18n: errorI18n(error)! } : {}),
           output,
           completedAt: Date.now()
         })!;
@@ -492,9 +495,9 @@ export class GenerationRunner {
     }
   }
 
-  private fail(generationId: string, code: string, message: string): void {
-    this.store.finishGeneration(generationId, "failed", { code, message });
-    this.emit(generationId, { type: "error", generationId, code, message });
+  private fail(generationId: string, code: string, message: string, i18n?: LocalizedMessage): void {
+    this.store.finishGeneration(generationId, "failed", { code, message, ...(i18n ? { i18n } : {}) });
+    this.emit(generationId, { type: "error", generationId, code, message, ...(i18n ? { i18n } : {}) });
     this.emitStatus(generationId, "failed");
   }
 
@@ -509,12 +512,12 @@ export class GenerationRunner {
   }
 }
 
-function normalizeError(error: unknown): { code: string; message: string } {
+function normalizeError(error: unknown): { code: string; message: string; i18n?: LocalizedMessage } {
   if (error instanceof ProviderError || error instanceof ContextError || error instanceof StoreError) {
-    return { code: error.code, message: error.message };
+    return { code: error.code, message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error)! } : {}) };
   }
-  if (error instanceof Error) return { code: "generation_failed", message: error.message };
-  return { code: "generation_failed", message: "生成失败" };
+  if (error instanceof Error) return { code: "generation_failed", message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error)! } : {}) };
+  return { code: "generation_failed", message: "生成失败", i18n: { key: "error.generation_failed" } };
 }
 
 function cleanUsage(usage: UsageDto): UsageDto {

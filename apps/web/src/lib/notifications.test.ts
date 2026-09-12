@@ -141,7 +141,7 @@ describe("notification preferences and permission", () => {
     events.get("sw:message")?.({ data: { type: "CHAT_NOTIFICATION_CONTEXT" }, ports: [{ postMessage: reply }] });
     expect(reply).toHaveBeenCalledWith({ path: location.pathname });
     events.get("llm-chat:conversations-deleted")?.({ detail: { ids: ["target"] } });
-    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: { kind: "clear-conversations", ids: ["target"] } }), expect.anything()));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ command: { kind: "clear-conversations", ids: ["target"], locale: "zh-CN" } }), expect.anything()));
   });
 
   it("handles missing workers, worker errors and an old worker that never acknowledges", async () => {

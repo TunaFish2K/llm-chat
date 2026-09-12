@@ -1,3 +1,5 @@
+import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
+import { t, getLocale, subscribeLocale, localizedError } from "./i18n";
 import type { AppEvent, GenerationDto } from "@llm-chat/contracts";
 import { api } from "./api";
 import { conversationDeleted } from "./conversation-lifecycle";
@@ -14,6 +16,8 @@ interface NotificationSettings {
   enabled: boolean;
   busy: boolean;
   error: string | null;
+  errorI18n?: LocalizedMessage | undefined;
+  hintI18n?: LocalizedMessage | undefined;
   hint: string | null;
 }
 
@@ -42,7 +46,7 @@ function supported(): boolean {
 }
 function permission(): NotificationPermission { return typeof Notification !== "undefined" ? Notification.permission : "default"; }
 function failure(error: unknown): void {
-  notificationStore.set({ error: error instanceof Error ? error.message : "通知服务不可用，请重试" });
+  notificationStore.set({ errorI18n: errorI18n(error), error: error instanceof Error ? error.message : t("notifications.notification_service_unavailable_try_again") });
 }
 function accept(value: NotificationControl): void {
   control = value;
@@ -51,7 +55,7 @@ function accept(value: NotificationControl): void {
 
 function timeout<T>(promise: Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error("通知服务尚未就绪，请更新应用后重试")), 5000);
+    const timer = window.setTimeout(() => reject(localizedError("notifications.notification_service_is_not_ready_update_the_app_and_try")), 5000);
     promise.then(resolve, reject).finally(() => window.clearTimeout(timer));
   });
 }
@@ -60,14 +64,14 @@ export async function notificationCommand(command: NotificationCommand): Promise
   const registration = await timeout(navigator.serviceWorker.ready);
   if (command.kind === "generation" && (!authenticated || conversationDeleted(command.state.conversationId)
     || !control.enabled || permission() !== "granted" || command.revision !== control.revision)) return;
-  if (!registration.active) throw new Error("通知服务尚未就绪，请刷新页面后重试");
+  if (!registration.active) throw localizedError("notifications.notification_service_is_not_ready_refresh_and_try_again");
   const ports = new MessageChannel();
   try {
     await timeout(new Promise<void>((resolve, reject) => {
       ports.port1.onmessage = (event: MessageEvent<{ ok: boolean; error?: string }>) => {
-        if (event.data.ok) resolve(); else reject(new Error(event.data.error ?? "通知服务不可用"));
+        if (event.data.ok) resolve(); else reject(new Error(event.data.error ?? t("notifications.notification_service_unavailable")));
       };
-      registration.active!.postMessage({ type: "CHAT_NOTIFICATIONS", command }, [ports.port2]);
+      registration.active!.postMessage({ type: "CHAT_NOTIFICATIONS", command: { ...command, locale: getLocale() } }, [ports.port2]);
     }));
   } finally { ports.port1.close(); ports.port2.close(); }
 }
@@ -143,14 +147,14 @@ export async function setNotificationsEnabled(enabled: boolean): Promise<void> {
   const revision = control.revision;
   notificationStore.set({ busy: true, error: null, hint: null });
   try {
-    if (!supported()) throw new Error(window.isSecureContext ? "当前浏览器不支持会话通知" : "会话通知需要 HTTPS 或本机地址");
+    if (!supported()) throw new Error(window.isSecureContext ? t("notifications.this_browser_does_not_support_conversation_notifications") : t("notifications.conversation_notifications_require_https_or_a_local_address"));
     const result = enabled && permission() === "default" ? await Notification.requestPermission() : permission();
     if (currentOperation !== operation) return;
     if (!initialization) await initializeNotifications();
     notificationStore.set({ permission: result });
     if (enabled && result !== "granted") {
       accept(await writeNotificationControl({ enabled: false }, revision));
-      notificationStore.set({ hint: result === "denied" ? "通知已被拒绝，请在浏览器的站点设置中允许通知后重新开启。" : "尚未允许通知，可再次点击开启。" });
+      notificationStore.set({ hintI18n: { key: result === "denied" ? "NotificationSettings.notifications_were_denied_allow_them_in_your_browser_s_site" : "notifications.notifications_are_not_allowed_yet_select_enable_to_try_again" }, hint: result === "denied" ? t("NotificationSettings.notifications_were_denied_allow_them_in_your_browser_s_site") : t("notifications.notifications_are_not_allowed_yet_select_enable_to_try_again") });
     } else {
       if (enabled) await notificationCommand({ kind: "sync" });
       if (currentOperation !== operation) return;
@@ -196,3 +200,5 @@ export function observeNotificationEvent(event: AppEvent): void {
     if (authenticated && current === session) tracker.handle(event);
   });
 }
+
+subscribeLocale(() => { if (supported()) void notificationCommand({ kind: "sync" }).catch(() => {}); });

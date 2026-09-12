@@ -4,7 +4,7 @@ import { createNotificationWorker, requestNotificationPath } from "./notificatio
 import { claimNotification, readNotificationControl } from "./notification-db";
 import { generationNotices } from "./notification-protocol";
 
-vi.mock("./notification-db", () => ({ claimNotification: vi.fn(), readNotificationControl: vi.fn() }));
+vi.mock("./notification-db", () => ({ claimNotification: vi.fn(), readNotificationControl: vi.fn(), notificationLocale: vi.fn(async (locale) => locale ?? "zh-CN") }));
 const state: GenerationNotificationState = { generationId: "g", messageId: "m", conversationId: "c", conversationTitle: "测试会话", status: "completed", stopReason: null, pendingTools: [] };
 const control = { enabled: true, authorized: true, revision: "1" };
 const candidate = (notify = true) => ({ kind: "generation" as const, sourceId: "server", state, notify, revision: "1" });
@@ -142,4 +142,13 @@ it("queries the page's current route and bounds missing or failed responses", as
     vi.mocked(client.postMessage).mockImplementationOnce(() => { throw new Error("closed"); });
     expect(await requestNotificationPath(client)).toBeNull();
   } finally { vi.useRealTimers(); }
+});
+
+it("uses the chosen language without replaying previously handled events", async () => {
+  const { worker, env } = setup();
+  await worker.handle({ ...candidate(), locale: "en-US" }, "tab");
+  expect(env.registration.showNotification).toHaveBeenCalledExactlyOnceWith("Reply completed", expect.objectContaining({ body: "测试会话", tag: "llm-chat:server:g:terminal" }));
+  await worker.handle({ kind: "sync", locale: "zh-CN" }, "tab");
+  await worker.handle({ ...candidate(), locale: "zh-CN" }, "tab");
+  expect(env.registration.showNotification).toHaveBeenCalledTimes(1);
 });

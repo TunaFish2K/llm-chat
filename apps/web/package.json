@@ -13,11 +13,13 @@
     "@llm-chat/contracts": "workspace:*",
     "@lobehub/icons": "^5.18.0",
     "@streamdown/cjk": "^1.0.2",
+    "i18next": "^26.4.2",
     "katex": "^0.16.28",
     "lucide-react": "^1.38.0",
     "radix-ui": "^1.4.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-i18next": "^17.0.13",
     "rehype-harden": "^1.1.8",
     "rehype-katex": "^7.0.1",
     "rehype-raw": "^7.0.0",
@@ -27,7 +29,8 @@
     "remark-parse": "^11.0.0",
     "streamdown": "^2.2.0",
     "unified": "^11.0.5",
-    "workbox-window": "^7.4.1"
+    "workbox-window": "^7.4.1",
+    "@llm-chat/i18n": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",

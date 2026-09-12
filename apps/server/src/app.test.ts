@@ -42,7 +42,7 @@ describe("server API", () => {
     ] as const) {
       const response = await reopened.inject({ method, url });
       expect(response.statusCode).toBe(404);
-      expect(response.json().error).toEqual({ code: "not_found", message: "API 不存在" });
+      expect(response.json().error).toEqual({ code: "not_found", message: "API 不存在", i18n: { key: "error.api_not_found" } });
     }
     const catalogResponse = await reopened.inject({ method: "GET", url: "/api/tools/catalog" });
     expect(catalogResponse.statusCode).toBe(200);
@@ -103,7 +103,7 @@ describe("server API", () => {
         clientRequestId: "00000000-0000-4000-8000-000000000001", text: "do not duplicate", agentId: app.store.getSettings().defaultAgentId
       } });
       expect(response.statusCode).toBe(409);
-      expect(response.json()).toEqual({ error: { code: "client_update_required", message: "版本已回退，请刷新页面后重试" } });
+      expect(response.json()).toEqual({ error: { code: "client_update_required", message: "版本已回退，请刷新页面后重试", i18n: { key: "error.the_version_was_rolled_back_refresh_the_page_and_try_again" } } });
       expect(counts()).toEqual(before);
     }
     const started = await app.inject({ method: "POST", url: "/api/conversations/start", payload: {
@@ -792,7 +792,7 @@ describe("server API", () => {
     vi.spyOn(app.store, "listMemories").mockImplementation(() => { throw new Error("database exploded"); });
     const internal = await app.inject({ method: "GET", url: "/api/memories" });
     expect(internal.statusCode).toBe(500);
-    expect(internal.json()).toEqual({ error: { code: "internal_error", message: "服务端发生错误" } });
+    expect(internal.json()).toEqual({ error: { code: "internal_error", message: "服务端发生错误", i18n: { key: "error.internal" } } });
   });
 
   it("rescans the injected Agent Skills root", async () => {

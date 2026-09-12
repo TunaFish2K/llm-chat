@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type {
   AgentDto,
   AgentExecutionConfig,
@@ -41,7 +42,7 @@ export function buildEffectiveSettings(
 ): GenerationSettings {
   const capabilities = model.capabilities;
   if (effort !== "none" && !capabilities.reasoning) {
-    throw new StoreError("reasoning_not_supported", "当前模型不支持推理强度设置");
+    throw withMessage(new StoreError("reasoning_not_supported", "当前模型不支持推理强度设置"), "error.this_model_does_not_support_reasoning_effort_settings");
   }
   const defaults = model.defaultSettings ?? ({} as ModelSettings);
   const common = {
@@ -57,7 +58,7 @@ export function buildEffectiveSettings(
     && capabilities.manualThinking
     && !capabilities.adaptiveThinking;
   if (effort !== "none" && isAnthropicManual && common.maxOutputTokens <= 1024) {
-    throw new StoreError("reasoning_budget_too_small", "当前模型输出上限过低，无法启用推理");
+    throw withMessage(new StoreError("reasoning_budget_too_small", "当前模型输出上限过低，无法启用推理"), "error.this_model_s_output_limit_is_too_low_to_enable_reasoning");
   }
   const resolvedThinkingBudgetTokens = effort !== "none" && isAnthropicManual
     ? resolveManualThinkingBudget(effort, common.maxOutputTokens, defaults.protocol?.thinkingBudgetTokens)
@@ -121,11 +122,11 @@ export interface GenerationPlanInput {
 }
 
 export function resolveGenerationPlan({ conversation, agent, model, connection, userProfile, roleplayState, generationKind = "normal" }: GenerationPlanInput) {
-  if (!conversation.agentId) throw new StoreError("conversation_agent_required", "请先为会话选择 Agent");
-  if (!agent) throw new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择");
+  if (!conversation.agentId) throw withMessage(new StoreError("conversation_agent_required", "请先为会话选择 Agent"), "error.select_an_agent_for_this_conversation_first");
+  if (!agent) throw withMessage(new StoreError("conversation_agent_required", "会话当前 Agent 不可用，请重新选择"), "error.the_conversation_s_agent_is_unavailable_select_another_agent");
   const modelId = effectiveModelId(agent.execution, conversation.executionOverrides);
-  if (!modelId) throw new StoreError("conversation_model_required", "请先为 Agent 或会话选择模型");
-  if (!model?.enabled || !connection) throw new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择");
+  if (!modelId) throw withMessage(new StoreError("conversation_model_required", "请先为 Agent 或会话选择模型"), "error.select_a_model_for_the_agent_or_conversation_first");
+  if (!model?.enabled || !connection) throw withMessage(new StoreError("conversation_model_required", "会话当前模型不可用，请重新选择"), "error.the_conversation_s_model_is_unavailable_select_another_model");
   const effort = conversation.executionOverrides.reasoningEffort ?? agent.execution.reasoningEffort;
   const preset = selectedRoleplayPreset(agent.roleplay, roleplayState);
   const generation = mergeGenerationOverrides(

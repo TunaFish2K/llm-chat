@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { ProviderError, type ProviderConnection, type ProviderRequestContext } from "./types";
 
 const textDecoder = new TextDecoder();
@@ -58,7 +59,7 @@ export async function ensureOk(response: Response): Promise<void> {
 }
 
 export async function* readSse(response: Response): AsyncGenerator<{ event: string; data: string }> {
-  if (!response.body) throw new ProviderError("provider_stream_error", "上游服务没有返回响应流");
+  if (!response.body) throw withMessage(new ProviderError("provider_stream_error", "上游服务没有返回响应流"), "error.the_upstream_service_did_not_return_a_response_stream");
   const reader = response.body.getReader();
   let buffer = "";
   try {

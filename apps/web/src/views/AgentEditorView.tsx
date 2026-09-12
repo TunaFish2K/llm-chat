@@ -1,3 +1,6 @@
+import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
+import { useErrorState } from "../lib/error-display";
+import { t, useLocale, localized } from "../lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import type {
@@ -22,20 +25,21 @@ import { RoleplayTab } from "../components/agent/RoleplayTab";
 
 const REASONING_LEVELS: ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh", "max"];
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
-const TABS = [
-  ["card", "角色卡"],
-  ["roleplay", "角色扮演"],
-  ["avatar", "头像"],
-  ["execution", "执行配置"],
-  ["tools", "工具"],
+function getTABS() { return [
+  ["card", t("AgentEditorView.character_card")],
+  ["roleplay", t("AgentEditorView.roleplay")],
+  ["avatar", t("AgentEditorView.avatar")],
+  ["execution", t("AgentEditorView.execution_settings")],
+  ["tools", t("SettingsView.tools")],
   ["skills", "Skill"],
-  ["user", "用户画像"]
-] as const;
-type Tab = (typeof TABS)[number][0];
+  ["user", t("SettingsView.user_profile")]
+] as const; }
+type Tab = ReturnType<typeof getTABS>[number][0];
 
 export function AgentEditorView({ agentId }: { agentId: string }) {
+  useLocale();
   const [agent, setAgent] = useState<AgentDto | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const [tab, setTab] = useState<Tab>("card");
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
   const [skills, setSkills] = useState<SkillDto[]>([]);
@@ -67,7 +71,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
         setSkills(skillData);
       })
       .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : "加载 Agent 失败");
+        if (!cancelled) setError(cause instanceof Error ? cause : t("AgentEditorView.could_not_load_agent"));
       });
     return () => {
       cancelled = true;
@@ -110,7 +114,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
       setAgent(updated);
       setDirty(false);
       await refreshAgents();
-      toast("success", "已保存 Agent");
+      toast("success", localized("AgentEditorView.agent_saved"));
     } catch (cause) {
       toastError(cause);
     } finally {
@@ -130,7 +134,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   if (!agent) {
     return (
       <div className="panel-scroll">
-        <LoadingState label="加载 Agent…" />
+        <LoadingState label={t("AgentEditorView.loading_agent")} />
       </div>
     );
   }
@@ -140,19 +144,17 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
       <div className="page-header mobile-redundant-title">
         <h2>
           {agent.name}
-          {agent.protected ? <span className="tag accent" style={{ marginLeft: 8 }}>内置</span> : null}
+          {agent.protected ? <span className="tag accent" style={{ marginLeft: 8 }}>{t("SettingsView.built_in")}</span> : null}
         </h2>
         <div className="actions">
-          <button className="btn" onClick={() => navigate(routes.agents())}>
-            返回列表
-          </button>
+          <button className="btn" onClick={() => navigate(routes.agents())}>{t("AgentEditorView.back_to_list")}</button>
           <button className="btn primary" disabled={!dirty || saving} onClick={() => void save()}>
-            {saving ? "保存中…" : dirty ? "保存修改" : "已保存"}
+            {saving ? t("AgentEditorView.saving") : dirty ? t("AgentEditorView.save_changes") : t("AgentEditorView.saved")}
           </button>
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {TABS.map(([key, label]) => (
+        {getTABS().map(([key, label]) => (
           <button
             key={key}
             role="tab"
@@ -190,7 +192,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
           {tab === "user" ? <UserProfileTab agent={agent} mutate={mutate} /> : null}
         </div>
       </div>
-      {leavePath ? <ConfirmModal title="放弃未保存的修改？" message="当前 Agent 的修改尚未保存。" confirmLabel="放弃修改"
+      {leavePath ? <ConfirmModal title={t("AgentEditorView.discard_unsaved_changes")} message={t("AgentEditorView.changes_to_this_agent_have_not_been_saved")} confirmLabel={t("AgentEditorView.discard_changes")}
         onClose={() => setLeavePath(null)} onConfirm={() => {
           allowLeave.current = true;
           navigate(leavePath);
@@ -202,17 +204,18 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
 }
 
 function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: AgentDto) => void) => void }) {
+  useLocale();
   const data = agent.card.data;
   const setField = (key: string, value: unknown) =>
     mutate((draft) => {
       (draft.card.data as unknown as Record<string, unknown>)[key] = value;
     });
   const [bookJson, setBookJson] = useState(() => JSON.stringify(data.character_book ?? null, null, 2));
-  const [bookError, setBookError] = useState<string | null>(null);
+  const [bookError, setBookError] = useErrorState(null);
 
   return (
     <div>
-      <Field label="名称" htmlFor="agent-name">
+      <Field label={t("SettingsView.name")} htmlFor="agent-name">
         <input
           id="agent-name"
           className="input"
@@ -220,32 +223,32 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           onChange={(event) => setField("name", event.target.value)}
         />
       </Field>
-      <Field label="描述">
+      <Field label={t("SettingsView.description")}>
         <ExpandableTextarea
-          label="角色描述"
+          label={t("AgentEditorView.character_description")}
           value={data.description}
           onChange={(value) => setField("description", value)}
         />
       </Field>
       <div className="grid-2">
-        <Field label="性格">
+        <Field label={t("AgentEditorView.personality")}>
           <ExpandableTextarea
-            label="角色性格"
+            label={t("AgentEditorView.character_personality")}
             value={data.personality}
             onChange={(value) => setField("personality", value)}
           />
         </Field>
-        <Field label="场景">
+        <Field label={t("AgentEditorView.scenario")}>
           <ExpandableTextarea
-            label="角色场景"
+            label={t("AgentEditorView.character_scenario")}
             value={data.scenario}
             onChange={(value) => setField("scenario", value)}
           />
         </Field>
       </div>
-      <Field label="开场白">
+      <Field label={t("ChatView.greeting")}>
         <ExpandableTextarea
-          label="开场白"
+          label={t("ChatView.greeting")}
           value={data.first_mes}
           onChange={(value) => setField("first_mes", value)}
         />
@@ -253,31 +256,30 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
       <div className="field greeting-editor">
         <div className="field-heading">
           <div>
-            <label>备选开场白</label>
-            <span className="hint">每条可包含多行；新会话中可预览和切换。</span>
+            <label>{t("AgentEditorView.alternate_greetings")}</label>
+            <span className="hint">{t("AgentEditorView.each_greeting_can_span_multiple_lines_preview_and_switch_greetings")}</span>
           </div>
           <button
             type="button"
             className="btn small"
             onClick={() => setField("alternate_greetings", [...data.alternate_greetings, ""])}
           >
-            <Plus size={15} aria-hidden="true" />新增
-          </button>
+            <Plus size={15} aria-hidden="true" />{t("AgentEditorView.add")}</button>
         </div>
         {data.alternate_greetings.length === 0 ? (
-          <p className="small muted">尚未添加备选开场白。</p>
+          <p className="small muted">{t("AgentEditorView.no_alternate_greetings_yet")}</p>
         ) : (
           <div className="greeting-editor-list">
             {data.alternate_greetings.map((greeting, index) => (
               <div className="greeting-editor-item" key={index}>
                 <div className="greeting-editor-item-header">
-                  <span>备选 {index + 1}</span>
+                  <span>{t("AgentEditorView.alternative", { value1: (index + 1) })}</span>
                   <div className="row compact">
                     <button
                       type="button"
                       className="btn ghost icon"
-                      title="上移"
-                      aria-label={`上移备选开场白 ${index + 1}`}
+                      title={t("AgentEditorView.move_up")}
+                      aria-label={t("AgentEditorView.move_alternate_greeting_up", { value1: (index + 1) })}
                       disabled={index === 0}
                       onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
                         itemIndex === index - 1 ? greeting : itemIndex === index ? data.alternate_greetings[index - 1] : item
@@ -286,8 +288,8 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
                     <button
                       type="button"
                       className="btn ghost icon"
-                      title="下移"
-                      aria-label={`下移备选开场白 ${index + 1}`}
+                      title={t("AgentEditorView.move_down")}
+                      aria-label={t("AgentEditorView.move_alternate_greeting_down", { value1: (index + 1) })}
                       disabled={index === data.alternate_greetings.length - 1}
                       onClick={() => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
                         itemIndex === index + 1 ? greeting : itemIndex === index ? data.alternate_greetings[index + 1] : item
@@ -296,14 +298,14 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
                     <button
                       type="button"
                       className="btn ghost icon danger"
-                      title="删除"
-                      aria-label={`删除备选开场白 ${index + 1}`}
+                      title={t("WorkspaceSidebar.delete_2")}
+                      aria-label={t("AgentEditorView.delete_alternate_greeting", { value1: (index + 1) })}
                       onClick={() => setField("alternate_greetings", data.alternate_greetings.filter((_, itemIndex) => itemIndex !== index))}
                     ><Trash2 size={15} /></button>
                   </div>
                 </div>
                 <ExpandableTextarea
-                  label={`备选开场白 ${index + 1}`}
+                  label={t("AgentEditorView.alternate_greeting", { value1: (index + 1) })}
                   value={greeting}
                   onChange={(value) => setField("alternate_greetings", data.alternate_greetings.map((item, itemIndex) =>
                     itemIndex === index ? value : item
@@ -314,43 +316,43 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           </div>
         )}
       </div>
-      <Field label="对话示例">
+      <Field label={t("AgentEditorView.example_dialogue")}>
         <ExpandableTextarea
-          label="对话示例"
+          label={t("AgentEditorView.example_dialogue")}
           value={data.mes_example}
           onChange={(value) => setField("mes_example", value)}
         />
       </Field>
-      <Field label="基础系统提示" hint="只用于此 Agent。角色卡系统提示留空时使用此内容。">
-        <ExpandableTextarea label="基础系统提示" value={agent.execution.baseSystemPrompt ?? ""}
+      <Field label={t("AgentEditorView.base_system_prompt")} hint={t("AgentEditorView.applies_only_to_this_agent_used_when_the_character_card")}>
+        <ExpandableTextarea label={t("AgentEditorView.base_system_prompt")} value={agent.execution.baseSystemPrompt ?? ""}
           onChange={(value) => mutate((draft) => { draft.execution.baseSystemPrompt = value; })} />
       </Field>
-      <Field label="系统提示" hint="角色卡系统提示覆盖基础提示；使用 {{original}} 引用此 Agent 的基础提示。">
+      <Field label={t("AgentEditorView.system_prompt")} hint={t("AgentEditorView.the_character_card_system_prompt_overrides_the_base_prompt_use")}>
         <ExpandableTextarea
-          label="系统提示"
+          label={t("AgentEditorView.system_prompt")}
           value={data.system_prompt}
           onChange={(value) => setField("system_prompt", value)}
         />
       </Field>
-      <Field label="历史后指令">
+      <Field label={t("AgentEditorView.post_history_instructions")}>
         <ExpandableTextarea
-          label="历史后指令"
+          label={t("AgentEditorView.post_history_instructions")}
           value={data.post_history_instructions}
           onChange={(value) => setField("post_history_instructions", value)}
         />
       </Field>
-      <Field label="创作者备注">
+      <Field label={t("AgentEditorView.creator_notes")}>
         <ExpandableTextarea
-          label="创作者备注"
+          label={t("AgentEditorView.creator_notes")}
           value={data.creator_notes}
           onChange={(value) => setField("creator_notes", value)}
         />
       </Field>
       <div className="grid-2">
-        <Field label="标签" hint="逗号分隔">
+        <Field label={t("AgentEditorView.tags")} hint={t("AgentEditorView.comma_separated")}>
           <input
             className="input"
-            aria-label="标签"
+            aria-label={t("AgentEditorView.tags")}
             value={data.tags.join(", ")}
             onChange={(event) =>
               setField(
@@ -363,26 +365,26 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
             }
           />
         </Field>
-        <Field label="创作者">
+        <Field label={t("AgentEditorView.creator")}>
           <input
             className="input"
-            aria-label="创作者"
+            aria-label={t("AgentEditorView.creator")}
             value={data.creator}
             onChange={(event) => setField("creator", event.target.value)}
           />
         </Field>
       </div>
-      <Field label="角色版本">
+      <Field label={t("AgentEditorView.character_version")}>
         <input
           className="input"
-          aria-label="角色版本"
+          aria-label={t("AgentEditorView.character_version")}
           value={data.character_version}
           onChange={(event) => setField("character_version", event.target.value)}
         />
       </Field>
-      <Field label="世界书（Character Book，JSON）" hint="保持 null 表示不使用。">
+      <Field label={t("AgentEditorView.character_book_json")} hint={t("AgentEditorView.keep_null_to_disable")}>
         <ExpandableTextarea
-          label="世界书 JSON"
+          label={t("AgentEditorView.character_book_json_2")}
           mono
           value={bookJson}
           onChange={(value) => {
@@ -392,7 +394,7 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
               setBookError(null);
               setField("character_book", parsed ?? undefined);
             } catch {
-              setBookError("JSON 无法解析，保存前请修正");
+              setBookError(localized("AgentEditorView.invalid_json_fix_it_before_saving"));
             }
           }}
         />
@@ -407,6 +409,7 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
 }
 
 function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: AgentDto) => void }) {
+  useLocale();
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -418,7 +421,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
       const updated = await endpoints.setAgentAvatar(agent.id, file.name, dataBase64);
       onChanged(updated);
       await refreshAgents();
-      toast("success", "头像已更新");
+      toast("success", localized("AgentEditorView.avatar_updated"));
     } catch (error) {
       toastError(error);
     } finally {
@@ -428,14 +431,14 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
 
   return (
     <div className="card">
-      <h3>头像</h3>
+      <h3>{t("AgentEditorView.avatar")}</h3>
       <div className="row">
         {agent.hasAvatar ? (
           <img
             className="avatar-img"
             style={{ width: 96, height: 96 }}
             src={`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`}
-            alt={`${agent.name} 的头像`}
+            alt={t("AgentEditorView.avatar_for", { value1: (agent.name) })}
           />
         ) : (
           <span className="avatar-placeholder" style={{ width: 96, height: 96, fontSize: 32 }} aria-hidden="true">
@@ -448,7 +451,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
             type="file"
             accept="image/png"
             className="sr-only"
-            aria-label="选择头像文件"
+            aria-label={t("AgentEditorView.choose_avatar_file")}
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = "";
@@ -456,23 +459,19 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
             }}
           />
           <div className="row">
-            <button className="btn" onClick={() => input.current?.click()} disabled={busy}>
-              上传 PNG 头像
-            </button>
+            <button className="btn" onClick={() => input.current?.click()} disabled={busy}>{t("AgentEditorView.upload_png_avatar")}</button>
             {agent.hasAvatar ? (
-              <button className="btn danger" onClick={() => setConfirmRemove(true)} disabled={busy}>
-                删除头像
-              </button>
+              <button className="btn danger" onClick={() => setConfirmRemove(true)} disabled={busy}>{t("AgentEditorView.delete_avatar")}</button>
             ) : null}
           </div>
-          <p className="small muted">头像必须是小于 10 MiB 的 PNG。</p>
+          <p className="small muted">{t("AgentEditorView.the_avatar_must_be_a_png_smaller_than_10_mib")}</p>
         </div>
       </div>
       {confirmRemove ? (
         <ConfirmModal
-          title="删除头像"
-          message="确定删除该 Agent 的头像吗？"
-          confirmLabel="删除"
+          title={t("AgentEditorView.delete_avatar")}
+          message={t("AgentEditorView.delete_this_agent_s_avatar")}
+          confirmLabel={t("WorkspaceSidebar.delete_2")}
           danger
           busy={busy}
           onClose={() => setConfirmRemove(false)}
@@ -496,6 +495,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
 }
 
 function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: AgentDto) => void) => void }) {
+  useLocale();
   const models = useStore(appStore, (s) => s.models);
   const execution = agent.execution;
   const generation = execution.generation ?? {};
@@ -520,15 +520,15 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
   return (
     <div>
       <div className="card">
-        <h3>模型与推理</h3>
-        <Field label="模型" hint="留空时，新对话沿用此 Agent 最近选择的模型。">
+        <h3>{t("AgentEditorView.model_and_reasoning")}</h3>
+        <Field label={t("InspectorPanel.model")} hint={t("AgentEditorView.when_blank_new_conversations_use_the_most_recently_selected_model")}>
           <select
             className="select"
-            aria-label="模型"
+            aria-label={t("InspectorPanel.model")}
             value={execution.modelId ?? ""}
             onChange={(event) => setExecution({ modelId: event.target.value || null })}
           >
-            <option value="">（不设默认模型）</option>
+            <option value="">{t("AgentEditorView.no_default_model")}</option>
             {models.map((model) => (
               <option key={model.id} value={model.id} disabled={!model.enabled}>
                 {model.displayName}（{model.modelKey}）
@@ -536,14 +536,14 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
             ))}
           </select>
         </Field>
-        <Field label="备用识图模型" hint="主模型不支持图片时，先用此模型生成可审计的图片说明。">
+        <Field label={t("AgentEditorView.fallback_vision_model")} hint={t("AgentEditorView.when_the_main_model_cannot_accept_images_this_model_creates")}>
           <select
             className="select"
-            aria-label="备用识图模型"
+            aria-label={t("AgentEditorView.fallback_vision_model")}
             value={execution.visionModelId ?? ""}
             onChange={(event) => setExecution({ visionModelId: event.target.value || null })}
           >
-            <option value="">（未配置）</option>
+            <option value="">{t("AgentEditorView.not_configured")}</option>
             {models.filter((model) => model.enabled && model.capabilities.imageInput).map((model) => (
               <option key={model.id} value={model.id}>
                 {model.displayName}（{model.modelKey}）
@@ -552,10 +552,10 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
           </select>
         </Field>
         <div className="grid-2">
-          <Field label="上下文策略">
+          <Field label={t("AgentEditorView.context_policy")}>
             <select
               className="select"
-              aria-label="上下文策略"
+              aria-label={t("AgentEditorView.context_policy")}
               value={execution.contextPolicy}
               onChange={(event) => setExecution({ contextPolicy: event.target.value as ContextPolicy })}
             >
@@ -566,10 +566,10 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
               ))}
             </select>
           </Field>
-          <Field label="推理档位">
+          <Field label={t("ConnectionsView.reasoning_levels")}>
             <select
               className="select"
-              aria-label="推理档位"
+              aria-label={t("ConnectionsView.reasoning_levels")}
               value={execution.reasoningEffort}
               onChange={(event) => setExecution({ reasoningEffort: event.target.value as ReasoningEffort })}
             >
@@ -584,16 +584,16 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
       </div>
 
       <div className="card">
-        <h3>生成参数覆盖</h3>
+        <h3>{t("AgentEditorView.generation_parameter_overrides")}</h3>
         <div className="grid-2">
-          <Field label="温度" hint="0 - 2，留空使用模型默认。">
+          <Field label={t("ConnectionsView.temperature")} hint={t("AgentEditorView.0_2_leave_blank_to_use_the_model_default")}>
             <input
               className="input"
               type="number"
               step="0.1"
               min={0}
               max={2}
-              aria-label="温度"
+              aria-label={t("ConnectionsView.temperature")}
               value={generation.common?.temperature ?? ""}
               onChange={(event) =>
                 setGeneration({ temperature: event.target.value === "" ? undefined : Number(event.target.value) })
@@ -615,22 +615,22 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
             />
           </Field>
         </div>
-        <Field label="最大输出 token">
+        <Field label={t("ConnectionsView.maximum_output_tokens")}>
           <input
             className="input"
             type="number"
             min={1}
-            aria-label="最大输出 token"
+            aria-label={t("ConnectionsView.maximum_output_tokens")}
             value={generation.common?.maxOutputTokens ?? ""}
             onChange={(event) =>
               setGeneration({ maxOutputTokens: event.target.value === "" ? undefined : Number(event.target.value) })
             }
           />
         </Field>
-        <Field label="停止序列" hint="每行一个，最多 8 个。">
+        <Field label={t("AgentEditorView.stop_sequences")} hint={t("AgentEditorView.one_per_line_up_to_8")}>
           <textarea
             className="textarea"
-            aria-label="停止序列"
+            aria-label={t("AgentEditorView.stop_sequences")}
             value={(generation.common?.stopSequences ?? []).join("\n")}
             onChange={(event) =>
               setGeneration({
@@ -642,26 +642,26 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
       </div>
 
       <div className="card">
-        <h3>执行上限</h3>
+        <h3>{t("AgentEditorView.execution_limits")}</h3>
         <div className="grid-2">
-          <Field label="最大工具轮数">
+          <Field label={t("AgentEditorView.maximum_tool_rounds")}>
             <input
               className="input"
               type="number"
               min={1}
-              aria-label="最大工具轮数"
+              aria-label={t("AgentEditorView.maximum_tool_rounds")}
               value={execution.maxToolRounds ?? ""}
               onChange={(event) =>
                 setExecution({ maxToolRounds: event.target.value === "" ? null : Number(event.target.value) })
               }
             />
           </Field>
-          <Field label="最大后台任务数">
+          <Field label={t("AgentEditorView.maximum_background_tasks")}>
             <input
               className="input"
               type="number"
               min={0}
-              aria-label="最大后台任务数"
+              aria-label={t("AgentEditorView.maximum_background_tasks")}
               value={execution.maxBackgroundTasks ?? ""}
               onChange={(event) =>
                 setExecution({ maxBackgroundTasks: event.target.value === "" ? null : Number(event.target.value) })
@@ -669,12 +669,12 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
             />
           </Field>
         </div>
-        <Field label="任务日志上限（字节）">
+        <Field label={t("AgentEditorView.task_log_limit_bytes")}>
           <input
             className="input"
             type="number"
             min={1}
-            aria-label="任务日志上限"
+            aria-label={t("AgentEditorView.task_log_limit")}
             value={execution.taskLogLimitBytes ?? ""}
             onChange={(event) =>
               setExecution({ taskLogLimitBytes: event.target.value === "" ? null : Number(event.target.value) })
@@ -695,6 +695,7 @@ function ToolsTab({
   mutate: (fn: (draft: AgentDto) => void) => void;
   catalog: ToolCatalogItemDto[];
 }) {
+  useLocale();
   const tools = agent.execution.tools;
 
   const setTools = (patch: Partial<ToolPolicy>) =>
@@ -723,22 +724,22 @@ function ToolsTab({
 
   return (
     <div>
-      <p className="hint">搜索引擎和图片模型在全局设置中配置。此处只管理工具权限。</p>
+      <p className="hint">{t("AgentEditorView.configure_search_engines_and_image_models_in_global_settings_manage")}</p>
 
       <div className="card">
-        <h3>工具策略</h3>
+        <h3>{t("AgentEditorView.tool_policy")}</h3>
       <Switch
-        label="默认启用所有工具"
+        label={t("AgentEditorView.enable_all_tools_by_default")}
         checked={tools.defaultEnabled}
         onChange={(checked) => setTools({ defaultEnabled: checked })}
       />
       <table className="table agent-policy-table" style={{ marginTop: 12 }}>
         <thead>
           <tr>
-            <th>工具</th>
-            <th>启用</th>
-            <th>直接</th>
-            <th>审批</th>
+            <th>{t("SettingsView.tools")}</th>
+            <th>{t("SettingsView.enable")}</th>
+            <th>{t("AgentEditorView.direct")}</th>
+            <th>{t("SettingsView.approval")}</th>
           </tr>
         </thead>
         <tbody>
@@ -749,36 +750,36 @@ function ToolsTab({
             return (
               <tr key={tool.name}>
                 <td>
-                  <div>{tool.label}</div>
+                  <div>{toolLabel(tool)}</div>
                   <div className="small muted mono">{tool.name}</div>
-                  {tool.name === "browser_fetch" ? <div className="small muted">默认关闭；需显式启用。{tool.error ?? ""}</div> : null}
-                  {tool.name === "workspace_shell_readonly" ? <div className="small muted">只读、不联网；默认免审批。{!tool.available ? tool.error ?? "运行时不可用" : ""}</div> : null}
+                  {tool.name === "browser_fetch" ? <div className="small muted">{t("AgentEditorView.disabled_by_default_enable_explicitly", { value1: (toolError(tool) ?? "") })}</div> : null}
+                  {tool.name === "workspace_shell_readonly" ? <div className="small muted">{t("AgentEditorView.read_only_no_network_no_approval_by_default", { value1: (!tool.available ? toolError(tool) ?? t("detail.runtime_unavailable") : "") })}</div> : null}
                 </td>
-                <td data-label="启用">
+                <td data-label={t("SettingsView.enable")}>
                   <PolicySelector
-                    label={`${tool.label} 启用策略`}
+                    label={t("AgentEditorView.enablement_policy", { value1: (toolLabel(tool)) })}
                     value={enabled === undefined ? "default" : enabled ? "on" : "off"}
-                    options={[["default", "默认"], ["on", "启用"], ["off", "停用"]]}
+                    options={[["default", t("AgentEditorView.default")], ["on", t("SettingsView.enable")], ["off", t("AgentEditorView.disable")]]}
                     onChange={(value) => {
                       setOverride("overrides", tool.name, value === "default" ? null : value === "on");
                     }}
                   />
                 </td>
-                <td data-label="直接性">
+                <td data-label={t("AgentEditorView.availability_mode")}>
                   <PolicySelector
-                    label={`${tool.label} 直接性`}
+                    label={t("AgentEditorView.availability_mode_2", { value1: (toolLabel(tool)) })}
                     value={direct === undefined ? "default" : direct ? "direct" : "lazy"}
-                    options={[["default", "默认"], ["direct", "直接"], ["lazy", "惰性"]]}
+                    options={[["default", t("AgentEditorView.default")], ["direct", t("AgentEditorView.direct")], ["lazy", t("AgentEditorView.lazy")]]}
                     onChange={(value) => {
                       setOverride("directOverrides", tool.name, value === "default" ? null : value === "direct");
                     }}
                   />
                 </td>
-                <td data-label="审批">
+                <td data-label={t("SettingsView.approval")}>
                   <PolicySelector
-                    label={`${tool.label} 审批策略`}
+                    label={t("AgentEditorView.approval_policy", { value1: (toolLabel(tool)) })}
                     value={approval ?? "default"}
-                    options={[["default", "默认"], ["always", "每次"], ["never", "免审"]]}
+                    options={[["default", t("AgentEditorView.default")], ["always", t("AgentEditorView.always")], ["never", t("AgentEditorView.never")]]}
                     onChange={(value) => {
                       setApproval(tool.name, value === "default" ? null : value);
                     }}
@@ -805,6 +806,7 @@ function PolicySelector<T extends string>({
   options: Array<[T, string]>;
   onChange: (value: T) => void;
 }) {
+  useLocale();
   return (
     <div className="policy-segmented" role="group" aria-label={label}>
       {options.map(([option, text]) => (
@@ -828,22 +830,23 @@ function SkillsTab({
   mutate: (fn: (draft: AgentDto) => void) => void;
   skills: SkillDto[];
 }) {
+  useLocale();
   const enabled = new Set(agent.execution.enabledSkillIds);
   return (
     <div className="card">
-      <h3>启用的 Skill</h3>
+      <h3>{t("AgentEditorView.enabled_skills")}</h3>
       {skills.length === 0 ? (
-        <EmptyState title="没有可用 Skill" hint="在设置中安装或发现 Skill。" />
+        <EmptyState title={t("AgentEditorView.no_available_skills")} hint={t("AgentEditorView.install_or_discover_skills_in_settings")} />
       ) : (
         <div className="agent-skill-list">
           {skills.map((skill) => (
             <div key={skill.id} className="agent-skill-row">
               <div className="agent-skill-copy">
-                <strong>{skill.name}</strong>
-                <span>{skill.description || "无描述"}</span>
+                <strong>{skillName(skill)}</strong>
+                <span>{skillDescription(skill) || t("SettingsView.no_description")}</span>
               </div>
               <Switch
-                label={`启用 ${skill.name}`}
+                label={t("ConnectionsView.enable", { value1: (skillName(skill)) })}
                 hideLabel
                 checked={enabled.has(skill.id)}
                 disabled={skill.state === "error" || skill.state === "unloaded"}
@@ -865,14 +868,15 @@ function SkillsTab({
 }
 
 function UserProfileTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: AgentDto) => void) => void }) {
+  useLocale();
   return (
     <div className="card">
-      <h3>用户画像覆盖</h3>
-      <p className="small muted">留空时使用全局用户画像。</p>
-      <Field label="用户显示名">
+      <h3>{t("AgentEditorView.user_profile_overrides")}</h3>
+      <p className="small muted">{t("AgentEditorView.leave_blank_to_use_the_global_user_profile")}</p>
+      <Field label={t("SettingsView.user_display_name")}>
         <input
           className="input"
-          aria-label="用户显示名"
+          aria-label={t("SettingsView.user_display_name")}
           value={agent.userProfile.displayName ?? ""}
           onChange={(event) =>
             mutate((draft) => {
@@ -884,9 +888,9 @@ function UserProfileTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draf
           }
         />
       </Field>
-      <Field label="用户描述">
+      <Field label={t("SettingsView.user_description")}>
         <ExpandableTextarea
-          label="用户描述"
+          label={t("SettingsView.user_description")}
           value={agent.userProfile.description ?? ""}
           onChange={(value) =>
             mutate((draft) => {

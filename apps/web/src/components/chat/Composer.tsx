@@ -1,3 +1,5 @@
+import { useErrorState } from "../../lib/error-display";
+import { t, useLocale, localized } from "../../lib/i18n";
 import { offlineStore } from "../../lib/offline-history";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
@@ -84,6 +86,7 @@ export const Composer = memo(function Composer({
   onRoleplayStateChange?: (state: ConversationRoleplayState) => void;
   onOpenRoleplay?: () => void;
 }) {
+  useLocale();
   const settings = useStore(appStore, (state) => state.settings);
   const agents = useStore(appStore, (state) => state.agents);
   const models = useStore(appStore, (state) => state.models);
@@ -282,7 +285,7 @@ export const Composer = memo(function Composer({
     try {
       await endpoints.updateConversation(conversation.id, { workspacePath: path });
       await refreshConversations();
-      toast("success", path ? "工作目录已更新" : "工作目录已清除");
+      toast("success", path ? t("Composer.working_directory_updated") : t("Composer.working_directory_cleared"));
     } catch (error) {
       toastError(error);
     }
@@ -292,15 +295,15 @@ export const Composer = memo(function Composer({
     let content = (overrideText ?? text).trim();
     if ((!content && !attachments.length) || sending || uploading || savingOverrides) return;
     if (!effectiveAgent) {
-      toast("error", "请先选择一个 Agent");
+      toast("error", localized("Composer.select_an_agent_first"));
       return;
     }
     if (!modelAvailable) {
-      toast("error", "请先选择一个可用模型");
+      toast("error", localized("Composer.select_an_available_model_first"));
       return;
     }
     if (attachments.some((asset) => asset.kind === "image") && !imageConfigured) {
-      toast("error", "当前模型不支持图片，请先为 Agent 配置备用识图模型");
+      toast("error", localized("Composer.this_model_does_not_support_images_configure_a_fallback_vision"));
       return;
     }
     setSending(true);
@@ -315,7 +318,7 @@ export const Composer = memo(function Composer({
         content = (automated.sendText ?? automated.draft ?? content).trim();
       }
       if (!content && !attachments.length) {
-        toast("error", "发送前脚本清空了消息");
+        toast("error", localized("Composer.the_before_send_script_cleared_the_message"));
         return;
       }
       if (!conversation) {
@@ -369,6 +372,7 @@ export const Composer = memo(function Composer({
   };
 
   const useQuickReply = async (reply: (typeof quickReplies)[number]) => {
+  useLocale();
     if (controlsDisabled) return;
     if (reply.mode === "insert") {
       const next = text ? `${text}${text.endsWith("\n") ? "" : "\n"}${reply.content}` : reply.content;
@@ -378,7 +382,7 @@ export const Composer = memo(function Composer({
       void sendMessage(reply.content); return;
     }
     if (!conversation) {
-      toast("info", "受限脚本需要先创建会话"); return;
+      toast("info", localized("Composer.create_a_conversation_before_running_sandboxed_scripts")); return;
     }
     try {
       const result = await endpoints.executeRoleplayScript(conversation.id, { quickReplyId: reply.id, draft: text });
@@ -417,7 +421,7 @@ export const Composer = memo(function Composer({
           setNewOverrides(draft.overrides); setNewWorkspace(draft.workspace);
           explicitNewModel.current = Object.hasOwn(draft.overrides, "modelId");
           onGreetingIndexChange(draft.greetingIndex);
-        }}>切换保留的草稿</button>}
+        }}>{t("Composer.switch_saved_draft")}</button>}
         <div
           className="composer-surface"
           onDragOver={(event) => {
@@ -443,9 +447,9 @@ export const Composer = memo(function Composer({
               <div className="composer-input-area" ref={inputAreaRef}>
               <textarea
                 className="composer-input"
-                aria-label="输入消息"
+                aria-label={t("Composer.enter_a_message")}
                 placeholder={
-                  !effectiveAgent ? "请先选择 Agent" : !modelAvailable ? "请先选择模型" : "请输入"
+                  !effectiveAgent ? t("Composer.select_an_agent_first_2") : !modelAvailable ? t("Composer.select_a_model_first") : t("Composer.type_a_message")
                 }
                 value={text}
                 rows={2}
@@ -471,10 +475,10 @@ export const Composer = memo(function Composer({
 
               <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={uploading || sending} />
               {attachments.some((asset) => asset.kind === "image") && !imageConfigured ? (
-                <p className="composer-warning">当前模型不支持图片，Agent 也未配置备用识图模型。</p>
+                <p className="composer-warning">{t("Composer.this_model_does_not_support_images_and_the_agent_has")}</p>
               ) : null}
               {quickReplies.some((reply) => reply.pinned) ? (
-                <div className="quick-reply-row" aria-label="快捷回复">
+                <div className="quick-reply-row" aria-label={t("Composer.quick_replies")}>
                   {quickReplies.filter((reply) => reply.pinned).map((reply) => (
                     <button type="button" className="quick-reply" key={reply.id} title={reply.tooltip || reply.label} onClick={() => void useQuickReply(reply)} disabled={controlsDisabled}>
                       {reply.mode === "script" ? <Zap size={13} aria-hidden="true" /> : null}{reply.label}
@@ -504,25 +508,25 @@ export const Composer = memo(function Composer({
                   <Popover.Root modal={false} open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setTypographyOpen(false); }}>
                     {typographyOpen ? <Popover.Anchor virtualRef={inputAreaRef} /> : null}
                     <Popover.Trigger asChild><button type="button" className="chip composer-settings-trigger"
-                      aria-label="低频设置" title="低频设置">
+                      aria-label={t("Composer.more_settings")} title={t("Composer.more_settings")}>
                       <Settings2 size={26} />
                       {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
                     </button></Popover.Trigger>
                     <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}
                       onInteractOutside={(event) => { if (typographyOpen) event.preventDefault(); }}>
                       {typographyOpen ? <>
-                        <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>返回</button><strong>聊天排版</strong>
-                          <button type="button" aria-label="关闭排版面板" onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
+                        <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>{t("Composer.back")}</button><strong>{t("SettingsView.chat_typography")}</strong>
+                          <button type="button" aria-label={t("Composer.close_typography_settings")} onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
                         <ChatTypographySettings />
                       </> : <>
-                      <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>聊天排版</strong><small>字号、字间距与行间距</small></span></button>
+                      <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>{t("SettingsView.chat_typography")}</strong><small>{t("Composer.font_size_letter_spacing_and_line_height")}</small></span></button>
                       {toolbar.foldAgent ? <AgentPicker menuItem agents={agents} value={effectiveAgentId} disabled={controlsDisabled}
                         onChange={(id) => { setSettingsOpen(false); chooseAgent(id); }} /> : null}
-                      <button type="button" aria-label="选择工作目录" onClick={() => { setSettingsOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
-                        <FolderOpen size={18} /><span><strong>工作目录</strong><small>{workspace ?? "未选择"}</small></span>
+                      <button type="button" aria-label={t("SettingsView.choose_working_directory")} onClick={() => { setSettingsOpen(false); setPickingWorkspace(true); }} disabled={controlsDisabled}>
+                        <FolderOpen size={18} /><span><strong>{t("SettingsView.working_directory")}</strong><small>{workspace ?? t("Composer.not_selected")}</small></span>
                       </button>
-                      <button type="button" aria-label="高级执行设置" onClick={() => { setSettingsOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
-                        <Settings2 size={18} /><span><strong>高级执行设置</strong><small>{Object.keys(overrides).length ? `${Object.keys(overrides).length} 项覆盖` : "跟随 Agent"}</small></span>
+                      <button type="button" data-execution-settings aria-label={t("Composer.advanced_execution_settings")} onClick={() => { setSettingsOpen(false); setEditingOverrides(true); }} disabled={controlsDisabled}>
+                        <Settings2 size={18} /><span><strong>{t("Composer.advanced_execution_settings")}</strong><small>{Object.keys(overrides).length ? t("Composer.overrides", { count: Number((Object.keys(overrides).length)), value1: (Object.keys(overrides).length) }) : t("dialogs.follow_agent_2")}</small></span>
                       </button>
                       </>}
                     </Popover.Content></Popover.Portal>
@@ -542,8 +546,8 @@ export const Composer = memo(function Composer({
                     onContextMenu={(event) => event.preventDefault()}
                     onClick={(event) => { if (event.detail === 0) void sendMessage(); }}
                     disabled={sendDisabled}
-                    aria-label={active ? "加入队列" : "发送"}
-                    title={active ? "点击加入轮末队列；长按 Steer，在下次模型请求前发送" : "发送；长按可在生成期间 Steer"}
+                    aria-label={active ? t("Composer.add_to_queue") : t("RoleplayTab.send")}
+                    title={active ? t("Composer.click_to_queue_after_this_turn_hold_to_steer_before") : t("Composer.send_hold_to_steer_during_generation")}
                   >
                     <Send size={18} />
                   </button>
@@ -557,33 +561,33 @@ export const Composer = memo(function Composer({
 
       {actionsHost && conversation ? createPortal((<Popover.Root open={moreOpen} onOpenChange={setMoreOpen}>
                     <Popover.Trigger asChild>
-                      <button type="button" className="icon-button" aria-label="会话操作" title="更多">
+                      <button type="button" className="icon-button" aria-label={t("Composer.conversation_actions")} title={t("Composer.more")}>
                         <MoreHorizontal size={17} aria-hidden="true" />
                       </button>
                     </Popover.Trigger>
                     <Popover.Portal>
                       <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10}>
                         {roleplayAvailable ? (
-                          <button type="button" aria-label="角色会话设置" onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
+                          <button type="button" aria-label={t("RoleplayConversationDialog.roleplay_conversation_settings")} onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
                             <Drama size={16} aria-hidden="true" />
-                            <span><strong>角色会话</strong><small>预设、人物、世界书与场景</small></span>
+                            <span><strong>{t("Composer.character_chat")}</strong><small>{t("Composer.presets_personas_world_books_and_scenarios")}</small></span>
                           </button>
                         ) : null}
                         {quickReplies.filter((reply) => !reply.pinned).map((reply) => (
                           <button type="button" key={reply.id} title={reply.tooltip || reply.label} onClick={() => { setMoreOpen(false); void useQuickReply(reply); }} disabled={controlsDisabled}>
                             <Zap size={16} aria-hidden="true" />
-                            <span><strong>{reply.label}</strong><small>{reply.mode === "insert" ? "插入草稿" : reply.mode === "send" ? "立即发送" : "受限脚本"}</small></span>
+                            <span><strong>{reply.label}</strong><small>{reply.mode === "insert" ? t("RoleplayTab.insert_into_draft") : reply.mode === "send" ? t("RoleplayTab.send_immediately") : t("RoleplayTab.restricted_script")}</small></span>
                           </button>
                         ))}
                         <button
                           type="button"
-                          aria-label="立即压缩上下文"
+                          aria-label={t("Composer.compact_context_now")}
                           onClick={() => { setMoreOpen(false); onCompact(); }}
                           disabled={controlsDisabled || compacting || !canCompact}
-                          title={canCompact ? "立即压缩上下文" : "智能或摘要策略下，至少三轮对话后可压缩"}
+                          title={canCompact ? t("Composer.compact_context_now") : t("Composer.smart_or_summary_mode_can_compact_after_at_least_three")}
                         >
                           {compacting ? <LoaderCircle className="spin" size={16} /> : <Minimize2 size={16} />}
-                          <span><strong>压缩上下文</strong><small>{canCompact ? "立即生成会话摘要" : "当前不可用"}</small></span>
+                          <span><strong>{t("Composer.compact_context")}</strong><small>{canCompact ? t("Composer.generate_conversation_summary_now") : t("Composer.currently_unavailable")}</small></span>
                         </button>
                       </Popover.Content>
                     </Popover.Portal>
@@ -603,7 +607,7 @@ export const Composer = memo(function Composer({
           models={models}
           onClose={() => setEditingOverrides(false)}
           onSave={async (next) => {
-            await saveOverrides(next, "执行设置已保存");
+            await saveOverrides(next, t("Composer.execution_settings_saved"));
             setEditingOverrides(false);
           }}
         />
@@ -630,10 +634,11 @@ function ApprovalCard({
   count: number;
   onInspect: (target: InspectionTarget) => void;
 }) {
+  useLocale();
   const [denying, setDenying] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useErrorState(null);
 
   const resolve = async (approved: boolean) => {
     setBusy(true);
@@ -645,19 +650,19 @@ function ApprovalCard({
       setDenying(false);
       setReason("");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "审批失败");
+      setError(cause instanceof Error ? cause : t("Composer.approval_failed"));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <section className="approval-card" aria-label="工具审批">
+    <section className="approval-card" aria-label={t("Composer.tool_approval")}>
       <header>
         <Wrench size={17} aria-hidden="true" />
         <div>
           <strong>{item.call.name}</strong>
-          <span>第 1 项，共 {count} 项</span>
+          <span>{t("Composer.item_1_of", { value1: (count) })}</span>
         </div>
         <button
           type="button"
@@ -670,7 +675,7 @@ function ApprovalCard({
               toolCallId: item.call.id
             })
           }
-          aria-label="检查工具调用"
+          aria-label={t("MessageStream.inspect_tool_call")}
         >
           <Settings2 size={15} />
         </button>
@@ -683,28 +688,20 @@ function ApprovalCard({
       ) : null}
       {denying ? (
         <label>
-          <span>拒绝原因（可选）</span>
+          <span>{t("Composer.reason_for_rejection_optional")}</span>
           <input className="input" value={reason} onChange={(event) => setReason(event.target.value)} autoFocus />
         </label>
       ) : null}
       <footer>
         {denying ? (
           <>
-            <Button onClick={() => setDenying(false)} disabled={busy}>
-              返回
-            </Button>
-            <Button variant="danger" onClick={() => void resolve(false)} disabled={busy}>
-              确认拒绝
-            </Button>
+            <Button onClick={() => setDenying(false)} disabled={busy}>{t("Composer.back")}</Button>
+            <Button variant="danger" onClick={() => void resolve(false)} disabled={busy}>{t("Composer.confirm_rejection")}</Button>
           </>
         ) : (
           <>
-            <Button onClick={() => setDenying(true)} disabled={busy}>
-              拒绝
-            </Button>
-            <Button variant="primary" onClick={() => void resolve(true)} disabled={busy}>
-              允许
-            </Button>
+            <Button onClick={() => setDenying(true)} disabled={busy}>{t("Composer.reject")}</Button>
+            <Button variant="primary" onClick={() => void resolve(true)} disabled={busy}>{t("Composer.allow")}</Button>
           </>
         )}
       </footer>

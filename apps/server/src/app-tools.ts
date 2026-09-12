@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type { ConversationService } from "./conversations";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve, sep } from "node:path";
@@ -126,7 +127,7 @@ export class AppTools {
     if (action === "create") return this.changed("agents", this.deps.store.createAgent(agentInputSchema.parse(object(input))));
     if (action === "update") {
       const agent = this.deps.store.updateAgent(id(input), agentInputSchema.partial().parse(object(input)));
-      if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+      if (!agent) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
       this.deps.tasks.notifyAgentPolicyChanged(agent.id);
       return this.changed("agents", agent, agent.id);
     }
@@ -148,20 +149,20 @@ export class AppTools {
     if (action === "set_avatar") {
       const loaded = await this.sourceFile(input, signal, context);
       if (loaded.bytes.byteLength > 10 * 1024 * 1024 || sniffImage(loaded.bytes) !== "image/png") {
-        throw new StoreError("agent_avatar_invalid", "头像必须是小于 10 MiB 的 PNG");
+        throw withMessage(new StoreError("agent_avatar_invalid", "头像必须是小于 10 MiB 的 PNG"), "error.the_avatar_must_be_a_png_smaller_than_10_mib");
       }
       const agent = this.deps.store.setAgentAvatar(id(input), loaded.bytes);
-      if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+      if (!agent) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
       return this.changed("agents", agent, agent.id);
     }
     if (action === "remove_avatar") {
       const agent = this.deps.store.setAgentAvatar(id(input), null);
-      if (!agent) throw new StoreError("agent_not_found", "Agent 不存在");
+      if (!agent) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
       return this.changed("agents", agent, agent.id);
     }
     if (action === "delete") {
-      if (this.deps.tasks.hasNonterminalForAgent(id(input))) throw new StoreError("agent_busy", "Agent 仍有后台任务");
-      if (!this.deps.store.deleteAgent(id(input))) throw new StoreError("agent_not_found", "Agent 不存在");
+      if (this.deps.tasks.hasNonterminalForAgent(id(input))) throw withMessage(new StoreError("agent_busy", "Agent 仍有后台任务"), "error.the_agent_still_has_background_tasks");
+      if (!this.deps.store.deleteAgent(id(input))) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
       return this.changed("agents", { success: true }, id(input));
     }
     throw invalidAction(action);
@@ -187,9 +188,9 @@ export class AppTools {
     }
     if (action === "update") {
       const value = object(input);
-      if (Object.hasOwn(value, "workspacePath")) throw new StoreError("app_workspace_path_forbidden", "网站管理工具不能绑定任意宿主机路径");
+      if (Object.hasOwn(value, "workspacePath")) throw withMessage(new StoreError("app_workspace_path_forbidden", "网站管理工具不能绑定任意宿主机路径"), "error.app_management_tools_cannot_bind_arbitrary_host_paths");
       const conversation = this.deps.store.updateConversation(id(input), patchConversationSchema.parse(value));
-      if (!conversation) throw new StoreError("conversation_not_found", "会话不存在");
+      if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
       return this.changed("conversations", conversation, conversation.id);
     }
     if (action === "fork") {
@@ -203,7 +204,7 @@ export class AppTools {
     if (action === "select_generation") {
       const messageId = string(input, "message_id");
       if (!this.deps.store.selectGeneration(messageId, string(input, "generation_id"))) {
-        throw new StoreError("generation_not_found", "回复版本不存在");
+        throw withMessage(new StoreError("generation_not_found", "回复版本不存在"), "error.reply_version_not_found");
       }
       return this.changed("conversations", { success: true, messageId }, this.deps.store.conversationIdForMessage(messageId));
     }
@@ -216,7 +217,7 @@ export class AppTools {
     if (action === "update") {
       const patch = appSettingsUpdateSchema.parse(object(input));
       for (const agentId of [patch.defaultAgentId, patch.lastAgentId]) {
-        if (agentId && !this.deps.store.getAgent(agentId)) throw new StoreError("agent_not_found", "Agent 不存在");
+        if (agentId && !this.deps.store.getAgent(agentId)) throw withMessage(new StoreError("agent_not_found", "Agent 不存在"), "error.agent_not_found");
       }
       return this.changed("settings", this.deps.store.updateSettings(patch));
     }
@@ -235,7 +236,7 @@ export class AppTools {
     if (action === "update") {
       const value = connectionInputPatchSchema.parse(object(input));
       const connection = this.deps.store.updateConnection(id(input), value);
-      if (!connection) throw new StoreError("connection_not_found", "连接不存在");
+      if (!connection) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
       return this.changed("connections", connection, connection.id);
     }
     const connection = requiredResource(this.deps.store.getConnection(id(input)), "connection_not_found", "连接不存在");
@@ -260,7 +261,7 @@ export class AppTools {
       return this.changed("models", { discovered: discovered.length, models: changed, warning: enrichment.warning ?? null });
     }
     if (action === "delete") {
-      if (!this.deps.store.deleteConnection(connection.id)) throw new StoreError("connection_not_found", "连接不存在");
+      if (!this.deps.store.deleteConnection(connection.id)) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
       return this.changed("connections", { success: true }, connection.id);
     }
     throw invalidAction(action);
@@ -272,27 +273,27 @@ export class AppTools {
     if (action === "get") return json(requiredResource(this.deps.store.getModel(id(input)), "model_not_found", "模型不存在"));
     if (action === "create") {
       const value = modelInputSchema.parse(object(input));
-      if (!this.deps.store.getConnection(value.connectionId)) throw new StoreError("connection_not_found", "连接不存在");
+      if (!this.deps.store.getConnection(value.connectionId)) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
       return this.changed("models", this.deps.store.createModel(value));
     }
     if (action === "update") {
       const value = modelInputSchema.partial().parse(object(input));
       if (value.connectionId && !this.deps.store.getConnection(value.connectionId)) {
-        throw new StoreError("connection_not_found", "连接不存在");
+        throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
       }
       const model = this.deps.store.updateModel(id(input), value);
-      if (!model) throw new StoreError("model_not_found", "模型不存在");
+      if (!model) throw withMessage(new StoreError("model_not_found", "模型不存在"), "error.model_not_found");
       return this.changed("models", model, model.id);
     }
     if (action === "restore_catalog") {
       const model = requiredResource(this.deps.store.getModel(id(input)), "model_not_found", "模型不存在");
       const connection = requiredResource(this.deps.store.getConnection(model.connectionId), "connection_not_found", "连接不存在");
       const enriched = await this.deps.catalog.enrichOne(connection, model.modelKey, model.modelKey);
-      if (!enriched?.catalogMetadata) throw new StoreError("model_catalog_match_not_found", "模型目录中没有可信匹配");
+      if (!enriched?.catalogMetadata) throw withMessage(new StoreError("model_catalog_match_not_found", "模型目录中没有可信匹配"), "error.no_trusted_match_found_in_the_model_catalog");
       return this.changed("models", this.deps.store.restoreCatalogModel(model.id, enriched.input, enriched.catalogMetadata), model.id);
     }
     if (action === "delete") {
-      if (!this.deps.store.deleteModel(id(input))) throw new StoreError("model_not_found", "模型不存在");
+      if (!this.deps.store.deleteModel(id(input))) throw withMessage(new StoreError("model_not_found", "模型不存在"), "error.model_not_found");
       return this.changed("models", { success: true }, id(input));
     }
     throw invalidAction(action);
@@ -306,14 +307,14 @@ export class AppTools {
     if (action === "create") return this.changed("mcp", this.deps.store.createMcpServer(mcpServerInputSchema.parse({ ...object(input), headers: {} })));
     if (action === "update") {
       const server = this.deps.store.updateMcpServer(id(input), mcpServerPatchSchema.parse(object(input)));
-      if (!server) throw new StoreError("mcp_server_not_found", "MCP 服务不存在");
+      if (!server) throw withMessage(new StoreError("mcp_server_not_found", "MCP 服务不存在"), "error.mcp_server_not_found");
       mcpManager(this.deps.store).invalidate(server.id);
       return this.changed("mcp", server, server.id);
     }
     if (action === "test") return json(await mcpManager(this.deps.store).test(id(input)));
     if (action === "delete") {
       mcpManager(this.deps.store).invalidate(id(input));
-      if (!this.deps.store.deleteMcpServer(id(input))) throw new StoreError("mcp_server_not_found", "MCP 服务不存在");
+      if (!this.deps.store.deleteMcpServer(id(input))) throw withMessage(new StoreError("mcp_server_not_found", "MCP 服务不存在"), "error.mcp_server_not_found");
       return this.changed("mcp", { success: true }, id(input));
     }
     throw invalidAction(action);
@@ -348,7 +349,7 @@ export class AppTools {
     if (action === "update") {
       const value = object(input);
       if (value.search && typeof value.search === "object" && Object.hasOwn(value.search, "apiKey")) {
-        throw new StoreError("secret_field_forbidden", "搜索 API Key 必须在 Agent 设置中修改");
+        throw withMessage(new StoreError("secret_field_forbidden", "搜索 API Key 必须在 Agent 设置中修改"), "error.change_the_search_api_key_in_agent_settings");
       }
       const parsed = toolSettingsInputSchema.parse(value);
       return this.changed("tools", this.deps.store.updateToolSettings(parsed));
@@ -381,7 +382,7 @@ export class AppTools {
     if (action === "run_script") {
       const conversation = requiredResource(this.deps.store.getConversation(conversationId), "conversation_not_found", "会话不存在");
       const agent = conversation.agentId ? this.deps.store.getAgent(conversation.agentId) : undefined;
-      if (!agent?.roleplay.enabled) throw new StoreError("roleplay_disabled", "当前 Agent 未启用角色扮演");
+      if (!agent?.roleplay.enabled) throw withMessage(new StoreError("roleplay_disabled", "当前 Agent 未启用角色扮演"), "error.roleplay_is_not_enabled_for_this_agent");
       const state = this.deps.store.getConversationRoleplayState(conversationId);
       try {
         const result = executeRestrictedStscript(string(input, "script"), typeof input.draft === "string" ? input.draft : "", state, agent.roleplay);
@@ -411,7 +412,7 @@ export class AppTools {
       requireContext(context);
       const assetId = string(input, "asset_id");
       const owned = this.deps.store.conversationHasFileAsset(context!.conversationId, assetId);
-      if (!owned) throw new StoreError("file_asset_not_found", "当前会话没有该附件");
+      if (!owned) throw withMessage(new StoreError("file_asset_not_found", "当前会话没有该附件"), "error.this_conversation_does_not_contain_that_attachment");
       const loaded = await this.deps.files.readFileAsset(assetId);
       return { bytes: loaded.bytes, fileName: loaded.asset.fileName };
     }
@@ -419,10 +420,10 @@ export class AppTools {
     if (source === "workspace") {
       const path = await this.workspaceSource(input, context);
       const info = await stat(path);
-      if (!info.isFile() || info.size > 10 * 1024 * 1024) throw new StoreError("card_too_large", "文件必须小于 10 MiB");
+      if (!info.isFile() || info.size > 10 * 1024 * 1024) throw withMessage(new StoreError("card_too_large", "文件必须小于 10 MiB"), "error.the_file_must_be_smaller_than_10_mib");
       return { bytes: new Uint8Array(await readFile(path)), fileName: path.split(sep).at(-1) || "file" };
     }
-    throw new StoreError("file_source_invalid", "source 必须是 attachment、url 或 workspace");
+    throw withMessage(new StoreError("file_source_invalid", "source 必须是 attachment、url 或 workspace"), "error.source_must_be_attachment_url_or_workspace");
   }
 
   private async workspaceSource(input: JsonObject, context?: ToolExecutionContext): Promise<string> {
@@ -430,13 +431,13 @@ export class AppTools {
     const root = input.workspace === "project"
       ? context!.snapshot.workspacePath
       : this.deps.files.attachmentWorkspace(context!.conversationId);
-    if (!root) throw new StoreError("workspace_required", "当前会话没有项目工作区");
+    if (!root) throw withMessage(new StoreError("workspace_required", "当前会话没有项目工作区"), "error.this_conversation_has_no_project_workspace");
     const value = string(input, "path");
-    if (isAbsolute(value)) throw new StoreError("workspace_path_invalid", "路径必须相对工作区");
+    if (isAbsolute(value)) throw withMessage(new StoreError("workspace_path_invalid", "路径必须相对工作区"), "error.the_path_must_be_relative_to_the_workspace");
     const canonicalRoot = await realpath(root);
     const canonical = await realpath(resolve(root, value));
     if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) {
-      throw new StoreError("workspace_path_invalid", "路径越过了工作区边界");
+      throw withMessage(new StoreError("workspace_path_invalid", "路径越过了工作区边界"), "error.the_path_crosses_the_workspace_boundary");
     }
     return canonical;
   }
@@ -467,17 +468,17 @@ function requiredResource<T>(value: T | undefined, code: string, message: string
   return value;
 }
 function requireContext(context?: ToolExecutionContext): asserts context is ToolExecutionContext {
-  if (!context) throw new StoreError("tool_context_required", "该操作需要会话上下文");
+  if (!context) throw withMessage(new StoreError("tool_context_required", "该操作需要会话上下文"), "error.this_operation_requires_a_conversation_context");
 }
 function assertNoSecrets(input: JsonObject): void {
   if (Object.hasOwn(input, "apiKey") || Object.hasOwn(input, "secretHeaders")) {
-    throw new StoreError("secret_field_forbidden", "网站管理工具不能读取或修改连接密钥");
+    throw withMessage(new StoreError("secret_field_forbidden", "网站管理工具不能读取或修改连接密钥"), "error.app_management_tools_cannot_read_or_change_connection_secrets");
   }
 }
 function assertNoHeaders(input: JsonObject): void {
-  if (Object.hasOwn(input, "headers")) throw new StoreError("secret_field_forbidden", "网站管理工具不能读取或修改 MCP 请求头");
+  if (Object.hasOwn(input, "headers")) throw withMessage(new StoreError("secret_field_forbidden", "网站管理工具不能读取或修改 MCP 请求头"), "error.app_management_tools_cannot_read_or_change_mcp_request_headers");
 }
-function invalidAction(action: string): StoreError { return new StoreError("app_tool_action_invalid", `不支持的操作：${action}`); }
+function invalidAction(action: string): StoreError { return withMessage(new StoreError("app_tool_action_invalid", `不支持的操作：${action}`), "error.unsupported_action", { value1: action }); }
 function fileMarkdown(asset: FileAssetDto): string {
   const label = asset.fileName.replace(/[\[\]]/g, "") || "file";
   return asset.kind === "image" ? `![${label}](${asset.url})` : `[${label}](${asset.url})`;

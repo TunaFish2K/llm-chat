@@ -22,5 +22,5 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   external: ["node:sqlite", "sqlite"],
-  noExternal: ["@llm-chat/contracts", "@llm-chat/providers"]
+  noExternal: ["@llm-chat/contracts", "@llm-chat/providers", "@llm-chat/i18n"]
 });

@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type { AgentRoleplayConfig, ConversationRoleplayState, ConversationRoleplayStatePatch } from "@llm-chat/contracts";
 import { StoreError } from "./errors";
 
@@ -16,9 +17,9 @@ export function executeRestrictedStscript(
   state: ConversationRoleplayState,
   config: AgentRoleplayConfig
 ): StscriptResult {
-  if (source.length > 500_000) throw new StoreError("roleplay_script_too_large", "脚本内容过长");
+  if (source.length > 500_000) throw withMessage(new StoreError("roleplay_script_too_large", "脚本内容过长"), "error.the_script_is_too_long");
   const commands = splitCommands(source);
-  if (commands.length > 100) throw new StoreError("roleplay_script_too_many_commands", "单次最多执行 100 条脚本命令");
+  if (commands.length > 100) throw withMessage(new StoreError("roleplay_script_too_many_commands", "单次最多执行 100 条脚本命令"), "error.run_up_to_100_script_commands_at_a_time");
   const variables = { ...state.variables };
   const patch: ConversationRoleplayStatePatch = {};
   const output: string[] = [];
@@ -40,7 +41,7 @@ export function executeRestrictedStscript(
     } else if (name === "/addvar" || name === "/incvar" || name === "/decvar") {
       requireArg(args[0], name);
       const delta = name === "/incvar" ? 1 : name === "/decvar" ? -1 : Number(args[1] ?? pipe);
-      if (!Number.isFinite(delta)) throw new StoreError("roleplay_script_argument_invalid", `${name} 需要数字`);
+      if (!Number.isFinite(delta)) throw withMessage(new StoreError("roleplay_script_argument_invalid", `${name} 需要数字`), "error.requires_a_number", { value1: name });
       variables[args[0]!] = Number(variables[args[0]!] ?? 0) + delta;
       pipe = String(variables[args[0]!]!);
     } else if (name === "/echo") {
@@ -49,7 +50,7 @@ export function executeRestrictedStscript(
       nextDraft = args.join(" ") || pipe; pipe = nextDraft;
     } else if (name === "/send") {
       sendText = args.join(" ") || pipe || nextDraft;
-      if (!sendText.trim()) throw new StoreError("roleplay_script_argument_invalid", "/send 没有可发送内容");
+      if (!sendText.trim()) throw withMessage(new StoreError("roleplay_script_argument_invalid", "/send 没有可发送内容"), "error.send_has_no_content_to_send");
       pipe = sendText;
     } else if (name === "/note") {
       patch.authorNote = args.join(" ") || pipe;
@@ -59,21 +60,21 @@ export function executeRestrictedStscript(
       pipe = patch.scenarioOverride;
     } else if (name === "/persona") {
       requireArg(args[0], name);
-      if (!config.personas.some((item) => item.id === args[0])) throw new StoreError("roleplay_script_target_invalid", "人物身份不属于当前 Agent");
+      if (!config.personas.some((item) => item.id === args[0])) throw withMessage(new StoreError("roleplay_script_target_invalid", "人物身份不属于当前 Agent"), "error.the_persona_does_not_belong_to_this_agent");
       patch.personaId = args[0]!;
     } else if (name === "/preset") {
       requireArg(args[0], name);
-      if (!config.presets.some((item) => item.id === args[0])) throw new StoreError("roleplay_script_target_invalid", "预设不属于当前 Agent");
+      if (!config.presets.some((item) => item.id === args[0])) throw withMessage(new StoreError("roleplay_script_target_invalid", "预设不属于当前 Agent"), "error.the_preset_does_not_belong_to_this_agent");
       patch.presetId = args[0]!;
     } else if (name === "/world") {
       requireArg(args[0], name);
-      if (!config.lorebooks.some((item) => item.id === args[0])) throw new StoreError("roleplay_script_target_invalid", "世界书不属于当前 Agent");
+      if (!config.lorebooks.some((item) => item.id === args[0])) throw withMessage(new StoreError("roleplay_script_target_invalid", "世界书不属于当前 Agent"), "error.the_world_book_does_not_belong_to_this_agent");
       const enabled = !["off", "false", "0"].includes((args[1] ?? "on").toLocaleLowerCase());
       patch.enabledLorebookIds = enabled
         ? [...new Set([...(patch.enabledLorebookIds ?? state.enabledLorebookIds), args[0]!])]
         : (patch.enabledLorebookIds ?? state.enabledLorebookIds).filter((id) => id !== args[0]);
     } else {
-      throw new StoreError("roleplay_script_command_unsupported", `不支持的命令：${name || command}`);
+      throw withMessage(new StoreError("roleplay_script_command_unsupported", `不支持的命令：${name || command}`), "error.unsupported_command", { value1: name || command });
     }
   }
   patch.variables = variables;
@@ -91,7 +92,7 @@ function splitCommands(source: string): string[] {
       current = "";
     } else current += char;
   }
-  if (quote) throw new StoreError("roleplay_script_syntax_invalid", "脚本引号没有闭合");
+  if (quote) throw withMessage(new StoreError("roleplay_script_syntax_invalid", "脚本引号没有闭合"), "error.the_script_contains_an_unclosed_quote");
   if (current.trim() && !current.trim().startsWith("#")) output.push(current.trim());
   return output;
 }
@@ -101,7 +102,7 @@ function tokenize(source: string): string[] {
 }
 
 function requireArg(value: string | undefined, command: string): void {
-  if (!value) throw new StoreError("roleplay_script_argument_invalid", `${command} 缺少参数`);
+  if (!value) throw withMessage(new StoreError("roleplay_script_argument_invalid", `${command} 缺少参数`), "error.is_missing_an_argument", { value1: command });
 }
 
 function scalar(value: string): string | number | boolean {

@@ -1,3 +1,5 @@
+import { useErrorState } from "../lib/error-display";
+import { t, useLocale, localized } from "../lib/i18n";
 import { useCallback, useEffect, useState } from "react";
 import { ModelBrandIcon } from "../components/chat/ModelBrandIcon";
 import { Bot, Plus } from "lucide-react";
@@ -26,6 +28,7 @@ interface BalanceState {
 }
 
 export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {}) {
+  useLocale();
   const connections = useStore(appStore, (s) => s.connections);
   const models = useStore(appStore, (s) => s.models);
   const [editingConnection, setEditingConnection] = useState<ConnectionDto | "new" | null>(null);
@@ -47,7 +50,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     } catch (error) {
       setBalances((current) => ({
         ...current,
-        [connection.id]: { loading: false, error: error instanceof Error ? error.message : "余额获取失败" }
+        [connection.id]: { loading: false, error: error instanceof Error ? error.message : t("ConnectionsView.could_not_retrieve_balance") }
       }));
     }
   }, []);
@@ -64,7 +67,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     setBusy(true);
     try {
       const result = await endpoints.testConnection(connection.id);
-      toast("success", `连接正常，发现 ${result.modelsFound} 个模型`);
+      toast("success", localized("ConnectionsView.connected_found_models", { value1: (result.modelsFound) }));
     } catch (error) {
       toastError(error);
     } finally {
@@ -78,11 +81,11 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
       const result = await endpoints.discoverModels(connection.id);
       await refreshConnectionsAndModels();
       const details = [
-        `发现 ${result.discovered}`,
-        `新增 ${result.created.length}`,
-        `更新 ${result.updated.length}`,
-        `保留手动配置 ${result.skipped}`,
-        `目录未匹配 ${result.unmatched}`
+        t("ConnectionsView.found", { value1: (result.discovered) }),
+        t("ConnectionsView.added", { value1: (result.created.length) }),
+        t("ConnectionsView.updated", { value1: (result.updated.length) }),
+        t("ConnectionsView.kept_manual_settings_for", { value1: (result.skipped) }),
+        t("ConnectionsView.unmatched_in_catalog", { value1: (result.unmatched) })
       ];
       toast(result.warnings.length > 0 ? "info" : "success", `${details.join("，")}。${result.warnings.join("；")}`);
     } catch (error) {
@@ -95,23 +98,21 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
   const actions = (
     <div className={embedded ? "connection-actions" : "actions"}>
       <button className="btn primary" onClick={() => setEditingConnection("new")}>
-        <Plus size={15} aria-hidden="true" />
-        新建连接
-      </button>
+        <Plus size={15} aria-hidden="true" />{t("ConnectionsView.new_connection")}</button>
     </div>
   );
 
   return (
     <>
       {!embedded ? <div className="page-header">
-        <h2>连接与模型</h2>
+        <h2>{t("SettingsView.connections_and_models")}</h2>
         {actions}
       </div> : null}
       <div className="panel-scroll">
         <div className="panel-inner">
           {embedded ? actions : null}
           {connections.length === 0 ? (
-            <EmptyState title="还没有连接" hint="添加一个模型提供方连接，然后发现或手动添加模型。" />
+            <EmptyState title={t("ConnectionsView.no_connections_yet")} hint={t("ConnectionsView.add_a_model_provider_connection_then_discover_models_or_add")} />
           ) : (
             connections.map((connection) => {
               const balance = balances[connection.id];
@@ -125,83 +126,68 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       <span className="tag">{connection.protocol}</span>
                     </h3>
                     <div className="list-row-actions">
-                      <button className="btn small" onClick={() => { setNewModelConnection(connection.id); setEditingModel("new"); }}>手动添加模型</button>
-                      <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>
-                        测试连接
-                      </button>
-                      <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>
-                        发现模型
-                      </button>
-                      <button className="btn small" onClick={() => setEditingConnection(connection)}>
-                        编辑
-                      </button>
-                      <button className="btn small danger" onClick={() => setDeletingConnection(connection)}>
-                        删除
-                      </button>
+                      <button className="btn small" onClick={() => { setNewModelConnection(connection.id); setEditingModel("new"); }}>{t("ConnectionsView.add_model_manually")}</button>
+                      <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>{t("ConnectionsView.test_connection")}</button>
+                      <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>{t("ConnectionsView.discover_models")}</button>
+                      <button className="btn small" onClick={() => setEditingConnection(connection)}>{t("SettingsView.edit")}</button>
+                      <button className="btn small danger" onClick={() => setDeletingConnection(connection)}>{t("WorkspaceSidebar.delete_2")}</button>
                     </div>
                   </header>
                   <p className="small muted mono">{connection.baseUrl}</p>
                   <p className="small muted">
-                    API Key：{connection.hasApiKey ? "已配置" : "未配置"}
+                    API Key：{connection.hasApiKey ? t("ConnectionsView.configured") : t("ConnectionsView.not_configured")}
                     {connection.secretHeaderNames.length > 0
-                      ? ` · 秘密头：${connection.secretHeaderNames.join(", ")}`
+                      ? t("ConnectionsView.secret_headers", { value1: (connection.secretHeaderNames.join(", ")) })
                       : ""}
                   </p>
                   {connection.balanceConfig?.enabled ? (
-                    <p className="small">
-                      余额：
-                      {balance?.loading ? (
-                        "查询中…"
+                    <p className="small">{(<>{t("ConnectionsView.balance", { value1: "" })}{(balance?.loading ? (
+                        t("detail.checking")
                       ) : balance?.error ? (
                         <span style={{ color: "var(--danger)" }}>{balance.error}</span>
                       ) : balance?.value !== undefined ? (
                         <>
                           <strong>{balance.value}</strong>
-                          {balance.cached ? "（缓存）" : ""} · {formatTime(balance.fetchedAt)}
+                          {balance.cached ? t("detail.cached") : ""} · {formatTime(balance.fetchedAt)}
                         </>
                       ) : (
-                        "未查询"
-                      )}{" "}
-                      <button className="btn small ghost" onClick={() => void loadBalance(connection, true)}>
-                        刷新
-                      </button>
+                        t("detail.not_checked")
+                      ))}</>)}<button className="btn small ghost" onClick={() => void loadBalance(connection, true)}>{t("TasksView.refresh")}</button>
                     </p>
                   ) : null}
 
                   {connectionModels.length === 0 ? (
-                    <p className="small muted">该连接下没有模型。</p>
+                    <p className="small muted">{t("ConnectionsView.this_connection_has_no_models")}</p>
                   ) : (
                     <table className="table connection-model-table">
                       <thead>
                         <tr>
-                          <th>模型</th>
-                          <th>上下文</th>
-                          <th>来源</th>
-                          <th>启用</th>
-                          <th>操作</th>
+                          <th>{t("InspectorPanel.model")}</th>
+                          <th>{t("InspectorPanel.context")}</th>
+                          <th>{t("SettingsView.source")}</th>
+                          <th>{t("SettingsView.enable")}</th>
+                          <th>{t("TasksView.actions")}</th>
                         </tr>
                       </thead>
                       <tbody>
                         {connectionModels.map((model) => (
                           <tr key={model.id}>
-                            <td className="connection-model-summary" data-label="模型">
+                            <td className="connection-model-summary" data-label={t("InspectorPanel.model")}>
                               <div className="list-row-title">
                                 <ModelBrandIcon model={model} connection={connection} />
                                 <span>{model.displayName}</span>
-                                {model.catalogManaged ? <span className="tag ok">自动维护</span> : null}
+                                {model.catalogManaged ? <span className="tag ok">{t("ConnectionsView.managed_automatically")}</span> : null}
                               </div>
                               <div className="small muted mono">{model.modelKey}</div>
                             </td>
-                            <td className="connection-model-context" data-label="上下文">
+                            <td className="connection-model-context" data-label={t("InspectorPanel.context")}>
                               <div>{formatTokens(model.contextWindow ?? undefined)}</div>
-                              <div className="small muted">
-                                输入 {formatTokens(model.maxInputTokens ?? undefined)} · 输出 {formatTokens(model.maxOutputTokens)}
-                              </div>
+                              <div className="small muted">{t("ConnectionsView.input_output", { value1: (formatTokens(model.maxInputTokens ?? undefined)), value2: (formatTokens(model.maxOutputTokens)) })}</div>
                             </td>
-                            <td className="connection-model-meta" data-label="来源">{model.source === "discovered" ? "发现" : "手动"}</td>
-                            <td className="connection-model-meta connection-model-enabled" data-label="启用">
+                            <td className="connection-model-meta" data-label={t("SettingsView.source")}>{model.source === "discovered" ? t("ConnectionsView.discovered") : t("ConnectionsView.manual")}</td>
+                            <td className="connection-model-meta connection-model-enabled" data-label={t("SettingsView.enable")}>
                               <Switch
-                                label={`启用 ${model.displayName}`}
+                                label={t("ConnectionsView.enable", { value1: (model.displayName) })}
                                 hideLabel
                                 checked={model.enabled}
                                 onChange={(checked) => {
@@ -212,13 +198,9 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                                 }}
                               />
                             </td>
-                            <td className="connection-model-actions" data-label="操作">
-                              <button className="btn small" onClick={() => setEditingModel(model)}>
-                                编辑
-                              </button>{" "}
-                              <button className="btn small danger" onClick={() => setDeletingModel(model)}>
-                                删除
-                              </button>
+                            <td className="connection-model-actions" data-label={t("TasksView.actions")}>
+                              <button className="btn small" onClick={() => setEditingModel(model)}>{t("SettingsView.edit")}</button>{" "}
+                              <button className="btn small danger" onClick={() => setDeletingModel(model)}>{t("WorkspaceSidebar.delete_2")}</button>
                             </td>
                           </tr>
                         ))}
@@ -247,9 +229,9 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
       ) : null}
       {deletingConnection ? (
         <ConfirmModal
-          title={`删除连接 ${deletingConnection.name}`}
-          message="删除连接会一并删除其下的所有模型，并清除指向这些模型的默认模型设置。"
-          confirmLabel="删除"
+          title={t("ConnectionsView.delete_connection", { value1: (deletingConnection.name) })}
+          message={t("ConnectionsView.deleting_this_connection_also_deletes_all_its_models_and_clears")}
+          confirmLabel={t("WorkspaceSidebar.delete_2")}
           danger
           onClose={() => setDeletingConnection(null)}
           onConfirm={() => {
@@ -264,9 +246,9 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
       ) : null}
       {deletingModel ? (
         <ConfirmModal
-          title={`删除模型 ${deletingModel.displayName}`}
-          message="确定删除该模型吗？"
-          confirmLabel="删除"
+          title={t("ConnectionsView.delete_model", { value1: (deletingModel.displayName) })}
+          message={t("ConnectionsView.delete_this_model")}
+          confirmLabel={t("WorkspaceSidebar.delete_2")}
           danger
           onClose={() => setDeletingModel(null)}
           onConfirm={() => {
@@ -284,6 +266,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
 }
 
 function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto | null; onClose: () => void }) {
+  useLocale();
   const initialProviderId = connection?.providerId ?? "custom";
   const [providerId, setProviderId] = useState<ProviderPresetId>(initialProviderId);
   const [name, setName] = useState(connection?.name ?? "");
@@ -295,7 +278,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
   const [balancePath, setBalancePath] = useState(connection?.balanceConfig?.apiPath ?? "");
   const [balanceExpression, setBalanceExpression] = useState(connection?.balanceConfig?.resultExpression ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
   const selectedProvider = providerPreset(providerId);
 
   const chooseProvider = (next: ProviderPresetId) => {
@@ -363,16 +346,16 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         try {
           const result = await endpoints.discoverModels(saved.id);
           await refreshConnectionsAndModels();
-          toast("success", `连接已保存，发现 ${result.discovered} 个模型，新增 ${result.created.length} 个`);
+          toast("success", localized("ConnectionsView.connection_saved_found_models_and_added", { value1: (result.discovered), value2: (result.created.length) }));
         } catch (cause) {
-          toast("error", `连接已保存，但自动发现模型失败：${cause instanceof Error ? cause.message : "请求失败"}`);
+          toast("error", localized("ConnectionsView.connection_saved_but_model_discovery_failed", { value1: (cause instanceof Error ? cause.message : t("detail.request_failed")) }));
         }
       } else {
-        toast("success", "连接已保存");
+        toast("success", localized("ConnectionsView.connection_saved"));
       }
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_save"));
     } finally {
       setBusy(false);
     }
@@ -380,21 +363,17 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
 
   return (
     <Modal
-      title={connection ? `编辑连接 ${connection.name}` : "新建连接"}
+      title={connection ? t("ConnectionsView.edit_connection", { value1: (connection.name) }) : t("ConnectionsView.new_connection")}
       onClose={onClose}
       wide
       footer={
         <>
-          <button className="btn" onClick={onClose}>
-            取消
-          </button>
+          <button className="btn" onClick={onClose}>{t("WorkspaceSidebar.cancel")}</button>
           <button
             className="btn primary"
             disabled={busy || !name.trim() || !baseUrl.trim() || (providerId !== "custom" && !apiKey && !connection?.hasApiKey)}
             onClick={() => void save()}
-          >
-            保存
-          </button>
+          >{t("WorkspaceSidebar.save")}</button>
         </>
       }
     >
@@ -418,10 +397,10 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         </select>
       </Field>
       <div className="grid-2">
-        <Field label="名称" htmlFor="conn-name">
+        <Field label={t("SettingsView.name")} htmlFor="conn-name">
           <input id="conn-name" className="input" value={name} onChange={(event) => setName(event.target.value)} />
         </Field>
-        <Field label="协议" htmlFor="conn-protocol">
+        <Field label={t("InspectorPanel.protocol")} htmlFor="conn-protocol">
           <select
             id="conn-protocol"
             className="select"
@@ -447,7 +426,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
       </Field>
       <Field
         label="API Key"
-        hint={connection?.hasApiKey ? "已配置；留空保持不变。" : providerId === "custom" ? "可选。" : "预置 Provider 需要 API Key。"}
+        hint={connection?.hasApiKey ? t("ConnectionsView.configured_leave_blank_to_keep_the_existing_value") : providerId === "custom" ? t("ConnectionsView.optional") : t("ConnectionsView.preset_providers_require_an_api_key")}
         htmlFor="conn-api-key"
       >
         <input
@@ -460,10 +439,10 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         />
       </Field>
       <Field
-        label="秘密请求头"
+        label={t("ConnectionsView.secret_headers_2")}
         hint={
           connection && connection.secretHeaderNames.length > 0
-            ? `当前已配置：${connection.secretHeaderNames.join(", ")}。添加同名请求头会覆盖，留空列表则保持不变。`
+            ? t("ConnectionsView.currently_configured_a_matching_header_name_replaces_its_value_leave", { value1: (connection.secretHeaderNames.join(", ")) })
             : undefined
         }
       >
@@ -472,8 +451,8 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
             <input
               className="input mono"
               style={{ flex: 1 }}
-              placeholder="Header 名称"
-              aria-label={`请求头 ${index + 1} 名称`}
+              placeholder={t("SettingsView.header_name")}
+              aria-label={t("SettingsView.header_name_2", { value1: (index + 1) })}
               value={header.name}
               onChange={(event) =>
                 setHeaders(headers.map((item, i) => (i === index ? { ...item, name: event.target.value } : item)))
@@ -482,40 +461,34 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
             <input
               className="input mono"
               style={{ flex: 2 }}
-              placeholder="值"
-              aria-label={`请求头 ${index + 1} 值`}
+              placeholder={t("SettingsView.value")}
+              aria-label={t("SettingsView.header_value", { value1: (index + 1) })}
               value={header.value}
               onChange={(event) =>
                 setHeaders(headers.map((item, i) => (i === index ? { ...item, value: event.target.value } : item)))
               }
             />
-            <button className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>
-              移除
-            </button>
+            <button className="btn small" onClick={() => setHeaders(headers.filter((_, i) => i !== index))}>{t("SettingsView.remove")}</button>
           </div>
         ))}
-        <button className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>
-          添加请求头
-        </button>
+        <button className="btn small" onClick={() => setHeaders([...headers, { name: "", value: "" }])}>{t("SettingsView.add_header")}</button>
       </Field>
       <label className="checkbox-row">
-        <input type="checkbox" checked={balanceEnabled} onChange={(event) => setBalanceEnabled(event.target.checked)} />
-        启用余额查询
-      </label>
+        <input type="checkbox" checked={balanceEnabled} onChange={(event) => setBalanceEnabled(event.target.checked)} />{t("ConnectionsView.enable_balance_lookup")}</label>
       {balanceEnabled ? (
         <div className="grid-2" style={{ marginTop: 8 }}>
-          <Field label="余额 API 路径" hint="相对连接 origin 的根路径，如 /dashboard/billing/credit_grants。">
+          <Field label={t("ConnectionsView.balance_api_path")} hint={t("ConnectionsView.an_absolute_path_relative_to_the_connection_origin_such_as")}>
             <input
               className="input mono"
-              aria-label="余额 API 路径"
+              aria-label={t("ConnectionsView.balance_api_path")}
               value={balancePath}
               onChange={(event) => setBalancePath(event.target.value)}
             />
           </Field>
-          <Field label="取值表达式" hint="从响应 JSON 中取余额数值。">
+          <Field label={t("ConnectionsView.value_expression")} hint={t("ConnectionsView.extract_the_balance_from_the_response_json")}>
             <input
               className="input mono"
-              aria-label="取值表达式"
+              aria-label={t("ConnectionsView.value_expression")}
               value={balanceExpression}
               onChange={(event) => setBalanceExpression(event.target.value)}
             />
@@ -528,23 +501,24 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
 
 type BooleanModelCapability = Exclude<keyof ModelCapabilities, "maxImageInputs">;
 
-const CAPABILITY_LABELS: Array<[BooleanModelCapability, string]> = [
-  ["imageInput", "图片输入"],
-  ["imageOutput", "图片输出"],
-  ["imageEdit", "图片编辑"],
-  ["imageInpaint", "图片局部重绘"],
-  ["imageVariation", "图片变体"],
-  ["imageMultiple", "多图输出"],
-  ["tools", "工具"],
-  ["temperature", "温度"],
+function getCAPABILITY_LABELS(): Array<[BooleanModelCapability, string]> { return [
+  ["imageInput", t("ConnectionsView.image_input")],
+  ["imageOutput", t("ConnectionsView.image_output")],
+  ["imageEdit", t("ConnectionsView.image_editing")],
+  ["imageInpaint", t("ConnectionsView.image_inpainting")],
+  ["imageVariation", t("ConnectionsView.image_variations")],
+  ["imageMultiple", t("ConnectionsView.multiple_image_outputs")],
+  ["tools", t("SettingsView.tools")],
+  ["temperature", t("ConnectionsView.temperature")],
   ["topP", "Top-P"],
-  ["reasoning", "推理"],
-  ["reasoningSummary", "推理摘要"],
-  ["adaptiveThinking", "自适应思考"],
-  ["manualThinking", "手动思考"]
-];
+  ["reasoning", t("TrajectoryView.reasoning")],
+  ["reasoningSummary", t("ConnectionsView.reasoning_summary")],
+  ["adaptiveThinking", t("ConnectionsView.adaptive_thinking")],
+  ["manualThinking", t("ConnectionsView.manual_thinking")]
+]; }
 
 function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto | null; onClose: () => void; initialConnectionId?: string }) {
+  useLocale();
   const connections = useStore(appStore, (s) => s.connections);
   const [connectionId, setConnectionId] = useState(model?.connectionId ?? initialConnectionId ?? connections[0]?.id ?? "");
   const [modelKey, setModelKey] = useState(model?.modelKey ?? "");
@@ -571,7 +545,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
   const [temperature, setTemperature] = useState(model?.defaultSettings.common.temperature?.toString() ?? "");
   const [reasoningSummary, setReasoningSummary] = useState(model?.defaultSettings.protocol.reasoningSummary ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useErrorState(null);
 
   const save = async () => {
     setBusy(true);
@@ -602,10 +576,10 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
       if (model) await endpoints.updateModel(model.id, input);
       else await endpoints.createModel(input);
       await refreshConnectionsAndModels();
-      toast("success", "模型已保存");
+      toast("success", localized("ConnectionsView.model_saved"));
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存失败");
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_save"));
     } finally {
       setBusy(false);
     }
@@ -618,10 +592,10 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
     try {
       await endpoints.restoreModelCatalog(model.id);
       await refreshConnectionsAndModels();
-      toast("success", "已恢复目录托管并刷新模型参数");
+      toast("success", localized("ConnectionsView.restored_catalog_management_and_refreshed_model_settings"));
       onClose();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "恢复目录托管失败");
+      setError(cause instanceof Error ? cause : t("ConnectionsView.could_not_restore_catalog_management"));
     } finally {
       setBusy(false);
     }
@@ -629,26 +603,20 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
 
   return (
     <Modal
-      title={model ? `编辑模型 ${model.displayName}` : "手动添加模型"}
+      title={model ? t("ConnectionsView.edit_model", { value1: (model.displayName) }) : t("ConnectionsView.add_model_manually")}
       onClose={onClose}
       wide
       footer={
         <>
           {model && !model.catalogManaged ? (
-            <button className="btn" disabled={busy} onClick={() => void restoreCatalog()}>
-              恢复目录托管
-            </button>
+            <button className="btn" disabled={busy} onClick={() => void restoreCatalog()}>{t("ConnectionsView.restore_catalog_management")}</button>
           ) : null}
-          <button className="btn" onClick={onClose}>
-            取消
-          </button>
+          <button className="btn" onClick={onClose}>{t("WorkspaceSidebar.cancel")}</button>
           <button
             className="btn primary"
             disabled={busy || !modelKey.trim() || !displayName.trim() || !connectionId}
             onClick={() => void save()}
-          >
-            保存
-          </button>
+          >{t("WorkspaceSidebar.save")}</button>
         </>
       }
     >
@@ -660,25 +628,25 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
       {model ? (
         <div className="model-management-note" data-managed={model.catalogManaged || undefined}>
           <div>
-            <strong>{model.catalogManaged ? "自动维护模型参数" : "当前使用手动参数"}</strong>
+            <strong>{model.catalogManaged ? t("ConnectionsView.manage_model_settings_automatically") : t("ConnectionsView.using_manual_settings")}</strong>
             <span>
               {model.catalogManaged
                 ? model.catalogMetadata
-                  ? "参数来自 models.dev。保存下面的技术参数会转为手动配置，后续发现不会覆盖。"
-                  : "暂未匹配目录记录；重新发现时会继续尝试。保存参数后将转为手动配置。"
+                  ? t("ConnectionsView.settings_come_from_models_dev_saving_technical_settings_below_switches")
+                  : t("ConnectionsView.no_catalog_match_yet_discovery_will_try_again_saving_settings")
                 : model.catalogMetadata
-                  ? "可恢复目录托管，重新采用 models.dev 的能力、限制和价格数据。"
-                  : "该模型尚未匹配到目录记录。"}
+                  ? t("ConnectionsView.restore_catalog_management_to_use_capabilities_limits_and_prices_from")
+                  : t("ConnectionsView.this_model_has_no_matching_catalog_entry_yet")}
             </span>
           </div>
-          <span className={`tag ${model.catalogManaged ? "ok" : ""}`}>{model.catalogManaged ? "自动" : "手动"}</span>
+          <span className={`tag ${model.catalogManaged ? "ok" : ""}`}>{model.catalogManaged ? t("ConnectionsView.automatic") : t("ConnectionsView.manual")}</span>
         </div>
       ) : null}
       <div className="grid-2">
-        <Field label="所属连接">
+        <Field label={t("ConnectionsView.connection")}>
           <select
             className="select"
-            aria-label="所属连接"
+            aria-label={t("ConnectionsView.connection")}
             value={connectionId}
             onChange={(event) => {
               const nextConnectionId = event.target.value;
@@ -697,27 +665,27 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
             ))}
           </select>
         </Field>
-        <Field label="显示名">
+        <Field label={t("SettingsView.display_name")}>
           <input
             className="input"
-            aria-label="显示名"
+            aria-label={t("SettingsView.display_name")}
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
           />
         </Field>
       </div>
-      <Field label="模型标识（modelKey）">
+      <Field label={t("ConnectionsView.model_identifier_modelkey")}>
         <input
           className="input mono"
-          aria-label="模型标识"
+          aria-label={t("ConnectionsView.model_identifier")}
           value={modelKey}
           onChange={(event) => setModelKey(event.target.value)}
         />
       </Field>
-      <Field label="图片协议" hint="配置后，模型可用于 Responses 原生生图和 Agent 的 image_generate 工具；两者可同时使用。">
+      <Field label={t("ConnectionsView.image_protocol")} hint={t("ConnectionsView.when_configured_the_model_supports_both_native_responses_image_generation")}>
         <select
           className="select"
-          aria-label="图片协议"
+          aria-label={t("ConnectionsView.image_protocol")}
           value={imageProtocol ?? ""}
           onChange={(event) => {
             const next = (event.target.value || null) as ModelInput["imageProtocol"];
@@ -725,7 +693,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
             setCapabilities((current) => ({ ...current, imageOutput: Boolean(next) }));
           }}
         >
-          <option value="">不启用图片生成</option>
+          <option value="">{t("ConnectionsView.disable_image_generation")}</option>
           {(supportedImageProtocols.length
             ? supportedImageProtocols
             : ["openai-images", "google-imagen", "google-interactions", "stability-image"] as const
@@ -736,56 +704,56 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
                 : protocol === "google-imagen"
                 ? "Google Imagen"
                 : protocol === "google-interactions"
-                ? "Google Gemini 图片"
+                ? t("ConnectionsView.google_gemini_images")
                 : "Stability Image"}
             </option>
           ))}
         </select>
       </Field>
       <div className="grid-3">
-        <Field label="上下文窗口" hint="留空表示未知。">
+        <Field label={t("ConnectionsView.context_window")} hint={t("ConnectionsView.leave_blank_if_unknown")}>
           <input
             className="input"
             type="number"
-            aria-label="上下文窗口"
+            aria-label={t("ConnectionsView.context_window")}
             value={contextWindow}
             onChange={(event) => setContextWindow(event.target.value)}
           />
         </Field>
-        <Field label="最大输入 token" hint="留空时按上下文窗口计算。">
+        <Field label={t("ConnectionsView.maximum_input_tokens")} hint={t("ConnectionsView.uses_the_context_window_when_blank")}>
           <input
             className="input"
             type="number"
-            aria-label="最大输入 token"
+            aria-label={t("ConnectionsView.maximum_input_tokens")}
             value={maxInputTokens}
             onChange={(event) => setMaxInputTokens(event.target.value)}
           />
         </Field>
-        <Field label="最大输出 token">
+        <Field label={t("ConnectionsView.maximum_output_tokens")}>
           <input
             className="input"
             type="number"
-            aria-label="最大输出 token"
+            aria-label={t("ConnectionsView.maximum_output_tokens")}
             value={maxOutputTokens}
             onChange={(event) => setMaxOutputTokens(event.target.value)}
           />
         </Field>
       </div>
-      <Field label="最大图片输入数" hint="留空表示不声明上限；超出上限的旧图片会转换为缓存的文字说明。">
+      <Field label={t("ConnectionsView.maximum_input_images")} hint={t("ConnectionsView.leave_blank_for_no_declared_limit_older_images_exceeding_the")}>
         <input
           className="input"
           type="number"
           min="1"
           step="1"
-          aria-label="最大图片输入数"
+          aria-label={t("ConnectionsView.maximum_input_images")}
           value={maxImageInputs}
           onChange={(event) => setMaxImageInputs(event.target.value)}
         />
       </Field>
       {model?.catalogMetadata ? <ModelCatalogDetails model={model} /> : null}
-      <Field label="能力">
+      <Field label={t("ConnectionsView.capabilities")}>
         <div>
-          {CAPABILITY_LABELS.map(([key, label]) => (
+          {getCAPABILITY_LABELS().map(([key, label]) => (
             <label key={key} className="checkbox-row">
               <input
                 type="checkbox"
@@ -798,24 +766,24 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         </div>
       </Field>
       <div className="grid-2">
-        <Field label="默认温度" hint="留空使用提供方默认。">
+        <Field label={t("ConnectionsView.default_temperature")} hint={t("ConnectionsView.leave_blank_to_use_the_provider_default")}>
           <input
             className="input"
             type="number"
             step="0.1"
-            aria-label="默认温度"
+            aria-label={t("ConnectionsView.default_temperature")}
             value={temperature}
             onChange={(event) => setTemperature(event.target.value)}
           />
         </Field>
-        <Field label="推理摘要">
+        <Field label={t("ConnectionsView.reasoning_summary")}>
           <select
             className="select"
-            aria-label="推理摘要"
+            aria-label={t("ConnectionsView.reasoning_summary")}
             value={reasoningSummary}
             onChange={(event) => setReasoningSummary(event.target.value)}
           >
-            <option value="">（不设置）</option>
+            <option value="">{t("ConnectionsView.not_set")}</option>
             <option value="auto">auto</option>
             <option value="concise">concise</option>
             <option value="detailed">detailed</option>
@@ -827,27 +795,24 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
 }
 
 function ModelCatalogDetails({ model }: { model: ModelDto }) {
+  useLocale();
   const metadata = model.catalogMetadata;
   if (!metadata) return null;
   const pricing = metadata.pricing;
   return (
     <details className="model-catalog-details">
-      <summary>模型目录详情</summary>
+      <summary>{t("ConnectionsView.model_catalog_details")}</summary>
       <dl className="catalog-detail-grid">
-        <div><dt>目录标识</dt><dd className="mono">{metadata.providerId} / {metadata.modelId}</dd></div>
-        <div><dt>系列与发布</dt><dd>{metadata.family ?? "—"} · {metadata.releaseDate ?? "—"}</dd></div>
-        <div><dt>输入模态</dt><dd>{metadata.inputModalities.join("、") || "—"}</dd></div>
-        <div><dt>输出模态</dt><dd>{metadata.outputModalities.join("、") || "—"}</dd></div>
-        <div className="detail-grid-wide"><dt>推理档位</dt><dd>{metadata.reasoningEfforts.join("、") || "目录未声明"}</dd></div>
-        {metadata.description ? <div className="detail-grid-wide"><dt>说明</dt><dd>{metadata.description}</dd></div> : null}
+        <div><dt>{t("ConnectionsView.catalog_identifier")}</dt><dd className="mono">{metadata.providerId} / {metadata.modelId}</dd></div>
+        <div><dt>{t("ConnectionsView.family_and_release")}</dt><dd>{metadata.family ?? "—"} · {metadata.releaseDate ?? "—"}</dd></div>
+        <div><dt>{t("ConnectionsView.input_modalities")}</dt><dd>{metadata.inputModalities.join("、") || "—"}</dd></div>
+        <div><dt>{t("ConnectionsView.output_modalities")}</dt><dd>{metadata.outputModalities.join("、") || "—"}</dd></div>
+        <div className="detail-grid-wide"><dt>{t("ConnectionsView.reasoning_levels")}</dt><dd>{metadata.reasoningEfforts.join("、") || t("ConnectionsView.not_specified_in_catalog")}</dd></div>
+        {metadata.description ? <div className="detail-grid-wide"><dt>{t("ConnectionsView.notes")}</dt><dd>{metadata.description}</dd></div> : null}
         {pricing ? (
           <div className="detail-grid-wide">
-            <dt>价格（每百万 token）</dt>
-            <dd>
-              输入 ${pricing.input} · 输出 ${pricing.output}
-              {pricing.cacheRead !== undefined ? ` · 缓存读取 $${pricing.cacheRead}` : ""}
-              {pricing.cacheWrite !== undefined ? ` · 缓存写入 $${pricing.cacheWrite}` : ""}
-            </dd>
+            <dt>{t("ConnectionsView.price_per_million_tokens")}</dt>
+            <dd>{t("ConnectionsView.input_output_2", { value1: (pricing.input), value2: (pricing.output), value3: (pricing.cacheRead !== undefined ? t("detail.cache_read", { value1: (pricing.cacheRead) }) : ""), value4: (pricing.cacheWrite !== undefined ? t("detail.cache_write", { value1: (pricing.cacheWrite) }) : "") })}</dd>
           </div>
         ) : null}
       </dl>

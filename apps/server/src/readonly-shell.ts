@@ -1,3 +1,4 @@
+import { withMessage, errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { constants } from "node:fs";
 import { access, lstat, mkdtemp, open, readdir, readlink, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,7 +23,7 @@ export interface ReadonlyShellInput {
  */
 function socketFilter(): Buffer {
   const architecture = process.arch === "x64" ? 0xc000003e : process.arch === "arm64" ? 0xc00000b7 : null;
-  if (architecture === null) throw new Error("只读 Shell 暂不支持此 CPU 架构");
+  if (architecture === null) throw withMessage(new Error("只读 Shell 暂不支持此 CPU 架构"), "error.read_only_shell_does_not_support_this_cpu_architecture");
   const instructions: number[][] = [
     [0x20, 0, 0, 4], [0x15, 1, 0, architecture], [0x06, 0, 0, 0x80000000],
     [0x20, 0, 0, 0], [0x45, 0, 1, 0x40000000], [0x06, 0, 0, 0x00050001],
@@ -41,7 +42,7 @@ function socketFilter(): Buffer {
 
 function inside(root: string, path: string): string {
   const suffix = relative(root, path);
-  if (isAbsolute(suffix) || suffix === ".." || suffix.startsWith(`..${sep}`)) throw new Error("工作目录超出所选工作区");
+  if (isAbsolute(suffix) || suffix === ".." || suffix.startsWith(`..${sep}`)) throw withMessage(new Error("工作目录超出所选工作区"), "error.the_working_directory_is_outside_the_selected_workspace");
   return suffix;
 }
 
@@ -76,7 +77,7 @@ async function maskSpecialFiles(root: string, destination: string, signal: Abort
       const path = join(directory, entry.name);
       if (entry.isDirectory()) pending.push(path);
       else if (!entry.isFile() && !entry.isSymbolicLink()) {
-        if (masks.length >= 3000) throw new Error("工作目录包含过多特殊文件，无法建立只读沙箱");
+        if (masks.length >= 3000) throw withMessage(new Error("工作目录包含过多特殊文件，无法建立只读沙箱"), "error.the_working_directory_contains_too_many_special_files_to_create_a_read");
         masks.push("--ro-bind", "/proc/self/fd/4", join(destination, path));
       }
     }
@@ -92,6 +93,9 @@ export class ReadonlyShellManager {
   private readonly active = new Map<AbortController, Promise<string>>();
   private failure: string | null = "只读 Shell 尚未初始化";
 
+  private failureI18n: LocalizedMessage | undefined = { key: "runtime.shell_initializing" };
+  get errorI18n(): LocalizedMessage | undefined { return this.closing ? { key: "runtime.shell_closed" } : this.failureI18n; }
+
   get available(): boolean { return this.binary !== null && this.failure === null && !this.closing; }
   get error(): string | null { return this.closing ? "只读 Shell 已关闭" : this.failure; }
 
@@ -102,7 +106,7 @@ export class ReadonlyShellManager {
 
   private async probe(): Promise<void> {
     try {
-      if (process.platform !== "linux") throw new Error("只读 Shell 目前仅支持 Linux");
+      if (process.platform !== "linux") throw withMessage(new Error("只读 Shell 目前仅支持 Linux"), "error.read_only_shell_currently_supports_linux_only");
       socketFilter();
       // Resolve the executable once; workspace PATH changes cannot replace it.
       for (const directory of (process.env.PATH ?? "/usr/bin:/bin").split(":")) {
@@ -111,24 +115,26 @@ export class ReadonlyShellManager {
         try { await access(candidate, constants.X_OK); this.binary = await realpath(candidate); break; }
         catch { /* Try the next configured system program directory. */ }
       }
-      if (!this.binary) throw new Error("未找到 Bubblewrap，请安装 bubblewrap 并重启服务");
+      if (!this.binary) throw withMessage(new Error("未找到 Bubblewrap，请安装 bubblewrap 并重启服务"), "error.bubblewrap_was_not_found_install_bubblewrap_and_restart_the_service");
       const versionResult = JSON.parse(await executeProcess(this.binary, ["--version"], "/", 2000, new AbortController().signal, { env: {} }));
       const version = /bubblewrap\s+(\d+)\.(\d+)\.(\d+)/.exec(versionResult.stdout);
       if (!version || (Number(version[1]) === 0 && Number(version[2]) < 12)) {
-        throw new Error("需要 Bubblewrap 0.12.0 或更高版本，请升级后重启服务");
+        throw withMessage(new Error("需要 Bubblewrap 0.12.0 或更高版本，请升级后重启服务"), "error.bubblewrap_0_12_0_or_later_is_required_upgrade_it_and_restart");
       }
       this.mounts = await systemMounts();
       await this.launch({ command: "test ! -w /usr && test ! -w / && test -w /tmp && test ! -e /home && test ! -e /run",
         project: null, attachments: null, workspace: "project", cwd: ".", timeout: 5000 }, new AbortController().signal, true);
       this.failure = null;
+      this.failureI18n = undefined;
     } catch (error) {
       const detail = error instanceof ShellError ? error.result.stderr.trim() || error.message : String(error instanceof Error ? error.message : error);
       this.failure = `只读 Shell 不可用：${detail}`;
+      this.failureI18n = errorI18n(error) ?? { key: "runtime.shell_failed", params: { detail } };
     }
   }
 
   execute(input: ReadonlyShellInput, signal: AbortSignal): Promise<string> {
-    if (!this.available) return Promise.reject(new Error(this.error ?? "只读 Shell 不可用"));
+    if (!this.available) { const error = new Error(this.error ?? "只读 Shell 不可用"); return Promise.reject(this.errorI18n ? withMessage(error, this.errorI18n.key, this.errorI18n.params) : error); }
     const controller = new AbortController();
     const work = this.launch(input, AbortSignal.any([signal, controller.signal]));
     this.active.set(controller, work);
@@ -173,7 +179,7 @@ export class ReadonlyShellManager {
         args.push(...await maskSpecialFiles(`/proc/self/fd/${handle.fd}`, destination, signal));
         if (kind === input.workspace) {
           const target = input.cwd === "/workspace" ? "." : input.cwd.replace(/^\/workspace\//, "");
-          if (isAbsolute(target)) throw new Error("cwd 必须是工作区相对路径");
+          if (isAbsolute(target)) throw withMessage(new Error("cwd 必须是工作区相对路径"), "error.cwd_must_be_relative_to_the_workspace");
           const resolved = await realpath(resolve(root, target));
           cwd = join(destination, inside(root, resolved));
         }
@@ -189,8 +195,8 @@ export class ReadonlyShellManager {
         { env: {}, fds: handles.map((handle) => handle.fd) });
     } catch (error) {
       if (deadline.aborted && !callerSignal.aborted) {
-        throw new ShellError({ exitCode: null, signal: null, stdout: "", stderr: "", truncated: false,
-          ...(error instanceof ShellError ? error.result : {}), timedOut: true, cancelled: false }, "命令执行超时");
+        throw withMessage(new ShellError({ exitCode: null, signal: null, stdout: "", stderr: "", truncated: false,
+          ...(error instanceof ShellError ? error.result : {}), timedOut: true, cancelled: false }, "命令执行超时"), "error.command_timed_out");
       }
       throw error;
     } finally {

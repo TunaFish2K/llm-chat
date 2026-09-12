@@ -1,5 +1,7 @@
 /// <reference types="vite-plugin-pwa/client" />
+import { t, localizedError, type MessageKey } from "./i18n";
 
+import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { registerSW } from "virtual:pwa-register";
 
 export interface PwaState {
@@ -9,6 +11,7 @@ export interface PwaState {
   offlineReady: boolean;
   updateStatus: "idle" | "checking" | "downloading" | "current" | "ready" | "applying" | "error";
   updateError: string | null;
+  updateErrorI18n?: LocalizedMessage | undefined;
 }
 
 type PwaListener = (state: PwaState) => void;
@@ -38,12 +41,12 @@ function ready(): void {
 }
 
 function failure(error: unknown): void {
-  emit({ updateStatus: "error", updateError: error instanceof Error ? error.message : "更新失败，请重试" });
+  emit({ updateStatus: "error", updateErrorI18n: errorI18n(error), updateError: error instanceof Error ? error.message : t("SettingsView.update_failed_try_again") });
 }
 
-function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, key: MessageKey): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error(message)), UPDATE_TIMEOUT);
+    const timer = window.setTimeout(() => reject(localizedError(key)), UPDATE_TIMEOUT);
     promise.then(resolve, reject).finally(() => window.clearTimeout(timer));
   });
 }
@@ -64,7 +67,7 @@ async function getRegistration(): Promise<ServiceWorkerRegistration> {
         if (registration) resolve(registration);
         else if (registrationError) reject(registrationError);
       });
-    }), "更新服务尚未就绪，请重试");
+    }), "pwa.update_service_is_not_ready_try_again");
   } catch (error) {
     if (!registration) registrationError = error instanceof Error ? error : new Error(String(error));
     throw error;
@@ -76,13 +79,13 @@ async function waitForInstallation(worker: ServiceWorker): Promise<void> {
   try {
     await withTimeout(new Promise<void>((resolve, reject) => {
       const changed = () => {
-        if (worker.state === "redundant") reject(new Error("新版下载失败，请重试"));
+        if (worker.state === "redundant") reject(localizedError("pwa.could_not_download_the_new_version_try_again"));
         else if (["installed", "activating", "activated"].includes(worker.state)) resolve();
       };
       worker.addEventListener("statechange", changed);
       cleanup = () => worker.removeEventListener("statechange", changed);
       changed();
-    }), "新版下载超时，请重试");
+    }), "pwa.download_timed_out_try_again");
   } finally { cleanup(); }
 }
 
@@ -95,14 +98,14 @@ function runOperation(action: () => Promise<void>): Promise<void> {
 /** Manual checks bypass the automatic foreground-check throttle. */
 export function checkForUpdates(): Promise<void> {
   return runOperation(async () => {
-    if (!state.supported) throw new Error("当前浏览器不支持应用更新，请刷新页面");
-    if (navigator.onLine === false) throw new Error("当前离线，请连接网络后重试");
+    if (!state.supported) throw localizedError("pwa.this_browser_does_not_support_app_updates_refresh_the_page");
+    if (navigator.onLine === false) throw localizedError("pwa.you_are_offline_connect_and_try_again");
     emit({ updateStatus: "checking", updateError: null });
     const current = await getRegistration();
     const hadActiveWorker = Boolean(current.active || navigator.serviceWorker.controller);
     await withTimeout(current.update().catch((error: unknown) => {
-      throw new Error(`检查更新失败：${error instanceof Error ? error.message : String(error)}`);
-    }), "检查更新超时，请重试");
+      throw localizedError("pwa.update_check_failed", { value1: (error instanceof Error ? error.message : String(error)) });
+    }), "pwa.update_check_timed_out_try_again");
     if (current.installing) {
       emit({ updateStatus: "downloading" });
       await waitForInstallation(current.installing);
@@ -153,13 +156,13 @@ function registerServiceWorker(): void {
     onNeedReload() { finishReload?.(); },
     onOfflineReady() { emit({ offlineReady: true }); },
     onRegisterError(error) {
-      registrationError = new Error(`无法启动更新服务：${error instanceof Error ? error.message : String(error)}`);
+      registrationError = localizedError("pwa.could_not_start_the_update_service", { value1: (error instanceof Error ? error.message : String(error)) });
       failure(registrationError);
     },
     onRegisteredSW(_url, next) {
       registration = next;
       if (!next) {
-        registrationError = new Error("无法启动更新服务，请刷新页面后重试");
+        registrationError = localizedError("pwa.could_not_start_the_update_service_refresh_and_try_again");
         failure(registrationError);
         return;
       }
@@ -214,7 +217,7 @@ export function applyUpdate(): Promise<void> {
           if (navigator.serviceWorker.controller && navigator.serviceWorker.controller !== previousController) finishReload?.();
         };
         const failed = () => {
-          if (worker.state === "redundant") reject(new Error("新版启用失败，请重试"));
+          if (worker.state === "redundant") reject(localizedError("pwa.could_not_apply_the_new_version_try_again"));
         };
         navigator.serviceWorker.addEventListener("controllerchange", changed);
         worker.addEventListener("statechange", failed);
@@ -224,7 +227,7 @@ export function applyUpdate(): Promise<void> {
           finishReload = null;
         };
         worker.postMessage({ type: "SKIP_WAITING" });
-      }), "启用新版超时，请重试");
+      }), "pwa.applying_the_new_version_timed_out_try_again");
     } finally { cleanup(); }
   });
 }

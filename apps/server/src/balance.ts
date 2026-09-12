@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import {
   BALANCE_EXPRESSION_MAX_LENGTH,
@@ -67,7 +68,7 @@ export class BalanceService {
   async get(connection: BalanceConnection, refresh = false): Promise<ConnectionBalanceDto> {
     const config = connection.balanceConfig;
     if (!config?.enabled) {
-      throw new BalanceError("balance_disabled", "该连接未启用余额查询", 400);
+      throw withMessage(new BalanceError("balance_disabled", "该连接未启用余额查询", 400), "error.balance_queries_are_not_enabled_for_this_connection");
     }
 
     const target = balanceUrl(connection.baseUrl, config.apiPath);
@@ -102,16 +103,16 @@ export class BalanceService {
         signal: AbortSignal.timeout(this.timeoutMs)
       });
     } catch {
-      throw new BalanceError("balance_upstream_error", "余额服务请求失败", 502);
+      throw withMessage(new BalanceError("balance_upstream_error", "余额服务请求失败", 502), "error.the_balance_service_request_failed");
     }
 
     if (!response.ok) {
       await cancelBody(response);
-      throw new BalanceError(
+      throw withMessage(new BalanceError(
         "balance_upstream_error",
         `余额服务返回 HTTP ${response.status}`,
         502
-      );
+      ), "error.the_balance_service_returned_http", { value1: response.status });
     }
     await ensureOk(response);
 
@@ -126,7 +127,7 @@ export class BalanceService {
       text = await readBoundedText(response, MAX_RESPONSE_LENGTH);
     } catch (error) {
       if (error instanceof BalanceError) throw error;
-      throw new BalanceError("balance_upstream_error", "读取余额服务响应失败", 502);
+      throw withMessage(new BalanceError("balance_upstream_error", "读取余额服务响应失败", 502), "error.could_not_read_the_balance_service_response");
     }
     try {
       return JSON.parse(text) as unknown;
@@ -184,7 +185,7 @@ export function evaluateBalanceExpression(expression: string, document: unknown)
 
 function balanceUrl(baseUrl: string, apiPath: string): URL {
   if (!apiPath.startsWith("/") || apiPath.startsWith("//") || apiPath.includes("\\")) {
-    throw new BalanceError("balance_invalid_config", "余额接口路径必须是站点根路径", 400);
+    throw withMessage(new BalanceError("balance_invalid_config", "余额接口路径必须是站点根路径", 400), "error.the_balance_api_path_must_start_at_the_site_root");
   }
   try {
     const base = new URL(baseUrl);
@@ -195,7 +196,7 @@ function balanceUrl(baseUrl: string, apiPath: string): URL {
     target.hash = "";
     return target;
   } catch {
-    throw new BalanceError("balance_invalid_config", "余额接口路径配置无效", 400);
+    throw withMessage(new BalanceError("balance_invalid_config", "余额接口路径配置无效", 400), "error.invalid_balance_api_path_configuration");
   }
 }
 

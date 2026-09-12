@@ -1,3 +1,4 @@
+import { t, useLocale } from "../../lib/i18n";
 import { requestMobileBack } from "../../lib/mobile-navigation";
 import { useEffect, useState, type RefCallback } from "react";
 import {
@@ -42,6 +43,7 @@ export function ConversationHeader({
   onViewChange: (view: ConversationView) => void;
   actionsRef?: RefCallback<HTMLDivElement>;
 }) {
+  useLocale();
   const conversations = useStore(appStore, (state) => state.conversations);
   const displayedConversation = conversation ? resolveConversationRoot(conversation, conversations) : null;
   const [editing, setEditing] = useState(false);
@@ -73,8 +75,8 @@ export function ConversationHeader({
         type="button"
         className="icon-button shell-control"
         onClick={view !== "chat" ? requestMobileBack : onToggleSidebar}
-        aria-label={mobile ? view !== "chat" ? "返回上一级" : "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
-        title={mobile ? view !== "chat" ? "返回上一级" : "打开导航" : sidebarCollapsed ? "展开会话栏" : "折叠会话栏"}
+        aria-label={mobile ? view !== "chat" ? t("index.go_back") : t("index.open_navigation") : sidebarCollapsed ? t("WorkspaceSidebar.expand_conversation_sidebar") : t("WorkspaceSidebar.collapse_conversation_sidebar")}
+        title={mobile ? view !== "chat" ? t("index.go_back") : t("index.open_navigation") : sidebarCollapsed ? t("WorkspaceSidebar.expand_conversation_sidebar") : t("WorkspaceSidebar.collapse_conversation_sidebar")}
       >
         {mobile ? view !== "chat" ? <ArrowLeft size={20} /> : <Menu size={20} /> : sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
       </button> : null}
@@ -83,7 +85,7 @@ export function ConversationHeader({
         {editing ? (
           <input
             className="title-input"
-            aria-label="会话标题"
+            aria-label={t("WorkspaceSidebar.conversation_title")}
             value={title}
             autoFocus
             onChange={(event) => setTitle(event.target.value)}
@@ -101,23 +103,23 @@ export function ConversationHeader({
             type="button"
             className="conversation-title"
             onDoubleClick={() => displayedConversation && setEditing(true)}
-            aria-label={displayedConversation ? `会话标题：${displayedConversation.title}` : "新会话"}
+            aria-label={displayedConversation ? t("ConversationHeader.conversation_title", { value1: (displayedConversation.title) }) : t("WorkspaceSidebar.new_conversation")}
             title={displayedConversation?.title}
           >
-            <strong>{displayedConversation?.title || "新会话"}</strong>
+            <strong>{displayedConversation?.title || t("WorkspaceSidebar.new_conversation")}</strong>
           </button>
         )}
       </div>
 
       {conversation ? (
-        <div className="conversation-projections" aria-label="会话覆盖层">
+        <div className="conversation-projections" aria-label={t("ConversationHeader.conversation_overrides")}>
           <button
             type="button"
             className="icon-button"
             aria-pressed={view === "trajectory"}
             onClick={() => toggleView("trajectory")}
-            aria-label={view === "trajectory" ? "关闭运行轨迹" : "打开运行轨迹"}
-            title={view === "trajectory" ? "关闭运行轨迹" : "运行轨迹"}
+            aria-label={view === "trajectory" ? t("ConversationHeader.close_run_trace") : t("ConversationHeader.open_run_trace")}
+            title={view === "trajectory" ? t("ConversationHeader.close_run_trace") : t("ChatView.activity")}
           >
             <ListTree size={17} />
           </button>
@@ -126,8 +128,8 @@ export function ConversationHeader({
             className="icon-button task-projection-button"
             aria-pressed={view === "tasks"}
             onClick={() => toggleView("tasks")}
-            aria-label={view === "tasks" ? "关闭后台任务" : `打开后台任务${runningTasks ? `，${runningTasks} 个运行中` : ""}`}
-            title={view === "tasks" ? "关闭后台任务" : "后台任务"}
+            aria-label={view === "tasks" ? t("ConversationHeader.close_background_tasks") : t("ConversationHeader.open_background_tasks", { value1: (runningTasks ? t("detail.running_count", { value1: (runningTasks) }) : "") })}
+            title={view === "tasks" ? t("ConversationHeader.close_background_tasks") : t("TrajectoryView.background_tasks")}
           >
             <TerminalSquare size={17} />
             {runningTasks ? <b>{runningTasks > 99 ? "99+" : runningTasks}</b> : null}
@@ -140,8 +142,8 @@ export function ConversationHeader({
         className="icon-button shell-control"
         onClick={onToggleInspector}
         disabled={!conversation}
-        aria-label={inspectorOpen ? "关闭检查器" : "打开检查器"}
-        title={inspectorOpen ? "关闭检查器" : "打开检查器"}
+        aria-label={inspectorOpen ? t("App.close_inspector") : t("index.open_inspector")}
+        title={inspectorOpen ? t("App.close_inspector") : t("index.open_inspector")}
       >
         {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
       </button>

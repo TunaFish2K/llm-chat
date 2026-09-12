@@ -1,3 +1,4 @@
+import { t, useLocale } from "../../lib/i18n";
 import { useBackLayer } from "../../lib/mobile-navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover } from "radix-ui";
@@ -5,6 +6,7 @@ import { Bot, Check, Search, X } from "lucide-react";
 import type { AgentSummaryDto } from "@llm-chat/contracts";
 
 function AgentAvatar({ agent }: { agent: AgentSummaryDto | undefined }) {
+  useLocale();
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [agent?.id, agent?.updatedAt]);
   return <span className="agent-picker-avatar" aria-hidden="true">
@@ -18,6 +20,7 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
   agents: AgentSummaryDto[]; value: string; disabled: boolean; onChange: (id: string) => void;
   menuItem?: boolean;
 }) {
+  useLocale();
   const [open, setOpen] = useState(false);
   useBackLayer(open, () => setOpen(false));
   const [query, setQuery] = useState("");
@@ -31,22 +34,22 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
   useEffect(() => { setOpen(false); setQuery(""); }, [value, disabled]);
   return <Popover.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) setQuery(""); }}>
     <Popover.Trigger asChild>
-      <button type="button" className={menuItem ? "agent-menu-item" : "chip composer-agent-select agent-trigger"} aria-label="选择 Agent"
-        title={selected?.name ?? "选择 Agent"} disabled={disabled || !agents.length}>
+      <button type="button" className={menuItem ? "agent-menu-item" : "chip composer-agent-select agent-trigger"} aria-label={t("AgentPicker.select_agent")}
+        title={selected?.name ?? t("AgentPicker.select_agent")} disabled={disabled || !agents.length}>
         <Bot size={26} aria-hidden="true" />
-        {menuItem ? <span><strong>Agent</strong><small>{selected?.name ?? "未选择"}</small></span> : null}
+        {menuItem ? <span><strong>Agent</strong><small>{selected?.name ?? t("Composer.not_selected")}</small></span> : null}
       </button>
     </Popover.Trigger>
-    {open ? <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label="Agent 选择" side="top" align="start" sideOffset={10}
+    {open ? <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label={t("AgentPicker.agent_selection")} side="top" align="start" sideOffset={10}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
         if (!window.matchMedia("(hover: none) and (pointer: coarse)").matches) search.current?.focus();
       }}>
-      <header><div><strong>Agent</strong><span>选择会话助手</span></div>
-        <button type="button" className="icon-button" aria-label="关闭 Agent 选择" onClick={() => { setOpen(false); setQuery(""); }}><X size={15} /></button>
+      <header><div><strong>Agent</strong><span>{t("AgentPicker.choose_a_conversation_assistant")}</span></div>
+        <button type="button" className="icon-button" aria-label={t("AgentPicker.close_agent_picker")} onClick={() => { setOpen(false); setQuery(""); }}><X size={15} /></button>
       </header>
       <label className="search-field"><Search size={15} aria-hidden="true" />
-        <input ref={search} type="search" aria-label="搜索 Agent" placeholder="搜索名称或描述" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input ref={search} type="search" aria-label={t("AgentPicker.search_agents")} placeholder={t("AgentPicker.search_names_or_descriptions")} value={query} onChange={(event) => setQuery(event.target.value)} />
       </label>
       <div className="picker-list">
         {matches.map((agent) => <button type="button" className="model-option agent-option" key={agent.id}
@@ -55,7 +58,7 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
           <AgentAvatar agent={agent} /><span><strong>{agent.name}</strong>{agent.description ? <small>{agent.description}</small> : null}</span>
           {agent.id === value ? <Check size={15} aria-hidden="true" /> : null}
         </button>)}
-        {!matches.length ? <div className="picker-empty">没有匹配的 Agent</div> : null}
+        {!matches.length ? <div className="picker-empty">{t("AgentPicker.no_matching_agents")}</div> : null}
       </div>
     </Popover.Content></Popover.Portal> : null}
   </Popover.Root>;

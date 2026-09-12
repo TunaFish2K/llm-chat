@@ -1,3 +1,4 @@
+import { t, useLocale } from "./i18n";
 import { OfflineAwareImage } from "../components/chat/atoms";
 import { memo, useMemo, type ComponentProps, type ReactNode } from "react";
 import { Streamdown, type Components, type StreamdownProps } from "streamdown";
@@ -41,6 +42,7 @@ function textOf(node: ReactNode): string {
 }
 
 function SafeLink({ href, children, ...props }: ComponentProps<"a">) {
+  useLocale();
   const localFile = Boolean(href && /^\/api\/files\/[0-9a-f-]{36}\?v=[a-f0-9]{64}$/i.test(href));
   if (!href || (!localFile && !href.startsWith("http://") && !href.startsWith("https://") && !href.startsWith("mailto:"))) {
     return <span>{children}</span>;
@@ -65,8 +67,9 @@ function imageSource(src: string | undefined): string | null {
 }
 
 function SafeImage({ src, alt = "", ...props }: ComponentProps<"img">) {
+  useLocale();
   const safe = imageSource(src);
-  if (!safe) return alt ? <span className="image-unavailable">[图片：{alt}]</span> : null;
+  if (!safe) return alt ? <span className="image-unavailable">{t("markdown.image", { value1: (alt) })}</span> : null;
   return (
     <a className="markdown-image-link" href={safe} target="_blank" rel="noopener noreferrer">
       <OfflineAwareImage {...props} src={safe} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
@@ -195,10 +198,12 @@ const richHtmlPlugins: NonNullable<StreamdownProps["rehypePlugins"]> = [
 
 /** Streaming-safe GFM, math, highlighted code, and sanitized model-authored HTML. */
 const MarkdownChunk = memo(function MarkdownChunk({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
+  useLocale();
   const content = useMemo(() => normalizeRichHtmlTags(normalizeMarkdown(text)), [text]);
   return (
     <div className={`markdown${inline ? " markdown-inline" : ""}`} data-streaming={streaming || undefined}>
       <Streamdown
+        translations={{ close: t("markdownControls.close"), copied: t("markdownControls.copied"), copyCode: t("markdownControls.copyCode"), copyLink: t("markdownControls.copyLink"), copyTable: t("markdownControls.copyTable"), copyTableAsCsv: t("markdownControls.copyTableAsCsv"), copyTableAsMarkdown: t("markdownControls.copyTableAsMarkdown"), copyTableAsTsv: t("markdownControls.copyTableAsTsv"), downloadDiagram: t("markdownControls.downloadDiagram"), downloadDiagramAsMmd: t("markdownControls.downloadDiagramAsMmd"), downloadDiagramAsPng: t("markdownControls.downloadDiagramAsPng"), downloadDiagramAsSvg: t("markdownControls.downloadDiagramAsSvg"), downloadFile: t("markdownControls.downloadFile"), downloadImage: t("markdownControls.downloadImage"), downloadTable: t("markdownControls.downloadTable"), downloadTableAsCsv: t("markdownControls.downloadTableAsCsv"), downloadTableAsMarkdown: t("markdownControls.downloadTableAsMarkdown"), exitFullscreen: t("markdownControls.exitFullscreen"), externalLinkWarning: t("markdownControls.externalLinkWarning"), imageNotAvailable: t("markdownControls.imageNotAvailable"), mermaidFormatMmd: t("markdownControls.mermaidFormatMmd"), mermaidFormatPng: t("markdownControls.mermaidFormatPng"), mermaidFormatSvg: t("markdownControls.mermaidFormatSvg"), openExternalLink: t("markdownControls.openExternalLink"), openLink: t("markdownControls.openLink"), resetView: t("markdownControls.resetView"), tableFormatCsv: t("markdownControls.tableFormatCsv"), tableFormatMarkdown: t("markdownControls.tableFormatMarkdown"), tableFormatTsv: t("markdownControls.tableFormatTsv"), viewFullscreen: t("markdownControls.viewFullscreen"), zoomIn: t("markdownControls.zoomIn"), zoomOut: t("markdownControls.zoomOut") }}
         remarkPlugins={remarkPlugins}
         rehypePlugins={richHtmlPlugins}
         plugins={plugins}
@@ -214,6 +219,7 @@ const MarkdownChunk = memo(function MarkdownChunk({ text, streaming = false, inl
 });
 
 export const Markdown = memo(function Markdown({ text, streaming = false, inline = false }: { text: string; streaming?: boolean; inline?: boolean }) {
+  useLocale();
   const parts = useMemo(() => inline ? [{ start: 0, source: text, kind: "markdown" as const }] : splitRichContent(text, streaming), [text, streaming, inline]);
   return <>{parts.map((part) => part.kind === "markdown"
     ? <MarkdownChunk key={part.start} text={part.source} streaming={streaming} inline={inline} />

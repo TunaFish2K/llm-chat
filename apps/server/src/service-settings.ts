@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import type { ServiceSettingsDto, ServiceSettingsInput, SearchEngineDto, ImageToolModelDto } from "@llm-chat/contracts";
 import type { Store } from "./database";
 import { StoreError } from "./errors";
@@ -54,21 +55,21 @@ export class ServiceSettings {
     try {
       if (input.searchEngines) {
         const ids = new Set(input.searchEngines.map((item) => item.id));
-        if (ids.size !== input.searchEngines.length) throw new StoreError("service_config_invalid", "搜索服务不能重复");
+        if (ids.size !== input.searchEngines.length) throw withMessage(new StoreError("service_config_invalid", "搜索服务不能重复"), "error.search_services_cannot_be_duplicated");
         input.searchEngines.forEach((item, position) => {
           const existing = sqlite.prepare("SELECT provider FROM global_search_engines WHERE id = ?").get(item.id);
-          if (!existing || existing.provider !== item.provider) throw new StoreError("service_config_invalid", "搜索服务不存在或类型不匹配");
+          if (!existing || existing.provider !== item.provider) throw withMessage(new StoreError("service_config_invalid", "搜索服务不存在或类型不匹配"), "error.the_search_service_does_not_exist_or_its_type_does_not_match");
           sqlite.prepare(`UPDATE global_search_engines SET enabled = ?, base_url = ?,
             api_key = COALESCE(?, api_key), position = ? WHERE id = ?`)
             .run(Number(item.enabled), item.baseUrl, item.apiKey ?? null, position, item.id);
         });
       }
       if (input.imageModels) {
-        if (new Set(input.imageModels.map((item) => item.modelId)).size !== input.imageModels.length) throw new StoreError("service_config_invalid", "图片模型不能重复");
+        if (new Set(input.imageModels.map((item) => item.modelId)).size !== input.imageModels.length) throw withMessage(new StoreError("service_config_invalid", "图片模型不能重复"), "error.image_models_cannot_be_duplicated");
         input.imageModels.forEach((item, position) => {
           const result = sqlite.prepare("UPDATE image_tool_models SET enabled = ?, position = ? WHERE model_id = ?")
             .run(Number(item.enabled), position, item.modelId);
-          if (!result.changes) throw new StoreError("service_config_invalid", "图片模型不存在");
+          if (!result.changes) throw withMessage(new StoreError("service_config_invalid", "图片模型不存在"), "error.image_model_not_found");
         });
       }
       sqlite.exec("COMMIT");

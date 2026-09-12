@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..")
 async function main(): Promise<void> {
   const selection = selectRuntimeConfig(process.argv.slice(2), projectRoot);
   if (selection.remainingArgs.length) {
-    throw new Error(`未知启动参数：${selection.remainingArgs.join(" ")}`);
+    throw withMessage(new Error(`未知启动参数：${selection.remainingArgs.join(" ")}`), "error.unknown_startup_argument", { value1: selection.remainingArgs.join(" ") });
   }
   const loaded = await loadRuntimeConfig(selection.configPath, projectRoot, true);
   const config = loaded.config;

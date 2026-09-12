@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
@@ -100,7 +101,7 @@ export class AnthropicAdapter implements ProviderAdapter {
         body.output_config = { effort };
       } else if (capabilities.manualThinking) {
         const budget = request.settings.resolvedThinkingBudgetTokens;
-        if (!budget) throw new ProviderError("reasoning_budget_missing", "手动 Thinking 缺少已解析的 token 预算");
+        if (!budget) throw withMessage(new ProviderError("reasoning_budget_missing", "手动 Thinking 缺少已解析的 token 预算"), "error.manual_thinking_requires_a_resolved_token_budget");
         body.thinking = {
           type: "enabled",
           budget_tokens: budget

@@ -1,8 +1,10 @@
+import { t, useLocale } from "./i18n";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useBackLayer } from "./mobile-navigation";
 import { X } from "lucide-react";
 
-export function Spinner({ label = "加载中" }: { label?: string }) {
+export function Spinner({ label = t("index.loading") }: { label?: string }) {
+  useLocale();
   return (
     <span role="status" aria-label={label} className="icon-btn-label">
       <span className="spinner" aria-hidden="true" />
@@ -12,6 +14,7 @@ export function Spinner({ label = "加载中" }: { label?: string }) {
 }
 
 export function EmptyState({ title, hint }: { title: string; hint?: string }) {
+  useLocale();
   return (
     <div className="empty">
       <p>{title}</p>
@@ -21,19 +24,19 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
 }
 
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  useLocale();
   return (
     <div className="error-box" role="alert">
       <p>{message}</p>
       {onRetry ? (
-        <button className="btn" onClick={onRetry}>
-          重试
-        </button>
+        <button className="btn" onClick={onRetry}>{t("NotificationSettings.retry")}</button>
       ) : null}
     </div>
   );
 }
 
-export function LoadingState({ label = "加载中…" }: { label?: string }) {
+export function LoadingState({ label = t("index.loading_2") }: { label?: string }) {
+  useLocale();
   return (
     <div className="loading-box" role="status">
       <span className="spinner" aria-hidden="true" /> <span>{label}</span>
@@ -52,6 +55,7 @@ export function Field({
   children: ReactNode;
   htmlFor?: string | undefined;
 }) {
+  useLocale();
   return (
     <div className="field">
       <label htmlFor={htmlFor}>{label}</label>
@@ -74,6 +78,7 @@ export function Switch({
   hideLabel?: boolean;
   onChange: (checked: boolean) => void;
 }) {
+  useLocale();
   return (
     <label className={`switch-control${disabled ? " disabled" : ""}`}>
       <input
@@ -104,6 +109,7 @@ export function Modal({
   wide?: boolean;
   fullscreen?: boolean;
 }) {
+  useLocale();
   useBackLayer(true, onClose);
   const ref = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -170,7 +176,7 @@ export function Modal({
       >
         <div className="modal-header">
           <h3>{title}</h3>
-          <button className="btn ghost icon" onClick={onClose} aria-label="关闭对话框">
+          <button className="btn ghost icon" onClick={onClose} aria-label={t("index.close_dialog")}>
             <X size={18} aria-hidden="true" />
           </button>
         </div>
@@ -184,7 +190,7 @@ export function Modal({
 export function ConfirmModal({
   title,
   message,
-  confirmLabel = "确认",
+  confirmLabel = t("index.confirm"),
   danger,
   onConfirm,
   onClose,
@@ -200,21 +206,20 @@ export function ConfirmModal({
   busy?: boolean;
   confirmDisabled?: boolean;
 }) {
+  useLocale();
   return (
     <Modal
       title={title}
       onClose={onClose}
       footer={
         <>
-          <button className="btn" onClick={onClose} disabled={busy}>
-            取消
-          </button>
+          <button className="btn" onClick={onClose} disabled={busy}>{t("WorkspaceSidebar.cancel")}</button>
           <button
             className={danger ? "btn danger" : "btn primary"}
             onClick={onConfirm}
             disabled={busy || confirmDisabled}
           >
-            {busy ? "处理中…" : confirmLabel}
+            {busy ? t("DirectoryPicker.processing") : confirmLabel}
           </button>
         </>
       }
@@ -225,6 +230,7 @@ export function ConfirmModal({
 }
 
 export function StatusDot({ kind, label }: { kind: "ok" | "warn" | "err" | "run" | "idle"; label: string }) {
+  useLocale();
   return (
     <span className="connection-dot">
       <span className={`dot ${kind === "idle" ? "" : kind}`} aria-hidden="true" />
@@ -233,23 +239,24 @@ export function StatusDot({ kind, label }: { kind: "ok" | "warn" | "err" | "run"
   );
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  queued: "排队中",
-  running: "运行中",
-  "waiting-approval": "等待审批",
-  completed: "已完成",
-  stopped: "已停止",
-  failed: "失败",
-  interrupted: "已中断",
-  starting: "启动中",
-  timed_out: "超时"
-};
+function getSTATUS_LABELS(): Record<string, string> { return {
+  queued: t("index.queued"),
+  running: t("index.running"),
+  "waiting-approval": t("index.waiting_for_approval"),
+  completed: t("index.completed"),
+  stopped: t("index.stopped"),
+  failed: t("index.failed"),
+  interrupted: t("index.interrupted"),
+  starting: t("index.starting"),
+  timed_out: t("index.timed_out")
+}; }
 
 export function statusLabel(status: string): string {
-  return STATUS_LABELS[status] ?? status;
+  return getSTATUS_LABELS()[status] ?? status;
 }
 
 export function StatusTag({ status }: { status: string }) {
+  useLocale();
   const kind =
     status === "completed"
       ? "ok"

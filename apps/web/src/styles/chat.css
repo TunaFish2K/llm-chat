@@ -1051,7 +1051,7 @@
   text-overflow: ellipsis;
 }
 
-.composer-tools .composer-inline-tool[aria-label="高级执行设置"] {
+.composer-tools .composer-inline-tool[data-execution-settings] {
   position: relative;
   flex: 0 0 44px;
   justify-content: center;

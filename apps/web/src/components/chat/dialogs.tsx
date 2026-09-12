@@ -1,3 +1,5 @@
+import { toolLabel, toolDescription } from "../../lib/catalog-i18n";
+import { t, useLocale } from "../../lib/i18n";
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import type {
@@ -27,29 +29,28 @@ export function EditForkDialog({
   onClose: () => void;
   onSubmit: (text: string, assetIds: string[]) => void;
 }) {
+  useLocale();
   const [text, setText] = useState(message.text ?? "");
   const { attachments, setAttachments, uploading, uploadFiles } = useAttachments(message.attachments ?? [], message.id);
   const valid = (text.trim().length > 0 || attachments.length > 0) && text.length <= 1_000_000;
   return (
     <Modal
-      title="编辑并分叉"
+      title={t("dialogs.edit_and_branch")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose} disabled={busy}>
-            取消
-          </Button>
+          <Button onClick={onClose} disabled={busy}>{t("WorkspaceSidebar.cancel")}</Button>
           <Button variant="primary" onClick={() => onSubmit(text, attachments.map((asset) => asset.id))} disabled={busy || uploading || !valid}>
-            {busy ? "正在创建…" : "创建分支并生成"}
+            {busy ? t("dialogs.creating") : t("dialogs.create_branch_and_generate")}
           </Button>
         </>
       }
     >
-      <Field label="修改后的消息">
+      <Field label={t("dialogs.edited_message")}>
         <textarea
           className="textarea"
           rows={7}
-          aria-label="修改后的消息"
+          aria-label={t("dialogs.edited_message")}
           value={text}
           onChange={(event) => setText(event.target.value)}
           disabled={busy}
@@ -60,47 +61,47 @@ export function EditForkDialog({
       </Field>
       <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={busy || uploading} />
       <AttachmentMenu uploadFiles={uploadFiles} disabled={busy || attachments.length >= 8} uploading={uploading} />
-      <p className="small muted">保存后会立即在新分支生成回复。原消息和原会话保持不变。</p>
+      <p className="small muted">{t("dialogs.saving_immediately_generates_a_reply_in_the_new_branch_the")}</p>
     </Modal>
   );
 }
 
 /** Rewind one turn by branching from before it; the original stays intact. */
 export function UndoDialog({ busy, onClose, onConfirm }: { busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  useLocale();
   return (
     <Modal
-      title="撤销上一轮"
+      title={t("dialogs.undo_last_turn")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>取消</Button>
+          <Button onClick={onClose}>{t("WorkspaceSidebar.cancel")}</Button>
           <Button variant="primary" disabled={busy} onClick={onConfirm}>
-            {busy ? "正在创建…" : "创建回退分支"}
+            {busy ? t("dialogs.creating") : t("dialogs.create_rollback_branch")}
           </Button>
         </>
       }
     >
-      <p>将从上一轮之前创建新分支，原会话保持不变。</p>
-      <p className="small muted">只回退会话上下文，不恢复 Agent 已修改的工作区文件。</p>
+      <p>{t("dialogs.creates_a_new_branch_before_the_last_turn_the_original")}</p>
+      <p className="small muted">{t("dialogs.only_conversation_context_is_rolled_back_workspace_files_changed_by")}</p>
     </Modal>
   );
 }
 
 export function AgentSwitchDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => void }) {
+  useLocale();
   return (
     <Modal
-      title="切换 Agent"
+      title={t("dialogs.switch_agent")}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>取消</Button>
-          <Button variant="primary" onClick={onConfirm}>
-            切换
-          </Button>
+          <Button onClick={onClose}>{t("WorkspaceSidebar.cancel")}</Button>
+          <Button variant="primary" onClick={onConfirm}>{t("dialogs.switch")}</Button>
         </>
       }
     >
-      <p>历史消息会保留；后续回复使用新 Agent。当前会话的模型、上下文、推理和工具覆盖将全部清除。</p>
+      <p>{t("dialogs.history_is_preserved_future_replies_use_the_new_agent_all")}</p>
     </Modal>
   );
 }
@@ -125,6 +126,7 @@ export function ExecutionOverridesDialog({
   onClose: () => void;
   onSave: (value: ConversationExecutionOverrides) => Promise<void>;
 }) {
+  useLocale();
   const [draft, setDraft] = useState<ConversationExecutionOverrides>(() => structuredClone(value));
   const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
   const [toolQuery, setToolQuery] = useState("");
@@ -163,7 +165,7 @@ export function ExecutionOverridesDialog({
     });
 
   const visibleTools = catalog.filter((tool) =>
-    [tool.label, tool.name, tool.description, tool.sourceName]
+    [toolLabel(tool), tool.name, toolDescription(tool), tool.sourceName]
       .filter(Boolean)
       .join(" ")
       .toLocaleLowerCase()
@@ -181,39 +183,33 @@ export function ExecutionOverridesDialog({
 
   return (
     <Modal
-      title="会话执行设置"
+      title={t("dialogs.conversation_execution_settings")}
       onClose={onClose}
       wide
       footer={
         <>
-          <Button disabled={saving || !Object.keys(draft).length} onClick={() => setDraft({})}>
-            清除覆盖
-          </Button>
+          <Button disabled={saving || !Object.keys(draft).length} onClick={() => setDraft({})}>{t("dialogs.clear_overrides")}</Button>
           <span className="grow" />
-          <Button onClick={onClose} disabled={saving}>
-            取消
-          </Button>
+          <Button onClick={onClose} disabled={saving}>{t("WorkspaceSidebar.cancel")}</Button>
           <Button variant="primary" onClick={() => void save()} disabled={saving}>
-            {saving ? "保存中…" : "保存"}
+            {saving ? t("AgentEditorView.saving") : t("WorkspaceSidebar.save")}
           </Button>
         </>
       }
     >
       <div className="override-editor">
-        <p className="muted small">仅影响当前会话的后续生成。设为“跟随 Agent”会删除对应覆盖字段。</p>
+        <p className="muted small">{t("dialogs.applies_only_to_future_generations_in_this_conversation_follow_agent")}</p>
 
         <div className="form-grid">
-          <Field label="模型">
+          <Field label={t("InspectorPanel.model")}>
             <select
               className="select"
-              aria-label="会话模型覆盖"
+              aria-label={t("dialogs.conversation_model_override")}
               value={Object.hasOwn(draft, "modelId") ? draft.modelId ?? NO_MODEL : INHERIT}
               onChange={(event) => setTop("modelId", event.target.value)}
             >
-              <option value={INHERIT}>
-                跟随 Agent · {models.find((model) => model.id === agent?.execution.modelId)?.displayName ?? "未配置"}
-              </option>
-              <option value={NO_MODEL}>明确不使用模型</option>
+              <option value={INHERIT}>{t("dialogs.follow_agent", { value1: (models.find((model) => model.id === agent?.execution.modelId)?.displayName ?? t("ConnectionsView.not_configured")) })}</option>
+              <option value={NO_MODEL}>{t("dialogs.explicitly_use_no_model")}</option>
               {models
                 .filter((model) => model.enabled)
                 .map((model) => (
@@ -223,14 +219,14 @@ export function ExecutionOverridesDialog({
                 ))}
             </select>
           </Field>
-          <Field label="上下文策略">
+          <Field label={t("AgentEditorView.context_policy")}>
             <select
               className="select"
-              aria-label="上下文策略"
+              aria-label={t("AgentEditorView.context_policy")}
               value={draft.contextPolicy ?? INHERIT}
               onChange={(event) => setTop("contextPolicy", event.target.value)}
             >
-              <option value={INHERIT}>跟随 Agent · {agent?.execution.contextPolicy ?? "auto"}</option>
+              <option value={INHERIT}>{t("dialogs.follow_agent", { value1: (agent?.execution.contextPolicy ?? "auto") })}</option>
               {CONTEXT_POLICIES.map((policy) => (
                 <option key={policy} value={policy}>
                   {policy}
@@ -238,14 +234,14 @@ export function ExecutionOverridesDialog({
               ))}
             </select>
           </Field>
-          <Field label="推理档位">
+          <Field label={t("ConnectionsView.reasoning_levels")}>
             <select
               className="select"
-              aria-label="推理档位"
+              aria-label={t("ConnectionsView.reasoning_levels")}
               value={draft.reasoningEffort ?? INHERIT}
               onChange={(event) => setTop("reasoningEffort", event.target.value)}
             >
-              <option value={INHERIT}>跟随 Agent · {agent?.execution.reasoningEffort ?? "none"}</option>
+              <option value={INHERIT}>{t("dialogs.follow_agent", { value1: (agent?.execution.reasoningEffort ?? "none") })}</option>
               {REASONING_LEVELS.map((level) => (
                 <option key={level} value={level}>
                   {level}
@@ -255,23 +251,23 @@ export function ExecutionOverridesDialog({
           </Field>
         </div>
 
-        <h4>通用生成参数</h4>
+        <h4>{t("dialogs.common_generation_parameters")}</h4>
         <div className="form-grid">
-          <OptionalNumber label="温度" value={common.temperature} min={0} max={2} step={0.1} onChange={(next) => setCommon("temperature", next)} />
+          <OptionalNumber label={t("ConnectionsView.temperature")} value={common.temperature} min={0} max={2} step={0.1} onChange={(next) => setCommon("temperature", next)} />
           <OptionalNumber label="Top P" value={common.topP} min={0} max={1} step={0.05} onChange={(next) => setCommon("topP", next)} />
           <OptionalNumber
-            label="最大输出 token"
+            label={t("ConnectionsView.maximum_output_tokens")}
             value={common.maxOutputTokens}
             min={1}
             max={1_000_000}
             step={1}
             onChange={(next) => setCommon("maxOutputTokens", next)}
           />
-          <Field label="停止序列（每行一个）" wide>
+          <Field label={t("dialogs.stop_sequences_one_per_line")} wide>
             <textarea
               className="textarea"
-              aria-label="停止序列（每行一个）"
-              placeholder="留空表示继承；勾选后可覆盖为空列表"
+              aria-label={t("dialogs.stop_sequences_one_per_line")}
+              placeholder={t("dialogs.leave_blank_to_inherit_select_override_to_use_an_empty")}
               disabled={common.stopSequences === undefined}
               value={(common.stopSequences ?? []).join("\n")}
               onChange={(event) =>
@@ -285,30 +281,30 @@ export function ExecutionOverridesDialog({
               }
             />
             <Toggle
-              label="覆盖停止序列"
+              label={t("dialogs.override_stop_sequences")}
               checked={common.stopSequences !== undefined}
               onChange={(checked) => setCommon("stopSequences", checked ? [] : undefined)}
             />
           </Field>
         </div>
 
-        <h4>协议参数</h4>
+        <h4>{t("dialogs.protocol_parameters")}</h4>
         <div className="form-grid">
-          <Field label="推理摘要">
+          <Field label={t("ConnectionsView.reasoning_summary")}>
             <select
               className="select"
-              aria-label="推理摘要"
+              aria-label={t("ConnectionsView.reasoning_summary")}
               value={protocol.reasoningSummary ?? INHERIT}
               onChange={(event) => setProtocol("reasoningSummary", event.target.value === INHERIT ? undefined : event.target.value)}
             >
-              <option value={INHERIT}>继承</option>
+              <option value={INHERIT}>{t("dialogs.inherit")}</option>
               <option value="auto">auto</option>
               <option value="concise">concise</option>
               <option value="detailed">detailed</option>
             </select>
           </Field>
           <OptionalNumber
-            label="Thinking 预算（token）"
+            label={t("dialogs.thinking_budget_tokens")}
             value={protocol.thinkingBudgetTokens}
             min={1024}
             step={1}
@@ -318,15 +314,15 @@ export function ExecutionOverridesDialog({
 
         <div className="tool-override-heading">
           <div>
-            <h4>工具覆盖</h4>
-            <p className="muted small">只改变工具是否启用，审批策略仍由 Agent 决定。</p>
+            <h4>{t("dialogs.tool_overrides")}</h4>
+            <p className="muted small">{t("dialogs.changes_only_tool_enablement_approval_policy_is_still_set_by")}</p>
           </div>
           <label className="search-field compact">
             <Search size={14} aria-hidden="true" />
             <input
               type="search"
-              aria-label="搜索工具"
-              placeholder="搜索工具"
+              aria-label={t("dialogs.search_tools")}
+              placeholder={t("dialogs.search_tools")}
               value={toolQuery}
               onChange={(event) => setToolQuery(event.target.value)}
             />
@@ -338,20 +334,20 @@ export function ExecutionOverridesDialog({
             return (
               <div className="tool-override-row" key={tool.name}>
                 <div>
-                  <strong>{tool.label}</strong>
+                  <strong>{toolLabel(tool)}</strong>
                   <code>{tool.name}</code>
-                  <small>{tool.description}</small>
+                  <small>{toolDescription(tool)}</small>
                 </div>
                 <StatusTag status={tool.available ? "completed" : "failed"} />
                 <select
                   className="select"
-                  aria-label={`${tool.label} 覆盖`}
+                  aria-label={t("dialogs.override", { value1: (toolLabel(tool)) })}
                   value={state === undefined ? INHERIT : state ? "on" : "off"}
                   onChange={(event) => setTool(tool.name, event.target.value)}
                 >
-                  <option value={INHERIT}>跟随 Agent</option>
-                  <option value="on">启用</option>
-                  <option value="off">停用</option>
+                  <option value={INHERIT}>{t("dialogs.follow_agent_2")}</option>
+                  <option value="on">{t("SettingsView.enable")}</option>
+                  <option value="off">{t("AgentEditorView.disable")}</option>
                 </select>
               </div>
             );
@@ -377,6 +373,7 @@ function OptionalNumber({
   step?: number;
   onChange: (value: number | undefined) => void;
 }) {
+  useLocale();
   return (
     <Field label={label}>
       <input
@@ -387,7 +384,7 @@ function OptionalNumber({
         min={min}
         max={max}
         step={step}
-        placeholder="继承"
+        placeholder={t("dialogs.inherit")}
         onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))}
       />
     </Field>

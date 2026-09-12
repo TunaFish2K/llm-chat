@@ -21,6 +21,7 @@ beforeEach(() => {
   current = { active: container.controller, waiting: null, installing: null, update: vi.fn() };
   current.update.mockResolvedValue(current);
   online = { onLine: true, serviceWorker: container };
+  Object.assign(online, { languages: ["zh-CN"], language: "zh-CN" });
   vi.stubGlobal("navigator", online);
   reload = vi.fn();
   vi.stubGlobal("window", {
@@ -172,4 +173,15 @@ it("reports installation timeouts and removes the obsolete listener", async () =
   await vi.advanceTimersByTimeAsync(30_001); await checking;
   expect(pwa.getPwaState().updateError).toContain("下载超时");
   expect(remove).toHaveBeenCalledOnce();
+});
+
+it("keeps update error metadata so the same failure can be shown in another language", async () => {
+  const pwa = await boot();
+  online.onLine = false;
+  await pwa.checkForUpdates();
+  const { renderMessage } = await import("@llm-chat/i18n");
+  const state = pwa.getPwaState();
+  expect(state.updateError).toContain("离线");
+  expect(renderMessage("en-US", { message: state.updateError!, i18n: state.updateErrorI18n! })).toContain("offline");
+  expect(renderMessage("zh-CN", { message: state.updateError!, i18n: state.updateErrorI18n! })).toBe(state.updateError);
 });

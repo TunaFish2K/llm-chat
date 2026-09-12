@@ -1,3 +1,4 @@
+import { withMessage } from "@llm-chat/i18n";
 import { randomUUID } from "node:crypto";
 import {
   agentRoleplayConfigSchema,
@@ -131,7 +132,7 @@ export function selectedRoleplayPreset(
 }
 
 export function importSillyTavernPreset(raw: unknown, fileName = "preset.json"): RoleplayPreset {
-  if (!isRecord(raw)) throw new Error("预设文件必须是 JSON 对象");
+  if (!isRecord(raw)) throw withMessage(new Error("预设文件必须是 JSON 对象"), "error.the_preset_file_must_be_a_json_object");
   const warnings: string[] = [];
   const promptRows = Array.isArray(raw.prompts) ? raw.prompts.filter(isRecord) : [];
   const orderRows = Array.isArray(raw.prompt_order) ? raw.prompt_order.filter(isRecord) : [];
