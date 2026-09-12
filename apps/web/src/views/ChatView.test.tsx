@@ -464,6 +464,63 @@ describe("ChatView", () => {
     ));
   });
 
+  it.each(["button", "enter", "queue"] as const)("jumps immediately on %s submission and follows the rendered message", async (mode) => {
+    let messages = [makeMessage({ id: "history", generations: [makeGeneration({ status: mode === "queue" ? "running" : "completed" })] })];
+    seedStore(messages);
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { finish = resolve; });
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return pending;
+      if (url === "/api/conversations/conv-1/messages") return Promise.resolve(json(messages));
+      if (url === "/api/conversations") return Promise.resolve(json([makeConversation()]));
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ChatView conversationId="conv-1" />);
+    await act(async () => { await Promise.resolve(); });
+    const scroll = screen.getByLabelText("消息列表");
+    Object.defineProperties(scroll, {
+      scrollHeight: { configurable: true, value: 1_200 },
+      clientHeight: { configurable: true, value: 400 },
+      scrollTop: { configurable: true, value: 800, writable: true }
+    });
+    fireEvent.scroll(scroll);
+    scroll.scrollTop = 200;
+    fireEvent.scroll(scroll);
+    expect(screen.getByRole("button", { name: "回到最新消息" })).toBeVisible();
+    const input = screen.getByLabelText("输入消息");
+    // Empty submissions leave the reader where they are.
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyUp(input, { key: "Enter" });
+    expect(scroll.scrollTop).toBe(200);
+    fireEvent.change(input, { target: { value: "新的消息" } });
+    if (mode === "enter") {
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.keyUp(input, { key: "Enter" });
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: mode === "queue" ? "加入队列" : "发送" }));
+    }
+    // Assert before any animation frame or network response can complete.
+    expect(scroll.scrollTop).toBe(800);
+    expect(screen.queryByRole("button", { name: "回到最新消息" })).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      mode === "queue" ? "/api/conversations/conv-1/queued-messages" : "/api/conversations/conv-1/messages",
+      expect.objectContaining({ method: "POST" })
+    ));
+    await act(async () => {
+      finish(json({ userMessageId: "u", assistantMessageId: "a", generationId: "g" }, 202));
+    });
+    await waitFor(() => expect(input).toHaveValue(""));
+    // A later message event and a smaller composer change the bottom together.
+    Object.defineProperty(scroll, "scrollHeight", { value: 1_800 });
+    Object.defineProperty(scroll, "clientHeight", { value: 500 });
+    messages = [...messages, makeMessage({ id: "u", ordinal: 2, role: "user", text: "新的消息" })];
+    act(() => appStore.set({ messages: { "conv-1": messages } }));
+    fireEvent.scroll(scroll);
+    await waitFor(() => expect(scroll.scrollTop).toBe(1_300));
+    expect(screen.queryByRole("button", { name: "回到最新消息" })).not.toBeInTheDocument();
+  });
+
   it("uploads and sends a pure image message when the model accepts images", async () => {
     const user = userEvent.setup();
     const model = makeModel({ capabilities: { ...makeModel().capabilities, imageInput: true } });

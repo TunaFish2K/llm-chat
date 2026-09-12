@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
+const JUMP_SETTLE_FRAMES = 2;
+
 export interface StickToBottom {
   ref: RefObject<HTMLDivElement | null>;
   /** True while the reader has scrolled away from the newest message. */
@@ -28,6 +30,7 @@ export function useStickToBottom(
   const following = useRef(initialFollowing);
   const dimensions = useRef({ height: 0, viewport: 0 });
   const smooth = useRef(false);
+  const jumpFrames = useRef(0);
   const frame = useRef<number | null>(null);
   const previousScrollTop = useRef<number | null>(null);
   const [detached, setDetached] = useState(!initialFollowing);
@@ -35,6 +38,7 @@ export function useStickToBottom(
   const reset = useCallback(() => {
     following.current = true;
     smooth.current = false;
+    jumpFrames.current = 0;
     previousScrollTop.current = null;
     setDetached(false);
   }, []);
@@ -48,12 +52,14 @@ export function useStickToBottom(
     const height = element.scrollHeight;
     const viewport = element.clientHeight;
     const top = element.scrollTop;
+    jumpFrames.current = 0;
     dimensions.current = { height, viewport };
     if (behavior === "smooth" && typeof element.scrollTo === "function") {
       previousScrollTop.current = top;
       element.scrollTo({ top: height, behavior });
     } else {
       const target = Math.max(0, height - viewport);
+      jumpFrames.current = top !== target ? JUMP_SETTLE_FRAMES : 0;
       if (top !== target) element.scrollTop = target;
       previousScrollTop.current = target;
     }
@@ -83,11 +89,12 @@ export function useStickToBottom(
     }
   }, [enabled]);
 
-  const follow = useCallback(() => {
+  const follow = useCallback(function follow() {
     if (!enabled || frame.current !== null) return;
     frame.current = requestAnimationFrame(() => {
       frame.current = null;
       syncLayout();
+      if (jumpFrames.current > 0 && --jumpFrames.current > 0) follow();
     });
   }, [enabled, syncLayout]);
 
@@ -105,8 +112,12 @@ export function useStickToBottom(
       return;
     }
     smooth.current = false;
-    // Expanding content and browser scroll anchoring are not an instruction to stop following.
-    if (following.current && resized) { follow(); return; }
+    // Compositor inertia can arrive even after scrollend. Settle an immediate
+    // jump over two quiet frames; a new upward gesture still detaches at once.
+    if (following.current && (resized || jumpFrames.current > 0 || (!atBottom && !movedUp))) {
+      if (jumpFrames.current > 0) jumpFrames.current = JUMP_SETTLE_FRAMES;
+      follow(); return;
+    }
     const nextFollowing = !movedUp && atBottom;
     following.current = nextFollowing;
     setDetached(!nextFollowing);
@@ -130,8 +141,10 @@ export function useStickToBottom(
     observer?.observe(element);
     if (contentRef.current) observer?.observe(contentRef.current);
     const ownsInput = (event: Event) => event.target instanceof Element && event.target.closest("[data-stick-scroll]") === element;
+    const pointerDown = (event: PointerEvent) => { if (ownsInput(event)) jumpFrames.current = 0; };
     const detach = () => {
       if (element.scrollHeight <= element.clientHeight) return;
+      jumpFrames.current = 0;
       following.current = false;
       setDetached(true);
       if (smooth.current) {
@@ -156,6 +169,7 @@ export function useStickToBottom(
       smooth.current = false;
       if (following.current) toBottom();
     };
+    element.addEventListener("pointerdown", pointerDown, { passive: true });
     element.addEventListener("wheel", wheel, { passive: true });
     element.addEventListener("touchstart", touchStart, { passive: true });
     element.addEventListener("touchmove", touchMove, { passive: true });
@@ -165,7 +179,9 @@ export function useStickToBottom(
       observer?.disconnect();
       if (frame.current !== null) cancelAnimationFrame(frame.current);
       frame.current = null;
+      jumpFrames.current = 0;
       delete element.dataset.stickScroll;
+      element.removeEventListener("pointerdown", pointerDown);
       element.removeEventListener("wheel", wheel);
       element.removeEventListener("touchstart", touchStart);
       element.removeEventListener("touchmove", touchMove);
