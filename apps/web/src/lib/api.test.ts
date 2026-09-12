@@ -224,6 +224,7 @@ describe("api client", () => {
       () => endpoints.stopBackgroundTask("task", "done"),
       () => endpoints.resizeBackgroundTask("task", 120, 40),
       () => endpoints.listDirectories(),
+      () => endpoints.listDirectories(""),
       () => endpoints.listDirectories("/workspace path"),
       () => endpoints.createDirectory("/workspace/new"),
       () => endpoints.validatePath("/workspace")
@@ -234,6 +235,7 @@ describe("api client", () => {
     expect(urls).toContain("/api/bootstrap?conversationId=conversation%2Fid");
     expect(urls).toContain("/api/background-tasks?scope=all");
     expect(urls).toContain("/api/filesystem/directories?path=%2Fworkspace%20path");
+    expect(urls).toContain("/api/filesystem/directories?path=");
     expect(urls.filter((url) => url === "/api/conversations/conversation/context/compact")).toHaveLength(2);
   });
 });

@@ -20,6 +20,40 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("validates directory input and returns actionable workspace errors", async () => {
+    const app = await testApp();
+    const root = mkdtempSync(join(tmpdir(), "llm-chat-directory-api-"));
+    dirs.push(root);
+    const path = join(root, "中文 project ");
+    mkdirSync(path);
+    const file = join(root, "file.txt");
+    writeFileSync(file, "content");
+    const browse = await app.inject({ method: "GET", url: `/api/filesystem/directories?path=${encodeURIComponent(path)}` });
+    expect(browse.statusCode).toBe(200);
+    expect(browse.json().path).toBe(path);
+    const validate = await app.inject({ method: "POST", url: "/api/filesystem/validate", payload: { path } });
+    expect(validate.statusCode).toBe(200);
+    expect(validate.json()).toEqual({ path });
+    const defaultDirectory = await app.inject({ method: "GET", url: "/api/filesystem/directories" });
+    expect(defaultDirectory.statusCode).toBe(200);
+    expect(defaultDirectory.json().parentPath).toBeNull();
+    for (const [invalid, message] of [
+      ["", "请输入目录路径"], ["relative", "必须是绝对路径"],
+      [join(root, "missing"), "目录不存在"], [file, "不是目录"],
+      [`${root}/bad\0path`, "非法字符"], [`/${"a".repeat(4096)}`, "目录路径过长"]
+    ]) {
+      const responses = await Promise.all([
+        app.inject({ method: "GET", url: `/api/filesystem/directories?path=${encodeURIComponent(invalid!)}` }),
+        app.inject({ method: "POST", url: "/api/filesystem/validate", payload: { path: invalid } })
+      ]);
+      for (const response of responses) {
+        expect(response.statusCode).toBe(400);
+        expect(response.json().error.code).toBe("workspace_invalid");
+        expect(response.json().error.message).toContain(message);
+      }
+    }
+  });
+
   it("rejects submissions from an unrefreshed client before writing, while legacy sends still work", async () => {
     const app = await testApp();
     seedStoreModel(app.store);
