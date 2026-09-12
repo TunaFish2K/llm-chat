@@ -1440,5 +1440,9 @@
   "ConnectionsView.model_protocol": "模型协议",
   "ConnectionsView.effective_model_protocol": "当前使用：{{protocol}}。自动模式优先采用模型协议，未知模型沿用连接设置。",
   "ConnectionsView.automatic_protocol": "自动识别",
-  "error.model_protocol_unsupported": "此提供商不支持所选模型协议"
+  "error.model_protocol_unsupported": "此提供商不支持所选模型协议",
+  "error.reasoning_effort_unsupported": "模型 {{model}} 不支持推理强度 {{effort}}，请选择：{{supported}}",
+  "ReasoningPicker.unsupported_effort": "{{effort}}（当前模型不支持）",
+  "ReasoningPicker.choose_supported_effort": "当前模型不支持 {{effort}}。请选择：{{supported}}。",
+  "ReasoningPicker.provider_default": "none（使用提供商默认值）"
 }

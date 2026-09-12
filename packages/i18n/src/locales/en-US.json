@@ -1456,5 +1456,9 @@
   "ConnectionsView.model_protocol": "Model protocol",
   "ConnectionsView.effective_model_protocol": "Currently using {{protocol}}. Automatic mode uses the model protocol, or the connection setting for unknown models.",
   "ConnectionsView.automatic_protocol": "Automatic",
-  "error.model_protocol_unsupported": "This provider does not support the selected model protocol"
+  "error.model_protocol_unsupported": "This provider does not support the selected model protocol",
+  "error.reasoning_effort_unsupported": "Model {{model}} does not support reasoning effort {{effort}}. Choose: {{supported}}",
+  "ReasoningPicker.unsupported_effort": "{{effort}} (unsupported by this model)",
+  "ReasoningPicker.choose_supported_effort": "This model does not support {{effort}}. Choose: {{supported}}.",
+  "ReasoningPicker.provider_default": "none (provider default)"
 }

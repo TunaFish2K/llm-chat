@@ -12,7 +12,9 @@ export function ReasoningPicker({ value, effective, inherited, levels, disabled,
   useLocale();
   const [open, setOpen] = useState(false);
   useBackLayer(open, () => setOpen(false));
-  const options = [INHERIT, ...REASONING_LEVELS.filter((level) => levels.includes(level))];
+  const inheritedSupported = inherited === "none" || levels.includes(inherited);
+  const effectiveSupported = effective === "none" || levels.includes(effective);
+  const options = [...(inheritedSupported ? [INHERIT] : []), ...REASONING_LEVELS.filter((level) => levels.includes(level))];
   const index = Math.max(0, options.indexOf(value));
   const [preview, setPreview] = useState(index);
   const brightness = Math.max(0, REASONING_LEVELS.indexOf(effective));
@@ -23,6 +25,7 @@ export function ReasoningPicker({ value, effective, inherited, levels, disabled,
       <Lightbulb size={18} style={{ color: `color-mix(in srgb, var(--accent) ${25 + brightness * 15}%, var(--text-muted))`, fill: `color-mix(in srgb, var(--accent) ${brightness * 14}%, transparent)` }} />
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="reasoning-popover" side="top" sideOffset={10}>
+      {!effectiveSupported ? <p role="alert" className="small">{t("ReasoningPicker.choose_supported_effort", { effort: effective, supported: levels.join(" / ") })}</p> : null}
       <Slider.Root aria-label={t("ConnectionsView.reasoning_levels")} orientation="vertical" min={0} max={options.length - 1} step={1}
         className="reasoning-slider" value={[preview]} onValueChange={([next]) => setPreview(next!)}
         onValueCommit={([next]) => onChange(options[next!]!)}>

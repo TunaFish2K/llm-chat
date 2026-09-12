@@ -502,7 +502,7 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
   const selectedModel = models.find((model) => model.id === execution.modelId);
   const advertisedReasoning = selectedModel?.catalogMetadata?.reasoningEfforts ?? [];
   const reasoningLevels = advertisedReasoning.length > 0
-    ? [...new Set([...advertisedReasoning, execution.reasoningEffort])]
+    ? advertisedReasoning
     : REASONING_LEVELS;
 
   const setExecution = (patch: Partial<AgentDto["execution"]>) =>
@@ -573,6 +573,11 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
               value={execution.reasoningEffort}
               onChange={(event) => setExecution({ reasoningEffort: event.target.value as ReasoningEffort })}
             >
+              {!reasoningLevels.includes(execution.reasoningEffort) ? (
+                <option value={execution.reasoningEffort} disabled>
+                  {execution.reasoningEffort === "none" ? t("ReasoningPicker.provider_default") : t("ReasoningPicker.unsupported_effort", { effort: execution.reasoningEffort })}
+                </option>
+              ) : null}
               {reasoningLevels.map((level) => (
                 <option key={level} value={level}>
                   {level}

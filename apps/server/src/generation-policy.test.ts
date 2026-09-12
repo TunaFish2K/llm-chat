@@ -98,3 +98,19 @@ describe("generation policy without persistence", () => {
     expect(settings.resolvedThinkingBudgetTokens).toBeLessThan(settings.common.maxOutputTokens);
   });
 });
+
+it("rejects unsupported inherited and explicit efforts before generation, preserving native values", () => {
+  const input = fixture();
+  input.model.catalogMetadata = { providerId: "opencode-go", modelId: "grok-4.6", inputModalities: ["text"], outputModalities: ["text"], reasoningEfforts: ["low", "medium", "high", "xhigh"], fetchedAt: 1 };
+  input.agent.execution.reasoningEffort = "max";
+  expect(() => resolveGenerationPlan(input)).toThrow("不支持推理强度 max");
+  input.conversation.executionOverrides.reasoningEffort = "xhigh";
+  expect(resolveGenerationPlan(input).snapshot.execution.settings.reasoningEffort).toBe("xhigh");
+  input.conversation.executionOverrides.reasoningEffort = "max";
+  expect(() => resolveGenerationPlan(input)).toThrow("low / medium / high / xhigh");
+  input.conversation.executionOverrides.reasoningEffort = "none";
+  expect(resolveGenerationPlan(input).snapshot.execution.settings.reasoningEffort).toBe("none");
+  input.model.catalogMetadata.reasoningEfforts = [];
+  input.conversation.executionOverrides.reasoningEffort = "max";
+  expect(resolveGenerationPlan(input).snapshot.execution.settings.reasoningEffort).toBe("max");
+});

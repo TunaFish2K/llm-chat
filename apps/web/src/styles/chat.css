@@ -1510,7 +1510,8 @@
 .composer-settings-popover small { white-space: normal; overflow-wrap: anywhere; }
 .conversation-action-slot { display: flex; flex: 0 0 auto; }
 .conversation-action-slot:empty { display: none; }
-.reasoning-popover { z-index: 75; display: flex; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); max-width: calc(100vw - 24px); }
+.reasoning-popover { z-index: 75; display: grid; grid-template-columns: 24px minmax(140px, 1fr); gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); max-width: calc(100vw - 24px); }
+.reasoning-popover > [role="alert"] { grid-column: 1 / -1; max-width: 260px; margin: 0; color: var(--danger); overflow-wrap: anywhere; }
 .reasoning-slider { position: relative; display: flex; align-items: center; width: 24px; height: min(240px, 55dvh); touch-action: none; user-select: none; }
 .reasoning-track { position: relative; width: 4px; height: 100%; margin: auto; background: var(--border-strong); border-radius: 3px; }
 .reasoning-range { position: absolute; width: 100%; background: var(--accent); }
