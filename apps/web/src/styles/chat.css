@@ -1513,10 +1513,21 @@
 .reasoning-popover { z-index: 75; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); width: 280px; max-width: calc(100vw - 24px); max-height: min(480px, 65dvh); overflow-y: auto; }
 .reasoning-popover > p { margin: 0; overflow-wrap: anywhere; }
 .reasoning-popover > [role="alert"] { color: var(--danger); }
-.reasoning-labels { display: flex; flex-direction: column; gap: 4px; }
-.reasoning-labels button { background: none; border: none; text-align: left; color: var(--text-muted); min-height: 36px; cursor: pointer; overflow-wrap: anywhere; }
+/* Equal rows keep every native label aligned with its discrete slider stop. */
+.reasoning-steps { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; flex: 0 0 auto; }
+.reasoning-rail { position: relative; }
+.reasoning-slider { position: absolute; inset-inline: 0; inset-block: calc(min(25%, calc(50% / var(--reasoning-count))) - 10px); display: flex; align-items: center; justify-content: center; touch-action: none; user-select: none; }
+.reasoning-track { position: relative; width: 4px; height: calc(100% - 20px); margin: auto; background: var(--border-strong); border-radius: 3px; }
+.reasoning-range { position: absolute; width: 100%; background: var(--accent); }
+.reasoning-thumb { display: block; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface-1); }
+.reasoning-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.reasoning-slider[data-unselected] .reasoning-thumb { background: var(--surface-1); border-color: var(--text-muted); }
+.reasoning-slider[data-unselected] .reasoning-range { visibility: hidden; }
+.reasoning-slider[data-disabled] { opacity: 0.5; }
+.reasoning-labels { display: grid; grid-template-rows: repeat(var(--reasoning-count), minmax(48px, 1fr)); min-width: 0; }
+.reasoning-labels button, .reasoning-unavailable { background: none; border: none; text-align: left; color: var(--text-muted); cursor: pointer; overflow-wrap: anywhere; padding: 4px; line-height: 1.2; font-size: var(--text-sm); }
 .reasoning-labels button[data-selected] { color: var(--accent); font-weight: 600; }
-.reasoning-labels button:disabled { opacity: 0.5; cursor: default; }
+.reasoning-labels button:disabled, .reasoning-unavailable { opacity: 0.5; cursor: default; }
 .attachment-menu { width: 180px; }
 .message-queue { border: 1px solid var(--border); border-radius: var(--radius-md); margin-top: 8px; padding: 6px 10px; font-size: var(--text-sm); }
 .message-queue header, .message-queue li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

@@ -4,7 +4,7 @@ import { agentInput, api, APP_URL } from "./helpers.mjs";
 for (const locale of ["zh-CN", "en-US"] as const) {
  test.describe(locale, () => {
   test.use({ locale, serviceWorkers: "block" });
-  test("native effort menus expose invalid inheritance and preserve the message draft", async ({ page, request }) => {
+  test("native effort sliders expose invalid inheritance and preserve the message draft", async ({ page, request }) => {
     const connection = await api(request, APP_URL, "POST", "/api/connections", { name: `Native ${locale}`, protocol: "openai-responses", baseUrl: "https://example.invalid/v1", secretHeaders: {} });
     const model = await api(request, APP_URL, "POST", "/api/models", {
       connectionId: connection.id, modelKey: "grok-4.6", displayName: "Native Grok", contextWindow: 128000, maxOutputTokens: 4096, reasoningEffortsOverride: ["low", "medium", "high", "xhigh"],
@@ -22,7 +22,8 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       const popover = page.locator(".reasoning-popover");
       await expect(popover.getByRole("alert")).toContainText(locale === "zh-CN" ? "当前模型不支持 max" : "does not support max");
       await expect(popover.getByRole("button", { name: "max", exact: true })).toHaveCount(0);
-      await expect(popover.getByRole("button").filter({ hasText: /^(low|medium|high|xhigh)$/ })).toHaveText(["low", "medium", "high", "xhigh"]);
+      await expect(popover.getByRole("button").filter({ hasText: /^(low|medium|high|xhigh)$/ })).toHaveText(["xhigh", "high", "medium", "low"]);
+      await expect(popover.getByRole("slider")).toHaveAttribute("aria-orientation", "vertical");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.screenshot({ path: test.info().outputPath(`native-effort-${locale}.png`) });
       await popover.getByRole("button", { name: "xhigh", exact: true }).click();
