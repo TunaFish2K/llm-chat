@@ -51,6 +51,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await expect(page.locator(".composer-stop-button")).toHaveCount(0);
       await page.locator(".reasoning-trigger").click();
       await page.locator(".reasoning-popover").getByRole("button", { name: cn ? "提供商默认" : "Provider default", exact: true }).click();
+      await page.keyboard.press("Escape");
       await page.locator(".composer textarea").first().fill("Provider default");
       await page.getByRole("button", { name: cn ? "发送" : "Send", exact: true }).click();
       await expect.poll(() => provider.requests.length).toBe(2);
