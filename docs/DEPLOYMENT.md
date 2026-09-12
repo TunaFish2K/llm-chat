@@ -75,16 +75,6 @@ pnpm build
 `pnpm start` 时，默认使用项目根目录的 `config.json`。如果文件不存在，服务会以 `0600` 权限
 排他创建完整默认配置，然后继续启动；已有但无效的配置不会被覆盖。
 
-Codex worker 是例外：它支持以下仅用于 Codex app-server 的环境覆盖。未设置时使用 `codex`，默认采用
-`server-workspace` 策略；npm 安装的 Codex 会自动使用 stdio app-server，官方 standalone 安装则优先使用
-本地 daemon 控制 socket。
-
-| 环境变量 | 作用 |
-| --- | --- |
-| `LLM_CHAT_CODEX_BIN` | Codex 可执行文件路径，默认 `codex` |
-| `LLM_CHAT_CODEX_SOCKET` | 已运行 app-server 的控制 socket 路径 |
-| `LLM_CHAT_CODEX_PROFILE` | 设置为 `trusted-local-yolo` 才启用本机 YOLO；默认 `server-workspace` |
-
 ```json
 {
   "host": "0.0.0.0",
@@ -173,6 +163,16 @@ Git 和归档提交信息时使用 `source-<内容哈希>`。直接运行源码�
 回滚使用同样的停服和单副本顺序，选择以前的不可变发布目录并保留同一个数据目录。启动前确认该版本
 支持当前数据库架构；数据库迁移在启动时向前执行，旧版本可能拒绝比它更新的数据库版本，不要假设可以
 自动降级。若需要回到迁移前状态，停止服务并恢复更新前保存的完整数据目录备份。
+
+### 从含 Codex 专用集成的版本升级
+
+Codex 专用面板、工具和 `/api/codex/*` 接口已移除。平台不再读取 `LLM_CHAT_CODEX_BIN`、
+`LLM_CHAT_CODEX_SOCKET` 和 `LLM_CHAT_CODEX_PROFILE`，也不再自动连接或恢复 Codex 会话。
+升级前确认没有仍需处理的 Codex 任务，再按上述停服、备份和切换流程部署。刷新旧标签页以载入新界面。
+
+旧 Codex 数据表与记录保留。平台自带的 `coding-supervisor` 会停用并从可选目录中隐藏；
+旧安装记录和 Skill 修订保留，重新加载不能恢复它。用户安装的 Skill、主机上的 Codex 安装及其数据不受影响。
+通用后台任务与交互式命令继续可用。定位与兼容边界见 [ADR-007](ADR-007-conversation-and-lightweight-tasks.md)。
 
 ## 停服备份和恢复
 

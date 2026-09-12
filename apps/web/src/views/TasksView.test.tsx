@@ -24,6 +24,8 @@ describe("ConversationTasksView", () => {
     render(<ConversationTasksView conversationId="conv-1" taskId={null} />);
 
     const command = await screen.findByRole("button", { name: "pnpm test" });
+    expect(screen.queryByRole("region", { name: "Codex 控制面板" })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/codex/"))).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/background-tasks?conversationId=conv-1",
       expect.objectContaining({ method: "GET" })

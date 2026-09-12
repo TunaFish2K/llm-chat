@@ -1174,83 +1174,6 @@ export interface BackgroundTaskEventDto {
   createdAt: number;
 }
 
-export const codexProfileSchema = z.enum(["trusted-local-yolo", "server-workspace"]);
-export type CodexProfile = z.infer<typeof codexProfileSchema>;
-
-export const codexSessionStatusSchema = z.enum([
-  "starting", "idle", "running", "waiting-approval", "detached", "stopped", "error"
-]);
-export type CodexSessionStatus = z.infer<typeof codexSessionStatusSchema>;
-
-export interface CodexRuntimeDto {
-  available: boolean;
-  connected: boolean;
-  binary: string;
-  version: string | null;
-  socketPath: string;
-  profile: CodexProfile;
-  error: string | null;
-  checkedAt: number;
-}
-
-export interface CodexThreadDto {
-  id: string;
-  preview: string;
-  cwd: string;
-  status: string;
-  model: string | null;
-  updatedAt: number;
-  source: string;
-  name: string | null;
-}
-
-export interface CodexSessionDto {
-  id: string;
-  conversationId: string;
-  threadId: string;
-  cwd: string;
-  preview: string;
-  status: CodexSessionStatus;
-  profile: CodexProfile;
-  model: string | null;
-  currentTurnId: string | null;
-  lastEventId: number;
-  managed: boolean;
-  error: string | null;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface CodexEventDto {
-  id: number;
-  sessionId: string;
-  kind: "status" | "message" | "turn" | "command" | "file-change" | "approval" | "input" | "error" | "item";
-  method: string;
-  payload: Record<string, unknown>;
-  createdAt: number;
-}
-
-export const codexCreateSessionSchema = z.object({
-  conversationId: z.string().uuid(),
-  threadId: z.string().min(1).max(200).optional(),
-  profile: codexProfileSchema.default("server-workspace")
-});
-export type CodexCreateSessionInput = z.infer<typeof codexCreateSessionSchema>;
-
-export const codexTurnInputSchema = z.object({ text: z.string().trim().min(1).max(200_000) });
-export type CodexTurnInput = z.infer<typeof codexTurnInputSchema>;
-
-export const codexResponseInputSchema = z.object({
-  requestId: z.string().min(1).max(100),
-  response: z.record(z.string(), z.unknown())
-});
-export type CodexResponseInput = z.infer<typeof codexResponseInputSchema>;
-
-export interface CodexSessionDetailDto {
-  session: CodexSessionDto;
-  events: CodexEventDto[];
-}
-
 export interface DirectoryEntryDto {
   name: string;
   path: string;
@@ -1285,7 +1208,6 @@ export type AppEvent =
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
   | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
   | { id: number; type: "image-generation"; jobId: string; conversationId: string; job: ImageGenerationJobDto }
-  | { id: number; type: "codex"; sessionId: string; conversationId: string; session: CodexSessionDto; event: CodexEventDto }
   | { id: number; type: "resource-changed"; resource: "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
 
 const mcpServerFields = {

@@ -20,6 +20,42 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("removes dedicated Codex APIs and tools while keeping background tools and old session data", async () => {
+    const app = await testApp();
+    const conversation = app.store.createConversation({ systemPrompt: "" });
+    app.store.sqlite.prepare(`INSERT INTO codex_sessions
+      (id, conversation_id, thread_id, cwd, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run("old-session", conversation.id, "old-thread", app.store.dataDir, "idle", 1, 1);
+    app.store.sqlite.prepare(`INSERT INTO codex_events (session_id, kind, method, payload_json, created_at)
+      VALUES (?, ?, ?, ?, ?)`)
+      .run("old-session", "message", "old-event", '{"text":"historical output"}', 1);
+    const sessions = app.store.sqlite.prepare("SELECT * FROM codex_sessions").all();
+    const events = app.store.sqlite.prepare("SELECT * FROM codex_events").all();
+    await app.close();
+    const reopened = await testApp({ dir: app.dir, password: app.password });
+    for (const [method, url] of [
+      ["GET", "/api/codex/runtime"], ["GET", "/api/codex/threads"],
+      ["GET", "/api/codex/sessions"], ["POST", "/api/codex/sessions"],
+      ["GET", "/api/codex/sessions/old-session"], ["DELETE", "/api/codex/sessions/old-session"],
+      ["POST", "/api/codex/sessions/old-session/turns"],
+      ["POST", "/api/codex/sessions/old-session/respond"], ["POST", "/api/codex/sessions/old-session/interrupt"]
+    ] as const) {
+      const response = await reopened.inject({ method, url });
+      expect(response.statusCode).toBe(404);
+      expect(response.json().error).toEqual({ code: "not_found", message: "API 不存在" });
+    }
+    const catalogResponse = await reopened.inject({ method: "GET", url: "/api/tools/catalog" });
+    expect(catalogResponse.statusCode).toBe(200);
+    const catalog = catalogResponse.json() as Array<{ name: string }>;
+    expect(catalog.some((tool) => tool.name.startsWith("codex_"))).toBe(false);
+    expect(catalog.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      "workspace_shell", "workspace_shell_readonly", "workspace_read_file", "workspace_write_file",
+      "background_start", "background_read", "background_wait", "background_write", "background_stop"
+    ]));
+    expect(reopened.store.sqlite.prepare("SELECT * FROM codex_sessions").all()).toEqual(sessions);
+    expect(reopened.store.sqlite.prepare("SELECT * FROM codex_events").all()).toEqual(events);
+  });
+
   it("validates directory input and returns actionable workspace errors", async () => {
     const app = await testApp();
     const root = mkdtempSync(join(tmpdir(), "llm-chat-directory-api-"));
@@ -1132,11 +1168,11 @@ function testWebRoot(dir: string): string {
   return root;
 }
 
-async function testApp() {
-  const dir = mkdtempSync(join(tmpdir(), "llm-chat-api-"));
-  dirs.push(dir);
+async function testApp(existing?: { dir: string; password: string }) {
+  const dir = existing?.dir ?? mkdtempSync(join(tmpdir(), "llm-chat-api-"));
+  if (!existing) dirs.push(dir);
   const webRoot = testWebRoot(dir);
-  let password = "";
+  let password = existing?.password ?? "";
   const app = await buildApp({
     dataFile: join(dir, "test.sqlite"), logger: false, webRoot,
     authAnnounce: (message) => { password = message.match(/\d{8}/)![0]; },
@@ -1147,7 +1183,7 @@ async function testApp() {
   expect(login.statusCode).toBe(200);
   const cookie = login.cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
   return {
-    store: app.store, runner: app.runner, webRoot, password, close: () => app.close(),
+    store: app.store, runner: app.runner, webRoot, password, dir, close: () => app.close(),
     inject: (options: InjectOptions) => app.inject({ ...options, headers: { cookie, "x-llm-chat-request": "1", ...options.headers } })
   };
 }

@@ -325,6 +325,45 @@ describe("GenerationRunner lifecycle", () => {
 });
 
 describe("GenerationRunner tools and approval", () => {
+  it("ignores stale Codex settings and completes a turn after an unavailable historical tool call", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const record = store.getGenerationRecord(generation.generationId)!;
+    record.agentSnapshot.execution.enabledSkillIds = ["coding-supervisor"];
+    record.agentSnapshot.execution.tools.defaultEnabled = false;
+    record.agentSnapshot.execution.tools.overrides = { codex_start: true, eval_javascript: true };
+    record.agentSnapshot.extensionsPinned = false;
+    store.updateGenerationExtensionSnapshot(record.id, record.agentSnapshot);
+    const hub = new EventHub();
+    const tasks = new TaskManager(store, hub);
+    const skills = new SkillManager(store, hub, { discoveryRoot: resolve(store.dataDir, "agent-skills") });
+    await skills.initialize();
+    const registry = new ToolRegistry(store, tasks, new PluginManager(store, hub), skills);
+    const requests: GenerateRequest[] = [];
+    const scripts: ProviderEvent[][] = [
+      [toolCall("retired-call", "codex_start", "{}")], [{ type: "complete", stopReason: "stop" }]
+    ];
+    const runner = makeRunner(store, {
+      buildTools: (_store, saved) => registry.tools(saved),
+      stream: (_protocol, request) => { requests.push(request); return events(scripts.shift()!); }
+    });
+    try {
+      runner.start(generation.generationId);
+      const result = await terminal(store, generation.generationId);
+      expect(result).toMatchObject({ status: "completed", error: null });
+      expect(result.toolCalls[0]).toMatchObject({ approvalState: "failed", error: "Tool codex_start is not available" });
+      expect(requests).toHaveLength(2);
+      expect(requests[0]!.tools?.map((tool) => tool.name)).toContain("eval_javascript");
+      expect(requests.flatMap((request) => request.tools ?? []).some((tool) => tool.name.startsWith("codex_"))).toBe(false);
+      expect(store.getGenerationRecord(record.id)!.agentSnapshot.skillRevisions).toEqual({});
+      expect(store.getGenerationRecord(record.id)!.agentSnapshot.execution.tools.overrides.codex_start).toBe(true);
+    } finally {
+      await runner.close();
+      await tasks.close();
+      registry.close();
+    }
+  });
+
   it.each(["default", "always", "never", "disabled", "lazy", "unavailable"] as const)("applies %s policy to the registered read-only shell", async (policy) => {
     const store = createStore();
     const generation = seedGeneration(store);
@@ -341,7 +380,7 @@ describe("GenerationRunner tools and approval", () => {
     const runtime = { available: policy !== "unavailable", error: policy === "unavailable" ? "Bubblewrap unavailable" : null, execute } as unknown as ReadonlyShellManager;
     const hub = new EventHub();
     const tasks = new TaskManager(store, hub);
-    const registry = new ToolRegistry(store, tasks, new PluginManager(store, hub), new SkillManager(store, hub), undefined, undefined, undefined, undefined, undefined, runtime);
+    const registry = new ToolRegistry(store, tasks, new PluginManager(store, hub), new SkillManager(store, hub), undefined, undefined, undefined, undefined, runtime);
     const scripts: ProviderEvent[][] = [
       ...(policy === "lazy" ? [[toolCall("discover-readonly", "search_tools", '{"query":"workspace shell readonly"}')]] : []),
       [toolCall("readonly-call", name, '{"command":"cat attached.txt","workspace":"attachments"}')],

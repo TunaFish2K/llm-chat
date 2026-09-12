@@ -19,9 +19,6 @@ import {
   connectionInputPatchSchema,
   conversationInputSchema,
   conversationRoleplayStatePatchSchema,
-  codexCreateSessionSchema,
-  codexResponseInputSchema,
-  codexTurnInputSchema,
   encodedFileSchema,
   fileUploadMetadataSchema,
   forkConversationSchema,
@@ -74,7 +71,6 @@ import { importSillyTavernPreset } from "./roleplay";
 import { executeRestrictedStscript } from "./stscript";
 import { providerRequestContextForConversation } from "./provider-context";
 import { ImageGenerationManager } from "./image-generation";
-import { CodexManager } from "./codex";
 
 export interface AppOptions {
   dataFile: string;
@@ -136,8 +132,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const balanceService = new BalanceService();
   const modelCatalog = new ModelCatalogService();
   const eventHub = new EventHub();
-  const codex = new CodexManager(store, eventHub);
-  codex.initialize();
   const imageJobs = new ImageGenerationManager(store, imageService, eventHub);
   await imageJobs.initialize();
   const taskManager = new TaskManager(store, eventHub);
@@ -156,7 +150,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const browser = new BrowserFetchManager();
   const readonlyShell = new ReadonlyShellManager();
   await readonlyShell.initialize();
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, codex, browser, readonlyShell);
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, browser, readonlyShell);
   const runner = new GenerationRunner(store, {
     onStateChange: (id) => publishGenerationState(store, eventHub, id),
     onSettled: (conversationId) => { queue.changed(conversationId); queue.kick(conversationId); },
@@ -896,35 +890,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     taskManager.resize(request.params.id, value.columns, value.rows);
     return { ok: true };
   });
-  app.get("/api/codex/runtime", async () => codex.status());
-  app.get<{ Querystring: { cwd?: string } }>("/api/codex/threads", async (request) => {
-    const cwd = request.query.cwd?.trim() || undefined;
-    return codex.listThreads(cwd);
-  });
-  app.get<{ Querystring: { conversationId?: string } }>("/api/codex/sessions", async (request) => {
-    return codex.listSessions(request.query.conversationId);
-  });
-  app.post("/api/codex/sessions", async (request, reply) => {
-    const session = await codex.create(codexCreateSessionSchema.parse(request.body));
-    return reply.code(201).send(session);
-  });
-  app.get<{ Params: { id: string }; Querystring: { after?: string } }>("/api/codex/sessions/:id", async (request) => {
-    const after = z.coerce.number().int().nonnegative().default(0).parse(request.query.after);
-    return codex.detail(request.params.id, after);
-  });
-  app.post<{ Params: { id: string } }>("/api/codex/sessions/:id/turns", async (request) => {
-    return codex.send(request.params.id, codexTurnInputSchema.parse(request.body));
-  });
-  app.post<{ Params: { id: string } }>("/api/codex/sessions/:id/respond", async (request) => {
-    return codex.respond(request.params.id, codexResponseInputSchema.parse(request.body));
-  });
-  app.post<{ Params: { id: string } }>("/api/codex/sessions/:id/interrupt", async (request) => {
-    return codex.interrupt(request.params.id);
-  });
-  app.delete<{ Params: { id: string } }>("/api/codex/sessions/:id", async (request, reply) => {
-    codex.detach(request.params.id);
-    return reply.code(204).send();
-  });
   const streams = new Set<SseWriter>();
   const createEventStream = (reply: FastifyReply): SseWriter => {
     const stream = new SseWriter(reply.raw, (reason) => {
@@ -1059,7 +1024,6 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     await browser.close();
     await imageJobs.close();
     await taskManager.close();
-    await codex.close();
     registry.close();
     await closeMcpManager(store);
     store.close();

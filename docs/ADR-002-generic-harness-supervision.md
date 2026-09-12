@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-007: Conversation and Lightweight Tasks](ADR-007-conversation-and-lightweight-tasks.md).
+
+The decision below records the former integration. It no longer describes the current product.
 
 ## Decision
 

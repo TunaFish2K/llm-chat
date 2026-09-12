@@ -2,6 +2,8 @@
 
 [中文](README.md)
 
+A single-user app for conversation and lightweight tasks. Agents use general tools to look up information, calculate results, process files, and run batch scripts. Background tasks support work that takes longer or needs interactive input.
+
 ## Deployment
 
 Install Node.js 24 or later and pnpm 11.7.0.

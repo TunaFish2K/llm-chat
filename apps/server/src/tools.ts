@@ -15,7 +15,6 @@ import type { AgentSnapshot } from "./generation-types";
 import type { TaskManager } from "./background-tasks";
 import type { ImageService } from "./images";
 import type { ImageGenerationManager } from "./image-generation";
-import type { CodexManager } from "./codex";
 import { mcpManager } from "./mcp";
 import { ServiceSettings } from "./service-settings";
 
@@ -54,7 +53,6 @@ export interface ToolDependencies {
   taskManager?: TaskManager;
   imageService?: ImageService;
   imageManager?: ImageGenerationManager;
-  codexManager?: CodexManager;
   workspacePath?: string | null;
   attachmentWorkspacePath?: string;
 }
@@ -262,7 +260,6 @@ export async function buildServerTools(
   ];
 
   if (dependencies.taskManager) tools.push(...backgroundTools(dependencies.taskManager, rootFor));
-  if (dependencies.codexManager) tools.push(...codexTools(dependencies.codexManager));
 
   const skillList = await listSkills(skills);
   tools.push(tool("use_skill", "加载 Skill", "skill", skillList.length
@@ -275,67 +272,6 @@ export async function buildServerTools(
   tools.push(...await mcpManager(store).tools());
 
   return tools;
-}
-
-function codexTools(manager: CodexManager): ServerTool[] {
-  return [
-    tool("codex_runtime", "Codex 状态", "background", "Read the local Codex runtime, app-server connection, version, and execution profile.", {}, false,
-      async () => JSON.stringify(await manager.status())),
-    tool("codex_sessions", "Codex 会话", "background", "List Codex sessions already bound to this conversation and discover attachable threads in its workspace.", {
-      discover: { type: "boolean", description: "Also query Codex app-server for attachable threads" }
-    }, false, async (input, _signal, context) => {
-      if (!context) throw new Error("Tool execution context is required");
-      const sessions = manager.listSessions(context.conversationId);
-      const threads = input.discover === true ? await manager.listThreads(context.snapshot.workspacePath ?? undefined) : [];
-      return JSON.stringify({ sessions, threads });
-    }),
-    tool("codex_start", "启动或接管 Codex", "background", "Start a new Codex coding session or attach a specific existing thread for this conversation. Use the current workspace only.", {
-      thread_id: stringProperty("Optional Codex thread ID to resume and bind"),
-      profile: { type: "string", enum: ["trusted-local-yolo", "server-workspace"], default: "server-workspace" }
-    }, false, async (input, _signal, context) => {
-      if (!context) throw new Error("Tool execution context is required");
-      return JSON.stringify(await manager.create({
-        conversationId: context.conversationId,
-        ...(typeof input.thread_id === "string" ? { threadId: input.thread_id } : {}),
-        profile: input.profile === "trusted-local-yolo" ? "trusted-local-yolo" : "server-workspace"
-      }));
-    }),
-    tool("codex_send", "发送 Codex 任务", "background", "Send a coding instruction to the bound Codex session. Codex owns the file edits; inspect its result before claiming completion.", {
-      session_id: stringProperty("Bound Codex session id"), text: stringProperty("Coding instruction for Codex")
-    }, false, async (input, _signal, context) => {
-      requireCodexContext(context);
-      return JSON.stringify(await manager.send(requiredString(input, "session_id"), { text: requiredString(input, "text") }));
-    }),
-    tool("codex_wait", "等待 Codex", "background", "Wait for new Codex events or a state change and return the incremental structured event list.", {
-      session_id: stringProperty("Bound Codex session id"), cursor: integerProperty("Last Codex event id"), timeout_seconds: integerProperty("Wait timeout from 1 to 120 seconds")
-    }, false, async (input, signal, context) => {
-      requireCodexContext(context);
-      const result = await manager.wait(requiredString(input, "session_id"), optionalInteger(input, "cursor", 0, 0, Number.MAX_SAFE_INTEGER),
-        optionalInteger(input, "timeout_seconds", 30, 1, 120) * 1_000, signal);
-      return JSON.stringify(result);
-    }),
-    tool("codex_respond", "响应 Codex 请求", "background", "Respond to a pending structured Codex approval or user-input request. Keep the response inside the configured execution policy.", {
-      session_id: stringProperty("Bound Codex session id"), request_id: stringProperty("Codex request id"), response: { type: "object", description: "Protocol response payload" }
-    }, false, async (input, _signal, context) => {
-      requireCodexContext(context);
-      const response = input.response && typeof input.response === "object" && !Array.isArray(input.response)
-        ? input.response as Record<string, unknown> : {};
-      return JSON.stringify(await manager.respond(requiredString(input, "session_id"), {
-        requestId: requiredString(input, "request_id"), response
-      }));
-    }),
-    tool("codex_interrupt", "中断 Codex", "background", "Interrupt the active Codex turn while keeping its persisted thread bound to the conversation.", {
-      session_id: stringProperty("Bound Codex session id")
-    }, false, async (input, _signal, context) => {
-      requireCodexContext(context);
-      return JSON.stringify(await manager.interrupt(requiredString(input, "session_id")));
-    })
-  ];
-}
-
-function requireCodexContext(context?: ToolExecutionContext): asserts context is ToolExecutionContext {
-  if (!context) throw new Error("Tool execution context is required");
-  if (!context.snapshot.workspacePath) throw new Error("Conversation has no workspace");
 }
 
 export async function toolCatalog(store: Store, dependencies: ToolDependencies = {}): Promise<ToolCatalogItemDto[]> {
@@ -374,13 +310,6 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_shell_readonly: "在只读沙箱中读取、搜索和分析当前工作目录及附件；不联网，临时文件在调用结束后销毁。默认免审批。",
   workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
   workspace_publish_file: "把工作区文件导入为不可变应用资产，并返回永久下载链接。发布前需要批准。",
-  codex_runtime: "检查本机 Codex 和 app-server 状态。",
-  codex_sessions: "列出当前会话绑定或可接管的 Codex 会话。",
-  codex_start: "启动新的 Codex 会话或接管已有 thread。",
-  codex_send: "向 Codex 发送编码任务。",
-  codex_wait: "等待 Codex 的结构化进度事件。",
-  codex_respond: "响应 Codex 的审批或输入请求。",
-  codex_interrupt: "中断当前 Codex turn。",
   use_skill: "按需加载服务端 Skills 目录中的专用说明。"
 };
 
@@ -519,8 +448,6 @@ function inferRequired(name: string): string[] {
     workspace_grep: ["query"], workspace_shell: ["command"], workspace_shell_readonly: ["command"], use_skill: ["name"],
     background_start: ["command"], background_status: ["task_id"], background_read: ["task_id"],
     background_wait: ["task_id"], background_write: ["task_id", "data", "reason"], background_stop: ["task_id", "reason"],
-    codex_send: ["session_id", "text"], codex_wait: ["session_id"],
-    codex_respond: ["session_id", "request_id", "response"], codex_interrupt: ["session_id"]
   } as Record<string, string[]>)[name] ?? [];
 }
 

@@ -6,7 +6,7 @@ export interface ToolFormatters {
   formatResult?: (result: ToolResultFormatInput) => ToolMarkdown | Promise<ToolMarkdown>;
 }
 
-const builtinNames = new Set(`browser_fetch get_time_info eval_javascript fetch_url search_web image_generate recent_chats conversation_search memory_tool workspace_list workspace_read_file workspace_write_file workspace_edit_file workspace_glob workspace_grep workspace_shell workspace_shell_readonly workspace_publish_image workspace_publish_file use_skill codex_runtime codex_sessions codex_start codex_send codex_wait codex_respond codex_interrupt background_start background_read background_wait background_write background_stop background_list search_tools plugin_install plugin_reload plugin_unload plugin_remove skill_install skill_reload app_agents app_conversations app_settings app_connections app_models app_mcp_servers app_skills app_plugins app_tool_settings app_roleplay`.split(" "));
+const builtinNames = new Set(`browser_fetch get_time_info eval_javascript fetch_url search_web image_generate recent_chats conversation_search memory_tool workspace_list workspace_read_file workspace_write_file workspace_edit_file workspace_glob workspace_grep workspace_shell workspace_shell_readonly workspace_publish_image workspace_publish_file use_skill background_start background_read background_wait background_write background_stop background_list search_tools plugin_install plugin_reload plugin_unload plugin_remove skill_install skill_reload app_agents app_conversations app_settings app_connections app_models app_mcp_servers app_skills app_plugins app_tool_settings app_roleplay`.split(" "));
 
 function clip(value: string, bytes: number): string {
   if (Buffer.byteLength(value) <= bytes) return value;

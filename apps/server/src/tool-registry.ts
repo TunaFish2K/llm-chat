@@ -11,7 +11,6 @@ import { realpath } from "node:fs/promises";
 import type { ImageService } from "./images";
 import type { AppTools } from "./app-tools";
 import type { ImageGenerationManager } from "./image-generation";
-import type { CodexManager } from "./codex";
 import type { BrowserFetchManager } from "./browser-fetch";
 import type { ReadonlyShellManager } from "./readonly-shell";
 
@@ -89,7 +88,6 @@ export class ToolRegistry {
     private readonly images?: ImageService,
     private readonly appTools?: AppTools,
     private readonly imageJobs?: ImageGenerationManager,
-    private readonly codex?: CodexManager,
     private readonly browser?: BrowserFetchManager,
     private readonly readonlyShell?: ReadonlyShellManager
   ) {}
@@ -110,7 +108,6 @@ export class ToolRegistry {
       ...(this.browser ? { browser: this.browser } : {}),
       ...(this.images ? { imageService: this.images } : {}),
       ...(this.imageJobs ? { imageManager: this.imageJobs } : {}),
-      ...(this.codex ? { codexManager: this.codex } : {}),
       ...(record ? {
         workspacePath: record.agentSnapshot.workspacePath,
         attachmentWorkspacePath: resolve(this.store.dataDir, "attachment-workspaces", record.conversationId),

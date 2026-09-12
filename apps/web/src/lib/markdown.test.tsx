@@ -126,4 +126,12 @@ describe("Markdown component", () => {
     const output = document.querySelector(".markdown");
     expect(output).not.toHaveAttribute("data-streaming");
   });
+
+  it("keeps compact tool summaries inline without tables or separators", () => {
+    render(<Markdown inline text={"第一行  \n第二行\n\n---\n\n| 列 |\n|---|\n| 单元格 |"} />);
+    expect(document.querySelector(".markdown-inline")).toHaveTextContent("第一行 第二行");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator")).not.toBeInTheDocument();
+    expect(screen.queryByText("单元格")).not.toBeInTheDocument();
+  });
 });

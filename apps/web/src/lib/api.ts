@@ -14,13 +14,6 @@ import type {
   ConnectionBalanceDto,
   ConnectionDto,
   ConnectionInput,
-  CodexCreateSessionInput,
-  CodexResponseInput,
-  CodexRuntimeDto,
-  CodexSessionDetailDto,
-  CodexSessionDto,
-  CodexThreadDto,
-  CodexTurnInput,
   ContextSummaryDto,
   ConversationDto,
   ConversationExecutionOverrides,
@@ -327,18 +320,6 @@ export const endpoints = {
     api.post<BackgroundTaskDto>(`/api/background-tasks/${id}/stop`, { reason }),
   resizeBackgroundTask: (id: string, columns: number, rows: number) =>
     api.post<{ ok: true }>(`/api/background-tasks/${id}/resize`, { columns, rows }),
-
-  codexRuntime: () => api.get<CodexRuntimeDto>("/api/codex/runtime"),
-  codexThreads: (cwd?: string) => api.get<CodexThreadDto[]>(`/api/codex/threads${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
-  codexSessions: (conversationId?: string) => api.get<CodexSessionDto[]>(
-    `/api/codex/sessions${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`
-  ),
-  createCodexSession: (input: CodexCreateSessionInput) => api.post<CodexSessionDto>("/api/codex/sessions", input),
-  codexSession: (id: string, after = 0) => api.get<CodexSessionDetailDto>(`/api/codex/sessions/${id}?after=${after}`),
-  sendCodexTurn: (id: string, input: CodexTurnInput) => api.post<CodexSessionDto>(`/api/codex/sessions/${id}/turns`, input),
-  respondCodex: (id: string, input: CodexResponseInput) => api.post<CodexSessionDto>(`/api/codex/sessions/${id}/respond`, input),
-  interruptCodex: (id: string) => api.post<CodexSessionDto>(`/api/codex/sessions/${id}/interrupt`),
-  detachCodex: (id: string) => api.delete<void>(`/api/codex/sessions/${id}`),
 
   listDirectories: (path?: string) =>
     api.get<DirectoryListingDto>(`/api/filesystem/directories${path !== undefined ? `?path=${encodeURIComponent(path)}` : ""}`),

@@ -37,6 +37,8 @@ test.describe("认证", () => {
 
 test.describe("应用外壳", () => {
   test("主导航与会话任务视图切换，深链接可直接打开", async ({ page, request }) => {
+    const codexRequests: string[] = [];
+    page.on("request", (request) => { if (new URL(request.url()).pathname.startsWith("/api/codex/")) codexRequests.push(request.url()); });
     await page.goto(APP_URL);
     await openDrawerIfNeeded(page);
     await expect(page.locator(".sidebar-brand")).toHaveText(/Chat/);
@@ -56,6 +58,8 @@ test.describe("应用外壳", () => {
       await page.getByRole("button", { name: /打开后台任务/ }).click();
       await expect(page).toHaveURL(new RegExp(`/c/${conversation.id}/tasks$`));
       await expect(page.getByText("没有后台任务")).toBeVisible();
+      await expect(page.getByRole("region", { name: "Codex 控制面板" })).toHaveCount(0);
+      expect(codexRequests).toEqual([]);
     } finally {
       await api(request, APP_URL, "DELETE", `/api/conversations/${conversation.id}`).catch(() => {});
     }
@@ -788,6 +792,7 @@ test.describe("设置分区", () => {
     await gotoPath(page, "/settings/tools");
     await expect(page.getByRole("heading", { name: "工具目录" })).toBeVisible();
     await expect(page.locator(".table tbody tr").first()).toBeVisible();
+    await expect(page.locator(".tool-catalog-table tbody tr").filter({ hasText: /codex_/ })).toHaveCount(0);
     await expect(page.getByText("工作区：")).toBeVisible();
 
     const skillTool = page.getByRole("button", { name: "查看工具 加载 Skill 的完整信息" });
@@ -795,7 +800,8 @@ test.describe("设置分区", () => {
     expect(await skillTool.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(86);
     await skillTool.click();
     const toolDialog = page.getByRole("dialog", { name: "工具详情 · 加载 Skill" });
-    await expect(toolDialog).toContainText("coding-supervisor");
+    await expect(toolDialog).toContainText("command-execution-guide");
+    await expect(toolDialog).not.toContainText("coding-supervisor");
     await toolDialog.getByRole("button", { name: "关闭对话框" }).click();
     await expect(skillTool).toBeFocused();
 
