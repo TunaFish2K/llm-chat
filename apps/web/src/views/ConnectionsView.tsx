@@ -12,7 +12,7 @@ import type {
   ProviderPresetId,
   ProviderProtocol
 } from "@llm-chat/contracts";
-import { providerPreset, providerPresetDefinitions } from "@llm-chat/contracts";
+import { providerPreset, providerPresetDefinitions, resolveModelProtocol } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { appStore, refreshConnectionsAndModels, toast, toastError } from "../lib/app-state";
 import { formatTime, formatTokens } from "../lib/format";
@@ -178,7 +178,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                                 <span>{model.displayName}</span>
                                 {model.catalogManaged ? <span className="tag ok">{t("ConnectionsView.managed_automatically")}</span> : null}
                               </div>
-                              <div className="small muted mono">{model.modelKey}</div>
+                              <div className="small muted mono">{model.modelKey} · {resolveModelProtocol(model, connection)}</div>
                             </td>
                             <td className="connection-model-context" data-label={t("InspectorPanel.context")}>
                               <div>{formatTokens(model.contextWindow ?? undefined)}</div>
@@ -522,6 +522,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
   const connections = useStore(appStore, (s) => s.connections);
   const [connectionId, setConnectionId] = useState(model?.connectionId ?? initialConnectionId ?? connections[0]?.id ?? "");
   const [modelKey, setModelKey] = useState(model?.modelKey ?? "");
+  const [protocol, setProtocol] = useState<ProviderProtocol | null>(model?.protocol ?? null);
   const [displayName, setDisplayName] = useState(model?.displayName ?? "");
   const [contextWindow, setContextWindow] = useState(model?.contextWindow?.toString() ?? "");
   const [maxInputTokens, setMaxInputTokens] = useState(model?.maxInputTokens?.toString() ?? "");
@@ -529,6 +530,8 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
   const [maxImageInputs, setMaxImageInputs] = useState(model?.capabilities.maxImageInputs?.toString() ?? "");
   const [imageProtocol, setImageProtocol] = useState<ModelInput["imageProtocol"]>(model?.imageProtocol ?? null);
   const selectedConnection = connections.find((connection) => connection.id === connectionId);
+  const detectedProtocol = model?.connectionId === connectionId && model.modelKey === modelKey.trim() ? model.detectedProtocol : null;
+  const effectiveProtocol = selectedConnection ? resolveModelProtocol({ modelKey: modelKey.trim(), protocol, detectedProtocol }, selectedConnection) : null;
   const supportedImageProtocols = providerPreset(selectedConnection?.providerId ?? "custom").imageProtocols;
   const [capabilities, setCapabilities] = useState<ModelCapabilities>(
     model?.capabilities ?? {
@@ -554,6 +557,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
       const input: ModelInput = {
         connectionId,
         modelKey: modelKey.trim(),
+        protocol,
         displayName: displayName.trim(),
         contextWindow: contextWindow === "" ? null : Number(contextWindow),
         maxInputTokens: maxInputTokens === "" ? null : Number(maxInputTokens),
@@ -561,19 +565,31 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         imageProtocol: imageProtocol ?? null,
         capabilities: {
           ...capabilities,
-          maxImageInputs: maxImageInputs === "" ? null : Number(maxImageInputs)
+          ...(maxImageInputs === "" && model?.capabilities.maxImageInputs === undefined ? {} : { maxImageInputs: maxImageInputs === "" ? null : Number(maxImageInputs) })
         },
         defaultSettings: {
           common: {
+            ...model?.defaultSettings.common,
             ...(temperature === "" ? {} : { temperature: Number(temperature) }),
             maxOutputTokens: Number(maxOutputTokens) || 4096,
             stopSequences: model?.defaultSettings.common.stopSequences ?? []
           },
-          protocol: reasoningSummary ? { reasoningSummary: reasoningSummary as "auto" | "concise" | "detailed" } : {}
+          protocol: { ...model?.defaultSettings.protocol, ...(reasoningSummary ? { reasoningSummary: reasoningSummary as "auto" | "concise" | "detailed" } : {}) }
         },
         enabled: model?.enabled ?? true
       };
-      if (model) await endpoints.updateModel(model.id, input);
+      if (temperature === "") delete input.defaultSettings.common.temperature;
+      if (!reasoningSummary) delete input.defaultSettings.protocol.reasoningSummary;
+      if (model) {
+        // Preserve untouched defaults, including a generation limit different from the model limit.
+        if (temperature === (model.defaultSettings.common.temperature?.toString() ?? "") &&
+            reasoningSummary === (model.defaultSettings.protocol.reasoningSummary ?? "") &&
+            maxOutputTokens === String(model.maxOutputTokens)) input.defaultSettings = model.defaultSettings;
+        const changes = Object.fromEntries(Object.entries(input).filter(([key, value]) =>
+          JSON.stringify(value) !== JSON.stringify(model[key as keyof ModelInput] ?? null)
+        ));
+        await endpoints.updateModel(model.id, changes);
+      }
       else await endpoints.createModel(input);
       await refreshConnectionsAndModels();
       toast("success", localized("ConnectionsView.model_saved"));
@@ -651,6 +667,8 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
             onChange={(event) => {
               const nextConnectionId = event.target.value;
               setConnectionId(nextConnectionId);
+              const nextProvider = providerPreset(connections.find((item) => item.id === nextConnectionId)?.providerId ?? "custom");
+              if (protocol && !nextProvider.protocols.includes(protocol)) setProtocol(null);
               const protocols = providerPreset(connections.find((item) => item.id === nextConnectionId)?.providerId ?? "custom").imageProtocols;
               if (protocols.length && imageProtocol && !protocols.includes(imageProtocol)) {
                 setImageProtocol(null);
@@ -681,6 +699,15 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
           value={modelKey}
           onChange={(event) => setModelKey(event.target.value)}
         />
+      </Field>
+      <Field label={t("ConnectionsView.model_protocol")} hint={t("ConnectionsView.effective_model_protocol", { protocol: effectiveProtocol ?? "—" })}>
+        <select className="select" aria-label={t("ConnectionsView.model_protocol")} value={protocol ?? ""}
+          onChange={(event) => setProtocol((event.target.value || null) as ProviderProtocol | null)}>
+          <option value="">{t("ConnectionsView.automatic_protocol")}</option>
+          {providerPreset(selectedConnection?.providerId ?? "custom").protocols.map((item) => (
+            <option key={item} value={item}>{item === "openai-responses" ? "OpenAI Responses" : item === "openai-chat" ? "OpenAI Chat Completions" : "Anthropic Messages"}</option>
+          ))}
+        </select>
       </Field>
       <Field label={t("ConnectionsView.image_protocol")} hint={t("ConnectionsView.when_configured_the_model_supports_both_native_responses_image_generation")}>
         <select

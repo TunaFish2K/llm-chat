@@ -1,6 +1,7 @@
 import { errorI18n, withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import type { GeneratedModelDto, ImageAssetDto, ModelDto, VisionAnalysisDto } from "@llm-chat/contracts";
+import { resolveModelProtocol, type ProviderProtocol } from "@llm-chat/contracts";
 import { adapterFor, type ProviderImage } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { ConnectionRecord, GenerationRecord } from "./generation-types";
@@ -79,14 +80,15 @@ export class VisionService {
       throw withMessage(new VisionError("vision_model_required", `${limitHint}，请先为 Agent 配置备用识图模型`), "error.configure_a_fallback_vision_model_for_the_agent_first", { value1: limitHint });
     }
     const visionModel = this.store.getModel(visionModelId);
-    const connection = visionModel?.enabled ? this.store.getConnection(visionModel.connectionId) : undefined;
+    let connection = visionModel?.enabled ? this.store.getConnection(visionModel.connectionId) : undefined;
     if (!visionModel || !connection || !visionModel.capabilities.imageInput) {
       throw withMessage(new VisionError("vision_model_unavailable", "Agent 配置的备用识图模型不可用或未启用图片输入"), "error.the_agent_s_fallback_vision_model_is_unavailable_or_does_not_support");
     }
 
+    connection = { ...connection, protocol: resolveModelProtocol(visionModel, connection) };
     for (const asset of descriptionAssets) {
       signal.throwIfAborted();
-      const cacheKey = visionCacheKey(asset, visionModel);
+      const cacheKey = visionCacheKey(asset, visionModel, connection.protocol);
       const existing = this.store.getVisionAnalysisByCacheKey(cacheKey);
       let analysis: VisionAnalysisDto;
       let cached = false;
@@ -191,12 +193,13 @@ export class VisionError extends StoreError {
   }
 }
 
-function visionCacheKey(asset: ImageAssetDto, model: ModelDto): string {
+function visionCacheKey(asset: ImageAssetDto, model: ModelDto, protocol: ProviderProtocol): string {
   return createHash("sha256").update(JSON.stringify({
     asset: asset.sha256,
     modelId: model.id,
     modelKey: model.modelKey,
     connectionId: model.connectionId,
+    protocol,
     modelUpdatedAt: model.updatedAt,
     promptVersion: VISION_PROMPT_VERSION
   })).digest("hex");

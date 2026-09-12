@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { GenerateRequest, ProviderEvent } from "@llm-chat/providers";
-import { ProviderError } from "@llm-chat/providers";
+import { adapterFor, ProviderError } from "@llm-chat/providers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContextError } from "./context";
 import type { Store } from "./database";
@@ -1112,4 +1112,55 @@ it("persists execution before formatting and ignores late presentation after can
   await terminal(store, generation.generationId);
   expect(store.getToolCall("format-delay-call")).toMatchObject({ output: "saved result", approvalState: "completed", completedAt });
   expect(store.getToolCall("format-delay-call")?.presentation?.result).toBeUndefined();
+});
+
+it.each(["openai-chat", "openai-responses", "anthropic-messages"] as const)("uses the saved %s protocol after configuration changes", async (protocol) => {
+ const store = createStore(); const { connection, model } = seedModel(store);
+ store.updateModel(model.id, { protocol });
+ const started = store.startConversation({ text: "question", modelId: model.id });
+ store.updateModel(model.id, { protocol: protocol === "openai-chat" ? "openai-responses" : "openai-chat" });
+ store.updateConnection(connection.id, { protocol: "anthropic-messages" });
+ const stream = vi.fn((_protocol, request: GenerateRequest) => {
+  expect(request.connection.protocol).toBe(protocol);
+  return events([{ type: "complete", stopReason: "stop" }]);
+ });
+ const runner = makeRunner(store, { stream });
+ runner.start(started.generation.generationId);
+ expect((await terminal(store, started.generation.generationId)).status).toBe("completed");
+ expect(stream.mock.calls[0]?.[0]).toBe(protocol);
+});
+
+it("routes three models on one Go connection through their native endpoints, auth and tool round trips", async () => {
+ const store = createStore(); const { connection, model: template } = seedModel(store);
+ store.updateConnection(connection.id, { providerId: "opencode-go" });
+ const frame = (type: string, data: Record<string, unknown> = {}) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+ const seen: Array<{ url: string; headers: Headers; body: Record<string, any> }> = [];
+ vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+  const body = JSON.parse(String(init.body));
+  seen.push({ url, headers: new Headers(init.headers), body });
+  const first = seen.filter(item => item.body.model === body.model).length === 1;
+  const id = `call-${body.model}`;
+  if (url.endsWith("/responses")) return new Response(first
+   ? frame("response.output_item.done", { item: { type: "function_call", call_id: id, name: "work", arguments: "{}" } }) + frame("response.completed", { response: {} })
+   : frame("response.output_text.delta", { delta: "done" }) + frame("response.completed", { response: {} }));
+  if (url.endsWith("/messages")) return new Response(first
+   ? frame("content_block_start", { index: 0, content_block: { type: "tool_use", id, name: "work", input: {} } }) + frame("content_block_stop", { index: 0 }) + frame("message_delta", { delta: { stop_reason: "tool_use" } }) + frame("message_stop")
+   : frame("content_block_start", { index: 0, content_block: { type: "text", text: "done" } }) + frame("content_block_stop", { index: 0 }) + frame("message_stop"));
+  return new Response(`data: ${JSON.stringify({ choices: [{ delta: first ? { tool_calls: [{ index: 0, id, type: "function", function: { name: "work", arguments: "{}" } }] } : { content: "done" }, finish_reason: first ? "tool_calls" : "stop" }] })}\n\ndata: [DONE]\n\n`);
+ }));
+ const runner = makeRunner(store, { buildTools: async () => [serverTool("work", async () => "tool-result")], stream: (protocol, request) => adapterFor(protocol).stream(request) });
+ for (const [modelKey, protocol, path] of [["grok-4.6", "openai-responses", "/responses"], ["minimax-m3", "anthropic-messages", "/messages"], ["glm-5.3", "openai-chat", "/chat/completions"]] as const) {
+  const model = store.createModel({ ...template, modelKey });
+  const started = store.startConversation({ text: "use work", modelId: model.id });
+  runner.start(started.generation.generationId);
+  const result = await terminal(store, started.generation.generationId);
+  expect(result).toMatchObject({ status: "completed", protocol, toolCalls: [expect.objectContaining({ output: "tool-result", approvalState: "completed" })] });
+  const calls = seen.filter(item => item.body.model === modelKey);
+  expect(calls).toHaveLength(2);
+  for (const call of calls) {
+   expect(call.url).toBe(`https://example.test/v1${path}`);
+   expect(call.headers.get(protocol === "anthropic-messages" ? "x-api-key" : "authorization")).toBe(protocol === "anthropic-messages" ? "key" : "Bearer key");
+  }
+  expect(JSON.stringify(calls[1]!.body)).toContain("tool-result");
+ }
 });

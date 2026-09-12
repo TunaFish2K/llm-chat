@@ -1452,5 +1452,9 @@
   "runtime.browser_missing": "Browser not installed. Run pnpm --filter @llm-chat/server exec playwright-core install firefox",
   "runtime.browser_closed": "Browser is closed",
   "runtime.browser_canceled": "Browser fetch canceled",
-  "runtime.browser_timeout": "Browser fetch timed out after 30 seconds"
+  "runtime.browser_timeout": "Browser fetch timed out after 30 seconds",
+  "ConnectionsView.model_protocol": "Model protocol",
+  "ConnectionsView.effective_model_protocol": "Currently using {{protocol}}. Automatic mode uses the model protocol, or the connection setting for unknown models.",
+  "ConnectionsView.automatic_protocol": "Automatic",
+  "error.model_protocol_unsupported": "This provider does not support the selected model protocol"
 }

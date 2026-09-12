@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, RefreshCw, Search, Settings2, X } from "lucide-react";
 import type { ConnectionBalanceDto, ConnectionDto, ModelDto } from "@llm-chat/contracts";
+import { resolveModelProtocol } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { navigate, routes } from "../../lib/router";
 import { INHERIT } from "./model";
@@ -52,7 +53,7 @@ export function ModelPicker({
         models: eligible.filter(
           (model) =>
             model.connectionId === connection.id &&
-            [model.displayName, model.modelKey, connection.name, connection.protocol]
+            [model.displayName, model.modelKey, connection.name, resolveModelProtocol(model, connection)]
               .join(" ")
               .toLocaleLowerCase()
               .includes(normalized)
@@ -137,7 +138,6 @@ export function ModelPicker({
               <section className="model-group" key={connection.id}>
                 <h3>
                   <span>{connection.name}</span>
-                  <small>{connection.protocol}</small>
                   <Balance value={balances[connection.id]} />
                 </h3>
                 {items.map((model) => (
@@ -154,7 +154,7 @@ export function ModelPicker({
                     <ModelBrandIcon model={model} connection={connection} />
                     <span>
                       <strong>{model.displayName}</strong>
-                      <small>{model.modelKey}</small>
+                      <small>{model.modelKey} · {resolveModelProtocol(model, connection)}</small>
                     </span>
                     <span className="model-badges">
                       {model.capabilities.imageInput ? <i>{t("ModelPicker.images")}</i> : null}

@@ -114,6 +114,27 @@ export function providerPreset(id: ProviderPresetId): ProviderPresetDefinition {
   return providerPresetDefinitions.find((item) => item.id === id) ?? providerPresetDefinitions[0]!;
 }
 
+// Exact model IDs from https://opencode.ai/docs/go/#endpoints (2026-09-12).
+const goModelProtocols: Readonly<Record<string, ProviderProtocol>> = Object.fromEntries([
+  ...["grok-4.6", "gpt-5.6-luna", "muse-spark-1.3-contributor", "muse-spark-1.2-contributor"].map((id) => [id, "openai-responses"] as const),
+  ...["minimax-m3", "minimax-m2.7", "minimax-m2.5", "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus"].map((id) => [id, "anthropic-messages"] as const),
+  ...["glm-5.3-flash", "glm-5.3", "glm-5.2", "glm-5.1", "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "longcat-2.0", "deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "mimo-v2.5", "mimo-v2.5-pro", "hy4-preview", "hy3"].map((id) => [id, "openai-chat"] as const)
+]);
+
+export function knownModelProtocol(providerId: ProviderPresetId, modelKey: string): ProviderProtocol | null {
+  return providerId === "opencode-go" && Object.hasOwn(goModelProtocols, modelKey) ? goModelProtocols[modelKey]! : null;
+}
+
+/** Missing fields in older clients and offline manifests retain automatic selection. */
+export function resolveModelProtocol(
+  model: { modelKey: string; protocol?: ProviderProtocol | null | undefined; detectedProtocol?: ProviderProtocol | null | undefined },
+  connection: Pick<ConnectionDto, "providerId" | "protocol">
+): ProviderProtocol {
+  const allowed = providerPreset(connection.providerId).protocols;
+  const detected = model.detectedProtocol && allowed.includes(model.detectedProtocol) ? model.detectedProtocol : null;
+  return model.protocol ?? detected ?? knownModelProtocol(connection.providerId, model.modelKey) ?? connection.protocol;
+}
+
 export const contextPolicySchema = z.enum(["auto", "trim", "summarize", "full"]);
 export type ContextPolicy = z.infer<typeof contextPolicySchema>;
 
@@ -275,6 +296,7 @@ export const modelInputSchema = z.object({
   contextWindow: z.number().int().positive().max(10_000_000).nullable(),
   maxInputTokens: z.number().int().positive().max(10_000_000).nullable().optional(),
   maxOutputTokens: z.number().int().positive().max(1_000_000),
+  protocol: protocolSchema.nullable().optional(),
   imageProtocol: imageProviderProtocolSchema.nullable().optional(),
   capabilities: modelCapabilitiesSchema,
   defaultSettings: modelSettingsSchema,
@@ -313,6 +335,7 @@ export type ModelCatalogMetadata = z.infer<typeof modelCatalogMetadataSchema>;
 
 export interface ModelDto extends Omit<ModelInput, "maxInputTokens"> {
   id: string;
+  readonly detectedProtocol?: ProviderProtocol | null;
   maxInputTokens: number | null;
   source: "manual" | "discovered";
   catalogManaged: boolean;

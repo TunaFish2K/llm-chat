@@ -76,9 +76,11 @@ import {
   imageGenerationOperationSchema,
   imageProviderProtocolSchema,
   providerPresetIdSchema,
+  providerPreset,
+  resolveModelProtocol,
   reasoningEffortSchema
 } from "@llm-chat/contracts";
-import { fallbackModel } from "./model-catalog";
+import { fallbackModel, type CatalogModelInput } from "./model-catalog";
 import {
   defaultRoleplayConfig,
   ensureRoleplayDefaults,
@@ -224,7 +226,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 41) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 42) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1120,6 +1122,12 @@ function migrate(sqlite: DatabaseSyncType): void {
       }
       sqlite.exec("PRAGMA user_version = 41;");
     }
+    if (current < 42) {
+      for (const column of ["protocol", "detected_protocol"]) {
+        if (!hasColumn(sqlite, "models", column)) sqlite.exec(`ALTER TABLE models ADD COLUMN ${column} TEXT`);
+      }
+      sqlite.exec("PRAGMA user_version = 42;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1742,6 +1750,8 @@ export class Store {
   updateConnection(id: string, input: OptionalInput<ConnectionInput>): ConnectionDto | undefined {
     const current = this.getConnection(id);
     if (!current) return undefined;
+    const providerId = input.providerId ?? current.providerId;
+    for (const model of this.listModels(id)) this.assertModelProtocol(model.protocol, providerId);
     const now = Date.now();
     this.sqlite.prepare(`
       UPDATE connections SET name = ?, provider_id = ?, protocol = ?, base_url = ?, api_key = ?, secret_headers_json = ?,
@@ -1758,6 +1768,9 @@ export class Store {
       now,
       id
     );
+    if (providerId !== current.providerId || (input.baseUrl !== undefined && input.baseUrl !== current.baseUrl)) {
+      this.sqlite.prepare("UPDATE models SET detected_protocol = NULL, updated_at = ? WHERE connection_id = ?").run(now, id);
+    }
     return this.listConnections().find((item) => item.id === id);
   }
 
@@ -1781,63 +1794,79 @@ export class Store {
     return row ? modelDto(row) : undefined;
   }
 
+  private assertModelProtocol(protocol: ModelInput["protocol"], providerId: ConnectionDto["providerId"]): void {
+    if (protocol && !providerPreset(providerId).protocols.includes(protocol)) {
+      throw withMessage(new StoreError("model_protocol_unsupported", "此提供商不支持所选模型协议"), "error.model_protocol_unsupported");
+    }
+  }
+
   createModel(
     input: ModelInput,
     source: ModelDto["source"] = "manual",
     catalogMetadata: ModelCatalogMetadata | null = null,
-    catalogManaged = source === "discovered"
+    catalogManaged = source === "discovered",
+    detectedProtocol: ProviderProtocol | null = null
   ): ModelDto {
+    const connection = this.getConnection(input.connectionId);
+    if (!connection) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
+    this.assertModelProtocol(input.protocol, connection.providerId);
     const now = Date.now();
     const id = randomUUID();
     this.sqlite.prepare(`
       INSERT INTO models (id, connection_id, model_key, display_name, context_window, max_output_tokens, image_protocol,
         capabilities_json, default_settings_json, source, enabled, created_at, updated_at,
-        max_input_tokens, catalog_managed, catalog_metadata_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        max_input_tokens, catalog_managed, catalog_metadata_json, protocol, detected_protocol)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(connection_id, model_key) DO UPDATE SET
         display_name = excluded.display_name,
+        protocol = CASE WHEN ? THEN excluded.protocol ELSE models.protocol END,
         catalog_managed = CASE WHEN excluded.source = 'manual' THEN 0 ELSE models.catalog_managed END,
         updated_at = excluded.updated_at
     `).run(
       id, input.connectionId, input.modelKey, input.displayName, input.contextWindow, input.maxOutputTokens, input.imageProtocol ?? null,
       json(input.capabilities), json(input.defaultSettings), source, input.enabled ? 1 : 0, now, now,
-      input.maxInputTokens ?? null, catalogManaged ? 1 : 0, catalogMetadata ? json(catalogMetadata) : null
+      input.maxInputTokens ?? null, catalogManaged ? 1 : 0, catalogMetadata ? json(catalogMetadata) : null,
+      input.protocol ?? null, detectedProtocol, input.protocol !== undefined ? 1 : 0
     );
     return this.listModels(input.connectionId).find((item) => item.modelKey === input.modelKey)!;
   }
 
   upsertDiscoveredModel(
-    input: ModelInput,
+    input: CatalogModelInput,
     catalogMetadata: ModelCatalogMetadata | null
   ): { model: ModelDto; status: "created" | "updated" | "skipped" } {
     const current = this.listModels(input.connectionId).find((model) => model.modelKey === input.modelKey);
     if (!current) {
-      return { model: this.createModel(input, "discovered", catalogMetadata, true), status: "created" };
+      return { model: this.createModel(input, "discovered", catalogMetadata, true, input.detectedProtocol ?? null), status: "created" };
     }
-    if (!current.catalogManaged) return { model: current, status: "skipped" };
+    const protocolChanged = input.detectedProtocol != null && input.detectedProtocol !== current.detectedProtocol;
+    if (protocolChanged) {
+      this.sqlite.prepare("UPDATE models SET detected_protocol = ?, updated_at = ? WHERE id = ?")
+        .run(input.detectedProtocol!, Date.now(), current.id);
+    }
     // A transient directory failure or unmatched response must not erase metadata
     // from a model that was enriched successfully on an earlier discovery.
-    if (!catalogMetadata) return { model: current, status: "skipped" };
+    if (!current.catalogManaged || !catalogMetadata) return { model: this.getModel(current.id)!, status: protocolChanged ? "updated" : "skipped" };
     this.writeCatalogModel(current.id, input, catalogMetadata);
     return { model: this.getModel(current.id)!, status: "updated" };
   }
 
-  restoreCatalogModel(id: string, input: ModelInput, catalogMetadata: ModelCatalogMetadata): ModelDto | undefined {
+  restoreCatalogModel(id: string, input: CatalogModelInput, catalogMetadata: ModelCatalogMetadata): ModelDto | undefined {
     const current = this.getModel(id);
     if (!current) return undefined;
     this.writeCatalogModel(id, { ...input, enabled: current.enabled }, catalogMetadata);
     return this.getModel(id);
   }
 
-  private writeCatalogModel(id: string, input: ModelInput, catalogMetadata: ModelCatalogMetadata | null): void {
+  private writeCatalogModel(id: string, input: CatalogModelInput, catalogMetadata: ModelCatalogMetadata | null): void {
     this.sqlite.prepare(`
       UPDATE models SET display_name = ?, context_window = ?, max_input_tokens = ?, max_output_tokens = ?, image_protocol = ?,
         capabilities_json = ?, default_settings_json = ?, source = 'discovered', catalog_managed = 1,
-        catalog_metadata_json = ?, updated_at = ? WHERE id = ?
+        catalog_metadata_json = ?, detected_protocol = COALESCE(?, detected_protocol), updated_at = ? WHERE id = ?
     `).run(
       input.displayName, input.contextWindow, input.maxInputTokens ?? null, input.maxOutputTokens, input.imageProtocol ?? null,
       json(input.capabilities), json(input.defaultSettings), catalogMetadata ? json(catalogMetadata) : null,
-      Date.now(), id
+      input.detectedProtocol ?? null, Date.now(), id
     );
   }
 
@@ -1851,21 +1880,27 @@ export class Store {
       contextWindow: input.contextWindow === undefined ? current.contextWindow : input.contextWindow,
       maxInputTokens: input.maxInputTokens === undefined ? current.maxInputTokens : input.maxInputTokens,
       maxOutputTokens: input.maxOutputTokens ?? current.maxOutputTokens,
+      protocol: input.protocol === undefined ? current.protocol : input.protocol,
       imageProtocol: input.imageProtocol === undefined ? current.imageProtocol : input.imageProtocol,
       capabilities: input.capabilities ?? current.capabilities,
       defaultSettings: input.defaultSettings ?? current.defaultSettings,
       enabled: input.enabled ?? current.enabled
     };
+    const connection = this.getConnection(next.connectionId);
+    if (!connection) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
+    this.assertModelProtocol(next.protocol, connection.providerId);
+    const identityChanged = next.connectionId !== current.connectionId || next.modelKey !== current.modelKey;
     const metadataChanged = ["connectionId", "modelKey", "displayName", "contextWindow", "maxInputTokens",
       "maxOutputTokens", "imageProtocol", "capabilities", "defaultSettings"].some((key) => Object.hasOwn(input, key));
     this.sqlite.prepare(`
       UPDATE models SET connection_id = ?, model_key = ?, display_name = ?, context_window = ?, max_output_tokens = ?, image_protocol = ?,
         capabilities_json = ?, default_settings_json = ?, enabled = ?, max_input_tokens = ?, catalog_managed = ?,
-        updated_at = ? WHERE id = ?
+        protocol = ?, detected_protocol = ?, updated_at = ? WHERE id = ?
     `).run(
       next.connectionId, next.modelKey, next.displayName, next.contextWindow, next.maxOutputTokens, next.imageProtocol ?? null,
       json(next.capabilities), json(next.defaultSettings), next.enabled ? 1 : 0, next.maxInputTokens ?? null,
-      metadataChanged ? 0 : current.catalogManaged ? 1 : 0, Date.now(), id
+      metadataChanged ? 0 : current.catalogManaged ? 1 : 0, next.protocol ?? null,
+      identityChanged ? null : current.detectedProtocol ?? null, Date.now(), id
     );
     if (!next.enabled) {
       this.sqlite.prepare("UPDATE conversations SET model_id = NULL WHERE model_id = ?").run(id);
@@ -2850,7 +2885,7 @@ export class Store {
         connection_name, protocol, model_key, model_display_name, settings_json,
         agent_id, agent_name, agent_revision, agent_snapshot_json, generation_kind, created_at)
       VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, assistantMessageId, version, connection.id, model.id, connection.name, connection.protocol, model.modelKey,
+    `).run(id, assistantMessageId, version, connection.id, model.id, connection.name, resolveModelProtocol(model, connection), model.modelKey,
       model.displayName, json(snapshot.execution.settings), snapshot.agentId, snapshot.name, snapshot.revision,
       json(snapshot), snapshot.generationKind, now);
   }
@@ -3462,6 +3497,8 @@ function modelDto(row: Row): ModelDto {
     id: String(row.id),
     connectionId: String(row.connection_id),
     modelKey: String(row.model_key),
+    protocol: row.protocol ? row.protocol as ProviderProtocol : null,
+    detectedProtocol: row.detected_protocol ? row.detected_protocol as ProviderProtocol : null,
     displayName: String(row.display_name),
     contextWindow: row.context_window === null ? null : Number(row.context_window),
     maxInputTokens: row.max_input_tokens === null || row.max_input_tokens === undefined ? null : Number(row.max_input_tokens),

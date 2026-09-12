@@ -208,7 +208,7 @@ describe("context builder", () => {
   it("uses automatic summary with trim fallback and supports manual compaction checkpoints", async () => {
     const store = createStore();
     const seeded = seedModel(store);
-    const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
+    const model = store.updateModel(seeded.model.id, { contextWindow: 512, protocol: "openai-responses" })!;
     const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "auto" });
     completeTurn(store, conversation.id, "first question".repeat(25), "first answer".repeat(25));
     completeTurn(store, conversation.id, "second question", "second answer");
@@ -221,6 +221,7 @@ describe("context builder", () => {
 
     const checkpoint = await compactConversationContext(store, conversation.id, new AbortController().signal);
     expect(checkpoint).toMatchObject({ text: "manual checkpoint", usage: { totalTokens: 10 } });
+    expect(adapterFor).toHaveBeenCalledWith("openai-responses");
     expect(await compactConversationContext(store, conversation.id, new AbortController().signal)).toEqual(checkpoint);
 
     const latest = store.createMessageGeneration(conversation.id, "latest question");
