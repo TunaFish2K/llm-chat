@@ -59,7 +59,7 @@ it("migrates v41 models without changing IDs, history or generation protocol sna
   expect(migrated.getModel(model.id)).toMatchObject({ protocol: null, detectedProtocol: null });
   expect(migrated.getGenerationRecord(started.generation.generationId)?.protocol).toBe("openai-chat");
   expect(migrated.listMessages(started.conversation.id).some(m => m.text === "history")).toBe(true);
-  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 44 });
+  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 45 });
  } finally { migrated.close(); }
 });
 

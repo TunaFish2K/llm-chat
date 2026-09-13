@@ -247,7 +247,7 @@ describe("SettingsView", () => {
         id: "plugin-1",
         name: "Long Plugin",
         version: "1.0.0",
-        apiVersion: 1,
+        apiVersion: 1, containerResources: [],
         entry: "index.mjs",
         description: "Another long description used to exercise the shared management row.",
         secretFields: []

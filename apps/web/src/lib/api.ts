@@ -1,3 +1,4 @@
+import type { ContainerResourceCatalog, ContainerResourceJob, ContainerResourceNode } from "@llm-chat/contracts";
 import { t } from "./i18n";
 import { ApiRequestError, httpRequest, uploadFileHttp, type HttpResult } from "./http-client";
 import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
@@ -154,6 +155,13 @@ export interface McpTestResult {
 }
 
 export const endpoints = {
+  containerResources: () => request<ContainerResourceCatalog>("GET", "/api/container-resources"),
+  setContainerResourceNode: (node: ContainerResourceNode) => request("PUT", "/api/container-resources/settings", { node }),
+  downloadContainerResources: (ids: string[]) => request<ContainerResourceJob>("POST", "/api/container-resources/download", { ids }),
+  cancelContainerResourceJob: (id: string) => request("POST", `/api/container-resources/jobs/${id}/cancel`),
+  clearContainerResourceCache: () => request("DELETE", "/api/container-resources/cache"),
+  beginContainerResourceUpload: (file: File) => request<{ id: string; offset: number }>("POST", "/api/container-resources/uploads", { name: file.name, size: file.size, fingerprint: String(file.lastModified) }),
+  completeContainerResourceUpload: (id: string) => request("POST", `/api/container-resources/uploads/${id}/complete`),
   containerEngines: () => request<ContainerEngineDto[]>("GET", "/api/container-engines"),
   conversationEnvironments: (id: string) => request<ConversationEnvironmentDto[]>("GET", `/api/conversations/${id}/environments`),
   stopEnvironment: (id: string, environmentId: string, reset = false) => request<ConversationEnvironmentDto[]>("POST", `/api/conversations/${id}/environments/${environmentId}/stop`, { reset }),

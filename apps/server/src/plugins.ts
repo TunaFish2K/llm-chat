@@ -126,9 +126,11 @@ export class PluginManager {
     await mkdir(dirname(staging), { recursive: true, mode: 0o700 });
     try {
       await cp(source, staging, { recursive: true, filter: (path) => !path.split(sep).some((part) => part === ".git" || part === "node_modules") });
-      const entryInfo = await stat(pluginEntry(staging, manifest));
-      if (!entryInfo.isFile()) throw new Error("Plugin entry must be a file");
-      try {
+      if (manifest.entry) {
+        const entryInfo = await stat(pluginEntry(staging, manifest));
+        if (!entryInfo.isFile()) throw new Error("Plugin entry must be a file");
+      }
+      if (manifest.entry) try {
         await stat(resolve(staging, "pnpm-lock.yaml"));
         await runPnpm(staging);
       } catch (error) {
@@ -226,6 +228,7 @@ export class PluginManager {
     for (const plugin of selected) {
       const revision = record?.agentSnapshot.toolRevisions[plugin.id] ?? plugin.revision;
       const manifest = await this.revisionManifest(plugin.id, revision);
+      if (!manifest.entry) continue;
       const host = await this.host(plugin.id, revision);
       for (const remote of host.tools) {
         toolValidators.get(remote.inputSchema);
@@ -299,9 +302,10 @@ export class PluginManager {
   }
 
   private async validateRevision(manifest: PluginManifest, revision: string, path: string, config: JsonObject, secrets: JsonObject): Promise<void> {
+    if (!manifest.entry) return;
     const host = new PluginHost(pluginEntry(path, manifest), config, secrets, () => {});
     await host.start(); host.close();
-    if (!host.tools.length) throw new Error("Plugin did not register any tools");
+    if (!host.tools.length && !manifest.containerResources.length) throw new Error("Plugin did not register any tools");
     const names = new Set<string>();
     for (const tool of host.tools) {
       if (names.has(tool.name)) throw new Error(`Duplicate plugin tool: ${tool.name}`);
@@ -379,6 +383,7 @@ async function hashTree(root: string): Promise<string> {
 }
 
 function pluginEntry(root: string, manifest: PluginManifest): string {
+  if (!manifest.entry) throw new Error("Plugin has no tool entry");
   const entry = resolve(root, manifest.entry);
   if (entry === root || !entry.startsWith(`${root}${sep}`)) throw new Error("Plugin entry must be inside its revision");
   return entry;

@@ -1,3 +1,5 @@
+import { ContainerResources } from "./container-resources";
+import { registerContainerResourceRoutes } from "./container-resource-routes";
 import { errorI18n, withMessage } from "@llm-chat/i18n";
 import { ConversationService } from "./conversations";
 import { activeGenerationNotifications, publishGenerationState } from "./generation-notifications";
@@ -136,7 +138,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const eventHub = new EventHub();
   const imageJobs = new ImageGenerationManager(store, imageService, eventHub);
   await imageJobs.initialize();
-  const environments = new ContainerEnvironments(store);
+  const containerResources = new ContainerResources(store, eventHub);
+  await containerResources.initialize();
+  const environments = new ContainerEnvironments(store, undefined, containerResources);
   await environments.initialize();
   const taskManager = new TaskManager(store, eventHub, environments);
   const pluginManager = new PluginManager(store, eventHub);
@@ -1020,6 +1024,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { toolCall: updated, generationId, resumed: !pending };
   });
 
+  registerContainerResourceRoutes(app, containerResources);
   app.get("/api/container-engines", async () => environments.catalog());
   app.get<{ Params: { id: string } }>("/api/conversations/:id/environments", async (request) => {
     if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "Conversation not found");

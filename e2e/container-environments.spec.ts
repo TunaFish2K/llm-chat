@@ -16,12 +16,13 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
       await expect(mode).toHaveValue("host");
       await mode.selectOption("container");
       await page.getByLabel(cn ? "容器引擎" : "Container engine", { exact: true }).selectOption("podman");
-      await page.getByLabel(cn ? "镜像" : "Image", { exact: true }).fill("my-runtime:local");
+      await page.getByLabel(cn ? "镜像" : "Image", { exact: true }).selectOption("custom");
+      await page.getByLabel(cn ? "自定义本地镜像" : "Custom local image", { exact: true }).fill("my-runtime:local");
       await page.getByLabel(cn ? "空闲停止（分钟）" : "Stop when idle (minutes)", { exact: true }).fill("30");
       await page.getByRole("button", { name: cn ? "保存修改" : "Save changes", exact: true }).click();
       await expect(page.getByRole("button", { name: cn ? "已保存" : "Saved", exact: true })).toBeDisabled();
       const saved = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
-      expect(saved.execution.environment).toEqual({ type: "container", engine: "podman", image: "my-runtime:local", idleTimeoutMinutes: 30 });
+      expect(saved.execution.environment).toEqual({ type: "container", engine: "podman", image: "my-runtime:local", preloadResourceIds: [], idleTimeoutMinutes: 30 });
       await page.reload();
       await page.getByRole("tab", { name: cn ? "执行配置" : "Execution settings", exact: true }).click();
       await expect(mode).toHaveValue("container");

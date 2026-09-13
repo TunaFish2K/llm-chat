@@ -1,3 +1,4 @@
+import { ContainerResourceSettings } from "../components/ContainerResourceSettings";
 import { displayStore, saveDisplayPreferences, useDisplayPreferences, type DisplayPreferences } from "../lib/local-display";
 import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
 import { useErrorState, displayError } from "../lib/error-display";
@@ -48,6 +49,7 @@ function getSECTIONS(): Array<[string, string]> { return [
   ["search", t("SettingsView.search_engines")],
   ["image-generation", t("SettingsView.image_generation")],
   ["tools", t("SettingsView.tools")],
+  ["container-resources", t("container_resources.title")],
   ["skills", "Skill"],
   ["plugins", "Plugin"],
   ["mcp", "MCP"],
@@ -102,6 +104,7 @@ export function SettingsView({ section }: { section: string }) {
             {active === "security" ? <SecuritySection /> : null}
             {active === "image-generation" ? <ImageGenerationSection /> : null}
             {active === "tools" ? <ToolsSection /> : null}
+            {active === "container-resources" ? <ContainerResourceSettings /> : null}
             {active === "skills" ? <SkillsSection /> : null}
             {active === "plugins" ? <PluginsSection /> : null}
             {active === "mcp" ? <McpSection /> : null}

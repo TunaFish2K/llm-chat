@@ -1,0 +1,2101 @@
+[
+  {
+    "id": "alpine",
+    "name": "Alpine",
+    "description": "Minimal Alpine root filesystem",
+    "version": "3.24.1",
+    "dependencies": [],
+    "variants": [
+      {
+        "platform": "linux/amd64",
+        "distro": "alpine-3.24",
+        "files": [
+          {
+            "name": "alpine-minirootfs-3.24.1-x86_64.tar.gz",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz",
+            "size": 3698422,
+            "sha256": "41f73e3cf5fa919b8aa5ca6b30dc48f0da2720776d7423e2a7748211456fe081",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz"
+            }
+          }
+        ],
+        "install": "true",
+        "verify": "true"
+      },
+      {
+        "platform": "linux/arm64",
+        "distro": "alpine-3.24",
+        "files": [
+          {
+            "name": "alpine-minirootfs-3.24.1-aarch64.tar.gz",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz",
+            "size": 4023732,
+            "sha256": "f55a90f69052c5bd6f92cb09a8f47065970830b194c917a006fb94028e721259",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz"
+            }
+          }
+        ],
+        "install": "true",
+        "verify": "true"
+      }
+    ]
+  },
+  {
+    "id": "runtime",
+    "name": "Runtime components",
+    "description": "",
+    "version": "3.24.1-1",
+    "dependencies": [
+      "alpine"
+    ],
+    "variants": [
+      {
+        "platform": "linux/amd64",
+        "distro": "alpine-3.24",
+        "files": [
+          {
+            "name": "shadow-4.18.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/x86_64/shadow-4.18.0-r1.apk",
+            "size": 499446,
+            "sha256": "7181ea17c1c2ab757af5c9985482ee35252a2587397985db57f758155153b06d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/x86_64/shadow-4.18.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/x86_64/shadow-4.18.0-r1.apk"
+            }
+          },
+          {
+            "name": "sudo-1.9.17_p2-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/x86_64/sudo-1.9.17_p2-r1.apk",
+            "size": 796745,
+            "sha256": "b428df6223dec20b8d599a0624bffdf8d0758476b31f62a66ca9a8e9ac86696b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/x86_64/sudo-1.9.17_p2-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/x86_64/sudo-1.9.17_p2-r1.apk"
+            }
+          },
+          {
+            "name": "ada-libs-3.3.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ada-libs-3.3.0-r0.apk",
+            "size": 234019,
+            "sha256": "b52b68118ed5ef4e59547e6d5dd29630e4ac33fa30e48b2795d78441ce925466",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/ada-libs-3.3.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/ada-libs-3.3.0-r0.apk"
+            }
+          },
+          {
+            "name": "brotli-libs-1.2.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/brotli-libs-1.2.0-r1.apk",
+            "size": 429608,
+            "sha256": "f0823de7c6d45859aeb6a7facfc5cfbf2dadb83ad4f27c794cb6ecc74e578cee",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/brotli-libs-1.2.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/brotli-libs-1.2.0-r1.apk"
+            }
+          },
+          {
+            "name": "busybox-1.37.0-r31.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-1.37.0-r31.apk",
+            "size": 504769,
+            "sha256": "0e626fa97cf937fda7bba4ed4dde8e2f2dbb5083ac34e02180cec0c4eba9351b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/busybox-1.37.0-r31.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/busybox-1.37.0-r31.apk"
+            }
+          },
+          {
+            "name": "busybox-binsh-1.37.0-r31.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-binsh-1.37.0-r31.apk",
+            "size": 1571,
+            "sha256": "93f803ae5db6b729c0f66f4afba6e907ccc17d7d5f8b8c3d25bdb4636de2c48a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/busybox-binsh-1.37.0-r31.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/busybox-binsh-1.37.0-r31.apk"
+            }
+          },
+          {
+            "name": "c-ares-1.34.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/c-ares-1.34.8-r0.apk",
+            "size": 110689,
+            "sha256": "123fdeadc5ec884b897787f98d865492bf70402697b251cd1f3591a00b8c9d73",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/c-ares-1.34.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/c-ares-1.34.8-r0.apk"
+            }
+          },
+          {
+            "name": "ca-certificates-20260611-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ca-certificates-20260611-r0.apk",
+            "size": 129499,
+            "sha256": "abe8a3badeb99bd147a0c5cba70364e8774e6ae05c625a86c01f11532d9721c8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/ca-certificates-20260611-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/ca-certificates-20260611-r0.apk"
+            }
+          },
+          {
+            "name": "icu-data-en-78.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/icu-data-en-78.1-r0.apk",
+            "size": 1025836,
+            "sha256": "7fc4d3abd06b6e3301c82e9f872e4555d4a41e2abc28087f4286aba01e5dd5a7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/icu-data-en-78.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/icu-data-en-78.1-r0.apk"
+            }
+          },
+          {
+            "name": "icu-libs-78.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/icu-libs-78.1-r0.apk",
+            "size": 1949839,
+            "sha256": "ef9a3035f23886cf0da5869902c736a775cf3db151ae1ab7f1406e2a0f84bd64",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/icu-libs-78.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/icu-libs-78.1-r0.apk"
+            }
+          },
+          {
+            "name": "libbsd-0.12.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libbsd-0.12.2-r0.apk",
+            "size": 30407,
+            "sha256": "407597c04b41dbfe8a05b35d45a3453e32fae7df84aed3a06ff48dd4df1338b6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libbsd-0.12.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libbsd-0.12.2-r0.apk"
+            }
+          },
+          {
+            "name": "libcrypto3-3.5.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk",
+            "size": 1978546,
+            "sha256": "161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libcrypto3-3.5.8-r0.apk"
+            }
+          },
+          {
+            "name": "libgcc-15.2.0-r5.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libgcc-15.2.0-r5.apk",
+            "size": 80348,
+            "sha256": "393dcd32629f06d7d85409c272d142d0c082772d10b87ef55ee82f47de3be637",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libgcc-15.2.0-r5.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libgcc-15.2.0-r5.apk"
+            }
+          },
+          {
+            "name": "libmd-1.2.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libmd-1.2.0-r0.apk",
+            "size": 27352,
+            "sha256": "f6d68d072fcefc8edd4ffe3afc341ca391f8a9a209130628fb065d98b18a2792",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libmd-1.2.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libmd-1.2.0-r0.apk"
+            }
+          },
+          {
+            "name": "libssl3-3.5.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk",
+            "size": 379265,
+            "sha256": "aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libssl3-3.5.8-r0.apk"
+            }
+          },
+          {
+            "name": "libstdc++-15.2.0-r5.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libstdc++-15.2.0-r5.apk",
+            "size": 961295,
+            "sha256": "14c987b556f5385a5db18376e788c75f37d85321b8dc1920d926ea7daac1d6f6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libstdc++-15.2.0-r5.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libstdc++-15.2.0-r5.apk"
+            }
+          },
+          {
+            "name": "linux-pam-1.7.1-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/linux-pam-1.7.1-r2.apk",
+            "size": 203565,
+            "sha256": "73c327468bfd849bf078fb3d59516f1adc54685682dec6386d8d9d75c00e939d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/linux-pam-1.7.1-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/linux-pam-1.7.1-r2.apk"
+            }
+          },
+          {
+            "name": "musl-1.2.6-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-1.2.6-r2.apk",
+            "size": 415475,
+            "sha256": "573712e2f49c15bfc20a2699f204acdfc74c772722b15e7353d768057fae0e71",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/musl-1.2.6-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/musl-1.2.6-r2.apk"
+            }
+          },
+          {
+            "name": "nghttp2-libs-1.69.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/nghttp2-libs-1.69.0-r0.apk",
+            "size": 63231,
+            "sha256": "7d7705cea464389989d3ca6b9505dbfce3cf25cfca1eeb06709a9909f93f4f11",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/nghttp2-libs-1.69.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/nghttp2-libs-1.69.0-r0.apk"
+            }
+          },
+          {
+            "name": "nodejs-24.18.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/nodejs-24.18.1-r0.apk",
+            "size": 19753124,
+            "sha256": "e02ef91fb73a6d96e0c0ba3945b1069651c981528cef483f2f94a62715939d19",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/nodejs-24.18.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/nodejs-24.18.1-r0.apk"
+            }
+          },
+          {
+            "name": "simdjson-4.2.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/simdjson-4.2.4-r0.apk",
+            "size": 99504,
+            "sha256": "b57ae504ace2b17f62da0de606d1d982d4a35ba9e3dd589c8a37f1444f84f535",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/simdjson-4.2.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/simdjson-4.2.4-r0.apk"
+            }
+          },
+          {
+            "name": "simdutf-9.0.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/simdutf-9.0.0-r0.apk",
+            "size": 232460,
+            "sha256": "5d286fce7f98524973e72a1e50a89dfc2043d37565b9ee5266968c5ee64e20c6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/simdutf-9.0.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/simdutf-9.0.0-r0.apk"
+            }
+          },
+          {
+            "name": "skalibs-libs-2.15.0.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/skalibs-libs-2.15.0.0-r0.apk",
+            "size": 84969,
+            "sha256": "3301f6ccbeaea49cdd966c7e636898a8612fb8fe964a15f24f6d204b3944c3f3",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/skalibs-libs-2.15.0.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/skalibs-libs-2.15.0.0-r0.apk"
+            }
+          },
+          {
+            "name": "sqlite-libs-3.53.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/sqlite-libs-3.53.4-r0.apk",
+            "size": 877769,
+            "sha256": "a8a216e53d22faa3f04d2e3650c1991af66f8d0b42fadff5afcdb9afb60b19e5",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/sqlite-libs-3.53.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/sqlite-libs-3.53.4-r0.apk"
+            }
+          },
+          {
+            "name": "ssl_client-1.37.0-r31.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ssl_client-1.37.0-r31.apk",
+            "size": 4686,
+            "sha256": "e578a140670e4cf9816117b0c2063632bf3754ecbe8fa593a7fd2b4039372bf0",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/ssl_client-1.37.0-r31.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/ssl_client-1.37.0-r31.apk"
+            }
+          },
+          {
+            "name": "utmps-libs-0.1.3.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/utmps-libs-0.1.3.3-r0.apk",
+            "size": 5206,
+            "sha256": "497f0f1cb51f0e6c1acc338fded0dc7722b1d43ea17bdb749f0d556794f8b2d8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/utmps-libs-0.1.3.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/utmps-libs-0.1.3.3-r0.apk"
+            }
+          },
+          {
+            "name": "zlib-1.3.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zlib-1.3.2-r0.apk",
+            "size": 56195,
+            "sha256": "b636306cbf8a0c15493b38de608ba11605fd8f11ade631f5ece6f7fdf5a1e09e",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/zlib-1.3.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/zlib-1.3.2-r0.apk"
+            }
+          },
+          {
+            "name": "zstd-libs-1.5.7-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zstd-libs-1.5.7-r2.apk",
+            "size": 376646,
+            "sha256": "23c6065b0049b2406441564bcf0032515a43f78e80d76fcb85535a3803ef5d4e",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/zstd-libs-1.5.7-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/zstd-libs-1.5.7-r2.apk"
+            }
+          }
+        ],
+        "install": "apk --no-network add /resources/*.apk",
+        "verify": "node --version; sudo --version >/dev/null; command -v useradd"
+      },
+      {
+        "platform": "linux/arm64",
+        "distro": "alpine-3.24",
+        "files": [
+          {
+            "name": "shadow-4.18.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/aarch64/shadow-4.18.0-r1.apk",
+            "size": 514485,
+            "sha256": "bf9c083ad203f9b717ac27e3f1710b78c3a734c455e2a8e577eb4c716b4dfd36",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/aarch64/shadow-4.18.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/aarch64/shadow-4.18.0-r1.apk"
+            }
+          },
+          {
+            "name": "sudo-1.9.17_p2-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/aarch64/sudo-1.9.17_p2-r1.apk",
+            "size": 743082,
+            "sha256": "57273b075643357104935eac1519b7da498c25d18d3aacab8e2a3d6f27a3bf1c",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/aarch64/sudo-1.9.17_p2-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/aarch64/sudo-1.9.17_p2-r1.apk"
+            }
+          },
+          {
+            "name": "ada-libs-3.3.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ada-libs-3.3.0-r0.apk",
+            "size": 232253,
+            "sha256": "70dd9fe3d2e2153213a93f7a76cef202b2d939839696a7c4d8a4c97cb29cca04",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/ada-libs-3.3.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/ada-libs-3.3.0-r0.apk"
+            }
+          },
+          {
+            "name": "brotli-libs-1.2.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/brotli-libs-1.2.0-r1.apk",
+            "size": 424924,
+            "sha256": "e0e7a7892f28326a9f18e09607b1aea72baedda470bc4e3d2b11262b9ae5dda3",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/brotli-libs-1.2.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/brotli-libs-1.2.0-r1.apk"
+            }
+          },
+          {
+            "name": "busybox-1.37.0-r31.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/busybox-1.37.0-r31.apk",
+            "size": 521974,
+            "sha256": "18e3490a6f024004b2b13dd4b54bd50ccd82894938023b2d4eab389a4edcba70",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/busybox-1.37.0-r31.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/busybox-1.37.0-r31.apk"
+            }
+          },
+          {
+            "name": "busybox-binsh-1.37.0-r31.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/busybox-binsh-1.37.0-r31.apk",
+            "size": 1547,
+            "sha256": "f3a1b2257cfa114ff20de05c665f380695385d589908bfc9af5768f39fef9ef5",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/busybox-binsh-1.37.0-r31.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/busybox-binsh-1.37.0-r31.apk"
+            }
+          },
+          {
+            "name": "c-ares-1.34.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/c-ares-1.34.8-r0.apk",
+            "size": 108771,
+            "sha256": "689603d300dc56f0b99e313506e4d7b3a3ffb87cec536324f8a306bc218afe67",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/c-ares-1.34.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/c-ares-1.34.8-r0.apk"
+            }
+          },
+          {
+            "name": "ca-certificates-20260611-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ca-certificates-20260611-r0.apk",
+            "size": 131089,
+            "sha256": "be5bd3346e2057d1771ea461cb1f790ef03521450572f0698b9bebf35b4c14d2",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/ca-certificates-20260611-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/ca-certificates-20260611-r0.apk"
+            }
+          },
+          {
+            "name": "icu-data-en-78.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/icu-data-en-78.1-r0.apk",
+            "size": 1025819,
+            "sha256": "3fa1dfb91a081f73c32a46f6ec054196caa37c9fd9569c433ddf6b29415dcf13",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/icu-data-en-78.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/icu-data-en-78.1-r0.apk"
+            }
+          },
+          {
+            "name": "icu-libs-78.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/icu-libs-78.1-r0.apk",
+            "size": 1957437,
+            "sha256": "2393882dcf1e3f5be98696665c3468dd0d2a85cd568d50abd232729863df9738",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/icu-libs-78.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/icu-libs-78.1-r0.apk"
+            }
+          },
+          {
+            "name": "libbsd-0.12.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libbsd-0.12.2-r0.apk",
+            "size": 31282,
+            "sha256": "1c4129bef0862afa2a7414217e8c3a50609abfe2e264b6f7ba6a5452ed6c3b35",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libbsd-0.12.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libbsd-0.12.2-r0.apk"
+            }
+          },
+          {
+            "name": "libcrypto3-3.5.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk",
+            "size": 2284775,
+            "sha256": "35b892813c23664a3592e4fc8c12a03538a22c579057655361c7043305272a9a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libcrypto3-3.5.8-r0.apk"
+            }
+          },
+          {
+            "name": "libgcc-15.2.0-r5.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libgcc-15.2.0-r5.apk",
+            "size": 66323,
+            "sha256": "369aaa6e9d099a737bad6dd3e6c2fe7bb1547ca26d22b94ee0411228f709b403",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libgcc-15.2.0-r5.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libgcc-15.2.0-r5.apk"
+            }
+          },
+          {
+            "name": "libmd-1.2.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libmd-1.2.0-r0.apk",
+            "size": 26213,
+            "sha256": "cb94430ebc45dbd5dd6882bfd296bb73ea3c337691f469bd1438e696a6e867eb",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libmd-1.2.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libmd-1.2.0-r0.apk"
+            }
+          },
+          {
+            "name": "libssl3-3.5.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk",
+            "size": 370156,
+            "sha256": "d6ec970cc10e01539e41626f720c4e0ac69016eaa2079a10ef776ffd3243db5b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libssl3-3.5.8-r0.apk"
+            }
+          },
+          {
+            "name": "libstdc++-15.2.0-r5.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libstdc++-15.2.0-r5.apk",
+            "size": 908984,
+            "sha256": "2302e766d4e4926038ec166ecb85837ee884576115236ddb565e3a5fca4a11d7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libstdc++-15.2.0-r5.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libstdc++-15.2.0-r5.apk"
+            }
+          },
+          {
+            "name": "linux-pam-1.7.1-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/linux-pam-1.7.1-r2.apk",
+            "size": 274955,
+            "sha256": "bc60d95c8a0fd16fbd72d41bc1e40510b9bd085f088a63ca1ad28778b0712efc",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/linux-pam-1.7.1-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/linux-pam-1.7.1-r2.apk"
+            }
+          },
+          {
+            "name": "musl-1.2.6-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/musl-1.2.6-r2.apk",
+            "size": 417710,
+            "sha256": "5e9674b7f41152fe2119093b5cb4c13eaaadb19c2d5422b2d7267913e663ee6e",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/musl-1.2.6-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/musl-1.2.6-r2.apk"
+            }
+          },
+          {
+            "name": "nghttp2-libs-1.69.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/nghttp2-libs-1.69.0-r0.apk",
+            "size": 63631,
+            "sha256": "10ec950fca526db87bbdc0702ba623fca6639df15abb48229f548d6812563b33",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/nghttp2-libs-1.69.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/nghttp2-libs-1.69.0-r0.apk"
+            }
+          },
+          {
+            "name": "nodejs-24.18.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/nodejs-24.18.1-r0.apk",
+            "size": 19197055,
+            "sha256": "73bb381ae2387f3e5ee661ee23628bb25e6aba5c7c82b54fd6e869be2edb4071",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/nodejs-24.18.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/nodejs-24.18.1-r0.apk"
+            }
+          },
+          {
+            "name": "simdjson-4.2.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/simdjson-4.2.4-r0.apk",
+            "size": 52111,
+            "sha256": "8e35f0644c8157c0d5ccdaaf001e70bb6640777b1b680e714e6a453d178829fd",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/simdjson-4.2.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/simdjson-4.2.4-r0.apk"
+            }
+          },
+          {
+            "name": "simdutf-9.0.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/simdutf-9.0.0-r0.apk",
+            "size": 101563,
+            "sha256": "336f5dfe8b0f784462cbccb4b58f71c15d64388c784ebca8568c8615b6f3c6b2",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/simdutf-9.0.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/simdutf-9.0.0-r0.apk"
+            }
+          },
+          {
+            "name": "skalibs-libs-2.15.0.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/skalibs-libs-2.15.0.0-r0.apk",
+            "size": 91460,
+            "sha256": "7ea58fb512067402b519079fcce8a48381eb2b9c690341c4a017aa15f719c198",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/skalibs-libs-2.15.0.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/skalibs-libs-2.15.0.0-r0.apk"
+            }
+          },
+          {
+            "name": "sqlite-libs-3.53.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/sqlite-libs-3.53.4-r0.apk",
+            "size": 852532,
+            "sha256": "b39d8d73c1208838a436f2d481ba605b52a095f8d6ff781556eafc81cd1a13e9",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/sqlite-libs-3.53.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/sqlite-libs-3.53.4-r0.apk"
+            }
+          },
+          {
+            "name": "ssl_client-1.37.0-r31.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ssl_client-1.37.0-r31.apk",
+            "size": 5078,
+            "sha256": "fa2911d412b7922b17a07829914ee630c2cd7091ef558abd4329ffb6020f879d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/ssl_client-1.37.0-r31.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/ssl_client-1.37.0-r31.apk"
+            }
+          },
+          {
+            "name": "utmps-libs-0.1.3.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/utmps-libs-0.1.3.3-r0.apk",
+            "size": 5758,
+            "sha256": "d6487b6f260728969191314f6706d4cc62527370e757ec3ac6f7fee8ed38cf88",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/utmps-libs-0.1.3.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/utmps-libs-0.1.3.3-r0.apk"
+            }
+          },
+          {
+            "name": "zlib-1.3.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/zlib-1.3.2-r0.apk",
+            "size": 54312,
+            "sha256": "a535991af7c9e8369ebbf33c1e388c1bc63c87ead5142eddaee71f65836c33e3",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/zlib-1.3.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/zlib-1.3.2-r0.apk"
+            }
+          },
+          {
+            "name": "zstd-libs-1.5.7-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/zstd-libs-1.5.7-r2.apk",
+            "size": 365383,
+            "sha256": "2bb5136c89f5b0bbe1554c8915a3b520d5aa63ae2a51d4d821eb81698db5a818",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/zstd-libs-1.5.7-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/zstd-libs-1.5.7-r2.apk"
+            }
+          }
+        ],
+        "install": "apk --no-network add /resources/*.apk",
+        "verify": "node --version; sudo --version >/dev/null; command -v useradd"
+      }
+    ]
+  },
+  {
+    "id": "tools",
+    "name": "Common tools",
+    "description": "",
+    "version": "3.24.1-1",
+    "dependencies": [
+      "runtime"
+    ],
+    "variants": [
+      {
+        "platform": "linux/amd64",
+        "distro": "alpine-3.24",
+        "files": [
+          {
+            "name": "npm-11.12.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/x86_64/npm-11.12.1-r0.apk",
+            "size": 2306254,
+            "sha256": "015fa1cf5fac5ede0d2675581389883c0cd01059ba8be8d7e4af0382129630c8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/x86_64/npm-11.12.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/x86_64/npm-11.12.1-r0.apk"
+            }
+          },
+          {
+            "name": "ripgrep-15.1.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/x86_64/ripgrep-15.1.0-r0.apk",
+            "size": 1386969,
+            "sha256": "055b1973a5f2face005d167d874eef8a534d4b1edb20ce601e46cc253016b051",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/x86_64/ripgrep-15.1.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/x86_64/ripgrep-15.1.0-r0.apk"
+            }
+          },
+          {
+            "name": "agetty-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/agetty-2.42.3-r1.apk",
+            "size": 25844,
+            "sha256": "10b6503b30f236e28abea6ace52fe963306456b5e0b0a4cc06f6a7718015683b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/agetty-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/agetty-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "bash-5.3.9-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/bash-5.3.9-r1.apk",
+            "size": 480961,
+            "sha256": "4ad962f26fb3c68365171233fe61e3c51bbee1cab35e8dc661198233daeab0dd",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/bash-5.3.9-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/bash-5.3.9-r1.apk"
+            }
+          },
+          {
+            "name": "blkid-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/blkid-2.42.3-r1.apk",
+            "size": 19557,
+            "sha256": "821b98599ca79bc1c5e83d2e24aa9dc8c608505f48d490d3b24c1b652ce5b928",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/blkid-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/blkid-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "ca-certificates-bundle-20260611-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ca-certificates-bundle-20260611-r0.apk",
+            "size": 107328,
+            "sha256": "cd7752154d0fa628a5f7360218e9e8e83edf31f7fa26f58ee42d26b507bd0372",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/ca-certificates-bundle-20260611-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/ca-certificates-bundle-20260611-r0.apk"
+            }
+          },
+          {
+            "name": "cfdisk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/cfdisk-2.42.3-r1.apk",
+            "size": 32070,
+            "sha256": "a8b96eb678357e5baca59b4e7e1bcd639c85c5517fe5e050804aac236ff0a125",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/cfdisk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/cfdisk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "curl-8.22.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/curl-8.22.0-r0.apk",
+            "size": 178668,
+            "sha256": "9262352e6341bb87e3047d1ca0b4051b2a9f4011409df25e4190e6be0334b860",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/curl-8.22.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/curl-8.22.0-r0.apk"
+            }
+          },
+          {
+            "name": "dmesg-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/dmesg-2.42.3-r1.apk",
+            "size": 23911,
+            "sha256": "0df5d4cce014c0bc2686e01337b31db4e231c4384d32a401165212ba283add57",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/dmesg-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/dmesg-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "findmnt-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/findmnt-2.42.3-r1.apk",
+            "size": 24091,
+            "sha256": "730bb6b5f45f8cf4704fa13021c129098bdff1e6e7cbac76c6ca2ed4e38aabee",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/findmnt-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/findmnt-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "flock-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/flock-2.42.3-r1.apk",
+            "size": 8197,
+            "sha256": "5e10c9d1d2844ed98359fa228625bcd23535fe95e66246623bccb0cc72877529",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/flock-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/flock-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "fstrim-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/fstrim-2.42.3-r1.apk",
+            "size": 13340,
+            "sha256": "2344b70dc160afdcbc3aaee5763e894b59b93b383daf9a75b40b461af814ecc5",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/fstrim-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/fstrim-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "gdbm-1.26-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/gdbm-1.26-r0.apk",
+            "size": 31902,
+            "sha256": "3278ccba30b241168ca4ab93c919be805411b918fdc062f06d3684d12dc33ae3",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/gdbm-1.26-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/gdbm-1.26-r0.apk"
+            }
+          },
+          {
+            "name": "git-2.54.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/git-2.54.0-r0.apk",
+            "size": 3546724,
+            "sha256": "5a2c6782774d2e891fc2fc3fdc50c3c2743b8eb2dc7cda69b6b723af2eedcf78",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/git-2.54.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/git-2.54.0-r0.apk"
+            }
+          },
+          {
+            "name": "git-init-template-2.54.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/git-init-template-2.54.0-r0.apk",
+            "size": 10825,
+            "sha256": "e8094a47bfa6e66b7d550ae12a7a8bcab0bc4af502aacd5d2a6fc62d2c5e488d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/git-init-template-2.54.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/git-init-template-2.54.0-r0.apk"
+            }
+          },
+          {
+            "name": "hexdump-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/hexdump-2.42.3-r1.apk",
+            "size": 17049,
+            "sha256": "87a5fd57a7408a9753ceafbb14243b97b93394d12151dcb70878d31bfca84f89",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/hexdump-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/hexdump-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libblkid-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libblkid-2.42.3-r1.apk",
+            "size": 98429,
+            "sha256": "2512c2bff496ac2b8561a3c814d21d35ce10cda579b3d410f9f96da93a5aaac1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libblkid-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libblkid-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libbz2-1.0.8-r6.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libbz2-1.0.8-r6.apk",
+            "size": 35467,
+            "sha256": "2737e2b23ed08d4911ee62cd0163b5f4bf0379cacf4dc35b23a00209584c98fd",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libbz2-1.0.8-r6.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libbz2-1.0.8-r6.apk"
+            }
+          },
+          {
+            "name": "libcap-ng-0.8.5-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcap-ng-0.8.5-r2.apk",
+            "size": 11389,
+            "sha256": "feeb65b050ec75766057ce8f3e9611eef3c03d9eeed17d31a900ab900ed2bcf2",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libcap-ng-0.8.5-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libcap-ng-0.8.5-r2.apk"
+            }
+          },
+          {
+            "name": "libcurl-8.22.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcurl-8.22.0-r0.apk",
+            "size": 358307,
+            "sha256": "40b2a8e15a8d24bc95a5f42aaeb018313a1ff457cee71d8e15aaf1328da765e8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libcurl-8.22.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libcurl-8.22.0-r0.apk"
+            }
+          },
+          {
+            "name": "libeconf-0.8.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libeconf-0.8.3-r0.apk",
+            "size": 26054,
+            "sha256": "2a791c7957961f830cf31b04f35f814a63afcf633badc9052425ff1cf2f64380",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libeconf-0.8.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libeconf-0.8.3-r0.apk"
+            }
+          },
+          {
+            "name": "libexpat-2.8.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libexpat-2.8.4-r0.apk",
+            "size": 61243,
+            "sha256": "34fa41e3994d9a844f50a7c01cb40bb2e272fa7f506b96e92a2b4a20b23a81bc",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libexpat-2.8.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libexpat-2.8.4-r0.apk"
+            }
+          },
+          {
+            "name": "libfdisk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libfdisk-2.42.3-r1.apk",
+            "size": 125583,
+            "sha256": "9775aae10e103c128e6b8424585f5d2dac6d8e8e386cc8365a46358ccd6aa7d0",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libfdisk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libfdisk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libffi-3.5.2-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libffi-3.5.2-r1.apk",
+            "size": 18348,
+            "sha256": "6da1a19313a40c56cac756fb11e2c4d5267831e1c22fc8323f24c943c94da6e0",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libffi-3.5.2-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libffi-3.5.2-r1.apk"
+            }
+          },
+          {
+            "name": "libidn2-2.3.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libidn2-2.3.8-r0.apk",
+            "size": 104623,
+            "sha256": "7d038ac558dde464964b033ce5126dd2eaf84cc414dc15e77c5424a321d0ebee",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libidn2-2.3.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libidn2-2.3.8-r0.apk"
+            }
+          },
+          {
+            "name": "libintl-1.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libintl-1.0-r0.apk",
+            "size": 39537,
+            "sha256": "cb03919cba5624b5e8759d04f3b31913b02585355988b914bc31de4746ff5ef6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libintl-1.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libintl-1.0-r0.apk"
+            }
+          },
+          {
+            "name": "libmount-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libmount-2.42.3-r1.apk",
+            "size": 134799,
+            "sha256": "e2ae003260f2c1ec13666c6e108d5e8e3d64974b0667166a02432bd3be263a7a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libmount-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libmount-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libncursesw-6.6_p20260516-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libncursesw-6.6_p20260516-r0.apk",
+            "size": 159438,
+            "sha256": "cf8caa8a88bc4ce9d9e395567fefaf9ef7fbd55c50ae6155b35c1b58f3755023",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libncursesw-6.6_p20260516-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libncursesw-6.6_p20260516-r0.apk"
+            }
+          },
+          {
+            "name": "libpanelw-6.6_p20260516-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libpanelw-6.6_p20260516-r0.apk",
+            "size": 5563,
+            "sha256": "057be8b1b788580f4cb72c382a6dcc03467d15bd69700f32192bd709e7a57a12",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libpanelw-6.6_p20260516-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libpanelw-6.6_p20260516-r0.apk"
+            }
+          },
+          {
+            "name": "libproc2-4.0.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libproc2-4.0.6-r0.apk",
+            "size": 54111,
+            "sha256": "b879846fa616ed27c64c5bd15ef3647f59005cab2c95c1fc2738b64ddbcfb9e6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libproc2-4.0.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libproc2-4.0.6-r0.apk"
+            }
+          },
+          {
+            "name": "libpsl-0.21.5-r3.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libpsl-0.21.5-r3.apk",
+            "size": 54692,
+            "sha256": "ec665a344b6e887f00f0a47015cc732c3a281b69e84641dc8662ea234fde6cdb",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libpsl-0.21.5-r3.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libpsl-0.21.5-r3.apk"
+            }
+          },
+          {
+            "name": "libsmartcols-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libsmartcols-2.42.3-r1.apk",
+            "size": 56244,
+            "sha256": "5e3a457257d9c0e6799ab5d544ca4f172c4e19e02adcde94c72343ed3f6d8b26",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libsmartcols-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libsmartcols-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libunistring-1.4.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libunistring-1.4.2-r0.apk",
+            "size": 743597,
+            "sha256": "3aa6030e603e34d96192742f327c0509f409c6769ce2e7b1463685dede38d714",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libunistring-1.4.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libunistring-1.4.2-r0.apk"
+            }
+          },
+          {
+            "name": "libuuid-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libuuid-2.42.3-r1.apk",
+            "size": 14261,
+            "sha256": "8306e5bb577696c9069fe1dfd9e1dcc39d2d481c6a1b0e707fd03c3e21aa6aa2",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/libuuid-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/libuuid-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "logger-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/logger-2.42.3-r1.apk",
+            "size": 13012,
+            "sha256": "c0b683fe21d6a4023f814d7071f7f3511926871cd54aa9f1a777434f4a340ec8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/logger-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/logger-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "losetup-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/losetup-2.42.3-r1.apk",
+            "size": 26101,
+            "sha256": "06e6e223c2dca8820f146a3ae4eecd10bf2f3698ecf7da07d8beec05aa4f70ac",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/losetup-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/losetup-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "lsblk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/lsblk-2.42.3-r1.apk",
+            "size": 54998,
+            "sha256": "27a14bbe262dccf7f430c2a785732cc9f2bce82603acb9e93be8131f1ca2e630",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/lsblk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/lsblk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "lscpu-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/lscpu-2.42.3-r1.apk",
+            "size": 42067,
+            "sha256": "cde259f2011700c4f4a32b0fea3610813510682d348dcece5c020bfd53d1c514",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/lscpu-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/lscpu-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "mcookie-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mcookie-2.42.3-r1.apk",
+            "size": 8555,
+            "sha256": "64f86340991e2f283ce95b1bae21157da6849118cd9f1a2931de5c73d0f9fc3d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/mcookie-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/mcookie-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "mount-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mount-2.42.3-r1.apk",
+            "size": 14696,
+            "sha256": "1e16b79830a029ea4784d53ae59fed22e46dc4e7254d0998c467f61b30235ab7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/mount-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/mount-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "mpdecimal-4.0.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mpdecimal-4.0.1-r0.apk",
+            "size": 78803,
+            "sha256": "1278f374bbc8b4aad674244458cca5fc63e0780a921138eef400d5db64381a31",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/mpdecimal-4.0.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/mpdecimal-4.0.1-r0.apk"
+            }
+          },
+          {
+            "name": "ncurses-terminfo-base-6.6_p20260516-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ncurses-terminfo-base-6.6_p20260516-r0.apk",
+            "size": 22172,
+            "sha256": "ce83be6d0bd10584a53c3a5868cc1595ce5f0f8e0b621f8f7f70b6144e521fc9",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/ncurses-terminfo-base-6.6_p20260516-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/ncurses-terminfo-base-6.6_p20260516-r0.apk"
+            }
+          },
+          {
+            "name": "partx-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/partx-2.42.3-r1.apk",
+            "size": 21855,
+            "sha256": "e01544908dd28b03bd33c9676e6fd35bf0e1c90e5247669c6509e959753f6f1b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/partx-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/partx-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "pcre2-10.48-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/pcre2-10.48-r0.apk",
+            "size": 322467,
+            "sha256": "cffaedb6cf404647619a8b0323958d293d9cd240e8f887c16bdf4b0a039f993a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/pcre2-10.48-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/pcre2-10.48-r0.apk"
+            }
+          },
+          {
+            "name": "procps-ng-4.0.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/procps-ng-4.0.6-r0.apk",
+            "size": 214243,
+            "sha256": "2510d07b3c029e7cdba1a6981fa17ac5a7b6c31e1e36df4327f46dd3aa8822eb",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/procps-ng-4.0.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/procps-ng-4.0.6-r0.apk"
+            }
+          },
+          {
+            "name": "py3-distlib-0.4.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-distlib-0.4.0-r1.apk",
+            "size": 107394,
+            "sha256": "0a447a8fd62b18d93dec7ed5f7880bd683ac702832bf7719a12c22cfa6a10d26",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-distlib-0.4.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-distlib-0.4.0-r1.apk"
+            }
+          },
+          {
+            "name": "py3-distlib-pyc-0.4.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-distlib-pyc-0.4.0-r1.apk",
+            "size": 209078,
+            "sha256": "63251f7acebf810f5b78149f4f73e77bda017660c122ba526e657bc3cd143c74",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-distlib-pyc-0.4.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-distlib-pyc-0.4.0-r1.apk"
+            }
+          },
+          {
+            "name": "py3-filelock-3.29.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-filelock-3.29.0-r0.apk",
+            "size": 34630,
+            "sha256": "6b568d9a8eef424ab872ddf547964b3a200c4320562ed69ce1ff43db3e1e6bf6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-filelock-3.29.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-filelock-3.29.0-r0.apk"
+            }
+          },
+          {
+            "name": "py3-filelock-pyc-3.29.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-filelock-pyc-3.29.0-r0.apk",
+            "size": 67408,
+            "sha256": "79d3008a023112479efcdfc8879c9204fb330df9529945c78268c3c615aba59a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-filelock-pyc-3.29.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-filelock-pyc-3.29.0-r0.apk"
+            }
+          },
+          {
+            "name": "py3-pip-26.1.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-pip-26.1.2-r0.apk",
+            "size": 1671707,
+            "sha256": "8ab13441fd0abfd625ac4e91eed5648d90a6422359d45469307bd78ad4f1b223",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-pip-26.1.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-pip-26.1.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-pip-pyc-26.1.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-pip-pyc-26.1.2-r0.apk",
+            "size": 2242420,
+            "sha256": "b7a66a9b68224468f9398220df4620f74747ee98e7526c2968c469c09a04cc37",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-pip-pyc-26.1.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-pip-pyc-26.1.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-platformdirs-4.9.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-platformdirs-4.9.6-r0.apk",
+            "size": 19094,
+            "sha256": "b767356a107e8f812acbac58cc9a45e133dd6dff5a93240354363f2d0804161d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-platformdirs-4.9.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-platformdirs-4.9.6-r0.apk"
+            }
+          },
+          {
+            "name": "py3-platformdirs-pyc-4.9.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-platformdirs-pyc-4.9.6-r0.apk",
+            "size": 37739,
+            "sha256": "a8d1f075ca7d342ce9699cd22eee0e686fc308893ffa0f2de063e71aeb9dc202",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-platformdirs-pyc-4.9.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-platformdirs-pyc-4.9.6-r0.apk"
+            }
+          },
+          {
+            "name": "py3-python-discovery-1.2.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-python-discovery-1.2.2-r0.apk",
+            "size": 28699,
+            "sha256": "a92bfcec5e39eb37e01b8d43478f172ebd3d320d77bb158e6020c8e4de750534",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-python-discovery-1.2.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-python-discovery-1.2.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-python-discovery-pyc-1.2.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-python-discovery-pyc-1.2.2-r0.apk",
+            "size": 64894,
+            "sha256": "f191b0c4c6dd4c315e3bc30dec54dc50c81b23a92b4f2f8181d3205f3c193fbf",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-python-discovery-pyc-1.2.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-python-discovery-pyc-1.2.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-virtualenv-21.3.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-virtualenv-21.3.3-r0.apk",
+            "size": 7568349,
+            "sha256": "3fe0a3bcbf3b753fefcf2162aa51c1645531e7cdf8df883bd585ba6cf390c155",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-virtualenv-21.3.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-virtualenv-21.3.3-r0.apk"
+            }
+          },
+          {
+            "name": "py3-virtualenv-pyc-21.3.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/py3-virtualenv-pyc-21.3.3-r0.apk",
+            "size": 188061,
+            "sha256": "84c3d3c7fd9695fbc49ae6cc1cb78d3772f195c62c5a3dc8fb236e7600261cc2",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/py3-virtualenv-pyc-21.3.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/py3-virtualenv-pyc-21.3.3-r0.apk"
+            }
+          },
+          {
+            "name": "pyc-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/pyc-3.14.7-r1.apk",
+            "size": 1268,
+            "sha256": "353665d585c0c54705794fea9667c6b8afe8accb525e30819e9c1d4b9383b673",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/pyc-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/pyc-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "python3-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/python3-3.14.7-r1.apk",
+            "size": 8371995,
+            "sha256": "8b7e0ce40ab6f0955138e791caf3e16c8b4616befde61c840137cc1a16770985",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/python3-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/python3-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "python3-pyc-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/python3-pyc-3.14.7-r1.apk",
+            "size": 1314,
+            "sha256": "c9da22e6f75c460ebc9d157a2c46393cd9ab6da83b6ab64044910b43a87c8df1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/python3-pyc-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/python3-pyc-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "python3-pycache-pyc0-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/python3-pycache-pyc0-3.14.7-r1.apk",
+            "size": 4477662,
+            "sha256": "04c6f299bd36870a78e8afe1a04e8c64673d46ad3905f84b590b36281f947bd1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/python3-pycache-pyc0-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/python3-pycache-pyc0-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "readline-8.3.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/readline-8.3.3-r1.apk",
+            "size": 127194,
+            "sha256": "766911ecb986a6c5cf0841a6b556cd1e9dbbf22b3559726de32416486cd15c81",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/readline-8.3.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/readline-8.3.3-r1.apk"
+            }
+          },
+          {
+            "name": "runuser-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/runuser-2.42.3-r1.apk",
+            "size": 20533,
+            "sha256": "75b2c148fe1f954e3ed070ffd3201dfe91a37092679c07428bdb4a8981c7b62a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/runuser-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/runuser-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "setarch-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/setarch-2.42.3-r1.apk",
+            "size": 8660,
+            "sha256": "14098fdd87c4247acbee0513147eb2defd17fb850913e45a6dad6cb3e9a4d6b1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/setarch-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/setarch-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "setpriv-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/setpriv-2.42.3-r1.apk",
+            "size": 15077,
+            "sha256": "6a6290ca1f0fb61d0a47e15ed921dd44cb54cf15981c26923dcdf79095c7aff8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/setpriv-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/setpriv-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "sfdisk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/sfdisk-2.42.3-r1.apk",
+            "size": 34702,
+            "sha256": "114578ca36b9bb9597eaee999dfc83e05367fe842d77d63793ee0264b51544ce",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/sfdisk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/sfdisk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "umount-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/umount-2.42.3-r1.apk",
+            "size": 11139,
+            "sha256": "575d7377edf4ec8256319af38a45a2dac816d511843a3ce64cd1d9f7178aaf58",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/umount-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/umount-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "util-linux-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/util-linux-2.42.3-r1.apk",
+            "size": 1537,
+            "sha256": "eb9246e5216823d5a506e22aaa03f9aead08415f9bdd12b080209e9aba4d8908",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/util-linux-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/util-linux-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "util-linux-misc-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/util-linux-misc-2.42.3-r1.apk",
+            "size": 720582,
+            "sha256": "8cba67c052d9932c61db6b32f3a6042b62cca642f16479ba066c59a5a97ffc55",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/util-linux-misc-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/util-linux-misc-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "uuidgen-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/uuidgen-2.42.3-r1.apk",
+            "size": 6279,
+            "sha256": "ef678e883e1a975db58e684619951b85434d10664aac31e832eb0925f15e56bb",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/uuidgen-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/uuidgen-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "wipefs-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/wipefs-2.42.3-r1.apk",
+            "size": 11863,
+            "sha256": "ea16da0e34dfedba70b4f3f9392bf28fb678439aac8f9503850ce79a05fc8628",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/wipefs-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/wipefs-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "xz-libs-5.8.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/xz-libs-5.8.4-r0.apk",
+            "size": 118503,
+            "sha256": "ab362dd515ead04c31a6c302163248da7aa4813e283c971e6dd3f789b453a1d9",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/x86_64/xz-libs-5.8.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/x86_64/xz-libs-5.8.4-r0.apk"
+            }
+          }
+        ],
+        "install": "apk --no-network add /resources/*.apk",
+        "verify": "npm --version; python3 -m venv /tmp/verify-venv; rm -rf /tmp/verify-venv; git --version; curl --version; rg --version; bash --version"
+      },
+      {
+        "platform": "linux/arm64",
+        "distro": "alpine-3.24",
+        "files": [
+          {
+            "name": "npm-11.12.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/aarch64/npm-11.12.1-r0.apk",
+            "size": 2306232,
+            "sha256": "447d8304ed66a2d49267f5b239de43912554d7d152eb467c493bb6d213666583",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/aarch64/npm-11.12.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/aarch64/npm-11.12.1-r0.apk"
+            }
+          },
+          {
+            "name": "ripgrep-15.1.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/community/aarch64/ripgrep-15.1.0-r0.apk",
+            "size": 1336743,
+            "sha256": "1bf67cfa4464bc91e1dd1a4f537c40664c473ce92bf16ebba64bc7968d7545eb",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/community/aarch64/ripgrep-15.1.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/community/aarch64/ripgrep-15.1.0-r0.apk"
+            }
+          },
+          {
+            "name": "agetty-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/agetty-2.42.3-r1.apk",
+            "size": 26396,
+            "sha256": "69f3d1e3bfd7dda893df4b4e9319679960f1d64543abffc58426bed142d576fb",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/agetty-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/agetty-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "bash-5.3.9-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/bash-5.3.9-r1.apk",
+            "size": 542084,
+            "sha256": "95f4f976bdf2f4ca18ff41c32916eb6d7b12a0dae12504d55d04427460d6542f",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/bash-5.3.9-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/bash-5.3.9-r1.apk"
+            }
+          },
+          {
+            "name": "blkid-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/blkid-2.42.3-r1.apk",
+            "size": 20247,
+            "sha256": "680c17cd5c482c15a699abda8a28498dcde9a0b7f2b1ec3e1c51de3f99a03ab7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/blkid-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/blkid-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "ca-certificates-bundle-20260611-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ca-certificates-bundle-20260611-r0.apk",
+            "size": 107310,
+            "sha256": "bc5d3ae0b602748852e0bc601a4348cabc4f654f12f27578919cbf3c810f1c1e",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/ca-certificates-bundle-20260611-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/ca-certificates-bundle-20260611-r0.apk"
+            }
+          },
+          {
+            "name": "cfdisk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/cfdisk-2.42.3-r1.apk",
+            "size": 32904,
+            "sha256": "bc1788386784b9ccfca70c21a8998bcc6813d3020bc57460fc80239aacb925db",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/cfdisk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/cfdisk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "curl-8.22.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/curl-8.22.0-r0.apk",
+            "size": 178909,
+            "sha256": "6658a1428fb4422bc280d6315e107774301dce65087f6552c4aad511a251455d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/curl-8.22.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/curl-8.22.0-r0.apk"
+            }
+          },
+          {
+            "name": "dmesg-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/dmesg-2.42.3-r1.apk",
+            "size": 24858,
+            "sha256": "44a86a6b284914e7451ad092b20c80e489854cb327ec2f743dc7acb826311e14",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/dmesg-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/dmesg-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "findmnt-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/findmnt-2.42.3-r1.apk",
+            "size": 24943,
+            "sha256": "2cf9d9a125ac0e187751a0ea959e4920ee89cead1ca9b9639c14f2fd8f404696",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/findmnt-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/findmnt-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "flock-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/flock-2.42.3-r1.apk",
+            "size": 13005,
+            "sha256": "cb520c722ab4599ce5a9f5478cce09e150c45d9b96626ee860f05a63d175eed9",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/flock-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/flock-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "fstrim-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/fstrim-2.42.3-r1.apk",
+            "size": 14055,
+            "sha256": "2a8f896aec5059e80c3e57bbb678d38470cdaaa6a0926ce631baf3bc70d7e92d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/fstrim-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/fstrim-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "gdbm-1.26-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/gdbm-1.26-r0.apk",
+            "size": 33830,
+            "sha256": "bad50eb26533e2f58e014fbcd3c1744f2fdb79954af6e3c188ccd059251c7790",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/gdbm-1.26-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/gdbm-1.26-r0.apk"
+            }
+          },
+          {
+            "name": "git-2.54.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/git-2.54.0-r0.apk",
+            "size": 3594478,
+            "sha256": "ea41e2f837f1f6a8b66e72a5ece0fc75cca44f76f49cf5500d467fc5627d0ab7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/git-2.54.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/git-2.54.0-r0.apk"
+            }
+          },
+          {
+            "name": "git-init-template-2.54.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/git-init-template-2.54.0-r0.apk",
+            "size": 10812,
+            "sha256": "bad163db30bfd90c99f86fac54e7ac082040024d214c0e1d0c7d98a4f5a7edb5",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/git-init-template-2.54.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/git-init-template-2.54.0-r0.apk"
+            }
+          },
+          {
+            "name": "hexdump-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/hexdump-2.42.3-r1.apk",
+            "size": 17645,
+            "sha256": "aaee5ac11bbd32b48216b62a9289f1340247d73704e262caa44564da2edb4bee",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/hexdump-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/hexdump-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libblkid-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libblkid-2.42.3-r1.apk",
+            "size": 97097,
+            "sha256": "9d0f24976c575c53c12526b6e078edf34c980c153bc8e5f1c1053cbece5b8cfa",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libblkid-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libblkid-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libbz2-1.0.8-r6.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libbz2-1.0.8-r6.apk",
+            "size": 34259,
+            "sha256": "28cb76bb6d11d2a55c3061b5fcb2ab84996412a248b2c9fe52bb710d0a2a84e7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libbz2-1.0.8-r6.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libbz2-1.0.8-r6.apk"
+            }
+          },
+          {
+            "name": "libcap-ng-0.8.5-r2.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcap-ng-0.8.5-r2.apk",
+            "size": 12793,
+            "sha256": "64b7159d772cec5bdb3e3d091d4b4c8e33e7b8dee0b5873ac89e25e3899de3ca",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libcap-ng-0.8.5-r2.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libcap-ng-0.8.5-r2.apk"
+            }
+          },
+          {
+            "name": "libcurl-8.22.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libcurl-8.22.0-r0.apk",
+            "size": 358024,
+            "sha256": "cbec830a63888be570c06d20d87c85649aff1db38c3b4dcc17884b14471e39e3",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libcurl-8.22.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libcurl-8.22.0-r0.apk"
+            }
+          },
+          {
+            "name": "libeconf-0.8.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libeconf-0.8.3-r0.apk",
+            "size": 27259,
+            "sha256": "cf0899d49ded0a6891e3cdf1b37887f2ecd77293afe1d8f3cb8937763c83f183",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libeconf-0.8.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libeconf-0.8.3-r0.apk"
+            }
+          },
+          {
+            "name": "libexpat-2.8.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libexpat-2.8.4-r0.apk",
+            "size": 60700,
+            "sha256": "ca1be5be36985a8370f4a8e9e33a25788ac95260295718e1b0b721a16bb2aa61",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libexpat-2.8.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libexpat-2.8.4-r0.apk"
+            }
+          },
+          {
+            "name": "libfdisk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libfdisk-2.42.3-r1.apk",
+            "size": 121449,
+            "sha256": "061e5c9c82eff00f806bd51bdd414d3ff6aaec99de02ed4c1b60f3e13578e2b7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libfdisk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libfdisk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libffi-3.5.2-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libffi-3.5.2-r1.apk",
+            "size": 17799,
+            "sha256": "9a67280b0c7c62db658c2d4d32ed1199903bef859c32dd4245e1a7e35c89ab4b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libffi-3.5.2-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libffi-3.5.2-r1.apk"
+            }
+          },
+          {
+            "name": "libidn2-2.3.8-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libidn2-2.3.8-r0.apk",
+            "size": 105430,
+            "sha256": "d02ffda4510652f89c5fb89cd2e7ff721afb0c74e7d75476ad60bebe7ac0ae20",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libidn2-2.3.8-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libidn2-2.3.8-r0.apk"
+            }
+          },
+          {
+            "name": "libintl-1.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libintl-1.0-r0.apk",
+            "size": 41483,
+            "sha256": "d106a13e3e68103d3a8217406aae6186289baf352d0f3d10fc21938d2dd8adb1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libintl-1.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libintl-1.0-r0.apk"
+            }
+          },
+          {
+            "name": "libmount-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libmount-2.42.3-r1.apk",
+            "size": 128579,
+            "sha256": "a2a6fc6aab7a59c70ec060f5fb8c950be42d1a017934bf32e5dd6984eaab15cc",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libmount-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libmount-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libncursesw-6.6_p20260516-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libncursesw-6.6_p20260516-r0.apk",
+            "size": 161906,
+            "sha256": "51a7aa4b3ec40b144d0801c0544e0a9f62e2a41d04b6067bb5e95786040741c6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libncursesw-6.6_p20260516-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libncursesw-6.6_p20260516-r0.apk"
+            }
+          },
+          {
+            "name": "libpanelw-6.6_p20260516-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libpanelw-6.6_p20260516-r0.apk",
+            "size": 5903,
+            "sha256": "a6912c654c821db4f8a801321709205bd482b0e515b862f2d02045e21b73d97d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libpanelw-6.6_p20260516-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libpanelw-6.6_p20260516-r0.apk"
+            }
+          },
+          {
+            "name": "libproc2-4.0.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libproc2-4.0.6-r0.apk",
+            "size": 53887,
+            "sha256": "2dd4249ead21043f3efbab320540df1545b3793ca63bca6e003f262d8b734e15",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libproc2-4.0.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libproc2-4.0.6-r0.apk"
+            }
+          },
+          {
+            "name": "libpsl-0.21.5-r3.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libpsl-0.21.5-r3.apk",
+            "size": 55302,
+            "sha256": "b31e91371425d5f80c1db5cba2a849956b65c802add0b49de844b2ca961aa8da",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libpsl-0.21.5-r3.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libpsl-0.21.5-r3.apk"
+            }
+          },
+          {
+            "name": "libsmartcols-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libsmartcols-2.42.3-r1.apk",
+            "size": 56563,
+            "sha256": "e2a4b6c2e2f493100305b0e62b9b10454611a49625534b1b06a3bc8aa0087818",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libsmartcols-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libsmartcols-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "libunistring-1.4.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libunistring-1.4.2-r0.apk",
+            "size": 746169,
+            "sha256": "58abfcbce2459071c505771a572a79953d6043d72b643ed0d5285ca39cdaf85c",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libunistring-1.4.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libunistring-1.4.2-r0.apk"
+            }
+          },
+          {
+            "name": "libuuid-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/libuuid-2.42.3-r1.apk",
+            "size": 15385,
+            "sha256": "9ce20c7ffe2ccaa7c321893c10564abbca13c3f2edb82f60a35f1f68e004f86c",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/libuuid-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/libuuid-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "logger-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/logger-2.42.3-r1.apk",
+            "size": 13654,
+            "sha256": "d4e85e8efa2418ed359ccd49b4449239cba7da45b59b9b8ae8534c391038fcc1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/logger-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/logger-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "losetup-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/losetup-2.42.3-r1.apk",
+            "size": 25977,
+            "sha256": "5057c131f0d33feca26e562aaa794b91a9d4a17eae244018560f61cfae15bf16",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/losetup-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/losetup-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "lsblk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/lsblk-2.42.3-r1.apk",
+            "size": 54854,
+            "sha256": "93519a18645204f204f3f9a7361b6a12ea786aed09c01f35e94e6aa0cd6c59a0",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/lsblk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/lsblk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "lscpu-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/lscpu-2.42.3-r1.apk",
+            "size": 42414,
+            "sha256": "f7adfb3707adb808b76854d16da18db8c9bf8530ae6861ff902cad326657de3b",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/lscpu-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/lscpu-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "mcookie-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/mcookie-2.42.3-r1.apk",
+            "size": 9641,
+            "sha256": "cae1e1827be1be3ec84664d685c8dc20a1447377a32f626a76ee7cb196557db6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/mcookie-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/mcookie-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "mount-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/mount-2.42.3-r1.apk",
+            "size": 15497,
+            "sha256": "8aa306ebe5946ed96e4a0696774bb6c358ee8bdfd205722bf25480c2718581f4",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/mount-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/mount-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "mpdecimal-4.0.1-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/mpdecimal-4.0.1-r0.apk",
+            "size": 81031,
+            "sha256": "358959600f99f58deee30ca9089c7f6f0f1bd73cc0021e321a7dbf6f735935c6",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/mpdecimal-4.0.1-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/mpdecimal-4.0.1-r0.apk"
+            }
+          },
+          {
+            "name": "ncurses-terminfo-base-6.6_p20260516-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/ncurses-terminfo-base-6.6_p20260516-r0.apk",
+            "size": 22150,
+            "sha256": "e0c546b9461bdce206a90bc720cb69aa4628b5a5b8d908c3e5084e00f28f6a9d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/ncurses-terminfo-base-6.6_p20260516-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/ncurses-terminfo-base-6.6_p20260516-r0.apk"
+            }
+          },
+          {
+            "name": "partx-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/partx-2.42.3-r1.apk",
+            "size": 22372,
+            "sha256": "ac6db4a2b9969f1c45d0b9d3244275d124c4bb6b04175cf53438d901e8a8a6b7",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/partx-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/partx-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "pcre2-10.48-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/pcre2-10.48-r0.apk",
+            "size": 320066,
+            "sha256": "0e8a425ec23fca1b549e83758b385e7186a070597e8dc014163462f960079167",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/pcre2-10.48-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/pcre2-10.48-r0.apk"
+            }
+          },
+          {
+            "name": "procps-ng-4.0.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/procps-ng-4.0.6-r0.apk",
+            "size": 238795,
+            "sha256": "15cd4bc90b35312a82b145a79bacccb2e77cb823922269e60802e16efa53c63a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/procps-ng-4.0.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/procps-ng-4.0.6-r0.apk"
+            }
+          },
+          {
+            "name": "py3-distlib-0.4.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-distlib-0.4.0-r1.apk",
+            "size": 107367,
+            "sha256": "40013d153f7e360461cedea833a16edcd3a48574e685292b5145a7b09a18e9c8",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-distlib-0.4.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-distlib-0.4.0-r1.apk"
+            }
+          },
+          {
+            "name": "py3-distlib-pyc-0.4.0-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-distlib-pyc-0.4.0-r1.apk",
+            "size": 209052,
+            "sha256": "fe85b5ddd965d943cd5de884209e362011fc0eb5906001b22c9862f684c6d06d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-distlib-pyc-0.4.0-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-distlib-pyc-0.4.0-r1.apk"
+            }
+          },
+          {
+            "name": "py3-filelock-3.29.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-filelock-3.29.0-r0.apk",
+            "size": 34605,
+            "sha256": "47be7aa60d4ff2db2edbf51cfa0dbe39ebff83b350dfb2d611badfd2107e1b23",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-filelock-3.29.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-filelock-3.29.0-r0.apk"
+            }
+          },
+          {
+            "name": "py3-filelock-pyc-3.29.0-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-filelock-pyc-3.29.0-r0.apk",
+            "size": 67387,
+            "sha256": "d2991f90bedf63bb05d7a35538811f068667e084b15f863e65f3828a6559a01a",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-filelock-pyc-3.29.0-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-filelock-pyc-3.29.0-r0.apk"
+            }
+          },
+          {
+            "name": "py3-pip-26.1.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-pip-26.1.2-r0.apk",
+            "size": 1671683,
+            "sha256": "c6f12afeaf15c7f4c4d2f9d4e4f3203da2f71a3fc2ba5fe7846cf0d8d8cd15dc",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-pip-26.1.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-pip-26.1.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-pip-pyc-26.1.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-pip-pyc-26.1.2-r0.apk",
+            "size": 2242400,
+            "sha256": "c0e417e669c35724ce74c1e90c66ea80dec4a8883a3e7e0f5045b2023c16b9ea",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-pip-pyc-26.1.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-pip-pyc-26.1.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-platformdirs-4.9.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-platformdirs-4.9.6-r0.apk",
+            "size": 19070,
+            "sha256": "4cedc3b0c26d14c7702ecb8fb68586425fbb6fdae7068488ee2ac8baf61bc3d5",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-platformdirs-4.9.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-platformdirs-4.9.6-r0.apk"
+            }
+          },
+          {
+            "name": "py3-platformdirs-pyc-4.9.6-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-platformdirs-pyc-4.9.6-r0.apk",
+            "size": 37712,
+            "sha256": "bfe718c616048c076471228a6e85196a6de6f5d05a47d59d5c7af7a654f0207e",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-platformdirs-pyc-4.9.6-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-platformdirs-pyc-4.9.6-r0.apk"
+            }
+          },
+          {
+            "name": "py3-python-discovery-1.2.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-python-discovery-1.2.2-r0.apk",
+            "size": 28676,
+            "sha256": "5d5b0fa2f07b2decc04f2a2f0a7ea945e53b569c0f19fea413abbb51f79730d4",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-python-discovery-1.2.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-python-discovery-1.2.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-python-discovery-pyc-1.2.2-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-python-discovery-pyc-1.2.2-r0.apk",
+            "size": 64869,
+            "sha256": "b16ad27ed92c1a0fed2602716851d1d3bf914a021fe952fabaec65d7c60a0f66",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-python-discovery-pyc-1.2.2-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-python-discovery-pyc-1.2.2-r0.apk"
+            }
+          },
+          {
+            "name": "py3-virtualenv-21.3.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-virtualenv-21.3.3-r0.apk",
+            "size": 7568322,
+            "sha256": "a67cf8d3118421ac7dff2ba2d155aaced2eb8ec379486027bdeef7704011ca8f",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-virtualenv-21.3.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-virtualenv-21.3.3-r0.apk"
+            }
+          },
+          {
+            "name": "py3-virtualenv-pyc-21.3.3-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/py3-virtualenv-pyc-21.3.3-r0.apk",
+            "size": 188041,
+            "sha256": "f84c80820547ea8eb33ae22906febd53da29ab5c57f218b350d8544a7e761ff1",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/py3-virtualenv-pyc-21.3.3-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/py3-virtualenv-pyc-21.3.3-r0.apk"
+            }
+          },
+          {
+            "name": "pyc-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/pyc-3.14.7-r1.apk",
+            "size": 1250,
+            "sha256": "dc3b6836f0eeaa87140d4006478e43b475ba38a1388ccf64b9725b9c1523b514",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/pyc-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/pyc-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "python3-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/python3-3.14.7-r1.apk",
+            "size": 8290134,
+            "sha256": "78a3ca29b9443ab19d3092e71f485b185badb3aea9165e59d54c257dccc98a27",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/python3-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/python3-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "python3-pyc-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/python3-pyc-3.14.7-r1.apk",
+            "size": 1299,
+            "sha256": "6fb67313dfacbcc073ff2669f89d4164ca20ff59efdf583dc6cf1f20590119c2",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/python3-pyc-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/python3-pyc-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "python3-pycache-pyc0-3.14.7-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/python3-pycache-pyc0-3.14.7-r1.apk",
+            "size": 4477562,
+            "sha256": "5280d49c32c2d0cd4fac5cc6de8a59d1a2d962ccaa06d3657e16fc814a1f7f60",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/python3-pycache-pyc0-3.14.7-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/python3-pycache-pyc0-3.14.7-r1.apk"
+            }
+          },
+          {
+            "name": "readline-8.3.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/readline-8.3.3-r1.apk",
+            "size": 129706,
+            "sha256": "9f0ae0923c02b0d6aba62e9173542b65396ba3f0efefcbf087ea32f1120e7b34",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/readline-8.3.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/readline-8.3.3-r1.apk"
+            }
+          },
+          {
+            "name": "runuser-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/runuser-2.42.3-r1.apk",
+            "size": 20702,
+            "sha256": "7414a076a1ba773d07bdf75f266082c71656bf719d0584f6a8fbc573397b7910",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/runuser-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/runuser-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "setarch-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/setarch-2.42.3-r1.apk",
+            "size": 9249,
+            "sha256": "10c2df054ee731b9cd9da771ef64d1275ff37385a53eaf71db798e756d9501e3",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/setarch-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/setarch-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "setpriv-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/setpriv-2.42.3-r1.apk",
+            "size": 15892,
+            "sha256": "88eade8ba518d55fb6c841b15f5432081ca43115ec67edc49da27518b853569d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/setpriv-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/setpriv-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "sfdisk-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/sfdisk-2.42.3-r1.apk",
+            "size": 35957,
+            "sha256": "ca922fbfb1be4c3736b011608086db92a4396c300fa13079eda430438e3fb865",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/sfdisk-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/sfdisk-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "umount-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/umount-2.42.3-r1.apk",
+            "size": 11832,
+            "sha256": "46140e318c6056dd6db07db832c2063fe13a7e626ff83807c035436a5ed323c4",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/umount-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/umount-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "util-linux-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/util-linux-2.42.3-r1.apk",
+            "size": 1521,
+            "sha256": "fd7c5dc16963c27d0f3f281235f06688ee11eb13cafd586068e87911b54c991d",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/util-linux-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/util-linux-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "util-linux-misc-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/util-linux-misc-2.42.3-r1.apk",
+            "size": 889060,
+            "sha256": "b04d1b39317348f03872bcafb5f5662d0e3f957b44469bef70a688c8a54a7e71",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/util-linux-misc-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/util-linux-misc-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "uuidgen-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/uuidgen-2.42.3-r1.apk",
+            "size": 6620,
+            "sha256": "123cc3dc5a08d554388ceca0b6eea4aa285937a401991d9808247591acdd9c65",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/uuidgen-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/uuidgen-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "wipefs-2.42.3-r1.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/wipefs-2.42.3-r1.apk",
+            "size": 12462,
+            "sha256": "b665227577395cfd0b0d94f168bd8e7a557ae7513ee1b2e0ec874898eed40968",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/wipefs-2.42.3-r1.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/wipefs-2.42.3-r1.apk"
+            }
+          },
+          {
+            "name": "xz-libs-5.8.4-r0.apk",
+            "url": "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/aarch64/xz-libs-5.8.4-r0.apk",
+            "size": 119423,
+            "sha256": "9be375832e747afe14f98e400e8b55d8f6fde25e41663090c81600628daab093",
+            "mirrors": {
+              "tuna": "https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.24/main/aarch64/xz-libs-5.8.4-r0.apk",
+              "ustc": "https://mirrors.ustc.edu.cn/alpine/v3.24/main/aarch64/xz-libs-5.8.4-r0.apk"
+            }
+          }
+        ],
+        "install": "apk --no-network add /resources/*.apk",
+        "verify": "npm --version; python3 -m venv /tmp/verify-venv; rm -rf /tmp/verify-venv; git --version; curl --version; rg --version; bash --version"
+      }
+    ]
+  }
+]
