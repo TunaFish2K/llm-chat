@@ -1,7 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { makeSettings } from "../../test/fixtures";
 import { initializeTypography, saveTypography, typographyStore, TYPOGRAPHY_KEY } from "./local-typography";
-import { updateUiPreferences, flushUiPreferences, appStore } from "./app-state";
 import { endpoints } from "./api";
 
 it("seeds once, ignores remote changes and restores browser preferences", () => {
@@ -33,11 +32,9 @@ it("validates stored values and follows same-browser storage events", () => {
   expect(typographyStore.get().values.chatFontSize).toBe(16);
 });
 
-it("never sends typography fields through the shared settings writer", async () => {
-  appStore.set({ settings: makeSettings() });
+it("saves typography without sending settings to the server", () => {
   const save = vi.spyOn(endpoints, "updateSettings");
-  updateUiPreferences({ chatFontSize: 22, chatLetterSpacing: .02 });
-  await flushUiPreferences();
+  saveTypography({ chatFontSize: 22, chatLetterSpacing: .02 });
   expect(save).not.toHaveBeenCalled();
   expect(typographyStore.get().values.chatFontSize).toBe(22);
 });

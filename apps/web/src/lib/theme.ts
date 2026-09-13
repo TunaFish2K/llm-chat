@@ -1,14 +1,12 @@
-import { useEffect } from "react";
-import type { AppSettings } from "@llm-chat/contracts";
+import { useLayoutEffect } from "react";
+import type { DisplayPreferences } from "./local-display";
 
 export const THEME_COLORS = { dark: "#0d100e", light: "#f5f7f5" } as const;
 
-/** Applies the theme from server settings to <html data-theme>. */
-export function useTheme(settings: AppSettings | null): void {
-  const theme = settings?.theme ?? "system";
-  const accent = settings?.uiPreferences.accentColor;
-  const amoled = settings?.uiPreferences.amoled ?? false;
-  useEffect(() => {
+/** Applies browser-local appearance to the document and browser chrome. */
+export function useTheme(preferences: DisplayPreferences): void {
+  const { theme, accentColor: accent, amoled } = preferences;
+  useLayoutEffect(() => {
     const root = document.documentElement;
     const media = window.matchMedia("(prefers-color-scheme: light)");
     const apply = () => {

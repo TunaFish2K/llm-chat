@@ -168,7 +168,7 @@ export const endpoints = {
   bootstrap: (conversationId?: string) =>
     api.get<BootstrapDto>(`/api/bootstrap${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`),
   settings: () => api.get<AppSettings>("/api/settings"),
-  updateSettings: (patch: AppSettingsUpdate) => api.patch<AppSettings>("/api/settings", patch),
+  updateSettings: (patch: Omit<AppSettingsUpdate, "theme" | "uiPreferences">) => api.patch<AppSettings>("/api/settings", patch),
 
   agents: () => api.get<AgentSummaryDto[]>("/api/agents"),
   agent: (id: string) => api.get<AgentDto>(`/api/agents/${id}`),

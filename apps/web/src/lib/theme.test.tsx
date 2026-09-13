@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { makeSettings } from "../../test/fixtures";
+import { DISPLAY_DEFAULTS, type DisplayPreferences } from "./local-display";
 import { THEME_COLORS, useTheme } from "./theme";
 
 describe("useTheme", () => {
@@ -9,7 +9,7 @@ describe("useTheme", () => {
     favicon.id = "app-favicon";
     favicon.href = "/icons/icon-v2.svg";
     document.head.append(favicon);
-    const settings = makeSettings({ theme: "dark", uiPreferences: { ...makeSettings().uiPreferences, accentColor: "#018EEE", amoled: true } });
+    const settings: DisplayPreferences = { ...DISPLAY_DEFAULTS, theme: "dark", accentColor: "#018EEE", amoled: true };
     const { rerender } = renderHook(({ value }) => useTheme(value), { initialProps: { value: settings } });
     expect(document.documentElement.dataset.amoled).toBe("true");
     expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#018EEE");
@@ -17,7 +17,7 @@ describe("useTheme", () => {
     expect(favicon.getAttribute("href")).toBe("/icons/icon-v2.svg");
     rerender({ value: { ...settings, theme: "light" } });
     expect(document.documentElement.dataset.amoled).toBe("false");
-    rerender({ value: { ...settings, uiPreferences: { ...settings.uiPreferences, accentColor: null } } });
+    rerender({ value: { ...settings, accentColor: null } });
     expect(document.documentElement.style.getPropertyValue("--accent")).toBe("");
     expect(favicon.getAttribute("href")).toBe("/icons/icon-v2.svg");
     favicon.remove();
@@ -32,7 +32,7 @@ describe("useTheme", () => {
     favicon.href = "/icons/icon-v2.svg";
     document.head.append(favicon);
     const { rerender, unmount } = renderHook(
-      ({ theme }) => useTheme(makeSettings({ theme })),
+      ({ theme }) => useTheme({ ...DISPLAY_DEFAULTS, theme }),
       { initialProps: { theme: "dark" as "dark" | "light" } }
     );
 
@@ -57,7 +57,7 @@ describe("useTheme", () => {
     const media = { matches: false, addEventListener: vi.fn((_event, callback) => { listener = callback; }), removeEventListener: vi.fn() };
     vi.spyOn(window, "matchMedia").mockReturnValue(media as unknown as MediaQueryList);
     const favicon = document.createElement("link"); favicon.id = "app-favicon"; favicon.href = "/icons/icon-v2.svg"; document.head.append(favicon);
-    const { unmount } = renderHook(() => useTheme(makeSettings({ theme: "system" })));
+    const { unmount } = renderHook(() => useTheme(DISPLAY_DEFAULTS));
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(favicon.getAttribute("href")).toBe("/icons/icon-v2.svg");
     act(() => { media.matches = true; listener(); });

@@ -1,3 +1,4 @@
+import { displayStore, DISPLAY_DEFAULTS } from "../src/lib/local-display";
 import { setLocalePreference } from "../src/lib/i18n";
 import { typographyStore, CHAT_TYPOGRAPHY_DEFAULTS } from "../src/lib/local-typography";
 import { setConversationSource } from "../src/lib/conversation-lifecycle";
@@ -82,6 +83,7 @@ beforeEach(() => { setLocalePreference("zh-CN"); });
 afterEach(() => {
   offlineStore.set({ offline: false });
   cleanup();
+  displayStore.set({ values: { ...DISPLAY_DEFAULTS }, initialized: false, saved: true });
   typographyStore.set({ values: { ...CHAT_TYPOGRAPHY_DEFAULTS }, initialized: false, saved: true });
   setConversationSource(crypto.randomUUID());
   memoryStorage.clear();

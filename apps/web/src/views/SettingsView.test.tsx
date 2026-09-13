@@ -1,4 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { DISPLAY_KEY, displayStore, saveDisplayPreferences } from "../lib/local-display";
+import { offlineStore } from "../lib/offline-history";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "../lib/api";
@@ -59,26 +61,56 @@ describe("SettingsView", () => {
     expect(screen.getByText(/此处的开关不影响直接通过 Responses/)).toBeInTheDocument();
   });
 
-  it("stores generation haptics in application settings", async () => {
+  it.each([false, true])("saves every display control locally (offline: %s)", async (offline) => {
     const user = userEvent.setup();
-    Object.defineProperty(window.navigator, "vibrate", { configurable: true, value: vi.fn() });
-    const fetchMock = vi.fn().mockResolvedValue(json(makeSettings({
-      uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: false }
-    })));
-    vi.stubGlobal("fetch", fetchMock);
+    const write = vi.spyOn(endpoints, "updateSettings");
+    offlineStore.set({ offline });
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
+    await user.selectOptions(screen.getByLabelText("主题"), "light");
+    await user.click(screen.getByRole("button", { name: "蓝色" }));
+    await user.click(screen.getByLabelText("深色模式使用纯黑背景"));
+    await user.click(screen.getByLabelText("默认折叠侧边栏"));
+    await user.click(screen.getByRole("checkbox", { name: /生成时振动/ }));
+    await user.selectOptions(screen.getByLabelText("推理块折叠策略"), "never-auto-collapse");
+    fireEvent.change(screen.getByRole("slider", { name: "字号" }), { target: { value: "20" } });
+    expect(JSON.parse(localStorage.getItem(DISPLAY_KEY)!)).toEqual({
+      theme: "light", accentColor: "#018EEE", amoled: true, sidebarCollapsed: true,
+      generationHaptics: false, reasoningCollapsePolicy: "never-auto-collapse"
+    });
+    expect(JSON.parse(localStorage.getItem("llm-chat.typography.v1")!)).toMatchObject({ chatFontSize: 20 });
+    expect(write).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("默认 Agent").matches(":disabled")).toBe(offline);
+  });
 
-    const toggle = screen.getByRole("checkbox", { name: /生成时振动/ });
-    expect(toggle).toBeChecked();
-    await user.click(toggle);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/settings",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({ uiPreferences: { generationHaptics: false } })
-      })
-    ));
+  it("keeps a failed local preview and retries saving without a server request", async () => {
+    const user = userEvent.setup();
+    appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
+    render(<SettingsView section="general" />);
+    const write = vi.spyOn(endpoints, "updateSettings");
+    vi.spyOn(localStorage, "setItem").mockImplementationOnce(() => { throw new Error("full"); });
+    await user.selectOptions(screen.getByLabelText("主题"), "light");
+    const alert = screen.getByText("未能保存显示设置，刷新后可能丢失。");
+    expect(alert).toHaveAttribute("role", "alert");
+    expect(screen.getByLabelText("主题")).toHaveValue("light");
+    await user.click(within(alert).getByRole("button", { name: "重试" }));
+    expect(alert).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(DISPLAY_KEY)!)).toMatchObject({ theme: "light" });
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it("still saves shared business settings without changing local appearance", async () => {
+    const user = userEvent.setup();
+    const original = makeSettings();
+    appStore.set({ settings: original, agents: [makeAgent(), makeAgent({ id: "agent-2" })], models: [] });
+    const write = vi.spyOn(endpoints, "updateSettings").mockResolvedValue({ ...original, defaultAgentId: "agent-2" });
+    vi.spyOn(endpoints, "settings").mockResolvedValue({ ...original, defaultAgentId: "agent-2" });
+    render(<SettingsView section="general" />);
+    act(() => saveDisplayPreferences({ theme: "light" }));
+    await user.selectOptions(screen.getByLabelText("默认 Agent"), "agent-2");
+    await waitFor(() => expect(write).toHaveBeenCalledWith({ defaultAgentId: "agent-2" }));
+    await waitFor(() => expect(appStore.get().settings?.defaultAgentId).toBe("agent-2"));
+    expect(displayStore.get().values.theme).toBe("light");
   });
 
   it("validates password confirmation before allowing change", async () => {
