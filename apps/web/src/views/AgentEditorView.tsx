@@ -1,3 +1,4 @@
+import { ModelPicker } from "../components/ModelPicker";
 import { effectiveReasoningSelection } from "@llm-chat/contracts";
 import { EnvironmentSettings } from "../components/EnvironmentSettings";
 import { ReasoningSelect } from "../components/ReasoningControl";
@@ -498,6 +499,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
 function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: AgentDto) => void) => void }) {
   useLocale();
   const models = useStore(appStore, (s) => s.models);
+  const connections = useStore(appStore, (s) => s.connections);
   const execution = agent.execution;
   const generation = execution.generation ?? {};
   const selectedModel = models.find((model) => model.id === execution.modelId);
@@ -519,34 +521,16 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
         <EnvironmentSettings value={execution.environment} onChange={environment => setExecution({ environment })} />
         <h3>{t("AgentEditorView.model_and_reasoning")}</h3>
         <Field label={t("InspectorPanel.model")} hint={t("AgentEditorView.when_blank_new_conversations_use_the_most_recently_selected_model")}>
-          <select
-            className="select"
-            aria-label={t("InspectorPanel.model")}
-            value={execution.modelId ?? ""}
-            onChange={(event) => setExecution({ modelId: event.target.value || null })}
-          >
-            <option value="">{t("AgentEditorView.no_default_model")}</option>
-            {models.map((model) => (
-              <option key={model.id} value={model.id} disabled={!model.enabled}>
-                {model.displayName}（{model.modelKey}）
-              </option>
-            ))}
-          </select>
+          <ModelPicker value={execution.modelId ?? null} models={models} connections={connections}
+            label={t("InspectorPanel.model")} onChange={modelId => setExecution({ modelId })}
+            emptyOption={{ label: t("AgentEditorView.no_default_model"), selected: execution.modelId == null,
+              onSelect: () => setExecution({ modelId: null }) }} />
         </Field>
         <Field label={t("AgentEditorView.fallback_vision_model")} hint={t("AgentEditorView.when_the_main_model_cannot_accept_images_this_model_creates")}>
-          <select
-            className="select"
-            aria-label={t("AgentEditorView.fallback_vision_model")}
-            value={execution.visionModelId ?? ""}
-            onChange={(event) => setExecution({ visionModelId: event.target.value || null })}
-          >
-            <option value="">{t("AgentEditorView.not_configured")}</option>
-            {models.filter((model) => model.enabled && model.capabilities.imageInput).map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.displayName}（{model.modelKey}）
-              </option>
-            ))}
-          </select>
+          <ModelPicker value={execution.visionModelId ?? null} models={models} connections={connections} imageInputOnly
+            label={t("AgentEditorView.fallback_vision_model")} onChange={visionModelId => setExecution({ visionModelId })}
+            emptyOption={{ label: t("AgentEditorView.not_configured"), selected: execution.visionModelId == null,
+              onSelect: () => setExecution({ visionModelId: null }) }} />
         </Field>
         <div className="grid-2">
           <Field label={t("AgentEditorView.context_policy")}>

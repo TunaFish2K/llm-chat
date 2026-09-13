@@ -1,3 +1,4 @@
+import { Highlight } from "./Highlight";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale } from "../lib/i18n";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
@@ -10,16 +11,6 @@ import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { Modal } from "../lib/ui";
 
-export function Highlight({ text, query }: { text: string; query: string }) {
-  useLocale();
-  if (!query.trim()) return <>{text}</>;
-  const parts = []; let start = 0;
-  const normalized = text.toLocaleLowerCase(), needle = query.trim().toLocaleLowerCase();
-  for (let i = normalized.indexOf(needle); i >= 0; i = normalized.indexOf(needle, start)) {
-    parts.push(text.slice(start, i), <mark key={i}>{text.slice(i, i + needle.length)}</mark>); start = i + needle.length;
-  }
-  parts.push(text.slice(start)); return <>{parts}</>;
-}
 export function ConversationSearch({ onClose }: { onClose: () => void }) {
   useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
