@@ -96,6 +96,7 @@ export function ModelPicker({
           side={appearance === "icon" ? "top" : "bottom"}
           align="start"
           sideOffset={10}
+          collisionPadding={12}
           onOpenAutoFocus={(event) => {
             if (touchLayout) event.preventDefault();
           }}
