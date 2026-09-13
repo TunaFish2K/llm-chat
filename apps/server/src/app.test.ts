@@ -1,3 +1,4 @@
+import { providerReasoningEffort } from "@llm-chat/contracts";
 import { seedModel as seedStoreModel } from "./test-helpers";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -527,7 +528,7 @@ describe("server API", () => {
     const generation = await waitForGeneration(app, started.generation.generationId);
     expect(generation).toMatchObject({ status: "completed", usage: { totalTokens: 6 } });
     // Effective settings carry the request effort and no legacy reasoning knobs.
-    expect(generation.settings.reasoningEffort).toBe("low");
+    expect(providerReasoningEffort(generation.settings)).toBe("low");
     expect(generation.settings.protocol.reasoningEffort).toBeUndefined();
     expect(generation.settings.protocol.verbosity).toBeUndefined();
     expect(generation.settings.common.maxOutputTokens).toBe(128);
@@ -554,7 +555,8 @@ describe("server API", () => {
     await app.close();
   });
 
-  it("rejects a start that enables reasoning on a non-reasoning model", async () => {
+  it("starts with provider default when a non-reasoning model inherits an effort", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => sse([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }])));
     const app = await testApp();
     const connection = (await app.inject({ method: "POST", url: "/api/connections", payload: {
       name: "Mock", protocol: "openai-chat", baseUrl: "https://example.test/v1", apiKey: "key", secretHeaders: {}
@@ -569,15 +571,15 @@ describe("server API", () => {
       defaultSettings: { common: { maxOutputTokens: 128, stopSequences: [] }, protocol: {} },
       enabled: true
     } })).json();
-    await app.inject({ method: "PATCH", url: "/api/settings", payload: { reasoningEffort: "high" } });
     const response = await app.inject({
       method: "POST",
       url: "/api/conversations/start",
       payload: agentStartPayload(app, model.id, { text: "你好", reasoningEffort: "high" })
     });
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ error: { code: "reasoning_not_supported" } });
-    expect((await app.inject({ method: "GET", url: "/api/conversations" })).json()).toEqual([]);
+    expect(response.statusCode).toBe(202);
+    const settings = app.store.getGeneration(response.json().generation.generationId)!.settings;
+    expect(settings.reasoningSelection).toEqual({ mode: "default" });
+    expect(providerReasoningEffort(settings)).toBeNull();
     await app.close();
   });
 
@@ -622,7 +624,7 @@ describe("server API", () => {
     })).json();
     const conversationId = started.conversation.id as string;
     let generation = await waitForGeneration(app, started.generation.generationId);
-    expect(generation.settings.reasoningEffort).toBe("medium");
+    expect(providerReasoningEffort(generation.settings)).toBe("medium");
 
     await app.inject({ method: "PATCH", url: `/api/conversations/${conversationId}`, payload: {
       executionOverrides: { modelId: model.id, reasoningEffort: "xhigh" }
@@ -634,7 +636,7 @@ describe("server API", () => {
     expect(sendResponse.statusCode).toBe(202);
     const message = sendResponse.json();
     generation = await waitForGeneration(app, message.generationId);
-    expect(generation.settings.reasoningEffort).toBe("xhigh");
+    expect(providerReasoningEffort(generation.settings)).toBe("xhigh");
 
     await app.inject({ method: "PATCH", url: `/api/conversations/${conversationId}`, payload: {
       executionOverrides: { modelId: model.id, reasoningEffort: "max" }
@@ -647,7 +649,7 @@ describe("server API", () => {
     expect(retriedResponse.statusCode).toBe(202);
     const retried = retriedResponse.json();
     generation = await waitForGeneration(app, retried.generationId);
-    expect(generation.settings.reasoningEffort).toBe("max");
+    expect(providerReasoningEffort(generation.settings)).toBe("max");
     await app.close();
   });
 
@@ -1214,10 +1216,10 @@ function sse(events: unknown[]): Response {
   }), { status: 200, headers: { "content-type": "text/event-stream" } });
 }
 
-it("rejects an inherited unsupported reasoning effort before saving messages or contacting the provider", async () => {
+it("adapts inherited efforts before saving the snapshot and contacting the provider", async () => {
   const app = await testApp();
   const { model } = seedStoreModel(app.store);
-  const updated = app.store.updateModel(model.id, { capabilities: { ...model.capabilities, reasoning: true } })!;
+  const updated = app.store.updateModel(model.id, { contextWindow: 128000, capabilities: { ...model.capabilities, reasoning: true } })!;
   app.store.restoreCatalogModel(model.id, { ...updated, detectedReasoningEfforts: ["low", "medium", "high", "xhigh"] }, {
     providerId: "opencode-go", modelId: "grok-4.6", inputModalities: ["text"], outputModalities: ["text"],
     reasoningEfforts: ["low", "medium", "high", "xhigh"], fetchedAt: 1
@@ -1225,12 +1227,13 @@ it("rejects an inherited unsupported reasoning effort before saving messages or 
   const agent = app.store.getAgent(app.store.getSettings().defaultAgentId)!;
   app.store.updateAgent(agent.id, { execution: { ...agent.execution, reasoningEffort: "max" } });
   const conversation = app.store.createConversation({ agentId: agent.id });
-  const fetchImpl = vi.fn();
+  const fetchImpl = vi.fn(async () => sse([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }]));
   vi.stubGlobal("fetch", fetchImpl);
   const response = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/messages`, payload: { text: "test" } });
-  expect(response.statusCode).toBe(400);
-  expect(response.json().error).toMatchObject({ code: "reasoning_effort_unsupported", i18n: { key: "error.reasoning_effort_unsupported" } });
-  expect(response.json().error.message).toContain("low / medium / high / xhigh");
-  expect(app.store.listMessages(conversation.id)).toEqual([]);
-  expect(fetchImpl).not.toHaveBeenCalled();
+  expect(response.statusCode).toBe(202);
+  const generation = await waitForGeneration(app, response.json().generationId);
+  expect(providerReasoningEffort(generation.settings)).toBe("xhigh");
+  expect(app.store.getAgent(agent.id)!.execution.reasoningEffort).toBe("max");
+  expect(fetchImpl).toHaveBeenCalled();
+  expect(JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).reasoning_effort).toBe("xhigh");
 });

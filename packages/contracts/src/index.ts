@@ -152,7 +152,7 @@ export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 export const blockTypeSchema = z.enum(["text", "reasoning", "refusal", "unsupported"]);
 export type BlockType = z.infer<typeof blockTypeSchema>;
 
-/** Raw reasoning effort names exposed by the global control. */
+/** Legacy tiers retained for configuration and snapshot compatibility. */
 export const reasoningEffortSchema = z.enum(["none", "low", "medium", "high", "xhigh", "max"]);
 export type ReasoningEffort = z.infer<typeof reasoningEffortSchema>;
 
@@ -382,6 +382,24 @@ export function modelReasoningOptions(model: Pick<ModelDto, "capabilities" | "re
   if (model.reasoningEffortsOverride != null) return { values: model.reasoningEffortsOverride, source: "manual" };
   if (model.detectedReasoningEfforts != null) return { values: model.detectedReasoningEfforts, source: "catalog" };
   return { values: [], source: "unknown" };
+}
+
+const reasoningStrengths: readonly string[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** Resolve a preference for this model without changing the stored preference or native option order. */
+export function resolveModelReasoningSelection(
+  model: Parameters<typeof modelReasoningOptions>[0],
+  requested: ReasoningSelection
+): ReasoningSelection {
+  const { values } = modelReasoningOptions(model);
+  if (requested.mode === "default" || !values.length) return { mode: "default" };
+  if (values.includes(requested.value)) return { ...requested };
+  const rank = reasoningStrengths.indexOf(requested.value);
+  const comparable = values.filter(value => reasoningStrengths.includes(value))
+    .sort((a, b) => reasoningStrengths.indexOf(a) - reasoningStrengths.indexOf(b));
+  const value = rank < 0 || !comparable.length ? values[values.length - 1]!
+    : comparable.find(value => reasoningStrengths.indexOf(value) >= rank) ?? comparable[comparable.length - 1]!;
+  return { mode: "effort", value };
 }
 
 export const characterBookEntrySchema = z.object({

@@ -19,7 +19,9 @@ for (const locale of ["zh-CN", "en-US"] as const) {
     try {
       await page.goto(`/c/${conversation.id}`);
       await page.locator(".reasoning-trigger").click();
-      await expect(page.locator(".reasoning-popover")).toContainText(cn ? "未识别到原生档位" : "Native effort levels are unknown");
+      await expect(page.locator(".reasoning-popover").getByRole("alert")).toHaveCount(0);
+      await expect(page.locator(".reasoning-popover").getByRole("slider")).toHaveAttribute("aria-valuetext", cn ? "默认" : "Default");
+      await expect(page.locator(".reasoning-labels button")).toHaveCount(1);
       await page.goto("/settings/connections");
       await page.locator("tr").filter({ hasText: "Universal model" }).getByRole("button", { name: cn ? "编辑" : "Edit", exact: true }).click();
       let dialog = page.getByRole("dialog");

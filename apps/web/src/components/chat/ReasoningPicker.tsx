@@ -13,49 +13,31 @@ function ReasoningSlider({ state, disabled, onChange }: {
   const selectedLabel = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     selectedLabel.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [state.key, state.invalid]);
-  const options = state.options.filter(option => !option.disabled);
-  const selectedIndex = state.invalid ? -1 : options.findIndex(option => option.key === state.key);
+  }, [state.key]);
+  const options = state.options;
+  const selectedIndex = options.findIndex(option => option.key === state.key);
   const [preview, setPreview] = useState<{ key: string; index: number } | null>(null);
   useEffect(() => setPreview(null), [state.key, disabled]);
   const index = !disabled && preview?.key === state.key ? preview.index : selectedIndex;
-  const unselected = index < 0;
   const commit = (next: number) => {
     setPreview(null);
     if (!disabled && options[next]) onChange(reasoningFromKey(options[next].key));
   };
   const sliderDisabled = disabled || options.length < 2;
   return <>
-    {state.options.filter(option => option.disabled).map(option => <button className="reasoning-unavailable" type="button" disabled key={option.key}>{option.label}</button>)}
     <div className="reasoning-steps" style={{ "--reasoning-count": options.length } as CSSProperties}>
       <div className="reasoning-rail"><Slider.Root orientation="vertical" min={0} max={Math.max(1, options.length - 1)} step={1}
-        className="reasoning-slider" data-no-back-gesture data-unselected={unselected || undefined}
+        className="reasoning-slider" data-no-back-gesture
         disabled={sliderDisabled} value={[Math.max(0, index)]}
         onValueChange={([next]) => setPreview({ key: state.key, index: next! })} onValueCommit={([next]) => commit(next!)}
-        onPointerCancel={() => setPreview(null)}
-        onPointerUp={event => {
-          // An invalid stored value has no selected stop. Explicitly choosing the
-          // bottom stop must still save, even though Radix's neutral value is 0.
-          const target = event.target as HTMLElement;
-          if (!sliderDisabled && selectedIndex < 0 && Math.max(0, index) === 0 && target.hasPointerCapture(event.pointerId)) {
-            target.releasePointerCapture(event.pointerId);
-            commit(0);
-            event.preventDefault();
-          }
-        }}
-        onKeyDown={event => {
-          if (!sliderDisabled && unselected && ["Home", "ArrowDown", "ArrowLeft"].includes(event.key)) {
-            commit(0);
-            event.preventDefault();
-          }
-        }}>
+        onPointerCancel={() => setPreview(null)}>
         <Slider.Track className="reasoning-track"><Slider.Range className="reasoning-range" /></Slider.Track>
         <Slider.Thumb className="reasoning-thumb" tabIndex={options.length > 1 ? 0 : undefined} aria-label={t("ConnectionsView.reasoning_levels")}
-          aria-disabled={sliderDisabled || undefined} aria-invalid={unselected || undefined}
-          aria-valuetext={unselected ? state.warning ?? state.label : options[index]!.label} />
+          aria-disabled={sliderDisabled || undefined}
+          aria-valuetext={options[index]!.label} />
       </Slider.Root></div>
       <div className="reasoning-labels">{[...options].reverse().map(option => <button type="button" key={option.key}
-        ref={!state.invalid && option.key === state.key ? selectedLabel : undefined} disabled={disabled} aria-pressed={option.key === options[index]?.key}
+        ref={option.key === state.key ? selectedLabel : undefined} disabled={disabled} aria-pressed={option.key === options[index]?.key}
         data-selected={option.key === options[index]?.key || undefined}
         onClick={() => commit(options.indexOf(option))}>
         {option.label}
@@ -91,7 +73,11 @@ export function ReasoningPicker(props: ReasoningControlProps) {
         restoreFocus.current = Boolean(trigger.current?.disabled);
         if (!restoreFocus.current) trigger.current?.focus({ preventScroll: true });
       }}>
-      {state.warning ? <p className="small" role={state.invalid ? "alert" : undefined}>{state.warning}</p> : null}
+      {props.inherited ? <label className="checkbox-row reasoning-inherit">
+        <input type="checkbox" checked={state.following} disabled={props.disabled}
+          onChange={event => props.onChange(event.target.checked ? undefined : state.current)} />
+        {state.inheritedLabel}
+      </label> : null}
       <ReasoningSlider key={JSON.stringify([props.model?.id, state.options])}
         state={state} disabled={props.disabled} onChange={props.onChange} />
     </Popover.Content></Popover.Portal>
