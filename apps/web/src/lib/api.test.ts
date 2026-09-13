@@ -10,7 +10,7 @@ function mockResponse(status: number, body: unknown): Response {
 
 describe("api client", () => {
   it("parses JSON responses for GET requests", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockResponse(200, { ok: true }));
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mockResponse(200, { ok: true })));
     vi.stubGlobal("fetch", fetchMock);
     await expect(api.get("/api/health")).resolves.toEqual({ ok: true });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -19,7 +19,7 @@ describe("api client", () => {
   });
 
   it("sends the mutation marker header on writes", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(mockResponse(200, { ok: true }));
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mockResponse(200, { ok: true })));
     vi.stubGlobal("fetch", fetchMock);
     await api.post("/api/conversations", { agentId: "x" });
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -255,23 +255,20 @@ it("loads container environments and scopes stop/reset operations to their conve
   expect(JSON.parse(fetchMock.mock.calls[3]![1].body)).toEqual({ reset: true });
 });
 
-it("keeps resource uploads resumable without putting binary content into JSON requests", async () => {
-  const fetchMock = vi.fn().mockImplementation((url: string) => Promise.resolve(mockResponse(200,
-    url.endsWith("/uploads") ? { id: "upload", offset: 8388608 } : { ok: true })));
+it("sends resource download settings and cache actions with the request header", async () => {
+  const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mockResponse(200, { ok: true })));
   vi.stubGlobal("fetch", fetchMock);
-  const artifact = new File([new Uint8Array(8388625)], "offline.bin", { lastModified: 123 });
   await endpoints.containerResources();
   await endpoints.setContainerResourceNode("tuna");
   await endpoints.downloadContainerResources(["plugin:software:extra"]);
   await endpoints.cancelContainerResourceJob("job");
-  const upload = await endpoints.beginContainerResourceUpload(artifact);
-  expect(upload).toEqual({ id: "upload", offset: 8388608 });
-  await endpoints.completeContainerResourceUpload(upload.id);
   await endpoints.clearContainerResourceCache();
   const writes = fetchMock.mock.calls.filter(([, init]) => init.method !== "GET");
   expect(writes.every(([, init]) => init.headers["x-llm-chat-request"] === "1")).toBe(true);
-  const begin = fetchMock.mock.calls.find(([url]) => url.endsWith("/uploads"))!;
-  expect(JSON.parse(begin[1].body)).toEqual({ name: "offline.bin", size: 8388625, fingerprint: "123" });
-  expect(begin[1].body.length).toBeLessThan(100);
-  expect(fetchMock.mock.calls.some(([url]) => url === "/api/container-resources/uploads/upload/complete")).toBe(true);
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/container-resources", "/api/container-resources/settings", "/api/container-resources/download",
+    "/api/container-resources/jobs/job/cancel", "/api/container-resources/cache"
+  ]);
+  expect(JSON.parse(writes[0]![1].body)).toEqual({ node: "tuna" });
+  expect(JSON.parse(writes[1]![1].body)).toEqual({ ids: ["plugin:software:extra"] });
 });

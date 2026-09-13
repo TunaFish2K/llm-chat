@@ -1,14 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { mkdir, link, open, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, link, readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { Readable } from "node:stream";
 import { containerResourceDefinitionSchema, pluginManifestSchema, type ContainerEngine, type ContainerResourceCatalog, type ContainerResourceFile, type ContainerResourceJob, type ContainerResourceNode, type ContainerResourceRevision } from "@llm-chat/contracts";
 import type { Store } from "./database";
 import type { EventHub } from "./events";
 import { LocalContainerEngine, type EngineAdapter } from "./container-engine";
-import { ContainerResourceFiles, RESOURCE_CHUNK_SIZE, waitForResource, fileHash } from "./container-resource-files";
+import { ContainerResourceFiles, waitForResource } from "./container-resource-files";
 import builtinLock from "./container-resource-lock.json";
 
 export const ALPINE_IMAGE = "llm-chat-runtime:alpine";
@@ -16,16 +15,13 @@ const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(va
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 const mount = (source: string, target: string) => [`type=bind`, `src=${source}`, `dst=${target}`, "readonly"].map(s => /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s).join(",");
 type JobRun = { controller: AbortController; promise: Promise<void>; job: ContainerResourceJob };
-type Upload = { id: string; sha256: string; size: number; offset: number };
 
 export class ContainerResources {
   readonly files: ContainerResourceFiles;
   readonly platform = process.arch === "x64" ? "linux/amd64" : process.arch === "arm64" ? "linux/arm64" : `linux/${process.arch}`;
   private readonly running = new Map<string, JobRun>();
-  private readonly uploadLocks = new Map<string, Promise<unknown>>();
   private closing = false;
   private clearingCache = false;
-  private activeExports = 0;
   private readonly preparationQueues = new Map<ContainerEngine, Promise<void>>();
   private readonly root: string;
   private readonly owner: string;
@@ -37,7 +33,7 @@ export class ContainerResources {
     this.owner = digest(resolve(store.dataDir)).slice(0, 24);
   }
   async initialize() {
-    await mkdir(join(this.root, "uploads"), { recursive: true, mode: 0o700 });
+    await mkdir(this.root, { recursive: true, mode: 0o700 });
     for (const job of this.jobs()) if (job.state === "running") this.save({ ...job, state: "error", error: "Preparation interrupted; retry to resume cached downloads" });
     // Only remove this application's abandoned preparation containers.
     for (const engine of Object.values(this.engines)) {
@@ -108,11 +104,6 @@ export class ContainerResources {
   }
   resourceFiles(resources: ContainerResourceRevision[]) {
     return [...new Map(resources.flatMap(resource => this.variant(resource).files).map(file => [file.sha256, file])).values()];
-  }
-  private allFiles() {
-    this.definitions();
-    const revisions = this.store.sqlite.prepare("SELECT value_json FROM container_resource_revisions").all();
-    return [...new Map(revisions.flatMap(row => (JSON.parse(String(row.value_json)) as ContainerResourceRevision).definition.variants.flatMap(v => v.files)).map(file => [file.sha256, file])).values()];
   }
   private url(file: ContainerResourceFile) {
     const node = this.node();
@@ -250,79 +241,14 @@ export class ContainerResources {
       child.on("close", code => finish(code === 0 ? undefined : new Error(log || "Container resource installation failed")));
     });
   }
-  async beginUpload(name: string, size: number, fingerprint: string) {
-    const file = this.allFiles().find(value => value.name === name && value.size === size);
-    const sha256 = name.endsWith(".llmresources") ? `bundle:${digest([name, size, fingerprint])}` : file ? `file:${digest([name, size])}` : undefined;
-    if (!sha256) throw new Error("File is not in the resource catalog; check its version and platform");
-    return this.withUploadLock(sha256, async () => {
-      const prior = this.store.sqlite.prepare("SELECT * FROM container_resource_uploads WHERE sha256=? AND size=?").get(sha256, size) as Upload | undefined;
-      if (prior) return prior;
-      const id = randomUUID();
-      const output = await open(join(this.root, "uploads", id), "wx", 0o600); await output.close();
-      this.store.sqlite.prepare("INSERT INTO container_resource_uploads VALUES (?,?,?,0)").run(id, sha256, size);
-      return { id, sha256, size, offset: 0 };
-    });
-  }
-  async upload(id: string, offset: number, chunk: Buffer) {
-    return this.withUploadLock(id, async () => {
-      const row = this.store.sqlite.prepare("SELECT * FROM container_resource_uploads WHERE id=?").get(id) as Upload | undefined;
-      if (!row || row.offset !== offset || chunk.length > RESOURCE_CHUNK_SIZE || !chunk.length || offset + chunk.length > row.size) throw new Error("Invalid upload offset or chunk size; resume the upload");
-      const output = await open(join(this.root, "uploads", row.id), "r+");
-      try {
-        let written = 0;
-        while (written < chunk.length) written += (await output.write(chunk, written, chunk.length - written, offset + written)).bytesWritten;
-        await output.sync();
-      } finally { await output.close(); }
-      row.offset += chunk.length;
-      this.store.sqlite.prepare("UPDATE container_resource_uploads SET offset=? WHERE id=?").run(row.offset, id);
-      return row;
-    });
-  }
-  private async withUploadLock<T>(id: string, work: () => Promise<T>): Promise<T> {
-    if (this.closing || this.clearingCache) throw new Error("Resource manager is closing or clearing its cache; retry shortly");
-    const previous = this.uploadLocks.get(id) ?? Promise.resolve();
-    const pending = previous.catch(() => {}).then(work);
-    this.uploadLocks.set(id, pending);
-    try { return await pending; } finally { if (this.uploadLocks.get(id) === pending) this.uploadLocks.delete(id); }
-  }
-  async completeUpload(id: string) {
-    return this.withUploadLock(id, async () => {
-      const row = this.store.sqlite.prepare("SELECT * FROM container_resource_uploads WHERE id=?").get(id) as Upload | undefined;
-      if (!row || row.offset !== row.size) throw new Error("Upload is incomplete");
-      const path = join(this.root, "uploads", row.id);
-      try {
-        if (row.sha256.startsWith("bundle:")) await this.files.importBundle(path, this.allFiles());
-        else {
-          const hash = await fileHash(path);
-          const file = this.allFiles().find(value => value.sha256 === hash && value.size === row.size);
-          if (!file) throw new Error("Resource checksum mismatch; check the file version");
-          await this.files.accept(path, file);
-        }
-      } finally {
-        await rm(path, { force: true });
-        this.store.sqlite.prepare("DELETE FROM container_resource_uploads WHERE id=?").run(id);
-      }
-      this.events.emit({ type: "resource-changed", resource: "container-resources" });
-    });
-  }
-  async exportBundle(ids: string[]) {
-    if (this.clearingCache) throw new Error("Resource cache is being cleared; retry shortly");
-    const files = this.resourceFiles(this.resolve(ids));
-    this.activeExports++;
-    try {
-      for (const file of files) if (!await this.files.has(file)) throw new Error(`Missing resource: ${file.name}`);
-    } catch (error) { this.activeExports--; throw error; }
-    return Readable.from(this.files.bundle(files)).once("close", () => { this.activeExports--; });
-  }
   async clearCache() {
-    if (this.running.size || this.uploadLocks.size || this.activeExports || this.clearingCache) throw new Error("Finish or cancel resource tasks before clearing downloads");
+    if (this.running.size || this.clearingCache) throw new Error("Finish or cancel resource tasks before clearing downloads");
     this.clearingCache = true;
     try {
       await this.files.close();
       await rm(this.files.directory, { recursive: true, force: true });
-      for (const row of this.store.sqlite.prepare("SELECT id FROM container_resource_uploads").all()) {
-        await rm(join(this.root, "uploads", String(row.id)), { force: true });
-      }
+      // Clean up unfinished uploads left by v45 before offline imports were removed.
+      await rm(join(this.root, "uploads"), { recursive: true, force: true });
       this.store.sqlite.prepare("DELETE FROM container_resource_uploads").run();
     } finally { this.clearingCache = false; }
     this.events.emit({ type: "resource-changed", resource: "container-resources" });
@@ -332,6 +258,5 @@ export class ContainerResources {
     const runs = [...this.running.values()]; runs.forEach(run => run.controller.abort(new Error("Resource manager is closing")));
     await Promise.allSettled(runs.map(run => run.promise));
     await this.files.close();
-    await Promise.allSettled([...this.uploadLocks.values()]);
   }
 }

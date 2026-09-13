@@ -317,7 +317,7 @@ Firefox。非本机 HTTP 下普通网页可用，但 Service Worker、PWA 安装
 
 Agent 执行设置可选择本机 Linux Docker 或 Podman，以及基于项目运行镜像的自定义镜像。应用使用本机引擎，不连接远程 Docker context。引擎必须能让容器实际加入应用宿主机的网络空间；不能满足此条件的 rootless Docker 配置会被拒绝。Podman 使用本机 rootless 模式时通过 keep-id 映射文件所有者。
 
-新建配置默认使用 Alpine，在「设置 → 容器资源下载」选择节点、下载或上传离线文件即可。应用会在首次执行前安装所选资源并保存共享镜像，无需运行构建脚本。完整使用方法见[容器资源](CONTAINER-RESOURCES.md)。
+新建配置默认使用 Alpine，在「设置 → 容器资源下载」选择节点并下载资源即可。应用会在首次执行前安装所选资源并保存共享镜像，无需运行构建脚本。完整使用方法见[容器资源](CONTAINER-RESOURCES.md)。
 
 旧 Debian 镜像继续可用。需要手动重建旧镜像时执行：
 

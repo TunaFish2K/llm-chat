@@ -118,7 +118,7 @@ export function SettingsView({ section }: { section: string }) {
 
 function ImageGenerationSection() {
   useLocale();
-  return <div>
+  return <div className="settings-panels">
     <ServiceSettingsPanel kind="image" />
     <div className="card">
       <p className="hint">{t("SettingsView.generating_images_directly_in_responses_requires_image_output_support_the")}</p>
@@ -184,7 +184,7 @@ function GeneralSection() {
   };
 
   return (
-    <div>
+    <div className="settings-panels">
       <div className="card"><LanguagePicker /></div>
       <OfflineHistorySettings />
       <NotificationSettings />
@@ -245,7 +245,7 @@ function GeneralSection() {
       </div>
 
       <div className="card"><h3>{t("SettingsView.chat_typography")}</h3><ChatTypographySettings preview /></div>
-      <fieldset disabled={offline} className="offline-settings-fields">
+      <fieldset disabled={offline} className="offline-settings-fields settings-panels">
       <AppUpdateCard />
       <div className="card"><h3>{t("SettingsView.quick_tour")}</h3><p className="hint">{t("SettingsView.tour_progress_is_saved_only_in_this_browser_and_does")}</p>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
@@ -346,7 +346,7 @@ function SecuritySection() {
   };
 
   return (
-    <div>
+    <div className="settings-panels">
       <div className="card">
         <h3>{t("SettingsView.change_access_password")}</h3>
         <Field label={t("SettingsView.new_password")} hint={t("SettingsView.at_least_8_characters_changing_the_password_revokes_all_previous")} htmlFor="new-password">
@@ -447,7 +447,7 @@ function ToolsSection() {
   };
 
   return (
-    <div>
+    <div className="settings-panels">
       <div className="card">
         <h3>{t("SettingsView.tool_environment")}</h3>
         <div className="environment-value">
@@ -640,7 +640,7 @@ function SkillsSection() {
   if (!skills) return <LoadingState />;
 
   return (
-    <div>
+    <div className="settings-panels">
       <div className="card">
         <h3>{t("SettingsView.install_and_discover")}</h3>
         <div className="row">
@@ -816,7 +816,7 @@ function PluginsSection() {
   if (!plugins) return <LoadingState />;
 
   return (
-    <div>
+    <div className="settings-panels">
       <div className="card">
         <h3>{t("SettingsView.install_plugin")}</h3>
         <div className="row">
@@ -1035,7 +1035,7 @@ function McpSection() {
   if (!servers) return <LoadingState />;
 
   return (
-    <div>
+    <div className="settings-panels">
       <div className="card">
         <h3 className="section-heading-actions">{t("SettingsView.mcp_servers")}<button className="btn small primary" onClick={() => setEditing("new")}>{t("SettingsView.add_server")}</button>
         </h3>

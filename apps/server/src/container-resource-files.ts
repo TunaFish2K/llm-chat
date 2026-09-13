@@ -1,11 +1,9 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { ContainerResourceFile } from "@llm-chat/contracts";
 
-export const RESOURCE_CHUNK_SIZE = 8 * 1024 * 1024;
-export const BUNDLE_MAGIC = "LLMCHAT-RESOURCES-1\n";
 export function waitForResource<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
   if (signal.aborted) { promise.catch(() => {}); signal.throwIfAborted(); }
@@ -107,48 +105,6 @@ export class ContainerResourceFiles {
       } catch (error) { last = error; }
     }
     throw last;
-  }
-  async accept(path: string, file: ContainerResourceFile) {
-    if ((await stat(path)).size !== file.size || await fileHash(path) !== file.sha256) throw new Error(`Resource checksum mismatch: ${file.name}`);
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    await rename(path, this.path(file.sha256));
-  }
-  async *bundle(files: ContainerResourceFile[]): AsyncGenerator<Buffer> {
-    for (const file of files) if (!await this.has(file)) throw new Error(`Missing resource: ${file.name}`);
-    yield Buffer.from(BUNDLE_MAGIC + JSON.stringify(files.map(({ sha256, size }) => ({ sha256, size }))) + "\n");
-    for (const file of files) for await (const chunk of createReadStream(this.path(file.sha256))) yield chunk as Buffer;
-  }
-  async importBundle(path: string, known: ContainerResourceFile[]) {
-    const input = await open(path, "r");
-    try {
-      const header = Buffer.alloc(1024 * 1024);
-      const { bytesRead } = await input.read(header, 0, header.length, 0);
-      if (header.subarray(0, BUNDLE_MAGIC.length).toString() !== BUNDLE_MAGIC) throw new Error("Invalid resource bundle");
-      const end = header.indexOf(10, BUNDLE_MAGIC.length);
-      if (end < 0 || end >= bytesRead) throw new Error("Resource bundle header is too large");
-      const entries: unknown = JSON.parse(header.subarray(BUNDLE_MAGIC.length, end).toString());
-      if (!Array.isArray(entries) || entries.length > 2000) throw new Error("Invalid resource bundle manifest");
-      const files = entries.map(entry => {
-        const match = known.find(file => file.sha256 === entry?.sha256 && file.size === entry?.size);
-        if (!match) throw new Error("Unknown resource in bundle; install its plugin revision first");
-        return match;
-      });
-      if (new Set(files.map(file => file.sha256)).size !== files.length) throw new Error("Duplicate resource in bundle");
-      let offset = end + 1;
-      if (offset + files.reduce((sum, file) => sum + file.size, 0) !== (await input.stat()).size) throw new Error("Incomplete resource bundle");
-      for (const file of files) {
-        const temporary = join(this.directory, `import-${randomUUID()}`);
-        await mkdir(this.directory, { recursive: true, mode: 0o700 });
-        try {
-          const output = await open(temporary, "wx", 0o600);
-          try {
-            for await (const chunk of createReadStream(path, { start: offset, end: offset + file.size - 1 })) await output.writeFile(chunk);
-          } finally { await output.close(); }
-          await this.accept(temporary, file);
-        } finally { await rm(temporary, { force: true }); }
-        offset += file.size;
-      }
-    } finally { await input.close(); }
   }
   async close() {
     const transfers = [...this.transfers.values()];
