@@ -66,7 +66,8 @@ const defaultDependencies: GenerationRunnerDependencies = {
   buildContext,
   prepareImages: async () => new Map(),
   buildTools: (store, record) => buildServerTools(store, false, {
-    workspacePath: record.agentSnapshot.workspacePath
+    workspacePath: record.agentSnapshot.workspacePath,
+    ...(record.agentSnapshot.execution.environment ? { environment: record.agentSnapshot.execution.environment } : {})
   }),
   memoryPrompt: toolSystemPrompt,
   runtimePrompt: () => "",
@@ -376,7 +377,7 @@ export class GenerationRunner {
           const definition = stepToolMap.get(call.name);
           const args = parseToolArguments(call.arguments);
           if (definition) validateToolArguments(definition, args);
-          const override = !definition || call.name === SEARCH_TOOLS_NAME
+          const override = !definition || definition.containerAutoApproval || call.name === SEARCH_TOOLS_NAME
             ? "never"
             : toolPolicy.approvalOverrides[call.name] ?? "default";
           const requiresApproval = override === "always"

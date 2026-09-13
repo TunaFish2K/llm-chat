@@ -129,3 +129,12 @@ it("keeps default, native none and custom efforts distinct and defaults unknown 
   model.reasoningEffortsOverride = ["high"];
   expect(providerReasoningEffort(buildEffectiveSettings(model, "openai-responses", "high"))).toBeNull();
 });
+
+it("freezes the Agent environment and leaves legacy Agents on the host", () => {
+  const input = fixture();
+  expect(resolveGenerationPlan(input).snapshot.execution.environment).toEqual({ type: "host" });
+  input.agent.execution.environment = { type: "container", engine: "docker", image: "llm-chat-runtime:local", idleTimeoutMinutes: 15 };
+  const snapshot = resolveGenerationPlan(input).snapshot;
+  input.agent.execution.environment.image = "another:local";
+  expect(snapshot.execution.environment).toMatchObject({ image: "llm-chat-runtime:local" });
+});

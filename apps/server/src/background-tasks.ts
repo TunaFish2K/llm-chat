@@ -1,3 +1,5 @@
+import type { ContainerEnvironments, ContainerExecution } from "./container-environments";
+import { executionEnvironmentSchema } from "@llm-chat/contracts";
 import { type LocalizedMessage } from "@llm-chat/i18n";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -18,6 +20,8 @@ const MODEL_READ_LIMIT = 32 * 1024;
 type Row = Record<string, unknown>;
 
 interface RuntimeTask {
+  container?: ContainerExecution;
+  preparation?: AbortController;
   pipe?: ChildProcessWithoutNullStreams;
   pty?: pty.IPty;
   writeChain: Promise<void>;
@@ -40,6 +44,7 @@ export interface StartTaskInput {
   expectedDurationMs: number | null;
   hardTimeoutMs: number | null;
   workspacePath?: string | undefined;
+  containerCwd?: string;
 }
 
 export class TaskManager {
@@ -48,11 +53,13 @@ export class TaskManager {
   private closed = false;
   private closePromise: Promise<void> | undefined;
 
-  constructor(private readonly store: Store, private readonly events: EventHub) {}
+  constructor(private readonly store: Store, private readonly events: EventHub, private readonly environments?: ContainerEnvironments) {}
 
   create(input: StartTaskInput): BackgroundTaskDto {
     if (this.closed) throw new Error("Task manager is closing");
-    const workspacePath = input.workspacePath ?? input.snapshot.workspacePath;
+    this.environments?.assertCanUse(input.conversationId, input.snapshot.execution.environment ?? { type: "host" }, input.snapshot.workspacePath);
+    const workspacePath = input.workspacePath ?? (input.snapshot.execution.environment?.type === "container" && this.environments
+      ? this.environments.workspace(input.conversationId, input.snapshot.workspacePath) : input.snapshot.workspacePath);
     if (!workspacePath) throw new Error("Conversation has no workspace");
     const id = randomUUID();
     const now = Date.now();
@@ -64,6 +71,16 @@ export class TaskManager {
     `).run(id, input.conversationId, input.generationId, input.snapshot.agentId, input.snapshot.name,
       input.snapshot.revision, input.command, input.mode, workspacePath,
       input.expectedDurationMs, input.hardTimeoutMs, input.snapshot.execution.taskLogLimitBytes, now);
+    if (input.snapshot.execution.environment?.type === "container") {
+      const environment = input.snapshot.execution.environment;
+      const existing = this.store.sqlite.prepare("SELECT id FROM conversation_environments WHERE conversation_id = ? AND engine = ? AND image = ? AND workspace_path = ?")
+        .get(input.conversationId, environment.engine, environment.image, this.environments?.workspace(input.conversationId, input.snapshot.workspacePath) ?? workspacePath);
+      if (existing) this.store.sqlite.prepare("UPDATE background_tasks SET environment_id = ? WHERE id = ?").run(String(existing.id), id);
+      this.store.sqlite.prepare("UPDATE background_tasks SET environment_config_json = ? WHERE id = ?").run(JSON.stringify({
+        config: input.snapshot.execution.environment, selected: input.snapshot.workspacePath,
+        cwd: input.containerCwd ?? "/workdir"
+      }), id);
+    }
     this.event(id, "state", null, { status: "queued" });
     const task = this.get(id)!;
     this.events.emit({ type: "task", taskId: id, task });
@@ -229,21 +246,34 @@ export class TaskManager {
     if (!task || task.status !== "queued") return;
     this.store.sqlite.prepare("UPDATE background_tasks SET status = 'starting' WHERE id = ? AND status = 'queued'").run(id);
     this.publish(id);
-    await mkdir(this.logDir(id), { recursive: true, mode: 0o700 });
-    if (this.closed) {
-      this.finish(id, "interrupted", null, "服务关闭");
-      return;
-    }
     let resolveExit!: () => void;
     const exitPromise = new Promise<void>((resolvePromise) => { resolveExit = resolvePromise; });
     const live: RuntimeTask = {
       writeChain: Promise.resolve(), exitPromise, resolveExit, segmentStart: 0, segmentSize: 0
     };
     this.runtime.set(id, live);
-    const shell = process.env.SHELL || "/bin/sh";
+    let shell = process.env.SHELL || "/bin/sh";
+    let args = ["-lc", task.command];
     try {
+      await mkdir(this.logDir(id), { recursive: true, mode: 0o700 });
+      if (this.closed || live.stoppingStatus) { this.finish(id, live.stoppingStatus ?? "interrupted", null, null); return; }
+      const row = this.store.sqlite.prepare("SELECT environment_config_json FROM background_tasks WHERE id = ?").get(id) as Row;
+      if (row.environment_config_json) {
+        if (!this.environments) throw new Error("Container environment unavailable");
+        const saved = JSON.parse(String(row.environment_config_json));
+        const config = executionEnvironmentSchema.parse(saved.config);
+        if (config.type !== "container") throw new Error("Invalid task environment");
+        const environmentId = await this.environments.register(task.conversationId, config, saved.selected);
+        this.store.sqlite.prepare("UPDATE background_tasks SET environment_id = ? WHERE id = ?").run(environmentId, id);
+        live.preparation = new AbortController();
+        if (this.closed || live.stoppingStatus) live.preparation.abort();
+        live.container = await this.environments.prepare(task.conversationId, config, saved.selected, task.command, saved.cwd, task.mode === "pty", live.preparation.signal);
+        shell = live.container.executable;
+        args = live.container.args;
+      }
+      if (this.closed || live.stoppingStatus) { this.finish(id, live.stoppingStatus ?? "interrupted", null, null); return; }
       if (task.mode === "pty") {
-        const terminal = pty.spawn(shell, ["-lc", task.command], {
+        const terminal = pty.spawn(shell, args, {
           name: "xterm-256color", cols: 120, rows: 40, cwd: task.workspacePath,
           env: { ...process.env, TERM: "xterm-256color" } as Record<string, string>
         });
@@ -252,7 +282,7 @@ export class TaskManager {
         terminal.onExit(({ exitCode }) => void this.onExit(id, exitCode));
         this.markRunning(id, terminal.pid);
       } else {
-        const child = spawn(shell, ["-lc", task.command], {
+        const child = spawn(shell, args, {
           cwd: task.workspacePath, env: process.env, detached: process.platform !== "win32", stdio: ["pipe", "pipe", "pipe"]
         });
         live.pipe = child;
@@ -276,7 +306,7 @@ export class TaskManager {
         live.failure = message;
         void this.terminate(live);
       } else {
-        this.finish(id, "failed", null, message);
+        this.finish(id, live.stoppingStatus ?? "failed", null, message);
       }
     }
   }
@@ -348,6 +378,7 @@ export class TaskManager {
   private finish(id: string, status: BackgroundTaskDto["status"], exitCode: number | null, error: string | null, i18n?: LocalizedMessage): void {
     const live = this.runtime.get(id);
     if (live?.timeout) clearTimeout(live.timeout);
+    live?.container?.release();
     this.runtime.delete(id);
     this.store.sqlite.prepare(`
       UPDATE background_tasks SET status = ?, exit_code = ?, error = ?, error_i18n_json = ?, completed_at = ?
@@ -367,8 +398,17 @@ export class TaskManager {
   }
 
   private async terminateProcess(live: RuntimeTask): Promise<void> {
-    this.signal(live, "SIGTERM");
-    if (!await exitsWithin(live.exitPromise, 2_000)) this.signal(live, "SIGKILL");
+    live.preparation?.abort();
+    if (live.container) {
+      await live.container.stop("SIGTERM").catch(() => {});
+      if (!await exitsWithin(live.exitPromise, 2_000)) {
+        await live.container.stop("SIGKILL").catch(() => {});
+        this.signal(live, "SIGKILL");
+      }
+    } else {
+      this.signal(live, "SIGTERM");
+      if (!await exitsWithin(live.exitPromise, 2_000)) this.signal(live, "SIGKILL");
+    }
     await live.exitPromise;
   }
 

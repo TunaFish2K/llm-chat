@@ -1,5 +1,6 @@
 import { builtinToolFormatters } from "./tool-presentation";
 import type { ToolCatalogItemDto } from "@llm-chat/contracts";
+import type { ContainerEnvironments } from "./container-environments";
 import type { Store } from "./database";
 import type { GenerationRecord } from "./generation-types";
 import type { TaskManager } from "./background-tasks";
@@ -89,7 +90,8 @@ export class ToolRegistry {
     private readonly appTools?: AppTools,
     private readonly imageJobs?: ImageGenerationManager,
     private readonly browser?: BrowserFetchManager,
-    private readonly readonlyShell?: ReadonlyShellManager
+    private readonly readonlyShell?: ReadonlyShellManager,
+    private readonly environments?: ContainerEnvironments
   ) {}
 
   async tools(
@@ -102,14 +104,21 @@ export class ToolRegistry {
       record.agentSnapshot.extensionsPinned = true;
       this.store.updateGenerationExtensionSnapshot(record.id, record.agentSnapshot);
     }
+    const environment = record?.agentSnapshot.execution.environment;
+    const workspace = record && environment?.type === "container" && this.environments
+      ? this.environments.workspace(record.conversationId, record.agentSnapshot.workspacePath)
+      : record?.agentSnapshot.workspacePath;
     const builtins = (await buildServerTools(this.store, true, {
       taskManager: this.tasks,
+      ...(this.environments ? { environments: this.environments } : {}),
+      ...(environment ? { environment } : {}),
       ...(this.readonlyShell ? { readonlyShell: this.readonlyShell } : {}),
       ...(this.browser ? { browser: this.browser } : {}),
       ...(this.images ? { imageService: this.images } : {}),
       ...(this.imageJobs ? { imageManager: this.imageJobs } : {}),
       ...(record ? {
-        workspacePath: record.agentSnapshot.workspacePath,
+        workspacePath: workspace ?? null,
+        conversationId: record.conversationId,
         attachmentWorkspacePath: resolve(this.store.dataDir, "attachment-workspaces", record.conversationId),
       } : {})
     })).filter((tool) => tool.definition.name !== "use_skill");
@@ -118,6 +127,12 @@ export class ToolRegistry {
     const policy = record?.agentSnapshot.execution.tools;
     for (const tool of all) {
       if (tool.sourceKind !== "plugin" && tool.category !== "mcp") Object.assign(tool, builtinToolFormatters(tool.definition.name));
+    }
+    if (record && this.environments && environment?.type !== "container") {
+      for (const tool of builtins.filter(tool => /^(workspace_|background_start$)/.test(tool.definition.name))) {
+        const execute = tool.execute;
+        tool.execute = async (...args) => { await this.environments!.enterHost(record.conversationId); return execute(...args); };
+      }
     }
     return all.filter((tool) => (includeUnavailable || tool.available)
       && (!policy || (policy.overrides[tool.definition.name] ?? (tool.definition.name === "browser_fetch" ? false : policy.defaultEnabled))));

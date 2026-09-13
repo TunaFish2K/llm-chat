@@ -2,6 +2,8 @@ import { withMessage, type LocalizedMessage } from "@llm-chat/i18n";
 import { builtinToolFormatters, type ToolFormatters } from "./tool-presentation";
 import { spawn } from "node:child_process";
 import { executeShell } from "./shell";
+import type { ContainerEnvironments } from "./container-environments";
+import type { ExecutionEnvironment } from "@llm-chat/contracts";
 import type { ReadonlyShellManager } from "./readonly-shell";
 import type { BrowserFetchManager } from "./browser-fetch";
 import { lookup } from "node:dns/promises";
@@ -32,6 +34,7 @@ export interface ServerTool extends ToolFormatters {
   label: string;
   category: ToolCatalogItemDto["category"];
   available: boolean;
+  containerAutoApproval?: boolean;
   requiresApproval: (input: JsonObject) => boolean | Promise<boolean>;
   execute: (input: JsonObject, signal: AbortSignal, context?: ToolExecutionContext) => Promise<string>;
   activatesTools?: (input: JsonObject) => string[] | Promise<string[]>;
@@ -49,6 +52,9 @@ export interface ToolExecutionContext {
 }
 
 export interface ToolDependencies {
+  environments?: ContainerEnvironments;
+  environment?: ExecutionEnvironment;
+  conversationId?: string;
   readonlyShell?: ReadonlyShellManager;
   browser?: BrowserFetchManager;
   lookup?: typeof lookup;
@@ -67,6 +73,7 @@ export async function buildServerTools(
   const workspace = Object.prototype.hasOwnProperty.call(dependencies, "workspacePath")
     ? dependencies.workspacePath ?? null
     : resolve(store.dataDir, "workspace");
+  const container = dependencies.environment?.type === "container" ? dependencies.environment : null;
   const skills = resolve(store.dataDir, "skills");
   const attachments = dependencies.attachmentWorkspacePath ?? null;
   await Promise.all([
@@ -88,7 +95,7 @@ export async function buildServerTools(
         url: stringProperty("Public HTTP or HTTPS URL")
       }, false, async (input, signal) => {
         if (!dependencies.browser) throw withMessage(new Error("浏览器运行时不可用"), "error.browser_runtime_unavailable");
-        return dependencies.browser.fetch(requiredString(input, "url"), signal);
+        return dependencies.browser.fetch(requiredString(input, "url"), signal, Boolean(container));
       }, dependencies.browser?.available ?? false),
       ...(dependencies.browser?.errorI18n ? { errorI18n: dependencies.browser.errorI18n } : {}),
       error: dependencies.browser?.error ?? null
@@ -100,7 +107,7 @@ export async function buildServerTools(
     }, true, async (input, signal) => runJavascript(requiredString(input, "code"), signal)),
     tool("fetch_url", "读取网页", "web", "Fetch a public HTTP or HTTPS URL and return readable text. Private and loopback addresses are blocked.", {
       url: stringProperty("Public HTTP or HTTPS URL")
-    }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal, dependencies.lookup ?? lookup)),
+    }, false, async (input, signal) => fetchPublicText(requiredString(input, "url"), signal, dependencies.lookup ?? lookup, Boolean(container))),
     tool("search_web", "网页搜索", "web", "Use action=list_engines to list available search services in recommended order. Use action=search (default) to search. Prefer earlier services unless another fits the task better. Omit engine_id to use the first available service. Returns titles, URLs, and snippets.", {
       action: { type: "string", enum: ["list_engines", "search"] },
       engine_id: stringProperty("Readable service id from list_engines, such as tavily or searxng"),
@@ -235,7 +242,16 @@ export async function buildServerTools(
       ...workspaceProperty, command: stringProperty("Shell command; use paths relative to the conversation workspace root selected by workspace"),
       cwd: workspacePathProperty("Working directory for the command"),
       timeout: integerProperty("Timeout in seconds, 1 to 120")
-    }, true, async (input, signal) => runShell(rootFor(input), input, signal), Boolean(workspace || attachments)),
+    }, true, async (input, signal) => {
+      if (!container) return runShell(rootFor(input), input, signal);
+      if (!dependencies.environments || !dependencies.conversationId) throw new Error("Container environment unavailable");
+      const root = rootFor(input);
+      const cwd = await workspacePath(root, optionalString(input, "cwd") ?? ".");
+      const inside = input.workspace === "attachments" ? "/attachments" : "/workdir";
+      return dependencies.environments.execute(dependencies.conversationId, container, workspace,
+        requiredString(input, "command"), resolve(inside, relative(root, cwd)),
+        optionalInteger(input, "timeout", 30, 1, 120) * 1000, signal);
+    }, Boolean(workspace || attachments)),
     tool("workspace_publish_image", "发布图片", "workspace", "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. Use this before showing a machine-local image to the user.", {
       ...workspaceProperty, path: workspacePathProperty("Image file to publish"),
       alt: stringProperty("Short alternative text for the image")
@@ -275,6 +291,18 @@ export async function buildServerTools(
 
   tools.push(...await mcpManager(store).tools());
 
+  if (container) {
+    for (const entry of tools) {
+      if (entry.category === "mcp" || (entry.sourceKind && entry.sourceKind !== "builtin")) continue;
+      if (entry.definition.name.startsWith("workspace_") || entry.definition.name.startsWith("background_")) {
+        entry.containerAutoApproval = true;
+        entry.requiresApproval = () => false;
+      }
+      if (entry.definition.name === "workspace_shell") entry.definition.description = "Run a command inside the conversation container without approval. The selected project is mounted at /workdir and attachments at /attachments. Host networking is shared, including localhost and TUN routing. Use this tool for reading, writing, installing dependencies with sudo, and running programs. Relative cwd defaults to the selected workspace root.";
+      if (["fetch_url", "browser_fetch"].includes(entry.definition.name)) entry.definition.description = entry.definition.description.replace(/Public HTTP/g, "HTTP").replace(/public HTTP/g, "HTTP").replace(/public webpage/g, "webpage").replace(/Private.*?blocked\./g, "Localhost and private network addresses are allowed in this environment.");
+    }
+    return tools.filter(entry => entry.definition.name !== "workspace_shell_readonly");
+  }
   return tools;
 }
 
@@ -330,6 +358,7 @@ function backgroundTools(manager: TaskManager, rootFor: (input: JsonObject) => s
       const task = manager.create({
         conversationId: context.conversationId, generationId: context.generationId, snapshot: context.snapshot,
         workspacePath: rootFor(input),
+        containerCwd: input.workspace === "attachments" ? "/attachments" : "/workdir",
         command: requiredString(input, "command"), mode: input.mode === "pty" ? "pty" : "pipe",
         expectedDurationMs: optionalPositiveSeconds(input, "expected_duration_seconds"),
         hardTimeoutMs: optionalPositiveSeconds(input, "hard_timeout_seconds")
@@ -566,10 +595,11 @@ async function searchWeb(
   })));
 }
 
-async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost: typeof lookup): Promise<string> {
+async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost: typeof lookup, allowPrivate = false): Promise<string> {
   let current = new URL(rawUrl);
   for (let redirects = 0; redirects <= 4; redirects += 1) {
-    await assertPublicUrl(current, resolveHost);
+    if (allowPrivate) assertHttpUrl(current);
+    else await assertPublicUrl(current, resolveHost);
     const response = await fetch(current, { redirect: "manual", headers: { "user-agent": "llm-chat-tool/1.0", accept: "text/html,text/plain,application/json" }, signal });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -588,6 +618,11 @@ async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost:
     return JSON.stringify({ url: current.toString(), contentType, text: text.slice(0, MAX_TOOL_OUTPUT) });
   }
   throw new Error("Too many redirects");
+}
+
+export function assertHttpUrl(url: URL): void {
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only HTTP and HTTPS URLs are allowed");
+  if (url.username || url.password) throw new Error("URLs with credentials are not allowed");
 }
 
 export async function assertPublicUrl(url: URL, resolveHost: typeof lookup): Promise<void> {
@@ -646,6 +681,9 @@ async function workspacePath(root: string, input: string, mustExist = true): Pro
 }
 
 function normalizeWorkspaceInput(input: string): string {
+  if (input === "/workdir" || input === "/attachments") return ".";
+  if (input.startsWith("/workdir/")) return input.slice(9) || ".";
+  if (input.startsWith("/attachments/")) return input.slice(13) || ".";
   if (input === "/workspace") return ".";
   if (input.startsWith("/workspace/")) return input.slice("/workspace/".length) || ".";
   return input || ".";

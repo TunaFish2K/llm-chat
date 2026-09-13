@@ -3,6 +3,8 @@ import { ApiRequestError, httpRequest, uploadFileHttp, type HttpResult } from ".
 import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
 import { isOffline, markOffline, offlineRequest } from "./offline-history";
 import type {
+  ContainerEngineDto,
+  ConversationEnvironmentDto,
   AgentDto,
   AgentInput,
   AgentSearchSecretDto,
@@ -152,6 +154,9 @@ export interface McpTestResult {
 }
 
 export const endpoints = {
+  containerEngines: () => request<ContainerEngineDto[]>("GET", "/api/container-engines"),
+  conversationEnvironments: (id: string) => request<ConversationEnvironmentDto[]>("GET", `/api/conversations/${id}/environments`),
+  stopEnvironment: (id: string, environmentId: string, reset = false) => request<ConversationEnvironmentDto[]>("POST", `/api/conversations/${id}/environments/${environmentId}/stop`, { reset }),
   serviceSettings: () => api.get<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services"),
   updateServiceSettings: (input: import("@llm-chat/contracts").ServiceSettingsInput) => api.patch<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services", input),
   queueState: (id: string) => api.get<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue`, { conversationId: id }),

@@ -49,6 +49,7 @@ import { Store } from "./database";
 import { StoreError } from "./errors";
 import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
 import { GenerationRunner } from "./generations";
+import { ContainerEnvironments } from "./container-environments";
 import { TaskManager } from "./background-tasks";
 import { EventHub } from "./events";
 import { SseWriter } from "./sse-writer";
@@ -135,13 +136,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const eventHub = new EventHub();
   const imageJobs = new ImageGenerationManager(store, imageService, eventHub);
   await imageJobs.initialize();
-  const taskManager = new TaskManager(store, eventHub);
+  const environments = new ContainerEnvironments(store);
+  await environments.initialize();
+  const taskManager = new TaskManager(store, eventHub, environments);
   const pluginManager = new PluginManager(store, eventHub);
   const skillManager = new SkillManager(store, eventHub,
     options.skillDiscoveryRoot === undefined ? {} : { discoveryRoot: options.skillDiscoveryRoot });
   await skillManager.initialize();
   const conversations = new ConversationService({
-    store, tasks: taskManager, imageJobs, files: imageService, events: eventHub,
+    store, environments, tasks: taskManager, imageJobs, files: imageService, events: eventHub,
     startGeneration: (id) => runner.start(id)
   });
   const appTools = new AppTools({
@@ -151,14 +154,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const browser = new BrowserFetchManager();
   const readonlyShell = new ReadonlyShellManager();
   await readonlyShell.initialize();
-  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, browser, readonlyShell);
+  const registry = new ToolRegistry(store, taskManager, pluginManager, skillManager, imageService, appTools, imageJobs, browser, readonlyShell, environments);
   const runner = new GenerationRunner(store, {
     onStateChange: (id) => publishGenerationState(store, eventHub, id),
     onSettled: (conversationId) => { queue.changed(conversationId); queue.kick(conversationId); },
     buildTools: (_currentStore, record) => registry.tools(record),
     prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
       visionService.prepare(record, model, signal, onAnalysis),
-    runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId),
+    runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId) + (record.agentSnapshot.execution.environment?.type === "container"
+      ? "\n<execution_environment>Commands run in a persistent container. The selected project is mounted at /workdir and conversation attachments at /attachments. Use workspace_shell for commands; workspace_shell_readonly is not offered here. sudo installs system packages inside the container. Networking, including localhost and TUN routing, is shared with the host. Container commands and workspace tools do not require approval.</execution_environment>" : ""),
     imageService
   });
   const queue = new MessageQueue(store, runner, imageService, eventHub, (conversationId, assets) => {
@@ -1016,6 +1020,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { toolCall: updated, generationId, resumed: !pending };
   });
 
+  app.get("/api/container-engines", async () => environments.catalog());
+  app.get<{ Params: { id: string } }>("/api/conversations/:id/environments", async (request) => {
+    if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "Conversation not found");
+    return environments.list(request.params.id);
+  });
+  app.post<{ Params: { id: string; environmentId: string }; Body: { reset?: boolean } }>("/api/conversations/:id/environments/:environmentId/stop", async (request) => {
+    if (!store.getConversation(request.params.id)) throw new StoreError("conversation_not_found", "Conversation not found");
+    await userOperation("environment_busy", () => environments.stop(request.params.id, request.params.environmentId, request.body?.reset === true));
+    return environments.list(request.params.id);
+  });
+
   await registerWeb(app, webRoot);
 
   app.addHook("onClose", async () => {
@@ -1025,6 +1040,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     await browser.close();
     await imageJobs.close();
     await taskManager.close();
+    await environments.close();
     registry.close();
     await closeMcpManager(store);
     store.close();

@@ -35,7 +35,7 @@ it("migrates schema 38 and retains the source identity across restarts", () => {
   const migrated = new Store(path);
   const id = offlineSourceId(migrated);
   expect(id).toMatch(/^[\da-f-]{36}$/);
-  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 43 });
+  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 44 });
   migrated.close();
   const reopened = new Store(path);
   expect(offlineSourceId(reopened)).toBe(id);

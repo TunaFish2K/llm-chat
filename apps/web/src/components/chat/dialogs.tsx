@@ -1,3 +1,4 @@
+import { ConversationEnvironments } from "../EnvironmentSettings";
 import { effectiveReasoningSelection, legacyReasoningSelection } from "@llm-chat/contracts";
 import { ReasoningSelect } from "../ReasoningControl";
 import { toolLabel, toolDescription } from "../../lib/catalog-i18n";
@@ -116,12 +117,14 @@ export function AgentSwitchDialog({ onClose, onConfirm }: { onClose: () => void;
  * Agent later changes.
  */
 export function ExecutionOverridesDialog({
+  conversationId,
   value,
   agent,
   models,
   onClose,
   onSave
 }: {
+  conversationId?: string;
   value: ConversationExecutionOverrides;
   agent: AgentSummaryDto | undefined;
   models: ModelDto[];
@@ -203,6 +206,7 @@ export function ExecutionOverridesDialog({
       }
     >
       <div className="override-editor">
+        {conversationId ? <ConversationEnvironments conversationId={conversationId} /> : null}
         <p className="muted small">{t("dialogs.applies_only_to_future_generations_in_this_conversation_follow_agent")}</p>
 
         <div className="form-grid">

@@ -239,3 +239,18 @@ describe("api client", () => {
     expect(urls.filter((url) => url === "/api/conversations/conversation/context/compact")).toHaveLength(2);
   });
 });
+
+it("loads container environments and scopes stop/reset operations to their conversation", async () => {
+  const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mockResponse(200, [])));
+  vi.stubGlobal("fetch", fetchMock);
+  await endpoints.containerEngines();
+  await endpoints.conversationEnvironments("chat");
+  await endpoints.stopEnvironment("chat", "env");
+  await endpoints.stopEnvironment("chat", "env", true);
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/container-engines", "/api/conversations/chat/environments",
+    "/api/conversations/chat/environments/env/stop", "/api/conversations/chat/environments/env/stop"
+  ]);
+  expect(JSON.parse(fetchMock.mock.calls[2]![1].body)).toEqual({ reset: false });
+  expect(JSON.parse(fetchMock.mock.calls[3]![1].body)).toEqual({ reset: true });
+});

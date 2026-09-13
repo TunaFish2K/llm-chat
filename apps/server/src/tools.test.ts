@@ -124,7 +124,7 @@ describe("server tool catalog", () => {
     expect(enabled.definition.inputSchema.required).toEqual(["url"]);
     const controller = new AbortController();
     expect(await enabled.execute({ url: "https://example.com" }, controller.signal)).toBe("rendered text");
-    expect(fetch).toHaveBeenCalledWith("https://example.com", controller.signal);
+    expect(fetch).toHaveBeenCalledWith("https://example.com", controller.signal, false);
     store.close();
   });
 
@@ -555,4 +555,39 @@ describe("memory, chat, skill, and large-output tools", () => {
     expect(existsSync(result.fullOutputPath)).toBe(true);
     store.close();
   });
+});
+
+it("routes container commands with mapped paths and makes only workspace and task tools automatic", async () => {
+  const store = createStore();
+  const execute = vi.fn().mockResolvedValue('{"stdout":"container"}');
+  const environment = { type: "container", engine: "docker", image: "llm-chat-runtime:local", idleTimeoutMinutes: 15 } as const;
+  const workspace = `${store.dataDir}/workspace`;
+  const tools = await buildServerTools(store, true, {
+    environment, conversationId: "chat", workspacePath: workspace,
+    environments: { execute } as unknown as import("./container-environments").ContainerEnvironments,
+    taskManager: {} as import("./background-tasks").TaskManager
+  });
+  const shell = tools.find(entry => entry.definition.name === "workspace_shell")!;
+  expect(shell.containerAutoApproval).toBe(true);
+  expect(await shell.requiresApproval({})).toBe(false);
+  const signal = new AbortController().signal;
+  await shell.execute({ command: "pwd", cwd: "/workdir", timeout: 5 }, signal);
+  expect(execute).toHaveBeenCalledWith("chat", environment, workspace, "pwd", "/workdir", 5000, signal);
+  expect(tools.find(entry => entry.definition.name === "background_start")!.containerAutoApproval).toBe(true);
+  expect(tools.find(entry => entry.definition.name === "image_generate")!.containerAutoApproval).toBeUndefined();
+  expect(tools.find(entry => entry.definition.name === "memory_tool")!.requiresApproval({ action: "delete" })).toBe(true);
+  expect(tools.some(entry => entry.definition.name === "workspace_shell_readonly")).toBe(false);
+  const unavailable = await buildServerTools(store, true, { environment, workspacePath: workspace });
+  await expect(unavailable.find(entry => entry.definition.name === "workspace_shell")!.execute({ command: "pwd" }, signal)).rejects.toThrow("Container environment unavailable");
+});
+
+it("allows local HTTP targets only for the container environment and still validates URL schemes", async () => {
+  const store = createStore();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("local service")));
+  const environment = { type: "container", engine: "docker", image: "llm-chat-runtime:local", idleTimeoutMinutes: 15 } as const;
+  const tools = await buildServerTools(store, true, { environment });
+  const fetcher = tools.find(entry => entry.definition.name === "fetch_url")!;
+  expect(await fetcher.execute({ url: "http://127.0.0.1:8080" }, new AbortController().signal)).toContain("local service");
+  await expect(fetcher.execute({ url: "file:///etc/passwd" }, new AbortController().signal)).rejects.toThrow("Only HTTP");
+  await expect(fetcher.execute({ url: "http://user:password@localhost" }, new AbortController().signal)).rejects.toThrow("credentials");
 });

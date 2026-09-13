@@ -598,6 +598,7 @@ export const Composer = memo(function Composer({
       ) : null}
       {editingOverrides ? (
         <ExecutionOverridesDialog
+          {...(conversation ? { conversationId: conversation.id } : {})}
           value={overrides}
           agent={effectiveAgent}
           models={models}

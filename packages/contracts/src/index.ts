@@ -674,7 +674,26 @@ export interface AgentSearchSecretDto {
   hasApiKey: boolean;
 }
 
+export const executionEnvironmentSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("host") }),
+  z.object({
+    type: z.literal("container"),
+    engine: z.enum(["docker", "podman"]),
+    image: z.string().trim().min(1).max(512).regex(/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/).default("llm-chat-runtime:local"),
+    idleTimeoutMinutes: z.number().int().min(1).max(10080).default(15)
+  })
+]);
+export type ExecutionEnvironment = z.infer<typeof executionEnvironmentSchema>;
+export type ContainerEngine = "docker" | "podman";
+export interface ContainerEngineDto { engine: ContainerEngine; available: boolean; version: string | null; error: string | null; }
+export interface ConversationEnvironmentDto {
+  id: string; conversationId: string; engine: ContainerEngine; image: string;
+  workspacePath: string; status: "created" | "running" | "stopped" | "error";
+  error: string | null; lastUsedAt: number; idleTimeoutMinutes: number;
+}
+
 export const agentExecutionConfigSchema = z.object({
+  environment: executionEnvironmentSchema.optional(),
   baseSystemPrompt: z.string().max(100_000).optional(),
   modelId: z.string().min(1).max(200).nullable(),
   visionModelId: z.string().min(1).max(200).nullable().default(null),
