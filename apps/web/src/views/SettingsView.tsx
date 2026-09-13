@@ -1,3 +1,4 @@
+import { displayStore, saveDisplayPreferences, useDisplayPreferences, type DisplayPreferences } from "../lib/local-display";
 import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
 import { useErrorState, displayError } from "../lib/error-display";
 import { LanguagePicker } from "../components/LanguagePicker";
@@ -22,7 +23,6 @@ import { AccentPicker } from "../components/AccentPicker";
 import {
   appStore,
   acceptSettings,
-  updateUiPreferences,
   refreshSettings,
   toast,
   toastError
@@ -155,6 +155,8 @@ function GeneralSection() {
   useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const settings = useStore(appStore, (s) => s.settings);
+  const display = useDisplayPreferences(settings);
+  const displaySaved = useStore(displayStore, (state) => state.saved);
   const agents = useStore(appStore, (s) => s.agents);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
   const hapticsSupported = generationHapticsSupported();
@@ -163,12 +165,10 @@ function GeneralSection() {
 
   if (!settings) return <LoadingState />;
 
-  const patch = (value: Omit<Partial<AppSettings>, "uiPreferences"> & { uiPreferences?: Partial<AppSettings["uiPreferences"]> }) => {
-    if (value.uiPreferences) { updateUiPreferences(value.uiPreferences); return; }
+  const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
     const revision = ++patchVersion.current;
     const current = appStore.get().settings ?? settings;
-    const { uiPreferences: _preferences, ...fields } = value;
-    appStore.set({ settings: { ...current, ...fields } });
+    appStore.set({ settings: { ...current, ...value } });
     patchSequence.current = patchSequence.current.then(async () => {
       await endpoints.updateSettings(value);
       if (revision !== patchVersion.current) return;
@@ -185,39 +185,40 @@ function GeneralSection() {
       <div className="card"><LanguagePicker /></div>
       <OfflineHistorySettings />
       <NotificationSettings />
-      <fieldset disabled={offline} className="offline-settings-fields">
       <div className="card">
         <h3>{t("SettingsView.appearance_and_interaction")}</h3>
+        <p className="hint">{t("SettingsView.display_preferences_are_local")}</p>
+        {!displaySaved ? <p role="alert">{t("SettingsView.display_preferences_not_saved")}
+          <button type="button" className="btn small" onClick={() => saveDisplayPreferences()}>{t("NotificationSettings.retry")}</button>
+        </p> : null}
         <Field label={t("SettingsView.theme")}>
           <select
             className="select"
             aria-label={t("SettingsView.theme")}
-            value={settings.theme}
-            onChange={(event) => patch({ theme: event.target.value as AppSettings["theme"] })}
+            value={display.theme}
+            onChange={(event) => saveDisplayPreferences({ theme: event.target.value as DisplayPreferences["theme"] })}
           >
             <option value="system">{t("SettingsView.follow_system")}</option>
             <option value="light">{t("SettingsView.light")}</option>
             <option value="dark">{t("SettingsView.dark")}</option>
           </select>
         </Field>
-        <AccentPicker value={settings.uiPreferences.accentColor ?? null} onChange={(accentColor) => patch({ uiPreferences: { accentColor } })} />
-        <label className="checkbox-row"><input type="checkbox" checked={settings.uiPreferences.amoled ?? false}
-          onChange={(event) => patch({ uiPreferences: { amoled: event.target.checked } })} />{t("SettingsView.use_a_pure_black_background_in_dark_mode")}</label>
+        <AccentPicker value={display.accentColor ?? null} onChange={(accentColor) => saveDisplayPreferences({ accentColor })} />
+        <label className="checkbox-row"><input type="checkbox" checked={display.amoled ?? false}
+          onChange={(event) => saveDisplayPreferences({ amoled: event.target.checked })} />{t("SettingsView.use_a_pure_black_background_in_dark_mode")}</label>
         <label className="checkbox-row">
           <input
             type="checkbox"
-            checked={settings.uiPreferences.sidebarCollapsed}
+            checked={display.sidebarCollapsed}
             onChange={(event) =>
-              patch({ uiPreferences: { sidebarCollapsed: event.target.checked } })
+              saveDisplayPreferences({ sidebarCollapsed: event.target.checked })
             }
           />{t("SettingsView.collapse_the_sidebar_by_default")}</label>
         <label className="checkbox-row">
           <input
             type="checkbox"
-            checked={settings.uiPreferences.generationHaptics}
-            onChange={(event) => patch({
-              uiPreferences: { generationHaptics: event.target.checked }
-            })}
+            checked={display.generationHaptics}
+            onChange={(event) => saveDisplayPreferences({ generationHaptics: event.target.checked })}
           />
           <span className="haptics-label">
             <span>{t("SettingsView.vibrate_during_generation")}</span>
@@ -228,14 +229,9 @@ function GeneralSection() {
           <select
             className="select"
             aria-label={t("SettingsView.reasoning_collapse_behavior")}
-            value={settings.uiPreferences.reasoningCollapsePolicy}
+            value={display.reasoningCollapsePolicy}
             onChange={(event) =>
-              patch({
-                uiPreferences: {
-                  reasoningCollapsePolicy: event.target
-                    .value as AppSettings["uiPreferences"]["reasoningCollapsePolicy"]
-                }
-              })
+              saveDisplayPreferences({ reasoningCollapsePolicy: event.target.value as DisplayPreferences["reasoningCollapsePolicy"] })
             }
           >
             <option value="always-collapsed">{t("SettingsView.always_collapsed")}</option>
@@ -245,7 +241,6 @@ function GeneralSection() {
         </Field>
       </div>
 
-      </fieldset>
       <div className="card"><h3>{t("SettingsView.chat_typography")}</h3><ChatTypographySettings preview /></div>
       <fieldset disabled={offline} className="offline-settings-fields">
       <AppUpdateCard />

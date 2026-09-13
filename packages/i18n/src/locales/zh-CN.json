@@ -127,6 +127,8 @@
   "SettingsView.refresh_page": "刷新页面",
   "SettingsView.settings_saved": "设置已保存",
   "SettingsView.appearance_and_interaction": "外观与交互",
+  "SettingsView.display_preferences_are_local": "这些设置仅保存在当前浏览器，不同步到其他客户端。",
+  "SettingsView.display_preferences_not_saved": "未能保存显示设置，刷新后可能丢失。",
   "SettingsView.theme": "主题",
   "SettingsView.follow_system": "跟随系统",
   "SettingsView.light": "浅色",

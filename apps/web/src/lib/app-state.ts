@@ -2,7 +2,7 @@ import { errorDisplayMessage } from "./error-display";
 import { t, type DisplayMessage, localized } from "./i18n";
 import { RefreshScheduler } from "./refresh-scheduler";
 import { GenerationBlockBuffer } from "./generation-block-buffer";
-import { saveTypography } from "./local-typography";
+import { initializeDisplayPreferences } from "./local-display";
 import { observeNotificationEvent, startNotificationSession, stopNotificationSession } from "./notifications";
 import { conversationDeleted, deletionRevision, markConversationsDeleted } from "./conversation-lifecycle";
 import { preserveDeletedDraft, removeComposerDraft } from "./composer-drafts";
@@ -20,7 +20,7 @@ import type {
   FileAssetDto
 } from "@llm-chat/contracts";
 import { api, endpoints, onAuthRequired } from "./api";
-import { cancelGenerationHaptic, scheduleGenerationHaptic, setGenerationHapticsEnabled } from "./haptics";
+import { cancelGenerationHaptic, scheduleGenerationHaptic } from "./haptics";
 import { createStore } from "./store";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
 
@@ -89,7 +89,7 @@ export async function bootstrap(conversationId?: string, background = false): Pr
     if (!isOffline()) reconcileConversations(data.conversations, conversationId ?? null, knownIds);
     data.conversations = data.conversations.filter((item) => !conversationDeleted(item.id));
     if (conversationId && conversationDeleted(conversationId)) { delete data.messages; replaceRoute("/"); }
-    setGenerationHapticsEnabled(data.settings.uiPreferences.generationHaptics);
+    initializeDisplayPreferences(data.settings);
     const normalizedMessages = data.messages ? normalizeMessages(data.messages) : undefined;
     const bootMessages = conversationId && normalizedMessages ? { [conversationId]: normalizedMessages } : {};
     appStore.set({
@@ -164,65 +164,11 @@ export async function refreshConnectionsAndModels(): Promise<void> {
   appStore.set({ connections, models });
 }
 
-type UiPreferences = AppSettings["uiPreferences"];
-export const preferenceSaveStore = createStore<{ status: "saved" | "saving" | "error" }>({ status: "saved" });
-let pendingPreferences: Partial<UiPreferences> = {};
-let preferenceRevision = 0;
-const preferenceVersions = new Map<keyof UiPreferences, number>();
-let preferenceTimer: ReturnType<typeof setTimeout> | undefined;
-let preferenceWrite: Promise<void> | null = null;
 let settingsReadSequence = 0;
 
 export function acceptSettings(settings: AppSettings): void {
-  const merged = { ...settings, uiPreferences: { ...settings.uiPreferences, ...pendingPreferences } };
-  setGenerationHapticsEnabled(merged.uiPreferences.generationHaptics);
-  appStore.set({ settings: merged });
-}
-
-export function updateUiPreferences(patch: Partial<UiPreferences>): void {
-  const { chatFontSize, chatLetterSpacing, chatLineHeight, ...shared } = patch;
-  const typography = Object.fromEntries(Object.entries({ chatFontSize, chatLetterSpacing, chatLineHeight }).filter(([, value]) => value !== undefined));
-  if (Object.keys(typography).length) saveTypography(typography);
-  patch = shared;
-  if (!Object.keys(patch).length) return;
-  const settings = appStore.get().settings;
-  if (!settings) return;
-  const revision = ++preferenceRevision;
-  for (const key of Object.keys(patch) as (keyof UiPreferences)[]) preferenceVersions.set(key, revision);
-  pendingPreferences = { ...pendingPreferences, ...patch };
-  acceptSettings(settings);
-  preferenceSaveStore.set({ status: "saving" });
-  clearTimeout(preferenceTimer);
-  preferenceTimer = setTimeout(() => void flushUiPreferences(), 300);
-}
-
-export function flushUiPreferences(): Promise<void> {
-  clearTimeout(preferenceTimer);
-  if (preferenceWrite) return preferenceWrite;
-  if (!Object.keys(pendingPreferences).length) return Promise.resolve();
-  const patch = { ...pendingPreferences };
-  const versions = new Map(preferenceVersions);
-  preferenceSaveStore.set({ status: "saving" });
-  preferenceWrite = (async () => {
-    try {
-      const saved = await endpoints.updateSettings({ uiPreferences: patch });
-      ++settingsReadSequence;
-      for (const key of Object.keys(patch) as (keyof UiPreferences)[]) {
-        if (versions.get(key) === preferenceVersions.get(key)) {
-          delete pendingPreferences[key];
-          preferenceVersions.delete(key);
-        }
-      }
-      acceptSettings(saved);
-      preferenceSaveStore.set({ status: Object.keys(pendingPreferences).length ? "saving" : "saved" });
-    } catch {
-      preferenceSaveStore.set({ status: "error" });
-    } finally {
-      preferenceWrite = null;
-    }
-    if (preferenceSaveStore.get().status === "saving") await flushUiPreferences();
-  })();
-  return preferenceWrite;
+  initializeDisplayPreferences(settings);
+  appStore.set({ settings });
 }
 
 export async function refreshSettings(): Promise<void> {

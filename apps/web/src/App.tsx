@@ -13,6 +13,7 @@ import { navigate, replaceRoute, routes, useRoute, type Route } from "./lib/rout
 import { useStore } from "./lib/store";
 import { useChatTypography } from "./lib/chat-typography";
 import { useTheme } from "./lib/theme";
+import { displayStore, useDisplayPreferences } from "./lib/local-display";
 import { ErrorState, LoadingState } from "./components/ui";
 import {
   AppFrame,
@@ -78,7 +79,9 @@ export function App() {
   const [rightWidth, setRightWidth] = useStoredNumber("llm-chat.inspector-width", 360, RIGHT_MIN, RIGHT_MAX);
   const [pwa, setPwa] = useState(getPwaState());
   const preferencesApplied = useRef(false);
-  useTheme(settings);
+  const display = useDisplayPreferences(settings);
+  const displayInitialized = useStore(displayStore, (state) => state.initialized);
+  useTheme(display);
   useChatTypography(settings);
 
   useEffect(() => {
@@ -109,10 +112,10 @@ export function App() {
 
   /* The stored sidebar preference applies once, then the session owns it. */
   useEffect(() => {
-    if (!settings || preferencesApplied.current) return;
+    if (!settings || !displayInitialized || preferencesApplied.current) return;
     preferencesApplied.current = true;
-    setSidebarCollapsed(settings.uiPreferences.sidebarCollapsed);
-  }, [settings]);
+    setSidebarCollapsed(display.sidebarCollapsed);
+  }, [settings, displayInitialized, display.sidebarCollapsed]);
 
   useEffect(() => {
     setNavDrawer(false);

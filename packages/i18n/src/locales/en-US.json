@@ -127,6 +127,8 @@
   "SettingsView.refresh_page": "Refresh page",
   "SettingsView.settings_saved": "Settings saved",
   "SettingsView.appearance_and_interaction": "Appearance and interaction",
+  "SettingsView.display_preferences_are_local": "These settings are saved only in this browser and do not sync to other clients.",
+  "SettingsView.display_preferences_not_saved": "Could not save display settings. Changes may be lost after refreshing.",
   "SettingsView.theme": "Theme",
   "SettingsView.follow_system": "Follow system",
   "SettingsView.light": "Light",

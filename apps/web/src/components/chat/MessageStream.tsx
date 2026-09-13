@@ -1,3 +1,4 @@
+import { displayStore } from "../../lib/local-display";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 import { useStickToBottom } from "./useStickToBottom";
@@ -193,8 +194,7 @@ function GenerationTimeline({
   callbacks: StreamCallbacks;
 }) {
   useLocale();
-  const settings = useStore(appStore, (state) => state.settings);
-  const collapsePolicy = settings?.uiPreferences.reasoningCollapsePolicy ?? "collapse-on-answer";
+  const collapsePolicy = useStore(displayStore, (state) => state.values.reasoningCollapsePolicy);
   const offline = useStore(offlineStore, (state) => state.offline);
   const busy = !offline && isGenerationActive(generation.status);
   const timeline = groupTimeline(generation, imageJobs);

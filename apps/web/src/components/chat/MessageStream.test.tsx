@@ -1,3 +1,4 @@
+import { saveDisplayPreferences } from "../../lib/local-display";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ImageGenerationJobDto } from "@llm-chat/contracts";
 import { describe, expect, it, vi } from "vitest";
@@ -35,15 +36,13 @@ describe("reply processing disclosure", () => {
   });
 
   it.each(["always-collapsed", "never-auto-collapse"] as const)("honors %s for processing groups", (policy) => {
-    const settings = makeSettings(); settings.uiPreferences.reasoningCollapsePolicy = policy;
-    appStore.set({ settings });
+    saveDisplayPreferences({ reasoningCollapsePolicy: policy });
     const { container } = render(reply(makeGeneration({ blocks: [{ ...reasoning, complete: true }, { ...answer, complete: true }] })));
     expect(container.querySelector(".process-disclosure")?.hasAttribute("open")).toBe(policy === "never-auto-collapse");
   });
 
   it("keeps tool errors visible while collapsed and stopped processing distinct from completion", () => {
-    const settings = makeSettings(); settings.uiPreferences.reasoningCollapsePolicy = "always-collapsed";
-    appStore.set({ settings });
+    saveDisplayPreferences({ reasoningCollapsePolicy: "always-collapsed" });
     const tool = { id: "tool", stepIndex: 0, index: 0, name: "workspace_shell", arguments: "{}", approvalState: "failed" as const, requiresApproval: false, output: null, error: "Command failed", startedAt: 1, completedAt: 2, artifacts: [] };
     render(reply(makeGeneration({ status: "stopped", blocks: [reasoning], toolCalls: [tool] })));
     expect(screen.getByText("处理已停止")).toBeVisible();
