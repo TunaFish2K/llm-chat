@@ -485,6 +485,8 @@ export function startAppEvents(): void {
         eventRefreshes.schedule("tasks", refreshTaskCounts);
       } else if (event.type === "image-generation") {
         refreshMessages(event.conversationId);
+      } else if (event.type === "container-resource") {
+        window.dispatchEvent(new CustomEvent("llm-chat:container-resource", { detail: event.job }));
       } else if (event.type === "resource-changed") {
         if (event.resource === "agents") eventRefreshes.schedule("agents", refreshAgents);
         if (event.resource === "conversations") eventRefreshes.schedule("conversations", refreshConversations);

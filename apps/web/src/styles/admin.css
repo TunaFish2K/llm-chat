@@ -1343,3 +1343,7 @@ button.trajectory-step {
 .hsv-channel input { flex: 1; accent-color: var(--accent); min-width: 0; }
 .quick-tour { padding-block: 12px; line-height: 1.8; }
 .quick-tour h3 { margin-block: 16px 8px; }
+
+.container-resources progress { width: min(100%, 24rem); }
+.container-resource-files { padding-inline-start: 1.25rem; }
+.container-resource-files li, .container-resources .hint { overflow-wrap: anywhere; }

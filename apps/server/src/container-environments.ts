@@ -1,3 +1,5 @@
+import { ContainerResources, ALPINE_IMAGE } from "./container-resources";
+import { EventHub } from "./events";
 import { randomUUID, createHash } from "node:crypto";
 import { mkdir, readFile, readdir, readlink, realpath, rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -10,7 +12,7 @@ import { executeProcess } from "./shell";
 
 type ContainerConfig = Extract<ExecutionEnvironment, { type: "container" }>;
 type EnvironmentRow = { id: string; conversation_id: string; engine: ContainerEngine; image: string; workspace_path: string;
-  container_name: string; status: ConversationEnvironmentDto["status"]; error: string | null; last_used_at: number; idle_timeout_minutes: number; };
+  container_name: string; status: ConversationEnvironmentDto["status"]; error: string | null; last_used_at: number; idle_timeout_minutes: number; resource_key: string; resource_lock_json: string | null; };
 export interface ContainerExecution extends EngineCommand {
   environmentId: string;
   stop(signal?: "SIGTERM" | "SIGKILL"): Promise<void>;
@@ -30,8 +32,10 @@ export class ContainerEnvironments {
   private timer: NodeJS.Timeout | undefined;
   private closing = false;
   private readonly owner: string;
-  constructor(private readonly store: Store, engines?: Record<ContainerEngine, EngineAdapter>) {
+  readonly resources: ContainerResources;
+  constructor(private readonly store: Store, engines?: Record<ContainerEngine, EngineAdapter>, resources?: ContainerResources) {
     this.engines = engines ?? { docker: new LocalContainerEngine("docker"), podman: new LocalContainerEngine("podman") };
+    this.resources = resources ?? new ContainerResources(store, new EventHub(), this.engines);
     this.owner = createHash("sha256").update(resolve(store.dataDir)).digest("hex").slice(0, 24);
   }
   async initialize(): Promise<void> {
@@ -63,6 +67,13 @@ export class ContainerEnvironments {
     this.locks.set(conversationId, next);
     try { return await next; } finally { if (this.locks.get(conversationId) === next) this.locks.delete(conversationId); }
   }
+  private resourceKey(config: ContainerConfig): string {
+    if (config.image !== ALPINE_IMAGE) {
+      if (config.preloadResourceIds?.length) throw new Error("Resource preloading requires the managed Alpine image");
+      return "";
+    }
+    return JSON.stringify([...new Set(config.preloadResourceIds ?? ["builtin:tools"])].sort());
+  }
   private busy(row: EnvironmentRow): boolean {
     if (this.leases.get(row.id)) return true;
     return this.store.sqlite.prepare(`SELECT environment_id, environment_config_json FROM background_tasks
@@ -70,15 +81,15 @@ export class ContainerEnvironments {
       if (task.environment_id === row.id) return true;
       if (!task.environment_config_json) return false;
       const saved = JSON.parse(String(task.environment_config_json));
-      return saved.config.engine === row.engine && saved.config.image === row.image
+      return saved.config.engine === row.engine && saved.config.image === row.image && this.resourceKey(saved.config) === row.resource_key
         && canonicalPath(this.workspace(row.conversation_id, saved.selected)) === row.workspace_path;
     });
   }
   assertCanUse(conversationId: string, config: ExecutionEnvironment, selected: string | null): void {
-    const matches = (engine: string, image: string, workspace: string) => config.type === "container"
-      && engine === config.engine && image === config.image && canonicalPath(workspace) === canonicalPath(this.workspace(conversationId, selected));
+    const matches = (engine: string, image: string, workspace: string, resourceKey: string) => config.type === "container"
+      && engine === config.engine && image === config.image && resourceKey === this.resourceKey(config) && canonicalPath(workspace) === canonicalPath(this.workspace(conversationId, selected));
     for (const row of this.rows(conversationId)) {
-      if (this.busy(row) && !matches(row.engine, row.image, row.workspace_path)) {
+      if (this.busy(row) && !matches(row.engine, row.image, row.workspace_path, row.resource_key)) {
         throw new Error("Another environment has active tools or background tasks; stop or finish them before switching");
       }
     }
@@ -86,7 +97,7 @@ export class ContainerEnvironments {
       WHERE conversation_id = ? AND status IN ('queued','starting','running') AND environment_config_json IS NOT NULL`).all(conversationId);
     for (const task of pending) {
       const saved = JSON.parse(String(task.environment_config_json));
-      if (!matches(saved.config.engine, saved.config.image, this.workspace(conversationId, saved.selected))) {
+      if (!matches(saved.config.engine, saved.config.image, this.workspace(conversationId, saved.selected), this.resourceKey(saved.config))) {
         throw new Error("Another environment has active tools or background tasks; stop or finish them before switching");
       }
     }
@@ -112,22 +123,23 @@ export class ContainerEnvironments {
       }
     });
   }
-  async register(conversationId: string, config: ContainerConfig, selected: string | null): Promise<string> {
+  async register(conversationId: string, config: ContainerConfig, selected: string | null, pluginPins?: Record<string, string>): Promise<string> {
     if (this.closing || !this.store.getConversation(conversationId)) throw new Error("Conversation environment is unavailable");
     const workspace = this.workspace(conversationId, selected);
     await mkdir(workspace, { recursive: true, mode: 0o700 });
     const canonical = await realpath(workspace);
     if (this.closing || !this.store.getConversation(conversationId)) throw new Error("Conversation environment is unavailable");
-    const old = this.rows(conversationId).find(row => row.engine === config.engine && row.image === config.image && row.workspace_path === canonical);
+    const old = this.rows(conversationId).find(row => row.engine === config.engine && row.image === config.image && row.workspace_path === canonical && row.resource_key === this.resourceKey(config));
     if (old) {
       this.store.sqlite.prepare("UPDATE conversation_environments SET idle_timeout_minutes = ? WHERE id = ?").run(config.idleTimeoutMinutes, old.id);
       return old.id;
     }
     const id = randomUUID();
+    const resourceLock = config.image === ALPINE_IMAGE ? JSON.stringify(this.resources.lock(config.preloadResourceIds, pluginPins)) : null;
     this.store.sqlite.prepare(`INSERT OR IGNORE INTO conversation_environments
-      (id,conversation_id,engine,image,workspace_path,container_name,status,last_used_at,idle_timeout_minutes,created_at)
-      VALUES (?,?,?,?,?,?,'created',?,?,?)`).run(id, conversationId, config.engine, config.image, canonical, `llm-chat-${this.owner}-${id}`, Date.now(), config.idleTimeoutMinutes, Date.now());
-    return this.rows(conversationId).find(row => row.engine === config.engine && row.image === config.image && row.workspace_path === canonical)!.id;
+      (id,conversation_id,engine,image,workspace_path,container_name,status,last_used_at,idle_timeout_minutes,created_at,resource_key,resource_lock_json)
+      VALUES (?,?,?,?,?,?,'created',?,?,?,?,?)`).run(id, conversationId, config.engine, config.image, canonical, `llm-chat-${this.owner}-${id}`, Date.now(), config.idleTimeoutMinutes, Date.now(), this.resourceKey(config), resourceLock);
+    return this.rows(conversationId).find(row => row.engine === config.engine && row.image === config.image && row.workspace_path === canonical && row.resource_key === this.resourceKey(config))!.id;
   }
   async prepare(conversationId: string, config: ContainerConfig, selected: string | null, command: string, cwd: string, tty = false, signal?: AbortSignal): Promise<ContainerExecution> {
     const id = await this.register(conversationId, config, selected);
@@ -151,8 +163,12 @@ export class ContainerEnvironments {
         if (!info) {
           const attachments = resolve(this.store.dataDir, "attachment-workspaces", conversationId);
           await mkdir(attachments, { recursive: true, mode: 0o700 });
-          const imageInfo = JSON.parse(await engine.run(["image", "inspect", row.image]))[0];
-          if (imageInfo.Config?.Labels?.["fish.2kb.llm-chat.runtime"] !== "1") throw new Error("Use an image built from containers/Dockerfile (runtime version 1)");
+          const image = row.resource_lock_json
+            ? await this.resources.prepare(row.engine, JSON.parse(row.resource_lock_json), signal)
+            : row.image;
+          signal?.throwIfAborted();
+          const imageInfo = JSON.parse(await engine.run(["image", "inspect", image]))[0];
+          if (!["1", "2"].includes(imageInfo.Config?.Labels?.["fish.2kb.llm-chat.runtime"])) throw new Error("Use a prepared Alpine environment or a compatible runtime image");
           await engine.run(["create", "--name", row.container_name, "--label", `${OWNER_LABEL}=${this.owner}`,
             "--network", "host", "--init", ...(row.engine === "podman" && uid !== 0 ? ["--userns", "keep-id"] : []), "--user", "0:0", "--workdir", "/workdir",
             "--mount", bindMount(row.workspace_path, "/workdir"),
@@ -246,6 +262,7 @@ export class ContainerEnvironments {
   }
   async close(): Promise<void> {
     this.closing = true;
+    await this.resources.close();
     clearInterval(this.timer);
     await Promise.allSettled([...this.locks.values()]);
     await Promise.all(this.rows().map(async row => { try { await this.stopRow(row); } catch (error) { this.failed(row.id, error); } }));

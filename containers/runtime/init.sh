@@ -4,7 +4,9 @@ uid="$1"
 gid="$2"
 getent group "$gid" >/dev/null || groupadd -g "$gid" llmchat
 if ! getent passwd "$uid" >/dev/null; then
-  useradd -m -u "$uid" -g "$gid" -s /bin/bash llmchat
+  shell=/bin/sh
+  [ ! -x /bin/bash ] || shell=/bin/bash
+  useradd -m -u "$uid" -g "$gid" -s "$shell" llmchat
 fi
 name="$(getent passwd "$uid" | cut -d: -f1)"
 mkdir -p /run/llm-chat /home/llm-chat

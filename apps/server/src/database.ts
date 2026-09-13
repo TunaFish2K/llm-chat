@@ -227,7 +227,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 44) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 45) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1155,6 +1155,30 @@ function migrate(sqlite: DatabaseSyncType): void {
       for (const column of ["environment_id", "environment_config_json"]) {
         if (!hasColumn(sqlite, "background_tasks", column)) sqlite.exec(`ALTER TABLE background_tasks ADD COLUMN ${column} TEXT`);
       }
+    }
+    if (current < 45) {
+      if (!hasColumn(sqlite, "conversation_environments", "resource_key")) sqlite.exec("ALTER TABLE conversation_environments ADD COLUMN resource_key TEXT NOT NULL DEFAULT ''");
+      if (!hasColumn(sqlite, "conversation_environments", "resource_lock_json")) sqlite.exec("ALTER TABLE conversation_environments ADD COLUMN resource_lock_json TEXT");
+      sqlite.exec(`
+        ALTER TABLE conversation_environments RENAME TO conversation_environments_old;
+        CREATE TABLE conversation_environments (
+          id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, engine TEXT NOT NULL,
+          image TEXT NOT NULL, workspace_path TEXT NOT NULL, container_name TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'created', error TEXT, last_used_at INTEGER NOT NULL,
+          idle_timeout_minutes INTEGER NOT NULL, created_at INTEGER NOT NULL,
+          resource_key TEXT NOT NULL DEFAULT '', resource_lock_json TEXT,
+          UNIQUE(conversation_id,engine,image,workspace_path,resource_key)
+        );
+        INSERT INTO conversation_environments SELECT * FROM conversation_environments_old;
+        DROP TABLE conversation_environments_old;
+        CREATE TABLE IF NOT EXISTS container_resource_settings (id INTEGER PRIMARY KEY CHECK(id=1), node TEXT NOT NULL);
+        INSERT OR IGNORE INTO container_resource_settings VALUES (1, 'ustc');
+        CREATE TABLE IF NOT EXISTS container_resource_revisions (id TEXT NOT NULL, revision TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY(id,revision));
+        CREATE TABLE IF NOT EXISTS container_resource_jobs (id TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS container_resource_images (key TEXT PRIMARY KEY, engine TEXT NOT NULL, image_id TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS container_resource_uploads (id TEXT PRIMARY KEY, sha256 TEXT NOT NULL, size INTEGER NOT NULL, offset INTEGER NOT NULL DEFAULT 0);
+        PRAGMA user_version = 45;
+      `);
     }
     sqlite.exec("COMMIT");
   } catch (error) {

@@ -683,6 +683,7 @@ export const executionEnvironmentSchema = z.discriminatedUnion("type", [
     type: z.literal("container"),
     engine: z.enum(["docker", "podman"]),
     image: z.string().trim().min(1).max(512).regex(/^[a-zA-Z0-9][a-zA-Z0-9._/:@-]*$/).default("llm-chat-runtime:local"),
+    preloadResourceIds: z.array(z.string().min(1).max(300)).max(100).optional(),
     idleTimeoutMinutes: z.number().int().min(1).max(10080).default(15)
   })
 ]);
@@ -1192,16 +1193,57 @@ export interface ToolCatalogItemDto {
   error?: string | null;
 }
 
+export const containerResourceNodeSchema = z.enum(["official", "tuna", "ustc"]);
+export type ContainerResourceNode = z.infer<typeof containerResourceNodeSchema>;
+export const containerResourceFileSchema = z.object({
+  name: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  size: z.number().int().positive().max(20 * 1024 ** 3),
+  url: z.string().url().refine(value => value.startsWith("https://")),
+  mirrors: z.object({ tuna: z.string().url().startsWith("https://mirrors.tuna.tsinghua.edu.cn/").optional(), ustc: z.string().url().startsWith("https://mirrors.ustc.edu.cn/").optional() }).optional()
+});
+export const containerResourceDefinitionSchema = z.object({
+  id: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
+  name: z.string().min(1).max(200),
+  description: z.string().max(2000).default(""),
+  version: z.string().min(1).max(100),
+  dependencies: z.array(z.string().min(1).max(300)).max(100).default([]),
+  variants: z.array(z.object({
+    platform: z.enum(["linux/amd64", "linux/arm64"]),
+    distro: z.literal("alpine-3.24"),
+    files: z.array(containerResourceFileSchema).min(1).max(500).refine(files => new Set(files.map(file => file.name)).size === files.length, "Duplicate resource filename"),
+    install: z.string().min(1).max(20000),
+    verify: z.string().min(1).max(10000)
+  })).min(1).max(2).refine(variants => new Set(variants.map(variant => variant.platform)).size === variants.length, "Duplicate resource platform")
+});
+export type ContainerResourceDefinition = z.infer<typeof containerResourceDefinitionSchema>;
+export type ContainerResourceFile = z.infer<typeof containerResourceFileSchema>;
+export interface ContainerResourceRevision {
+  id: string; revision: string; source: string; definition: ContainerResourceDefinition;
+}
+export interface ContainerResourceItem extends ContainerResourceRevision {
+  available: boolean; availabilityError?: string; files: Array<ContainerResourceFile & { cached: boolean; downloadUrl: string }>;
+}
+export interface ContainerResourceJob {
+  id: string; key: string; kind: "download" | "prepare"; state: "running" | "complete" | "error" | "cancelled";
+  message: string; completedBytes: number; totalBytes: number; error: string | null; updatedAt: number;
+}
+export interface ContainerResourceCatalog {
+  node: ContainerResourceNode; platform: string; resources: ContainerResourceItem[];
+  jobs: ContainerResourceJob[]; cacheBytes: number;
+}
+
 export const pluginManifestSchema = z.object({
   id: z.string().min(1).max(100).regex(/^[a-z0-9][a-z0-9._-]*$/),
   name: z.string().trim().min(1).max(200),
   version: z.string().trim().min(1).max(100),
   apiVersion: z.literal(1),
-  entry: z.string().min(1).max(500),
+  entry: z.string().min(1).max(500).optional(),
+  containerResources: z.array(containerResourceDefinitionSchema).max(100).default([]).refine(resources => new Set(resources.map(resource => resource.id)).size === resources.length, "Duplicate resource id"),
   description: z.string().max(20_000).default(""),
   configSchema: z.record(z.string(), z.unknown()).optional(),
   secretFields: z.array(z.string().min(1).max(200)).max(100).default([])
-});
+}).refine(value => Boolean(value.entry) || value.containerResources.length > 0, "Plugin needs an entry or container resources");
 export type PluginManifest = z.infer<typeof pluginManifestSchema>;
 
 export interface PluginDto {
@@ -1311,6 +1353,7 @@ export interface GenerationNotificationState {
 }
 
 export type AppEvent =
+  | { id: number; type: "container-resource"; job: ContainerResourceJob }
   | { id: number; type: "resync" }
   | { id: number; type: "generation-state"; generation: GenerationNotificationState }
   | { id: number; type: "generation-snapshot"; sourceId: string; active: GenerationNotificationState[] }
@@ -1320,7 +1363,7 @@ export type AppEvent =
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
   | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
   | { id: number; type: "image-generation"; jobId: string; conversationId: string; job: ImageGenerationJobDto }
-  | { id: number; type: "resource-changed"; resource: "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
+  | { id: number; type: "resource-changed"; resource: "container-resources" | "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
 
 const mcpServerFields = {
   name: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9]+$/, "名称只能包含英文字母和数字"),

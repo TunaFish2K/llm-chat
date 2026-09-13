@@ -105,6 +105,9 @@ export class ToolRegistry {
       this.store.updateGenerationExtensionSnapshot(record.id, record.agentSnapshot);
     }
     const environment = record?.agentSnapshot.execution.environment;
+    if (record && environment?.type === "container" && environment.image === "llm-chat-runtime:alpine") {
+      await this.environments?.register(record.conversationId, environment, record.agentSnapshot.workspacePath, record.agentSnapshot.toolRevisions);
+    }
     const workspace = record && environment?.type === "container" && this.environments
       ? this.environments.workspace(record.conversationId, record.agentSnapshot.workspacePath)
       : record?.agentSnapshot.workspacePath;

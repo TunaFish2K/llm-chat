@@ -76,7 +76,7 @@ export function subscribeAppEvents(
 ): Subscription {
   let closed = false;
   const source = new EventSource("/api/events");
-  const types = ["resync", "task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
+  const types = ["container-resource", "resync", "task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
   for (const type of types) {
     source.addEventListener(type, (raw) => {
       if (closed) return;
