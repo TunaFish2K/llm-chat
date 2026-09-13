@@ -109,7 +109,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
         {actions}
       </div> : null}
       <div className="panel-scroll">
-        <div className="panel-inner">
+        <div className="panel-inner settings-panels">
           {embedded ? actions : null}
           {connections.length === 0 ? (
             <EmptyState title={t("ConnectionsView.no_connections_yet")} hint={t("ConnectionsView.add_a_model_provider_connection_then_discover_models_or_add")} />
