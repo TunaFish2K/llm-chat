@@ -6,6 +6,7 @@ import {
   blockTypeSchema,
   commonSettingsSchema,
   connectionInputSchema,
+  connectionInputPatchSchema,
   contextPolicySchema,
   conversationInputSchema,
   forkConversationSchema,
@@ -142,6 +143,22 @@ describe("contract schemas", () => {
     expect(balanceConfigSchema.safeParse({
       enabled: true, apiPath: "/balance", resultExpression: "1".repeat(513)
     }).success).toBe(false);
+  });
+
+  it("rejects credentials and headers that cannot be sent over HTTP on create and update", () => {
+    const base = { name: "Connection", protocol: "openai-chat", baseUrl: "https://example.test" };
+    for (const patch of [
+      { apiKey: "sk-使用说明" }, { apiKey: "key\nnext" }, { apiKey: "key\rnext" }, { apiKey: "key\u0000" },
+      { secretHeaders: { "x-key": "中文" } }, { secretHeaders: { "x-key": "one\r\ntwo" } },
+      { secretHeaders: { "bad name": "value" } }, { secretHeaders: { "请求头": "value" } },
+      { secretHeaders: { "": "value" } }, { secretHeaders: { "x-key": "value\u007f" } }
+    ]) {
+      expect(connectionInputSchema.safeParse({ ...base, ...patch }).success).toBe(false);
+      expect(connectionInputPatchSchema.safeParse(patch).success).toBe(false);
+    }
+    expect(connectionInputPatchSchema.parse({ name: "Rename only" })).toMatchObject({ name: "Rename only" });
+    expect(connectionInputSchema.parse({ ...base, apiKey: "", secretHeaders: { "X-Key": "latin-1-\u00e9\tvalue" } }).secretHeaders)
+      .toEqual({ "X-Key": "latin-1-\u00e9\tvalue" });
   });
 
   it("validates model boundaries and required nested settings", () => {
