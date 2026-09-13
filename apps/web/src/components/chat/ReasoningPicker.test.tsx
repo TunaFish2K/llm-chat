@@ -23,7 +23,7 @@ it.each(["none", "default"])("distinguishes native %s from provider default", as
   const onChange = vi.fn();
   render(<ReasoningPicker value={{ mode: "default" }} model={model()} onChange={onChange} />);
   await userEvent.setup().click(screen.getByRole("button"));
-  expect(screen.getByRole("button", { name: "提供商默认" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "默认" })).toHaveAttribute("aria-pressed", "true");
   await userEvent.setup().click(screen.getByRole("button", { name: value }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith({ mode: "effort", value });
 });
@@ -48,7 +48,7 @@ it("restores the vertical slider with native stops, keyboard selection and an op
   const slider = screen.getByRole("slider");
   expect(slider).toHaveAttribute("aria-orientation", "vertical");
   expect(slider).toHaveAttribute("aria-valuemax", "4");
-  expect(slider).toHaveAttribute("aria-valuetext", "提供商默认");
+  expect(slider).toHaveAttribute("aria-valuetext", "默认");
   expect(onChange).not.toHaveBeenCalled();
   slider.focus();
   await user.keyboard("{ArrowUp}");
@@ -89,7 +89,7 @@ it("disables a single-stop slider and resets its range when the model changes", 
   rerender(<ReasoningPicker {...props} model={model()} />);
   expect(screen.getByRole("slider")).not.toHaveAttribute("aria-disabled");
   expect(screen.getByRole("slider")).toHaveAttribute("aria-valuemax", "4");
-  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "提供商默认");
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "默认");
   expect(onChange).not.toHaveBeenCalled();
 });
 

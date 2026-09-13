@@ -31,7 +31,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await page.goto(`/agents/${agent.id}`);
       await page.getByRole("tab", { name: cn ? "执行配置" : "Execution settings", exact: true }).click();
       let levels = page.getByLabel(cn ? "推理档位" : "Reasoning levels", { exact: true });
-      await expect(levels.locator("option")).toHaveText([cn ? "提供商默认" : "Provider default", "minimal", "none", "default"]);
+      await expect(levels.locator("option")).toHaveText([cn ? "默认" : "Default", "minimal", "none", "default"]);
       await levels.selectOption("effort:minimal");
       await page.getByRole("button", { name: cn ? "保存修改" : "Save changes", exact: true }).click();
       await expect(page.getByRole("button", { name: cn ? "已保存" : "Saved", exact: true })).toBeDisabled();
@@ -40,7 +40,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await page.locator("[data-execution-settings]").click();
       dialog = page.getByRole("dialog");
       levels = dialog.getByLabel(cn ? "推理档位" : "Reasoning levels", { exact: true });
-      await expect(levels.locator("option")).toHaveText([cn ? "跟随 Agent · minimal" : "Follow Agent · minimal", cn ? "提供商默认" : "Provider default", "minimal", "none", "default"]);
+      await expect(levels.locator("option")).toHaveText([cn ? "跟随 Agent · minimal" : "Follow Agent · minimal", cn ? "默认" : "Default", "minimal", "none", "default"]);
       await levels.selectOption("effort:none");
       await dialog.getByRole("button", { name: cn ? "保存" : "Save", exact: true }).click();
       await expect(dialog).toHaveCount(0);
@@ -50,9 +50,9 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       expect(provider.requests[0].reasoning_effort).toBe("none");
       await expect(page.locator(".composer-stop-button")).toHaveCount(0);
       await page.locator(".reasoning-trigger").click();
-      await page.locator(".reasoning-popover").getByRole("button", { name: cn ? "提供商默认" : "Provider default", exact: true }).click();
+      await page.locator(".reasoning-popover").getByRole("button", { name: cn ? "默认" : "Default", exact: true }).click();
       await page.keyboard.press("Escape");
-      await page.locator(".composer textarea").first().fill("Provider default");
+      await page.locator(".composer textarea").first().fill("Default");
       await page.getByRole("button", { name: cn ? "发送" : "Send", exact: true }).click();
       await expect.poll(() => provider.requests.length).toBe(2);
       expect(provider.requests[1]).not.toHaveProperty("reasoning_effort");
