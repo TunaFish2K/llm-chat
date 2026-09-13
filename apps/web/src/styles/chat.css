@@ -1270,6 +1270,19 @@
 .model-field-value > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-field-value > small { color: var(--text-muted); }
 
+.model-picker-popover {
+  max-width: min(calc(100vw - 24px), var(--radix-popover-content-available-width));
+  max-height: min(60dvh, 520px, var(--radix-popover-content-available-height));
+  overflow-y: auto;
+}
+.model-picker-popover > header,
+.model-picker-popover > .search-field,
+.model-picker-popover > .picker-footer { flex-shrink: 0; }
+.model-picker-popover .picker-list {
+  flex: 1 1 auto;
+  min-height: 96px;
+  overflow-y: auto;
+}
 .model-picker-popover mark { color: var(--accent); background: var(--accent-soft); }
 .model-picker-popover .model-option[data-selected] mark { color: var(--text-invert); background: var(--accent); }
 .model-picker-popover[data-searching] .model-option strong,

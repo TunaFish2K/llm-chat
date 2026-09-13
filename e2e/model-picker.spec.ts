@@ -1,3 +1,4 @@
+import { expectModelPickerInsideViewport } from "./model-picker-layout";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 
@@ -38,10 +39,7 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
         const highlights = await panel.locator(selector).allTextContents();
         expect(highlights.length).toBeGreaterThan(0);
         for (const text of expected) expect(highlights).toContain(text);
-        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        const rect = await panel.boundingBox();
-        expect(rect!.x).toBeGreaterThanOrEqual(0);
-        expect(rect!.x + rect!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+        await expectModelPickerInsideViewport(page);
       }
     };
     try {
