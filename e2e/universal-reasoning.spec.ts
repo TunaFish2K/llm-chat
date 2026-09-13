@@ -59,6 +59,22 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await expect.poll(() => provider.requests.length).toBe(2);
       expect(provider.requests[1]).not.toHaveProperty("reasoning_effort");
       await expect(page.locator(".composer-stop-button")).toHaveCount(0);
+      await page.locator(".composer-settings-trigger").click();
+      await page.locator("[data-execution-settings]").click();
+      dialog = page.getByRole("dialog");
+      await dialog.getByLabel(cn ? "推理档位" : "Reasoning levels", { exact: true }).selectOption("inherit");
+      await dialog.getByRole("button", { name: cn ? "保存" : "Save", exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      expect((await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toBeUndefined();
+      await page.locator(".reasoning-trigger").click();
+      await expect(page.locator(".reasoning-popover").getByRole("slider")).toHaveAttribute("aria-valuetext", "minimal");
+      await expect(page.locator(".reasoning-popover").getByRole("checkbox")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await page.locator(".composer textarea").first().fill("Restored Agent preference");
+      await page.getByRole("button", { name: cn ? "发送" : "Send", exact: true }).click();
+      await expect.poll(() => provider.requests.length).toBe(3);
+      expect(provider.requests[2].reasoning_effort).toBe("minimal");
+      await expect(page.locator(".composer-stop-button")).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     } finally {
       await page.goto("about:blank");

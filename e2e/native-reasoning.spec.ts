@@ -18,11 +18,16 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await page.goto(`/c/${conversation.id}`);
       const composer = page.locator(".composer textarea").first();
       await composer.fill("Keep this draft");
-      await page.locator(".reasoning-trigger").click();
+      const trigger = page.locator(".reasoning-trigger");
+      const triggerLabel = locale === "zh-CN" ? "推理档位：xhigh" : "Reasoning effort: xhigh";
+      await expect(trigger).toHaveAccessibleName(triggerLabel);
+      await expect(trigger).toHaveAttribute("title", triggerLabel);
+      await trigger.click();
       const popover = page.locator(".reasoning-popover");
       await expect(popover.getByRole("alert")).toHaveCount(0);
       await expect(popover.getByRole("slider")).toHaveAttribute("aria-valuetext", "xhigh");
-      await expect(popover.getByRole("checkbox")).toBeChecked();
+      await expect(popover.getByRole("checkbox")).toHaveCount(0);
+      await expect(popover.getByText(/跟随 Agent|Follow Agent/)).toHaveCount(0);
       expect((await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toBeUndefined();
       await expect(popover.getByRole("button", { name: "max", exact: true })).toHaveCount(0);
       await expect(popover.getByRole("button").filter({ hasText: /^(low|medium|high|xhigh)$/ })).toHaveText(["xhigh", "high", "medium", "low"]);
