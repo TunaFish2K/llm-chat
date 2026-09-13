@@ -73,9 +73,9 @@ export interface GenerateRequest {
   tools?: ProviderToolDefinition[];
   /**
    * Effective settings for this generation. The server has already
-   * resolved `settings.reasoningEffort` (top-level); adapters must
-   * consult that field only, and must also honour `capabilities` to
-   * decide whether a thinking/reasoning knob is actually safe to emit.
+   * resolved `settings.reasoningSelection` for the current model.
+   * Adapters use providerReasoningEffort, which also reads legacy
+   * reasoningEffort snapshots, and honour the model capabilities.
    */
   settings: GenerationSettings;
   capabilities: ModelCapabilities;

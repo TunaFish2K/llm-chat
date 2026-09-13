@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MIGRATION_V1, Store } from "./database";
-import { resolveManualThinkingBudget } from "./generation-policy";
+import { providerReasoningEffort } from "@llm-chat/contracts";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 import { appSettingsUpdateSchema } from "@llm-chat/contracts";
 import { defaultRoleplayConfig } from "./roleplay";
@@ -100,13 +100,6 @@ describe("Store", () => {
 
     expect(state).toMatchObject({ authorNote: "Keep this branch note", variables: { chapter: 2 } });
     expect(store.getConversationRoleplayState(fork.conversation.id)).toEqual(state);
-  });
-
-  it("inserts xhigh between the existing manual Thinking budget tiers", () => {
-    expect(resolveManualThinkingBudget("high", 10_000)).toBe(5_500);
-    expect(resolveManualThinkingBudget("xhigh", 10_000)).toBe(6_750);
-    expect(resolveManualThinkingBudget("max", 10_000)).toBe(8_000);
-    expect(resolveManualThinkingBudget("xhigh", 10_000, 2_000)).toBe(4_400);
   });
 
   it("enables the bundled llm-chat operator for the protected default Agent", () => {
@@ -711,30 +704,30 @@ describe("Store", () => {
     });
     updateDefaultAgentExecution(store, { reasoningEffort: "high" });
     const started = store.startConversation({ text: "hi", agentId: store.getSettings().defaultAgentId, greetingIndex: 0, executionOverrides: { modelId: model.id, reasoningEffort: "high" } });
-    expect(store.getGeneration(started.generation.generationId)?.settings.reasoningEffort).toBe("high");
+    expect(providerReasoningEffort(store.getGeneration(started.generation.generationId)!.settings)).toBe("high");
 
     updateDefaultAgentExecution(store, { reasoningEffort: "xhigh" });
     const second = store.createMessageGeneration(started.conversation.id, "继续");
-    expect(store.getGeneration(second.generationId)?.settings.reasoningEffort).toBe("high");
+    expect(providerReasoningEffort(store.getGeneration(second.generationId)!.settings)).toBe("high");
 
     updateDefaultAgentExecution(store, { reasoningEffort: "max" });
     const retry = store.createRetryGeneration(second.assistantMessageId);
-    expect(store.getGeneration(retry.generationId)?.settings.reasoningEffort).toBe("high");
-    expect(store.getGeneration(started.generation.generationId)?.settings.reasoningEffort).toBe("high");
+    expect(providerReasoningEffort(store.getGeneration(retry.generationId)!.settings)).toBe("high");
+    expect(providerReasoningEffort(store.getGeneration(started.generation.generationId)!.settings)).toBe("high");
     store.close();
   });
 
-  it("rejects reasoning effort atomically when the model lacks reasoning capability", () => {
+  it("uses default without changing the preference when the model lacks reasoning capability", () => {
     const store = createStore();
     const { model } = seedModel(store); // seedModel has reasoning: false
     updateDefaultAgentExecution(store, { reasoningEffort: "high" });
-    expect(() => store.startConversation({ text: "hi", modelId: model.id }))
-      .toThrow(/不支持推理/);
-    expect(store.listConversations()).toHaveLength(0);
+    const started = store.startConversation({ text: "hi", modelId: model.id });
+    expect(providerReasoningEffort(store.getGeneration(started.generation.generationId)!.settings)).toBeNull();
+    expect(store.getAgent(store.getSettings().defaultAgentId)!.execution.reasoningEffort).toBe("high");
     store.close();
   });
 
-  it("rejects anthropic manual thinking when maxOutputTokens is too small", () => {
+  it("defaults legacy manual Thinking without inventing levels or a token budget", () => {
     const store = createStore();
     const anthropicConnection = store.createConnection({
       name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
@@ -750,16 +743,16 @@ describe("Store", () => {
       enabled: true
     });
     updateDefaultAgentExecution(store, { reasoningEffort: "low" });
-    expect(() => store.startConversation({ text: "hi", modelId: model.id }))
-      .toThrow(/输出上限过低/);
-    expect(store.listConversations()).toHaveLength(0);
+    const first = store.startConversation({ text: "hi", modelId: model.id });
+    expect(providerReasoningEffort(store.getGeneration(first.generation.generationId)!.settings)).toBeNull();
+    expect(store.getGeneration(first.generation.generationId)!.settings.resolvedThinkingBudgetTokens).toBeUndefined();
     updateDefaultAgentExecution(store, { reasoningEffort: "none" });
     const ok = store.startConversation({ text: "hi", modelId: model.id });
     expect(ok.generation.generationId).toBeTruthy();
     store.close();
   });
 
-  it("rejects anthropic manual thinking when the effective defaultSettings ceiling is <= 1024", () => {
+  it("preserves token ceilings while defaulting manual Thinking models without native levels", () => {
     const store = createStore();
     const anthropicConnection = store.createConnection({
       name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
@@ -777,10 +770,10 @@ describe("Store", () => {
       enabled: true
     });
     updateDefaultAgentExecution(store, { reasoningEffort: "low" });
-    expect(() => store.startConversation({ text: "hi", modelId: model.id }))
-      .toThrow(/输出上限过低/);
-    expect(store.listConversations()).toHaveLength(0);
-    // Raising the effective default ceiling unblocks the same model row.
+    const first = store.startConversation({ text: "hi", modelId: model.id });
+    expect(providerReasoningEffort(store.getGeneration(first.generation.generationId)!.settings)).toBeNull();
+    expect(store.getGeneration(first.generation.generationId)!.settings.resolvedThinkingBudgetTokens).toBeUndefined();
+    // Raising the output ceiling does not invent native reasoning levels.
     store.updateModel(model.id, {
       defaultSettings: {
         common: { maxOutputTokens: 4096, stopSequences: [] },
@@ -791,7 +784,7 @@ describe("Store", () => {
     expect(ok.generation.generationId).toBeTruthy();
     const generation = store.getGeneration(ok.generation.generationId);
     expect(generation?.settings.common.maxOutputTokens).toBe(4096);
-    expect(generation?.settings.resolvedThinkingBudgetTokens).toBe(1024);
+    expect(generation?.settings.resolvedThinkingBudgetTokens).toBeUndefined();
     store.close();
   });
 

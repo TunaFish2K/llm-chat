@@ -5,16 +5,19 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { makeModel } from "../../../test/fixtures";
 import { ReasoningPicker } from "./ReasoningPicker";
+import { ReasoningSelect } from "../ReasoningControl";
 
 const model = () => { const model = makeModel(); return { ...model, capabilities: { ...model.capabilities, reasoning: true }, detectedReasoningEfforts: ["minimal", "high", "none", "default"] }; };
 
-it("shows native order and no false selection for unsupported inheritance", async () => {
+it("selects the adapted inherited level without warnings or rewriting the preference", async () => {
   const onChange = vi.fn();
   render(<ReasoningPicker value={undefined} inherited={{ mode: "effort", value: "max" }} model={model()} onChange={onChange} />);
   await userEvent.setup().click(screen.getByRole("button"));
-  expect(screen.getByRole("alert")).toHaveTextContent("当前模型不支持 max");
-  expect(screen.getByRole("button", { name: /^跟随.*max/ })).toBeDisabled();
-  expect(screen.queryByRole("button", { pressed: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: "跟随 Agent · high" })).toBeChecked();
+  expect(screen.getByRole("button", { name: "high" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "high");
+  expect(onChange).not.toHaveBeenCalled();
   await userEvent.setup().click(screen.getByRole("button", { name: "minimal" }));
   expect(onChange).toHaveBeenCalledExactlyOnceWith({ mode: "effort", value: "minimal" });
 });
@@ -31,7 +34,8 @@ it.each(["none", "default"])("distinguishes native %s from provider default", as
 it("offers only provider default for unknown models", async () => {
   render(<ReasoningPicker value={{ mode: "default" }} model={{ ...model(), detectedReasoningEfforts: null }} onChange={() => {}} />);
   await userEvent.setup().click(screen.getByRole("button"));
-  expect(screen.getByText("未识别到原生档位。可在模型设置中手动补充。")).toBeVisible();
+  expect(screen.queryByText(/未识别|不支持/)).not.toBeInTheDocument();
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "默认");
   expect(screen.queryByRole("button", { name: "high" })).not.toBeInTheDocument();
 });
 
@@ -66,14 +70,14 @@ it("restores the vertical slider with native stops, keyboard selection and an op
   expect(screen.getByRole("button")).toHaveFocus();
 });
 
-it("marks unsupported values as unselected and allows choosing default with Home", async () => {
+it("adapts unsupported values without saving and allows explicitly choosing default with Home", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();
   render(<ReasoningPicker value={{ mode: "effort", value: "max" }} model={model()} onChange={onChange} />);
   await user.click(screen.getByRole("button"));
   const slider = screen.getByRole("slider");
-  expect(slider).toHaveAttribute("aria-invalid", "true");
-  expect(slider).toHaveAttribute("aria-valuetext", expect.stringContaining("max"));
+  expect(slider).not.toHaveAttribute("aria-invalid");
+  expect(slider).toHaveAttribute("aria-valuetext", "high");
   expect(onChange).not.toHaveBeenCalled();
   slider.focus();
   await user.keyboard("{Home}");
@@ -109,4 +113,44 @@ it("blocks changes while saving and restores trigger focus after closing during 
   expect(screen.queryByRole("slider")).not.toBeInTheDocument();
   rerender(<ReasoningPicker {...props} />);
   expect(screen.getByRole("button")).toHaveFocus();
+});
+
+it("restores a preference when switching back to a supporting model without calling onChange", async () => {
+  const onChange = vi.fn();
+  const props = { value: { mode: "effort", value: "max" } as ReasoningSelection, onChange };
+  const full = { ...model(), detectedReasoningEfforts: ["low", "high", "max"] };
+  const { rerender } = render(<ReasoningPicker {...props} model={full} />);
+  await userEvent.setup().click(screen.getByRole("button"));
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "max");
+  rerender(<ReasoningPicker {...props} model={model()} />);
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "high");
+  rerender(<ReasoningPicker {...props} model={full} />);
+  expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "max");
+  expect(onChange).not.toHaveBeenCalled();
+});
+
+it("fixes the effective level when leaving inheritance and removes the override when following again", async () => {
+  const onChange = vi.fn();
+  const inherited = { mode: "effort", value: "max" } as const;
+  const { rerender } = render(<ReasoningPicker value={undefined} inherited={inherited} model={model()} onChange={onChange} />);
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button"));
+  await user.click(screen.getByRole("checkbox"));
+  expect(onChange).toHaveBeenLastCalledWith({ mode: "effort", value: "high" });
+  rerender(<ReasoningPicker value={{ mode: "effort", value: "high" }} inherited={inherited} model={model()} onChange={onChange} />);
+  await user.click(screen.getByRole("checkbox"));
+  expect(onChange).toHaveBeenLastCalledWith(undefined);
+});
+
+it("shows effective values in editors without rewriting raw or inherited preferences", () => {
+  const onChange = vi.fn();
+  const requested = { mode: "effort", value: "max" } as const;
+  const { rerender } = render(<ReasoningSelect value={requested} model={model()} onChange={onChange} />);
+  expect(screen.getByRole("combobox")).toHaveValue("effort:high");
+  expect(screen.queryByRole("option", { name: /max|不支持/ })).not.toBeInTheDocument();
+  rerender(<ReasoningSelect value={undefined} inherited={requested} model={model()} onChange={onChange} />);
+  expect(screen.getByRole("combobox")).toHaveValue("inherit");
+  expect(screen.getByRole("option", { name: "跟随 Agent · high" })).toBeEnabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(onChange).not.toHaveBeenCalled();
 });

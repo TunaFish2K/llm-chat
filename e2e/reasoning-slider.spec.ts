@@ -66,10 +66,10 @@ for (const locale of ["zh-CN", "en-US"] as const) {
         await expect(slider).toBeFocused();
         await expect(slider).not.toHaveAttribute("aria-disabled");
         await page.keyboard.press("Home");
-        await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toBeUndefined();
+        await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toEqual({ mode: "default" });
         await expect(slider).not.toHaveAttribute("aria-disabled");
         await page.keyboard.press("ArrowUp");
-        await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toEqual({ mode: "default" });
+        await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toEqual({ mode: "effort", value: "low" });
         await expect(slider).not.toHaveAttribute("aria-disabled");
         await popover.getByRole("button", { name: "low", exact: true }).click();
         await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toEqual({ mode: "effort", value: "low" });
@@ -84,8 +84,10 @@ for (const locale of ["zh-CN", "en-US"] as const) {
         await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { reasoningEffortsOverride: longLevels });
         await page.reload();
         await page.locator(".reasoning-trigger").click();
-        await expect(popover.getByRole("alert")).toBeVisible();
-        await expect(popover.locator("button[aria-pressed=true]")).toHaveCount(0);
+        await expect(popover.getByRole("alert")).toHaveCount(0);
+        await expect(slider).toHaveAttribute("aria-valuetext", longLevels.at(-1)!);
+        await expect(popover.locator("button[aria-pressed=true]")).toHaveCount(1);
+        expect((await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toEqual({ mode: "effort", value: "low" });
         const box = (await popover.boundingBox())!;
         expect(box.x).toBeGreaterThanOrEqual(0);
         expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
