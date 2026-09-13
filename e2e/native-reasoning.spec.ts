@@ -33,7 +33,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await page.getByRole("tab", { name: locale === "zh-CN" ? "执行配置" : "Execution settings", exact: true }).click();
       const levels = page.getByLabel(locale === "zh-CN" ? "推理档位" : "Reasoning levels", { exact: true });
       await expect(levels.locator('option[value="effort:max"]')).toBeDisabled();
-      await expect(levels.locator("option:not(:disabled)")).toHaveText([locale === "zh-CN" ? "提供商默认" : "Provider default", "low", "medium", "high", "xhigh"]);
+      await expect(levels.locator("option:not(:disabled)")).toHaveText([locale === "zh-CN" ? "默认" : "Default", "low", "medium", "high", "xhigh"]);
     } finally {
       await page.goto("about:blank");
       await api(request, APP_URL, "DELETE", `/api/conversations/${conversation.id}`);

@@ -53,7 +53,7 @@ export function buildEffectiveSettings(
   if (nativeEffort !== null && (!capabilities.reasoning || (!legacyBudget && !advertised.includes(nativeEffort)))) {
     const message = `模型 ${model.displayName} 不支持推理强度 ${nativeEffort}`;
     if (!advertised.length) {
-      throw withMessage(new StoreError("reasoning_effort_unsupported", `${message}，请使用提供商默认，或在模型设置中补充原生档位`),
+      throw withMessage(new StoreError("reasoning_effort_unsupported", `${message}，请使用默认，或在模型设置中补充原生档位`),
         "error.reasoning_efforts_unknown", { model: model.displayName, effort: nativeEffort });
     }
     throw withMessage(new StoreError("reasoning_effort_unsupported", `${message}，请选择：${advertised.join(" / ")}`),
