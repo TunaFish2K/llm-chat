@@ -42,7 +42,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
         const label = entry.effective ?? (locale === "zh-CN" ? "默认" : "Default");
         await expect(popover.getByRole("slider")).toHaveAttribute("aria-valuetext", label);
         await expect(popover.getByRole("alert")).toHaveCount(0);
-        await expect(popover.getByRole("checkbox")).not.toBeChecked();
+        await expect(popover.getByRole("checkbox")).toHaveCount(0);
         await expect(popover.locator(".reasoning-labels button")).toHaveCount(entry.model.reasoningEffortsOverride.length + 1);
         expect((await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.reasoningSelection).toEqual(preference);
         await page.keyboard.press("Escape");

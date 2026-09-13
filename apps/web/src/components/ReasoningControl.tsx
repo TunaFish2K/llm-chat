@@ -28,7 +28,7 @@ export function reasoningControl({ model, value, inherited }: Omit<ReasoningCont
     ...profile.values.map(effort => ({ key: `effort:${effort}`, label: effort }))
   ];
   return { options, current, key: reasoningKey(current), following, inheritedLabel,
-    label: following ? inheritedLabel! : reasoningLabel(current) };
+    label: reasoningLabel(current) };
 }
 
 export function ReasoningSelect(props: ReasoningControlProps) {

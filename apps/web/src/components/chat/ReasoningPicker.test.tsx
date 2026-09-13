@@ -12,9 +12,12 @@ const model = () => { const model = makeModel(); return { ...model, capabilities
 it("selects the adapted inherited level without warnings or rewriting the preference", async () => {
   const onChange = vi.fn();
   render(<ReasoningPicker value={undefined} inherited={{ mode: "effort", value: "max" }} model={model()} onChange={onChange} />);
-  await userEvent.setup().click(screen.getByRole("button"));
+  const trigger = screen.getByRole("button", { name: "推理档位：high" });
+  expect(trigger).toHaveAttribute("title", "推理档位：high");
+  await userEvent.setup().click(trigger);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-  expect(screen.getByRole("checkbox", { name: "跟随 Agent · high" })).toBeChecked();
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.queryByText(/跟随 Agent/)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "high" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getByRole("slider")).toHaveAttribute("aria-valuetext", "high");
   expect(onChange).not.toHaveBeenCalled();
@@ -129,17 +132,16 @@ it("restores a preference when switching back to a supporting model without call
   expect(onChange).not.toHaveBeenCalled();
 });
 
-it("fixes the effective level when leaving inheritance and removes the override when following again", async () => {
+it("allows restoring inheritance in the conversation editor", async () => {
   const onChange = vi.fn();
   const inherited = { mode: "effort", value: "max" } as const;
-  const { rerender } = render(<ReasoningPicker value={undefined} inherited={inherited} model={model()} onChange={onChange} />);
+  const { rerender } = render(<ReasoningSelect value={{ mode: "effort", value: "high" }} inherited={inherited} model={model()} onChange={onChange} />);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button"));
-  await user.click(screen.getByRole("checkbox"));
-  expect(onChange).toHaveBeenLastCalledWith({ mode: "effort", value: "high" });
-  rerender(<ReasoningPicker value={{ mode: "effort", value: "high" }} inherited={inherited} model={model()} onChange={onChange} />);
-  await user.click(screen.getByRole("checkbox"));
-  expect(onChange).toHaveBeenLastCalledWith(undefined);
+  await user.selectOptions(screen.getByRole("combobox"), "inherit");
+  expect(onChange).toHaveBeenCalledExactlyOnceWith(undefined);
+  rerender(<ReasoningSelect value={undefined} inherited={inherited} model={model()} onChange={onChange} />);
+  expect(screen.getByRole("combobox")).toHaveValue("inherit");
+  expect(screen.getByRole("option", { name: "跟随 Agent · high" })).toBeEnabled();
 });
 
 it("shows effective values in editors without rewriting raw or inherited preferences", () => {

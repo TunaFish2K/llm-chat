@@ -1511,7 +1511,6 @@
 .conversation-action-slot { display: flex; flex: 0 0 auto; }
 .conversation-action-slot:empty { display: none; }
 .reasoning-popover { z-index: 75; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); width: 280px; max-width: calc(100vw - 24px); max-height: min(480px, 65dvh); overflow-y: auto; }
-.reasoning-inherit { margin: 0; overflow-wrap: anywhere; }
 /* Equal rows keep every native label aligned with its discrete slider stop. */
 .reasoning-steps { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; flex: 0 0 auto; }
 .reasoning-rail { position: relative; }

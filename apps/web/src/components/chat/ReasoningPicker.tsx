@@ -73,11 +73,6 @@ export function ReasoningPicker(props: ReasoningControlProps) {
         restoreFocus.current = Boolean(trigger.current?.disabled);
         if (!restoreFocus.current) trigger.current?.focus({ preventScroll: true });
       }}>
-      {props.inherited ? <label className="checkbox-row reasoning-inherit">
-        <input type="checkbox" checked={state.following} disabled={props.disabled}
-          onChange={event => props.onChange(event.target.checked ? undefined : state.current)} />
-        {state.inheritedLabel}
-      </label> : null}
       <ReasoningSlider key={JSON.stringify([props.model?.id, state.options])}
         state={state} disabled={props.disabled} onChange={props.onChange} />
     </Popover.Content></Popover.Portal>
