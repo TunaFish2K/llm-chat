@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "./app";
 import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
+import { LocalContainerEngine } from "./container-engine";
 
 const dirs: string[] = [];
 const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
@@ -21,6 +22,29 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("reports local engines and scopes environment controls to their conversation", async () => {
+    const probe = vi.spyOn(LocalContainerEngine.prototype, "probe").mockImplementation(async function (this: LocalContainerEngine) {
+      return { engine: this.engine, available: false, version: null, error: "Not installed" };
+    });
+    const app = await testApp();
+    const conversation = app.store.createConversation({ systemPrompt: "" });
+    expect(probe).not.toHaveBeenCalled();
+    const catalog = await app.inject({ method: "GET", url: "/api/container-engines" });
+    expect(catalog.statusCode).toBe(200);
+    expect(catalog.json()).toEqual([
+      { engine: "docker", available: false, version: null, error: "Not installed" },
+      { engine: "podman", available: false, version: null, error: "Not installed" }
+    ]);
+    const list = await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/environments` });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toEqual([]);
+    expect((await app.inject({ method: "GET", url: "/api/conversations/missing/environments" })).statusCode).toBe(404);
+    const wrong = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/environments/foreign/stop`, payload: { reset: true } });
+    expect(wrong.statusCode).toBe(400);
+    expect(wrong.json().error.message).toBe("Environment not found");
+    expect((await app.inject({ method: "POST", url: "/api/conversations/missing/environments/foreign/stop", payload: {} })).statusCode).toBe(404);
+  });
+
   it("removes dedicated Codex APIs and tools while keeping background tools and old session data", async () => {
     const app = await testApp();
     const conversation = app.store.createConversation({ systemPrompt: "" });

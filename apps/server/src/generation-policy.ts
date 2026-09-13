@@ -115,6 +115,7 @@ export function resolveGenerationPlan({ conversation, agent, model, connection, 
     skillRevisions: {},
     toolRevisions: {},
     execution: {
+      environment: agent.execution.environment ?? { type: "host" },
       modelId,
       visionModelId: agent.execution.visionModelId,
       search: agent.execution.search,

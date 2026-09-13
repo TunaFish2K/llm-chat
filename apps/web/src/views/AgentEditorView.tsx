@@ -1,4 +1,5 @@
 import { effectiveReasoningSelection } from "@llm-chat/contracts";
+import { EnvironmentSettings } from "../components/EnvironmentSettings";
 import { ReasoningSelect } from "../components/ReasoningControl";
 import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
 import { useErrorState } from "../lib/error-display";
@@ -515,6 +516,7 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
   return (
     <div>
       <div className="card">
+        <EnvironmentSettings value={execution.environment} onChange={environment => setExecution({ environment })} />
         <h3>{t("AgentEditorView.model_and_reasoning")}</h3>
         <Field label={t("InspectorPanel.model")} hint={t("AgentEditorView.when_blank_new_conversations_use_the_most_recently_selected_model")}>
           <select
@@ -728,7 +730,7 @@ function ToolsTab({
           </tr>
         </thead>
         <tbody>
-          {catalog.map((tool) => {
+          {catalog.filter(tool => agent.execution.environment?.type !== "container" || tool.name !== "workspace_shell_readonly").map((tool) => {
             const enabled = tools.overrides[tool.name];
             const direct = tools.directOverrides?.[tool.name];
             const approval = tools.approvalOverrides[tool.name];
@@ -761,14 +763,14 @@ function ToolsTab({
                   />
                 </td>
                 <td data-label={t("SettingsView.approval")}>
-                  <PolicySelector
+                  {agent.execution.environment?.type === "container" && tool.sourceKind === "builtin" && /^(workspace_|background_)/.test(tool.name) ? <span>{t("environment.automatic")}</span> : <PolicySelector
                     label={t("AgentEditorView.approval_policy", { value1: (toolLabel(tool)) })}
                     value={approval ?? "default"}
                     options={[["default", t("AgentEditorView.default")], ["always", t("AgentEditorView.always")], ["never", t("AgentEditorView.never")]]}
                     onChange={(value) => {
                       setApproval(tool.name, value === "default" ? null : value);
                     }}
-                  />
+                  />}
                 </td>
               </tr>
             );

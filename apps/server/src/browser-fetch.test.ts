@@ -83,6 +83,19 @@ it("rejects credentials, other protocols and mixed public/private DNS answers", 
   await expect(browserResource(new URL("https://example.com"), {}, new AbortController().signal)).rejects.toThrow("blocked");
 });
 
+it("allows private destinations only for the container request while keeping URL and size limits", async () => {
+  mocks.lookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+  browserFixture();
+  const manager = new BrowserFetchManager();
+  expect(JSON.parse(await manager.fetch("http://localhost:3000", new AbortController().signal, true)).text).toBe("rendered by JavaScript");
+  await expect(manager.fetch("http://localhost:3000", new AbortController().signal)).rejects.toThrow("blocked");
+  await expect(browserResource(new URL("file:///etc/passwd"), {}, new AbortController().signal, true)).rejects.toThrow("HTTP");
+  await expect(browserResource(new URL("http://user:password@localhost"), {}, new AbortController().signal, true)).rejects.toThrow("credentials");
+  respond(Buffer.alloc(2 * 1024 * 1024 + 1));
+  await expect(browserResource(new URL("http://localhost"), {}, new AbortController().signal, true)).rejects.toThrow("2 MiB");
+  await manager.close();
+});
+
 it("bounds each resource and honors a pre-aborted request", async () => {
   respond(Buffer.alloc(2 * 1024 * 1024 + 1));
   await expect(browserResource(new URL("https://example.com"), {}, new AbortController().signal)).rejects.toThrow("2 MiB");

@@ -25,7 +25,7 @@ export function executeShell(command: string, cwd: string, timeout: number, sign
 /** All launch paths share cancellation, output bounds and process-group cleanup. */
 export function executeProcess(
   executable: string, args: string[], cwd: string, timeout: number, signal: AbortSignal,
-  options: { env?: NodeJS.ProcessEnv; fds?: number[] } = {}
+  options: { env?: NodeJS.ProcessEnv; fds?: number[]; onStop?: (signal: "SIGTERM" | "SIGKILL") => Promise<void> } = {}
 ): Promise<string> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
@@ -41,8 +41,19 @@ export function executeProcess(
     };
     const stop = () => {
       if (killTimer || finished) return;
-      kill("SIGTERM");
-      killTimer = setTimeout(() => { kill("SIGKILL"); finish(); }, 1000);
+      if (options.onStop) {
+        // Terminate the actual container process before detaching its CLI transport.
+        void options.onStop("SIGTERM").catch(() => {}).then(() => {
+          if (killTimer) clearTimeout(killTimer);
+          if (!finished) killTimer = setTimeout(() => {
+            void options.onStop!("SIGKILL").catch(() => {}).finally(() => { kill("SIGKILL"); finish(); });
+          }, 1200);
+        });
+        killTimer = setTimeout(() => { kill("SIGKILL"); finish(); }, 8000);
+      } else {
+        kill("SIGTERM");
+        killTimer = setTimeout(() => { kill("SIGKILL"); finish(); }, 1000);
+      }
     };
     const abort = () => { result.cancelled = true; stop(); };
     const timer = setTimeout(() => { result.timedOut = true; stop(); }, timeout);

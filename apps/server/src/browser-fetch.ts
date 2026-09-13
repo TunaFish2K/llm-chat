@@ -4,7 +4,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { firefox, type BrowserContext, type Browser } from "playwright-core";
-import { assertPublicUrl } from "./tools";
+import { assertHttpUrl, assertPublicUrl } from "./tools";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -20,9 +20,10 @@ async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 // Resolve once, validate every answer, then pin the actual socket to that answer.
-export async function browserResource(url: URL, headers: Record<string, string>, signal: AbortSignal) {
+export async function browserResource(url: URL, headers: Record<string, string>, signal: AbortSignal, allowPrivate = false) {
+  assertHttpUrl(url);
   const addresses = await abortable(lookup(url.hostname.replace(/^\[|\]$/g, ""), { all: true }), signal);
-  await assertPublicUrl(url, (async () => addresses) as unknown as typeof lookup);
+  if (!allowPrivate) await assertPublicUrl(url, (async () => addresses) as unknown as typeof lookup);
   signal.throwIfAborted();
   return new Promise<{ status: number; headers: Record<string, string>; body: Buffer }>((resolve, reject) => {
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
@@ -66,7 +67,7 @@ export class BrowserFetchManager {
   }
   get available(): boolean { return existsSync(this.executablePath) && !this.closing; }
 
-  async fetch(rawUrl: string, callerSignal: AbortSignal): Promise<string> {
+  async fetch(rawUrl: string, callerSignal: AbortSignal, allowPrivate = false): Promise<string> {
     callerSignal.throwIfAborted();
     if (!this.available) { const descriptor = this.errorI18n ?? { key: "runtime.browser_closed" as const }; throw withMessage(new Error(this.error ?? "浏览器已关闭"), descriptor.key, descriptor.params); }
     if (this.active >= 2) throw withMessage(new Error("浏览器并发已达上限，请稍后重试"), "error.the_browser_concurrency_limit_has_been_reached_try_again_later");
@@ -79,7 +80,8 @@ export class BrowserFetchManager {
     const abort = () => { void browser?.close().catch(() => {}); };
     signal.addEventListener("abort", abort, { once: true });
     try {
-      await abortable(assertPublicUrl(new URL(rawUrl), lookup), signal);
+      assertHttpUrl(new URL(rawUrl));
+      if (!allowPrivate) await abortable(assertPublicUrl(new URL(rawUrl), lookup), signal);
       signal.throwIfAborted();
       browser = await firefox.launch({ headless: true, executablePath: this.executablePath, timeout: 10_000,
         firefoxUserPrefs: { "media.peerconnection.enabled": false, "network.dns.disablePrefetch": true, "network.prefetch-next": false } });
@@ -99,7 +101,7 @@ export class BrowserFetchManager {
           if (!["GET", "HEAD"].includes(request.method()) || ["image", "media", "font"].includes(request.resourceType())) {
             await route.abort(); return;
           }
-          const resource = await browserResource(new URL(request.url()), await request.allHeaders(), signal);
+          const resource = await browserResource(new URL(request.url()), await request.allHeaders(), signal, allowPrivate);
           bytes += resource.body.length;
           if (bytes > 8 * MAX_BYTES) throw withMessage(new Error("网页资源总量超过 16 MiB"), "error.web_resources_exceed_16_mib_in_total");
           await route.fulfill(resource);

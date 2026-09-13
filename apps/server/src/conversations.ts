@@ -1,5 +1,6 @@
 import { withMessage } from "@llm-chat/i18n";
 import type { ForkConversationInput } from "@llm-chat/contracts";
+import type { ContainerEnvironments } from "./container-environments";
 import type { Store } from "./database";
 import type { TaskManager } from "./background-tasks";
 import type { ImageGenerationManager } from "./image-generation";
@@ -10,6 +11,7 @@ import { assertImageConfiguration } from "./image-configuration";
 
 interface ConversationDependencies {
   store: Store;
+  environments?: Pick<ContainerEnvironments, "cleanupDeleted">;
   tasks: Pick<TaskManager, "hasNonterminalForConversation">;
   imageJobs: Pick<ImageGenerationManager, "hasActiveForConversation">;
   files: Pick<ImageService, "cloneAttachmentWorkspace" | "materializeMessageAttachments" | "scheduleAttachmentWorkspaceCleanup">;
@@ -32,6 +34,7 @@ export class ConversationService {
     }
     if (!store.deleteConversation(id)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     for (const target of ids) events.emit({ type: "resource-changed", resource: "conversations", resourceId: target });
+    await this.deps.environments?.cleanupDeleted();
     const cleanups = await Promise.allSettled(ids.map((target) => files.scheduleAttachmentWorkspaceCleanup(target)));
     for (const result of cleanups) if (result.status === "rejected") throw result.reason;
   }

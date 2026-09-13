@@ -311,3 +311,53 @@ Firefox。非本机 HTTP 下普通网页可用，但 Service Worker、PWA 安装
 | `/healthz` 为 200 但 `/readyz` 为 503 | 这是启动检查失败或关闭排空的预期信号。查看日志中的 `buildId`，确认 SQLite 可读写、Web 入口存在且进程没有收到停止信号；排空时等待进程退出，不要立刻重叠启动。 |
 | 两个探针都无法连接 | 进程可能尚未监听、已退出或管理器已强制终止。检查管理器退出状态和启动日志，再确认端口、发布目录和运行时环境。 |
 | 密码始终错误 | 检查是否使用当前数据目录首次启动时输出的密码。忘记密码时停服并执行离线密码重置。 |
+
+
+## 会话容器（v44）
+
+Agent 执行设置可选择本机 Linux Docker 或 Podman，以及基于项目运行镜像的自定义镜像。应用使用本机引擎，不连接远程 Docker context。引擎必须能让容器实际加入应用宿主机的网络空间；不能满足此条件的 rootless Docker 配置会被拒绝。Podman 使用本机 rootless 模式时通过 keep-id 映射文件所有者。
+
+先为准备使用的引擎构建基础镜像：
+
+```sh
+sh containers/build.sh docker
+sh containers/build.sh podman
+```
+
+两者分别创建各自引擎中的 `llm-chat-runtime:local`。自定义镜像使用该镜像作为 `FROM`，保留运行时标签和 Node、Shell、用户管理及 sudo 工具。镜像必须在首次执行前准备好；查询设置和普通聊天不会构建、拉取或启动容器。构建过程中若主机 IPv6 出口不可用，可使用 `LLM_CHAT_APT_FORCE_IPV4=true sh containers/build.sh docker`。
+
+应用从 PATH 查找引擎。运行账号需要对应引擎访问权限。不要向会话容器挂载 Docker socket 或整个应用数据目录。运行辅助脚本从对应发布目录只读挂载；保留仍被容器引用的旧发布目录，或在删除该发布目录前重置对应环境。
+
+容器固定使用 host 网络，localhost 即宿主机，路由沿用宿主机 TUN。启动、恢复和执行前同步 DNS 与 hosts；主机代理如按 UID 或进程分流，部署时实际测试对应命令。不同会话运行服务时必须使用不同端口。
+
+后台任务和容器按应用关闭顺序停止。应用重启后会清理遗留执行并保留环境；活动后台任务标记中断，不自动重放。停止环境保留容器可写层，重置环境删除安装的依赖而保留工作目录和附件。容器中自行启动并脱离任务管理的服务不会阻止空闲停止。
+
+SQLite v44 增加环境记录和后台任务的环境引用。升级前停止服务、备份数据。回滚到 v43 服务需要恢复升级前数据库；清理对应 v44 托管容器后再启动旧版本。
+
+### 容器环境备份
+
+备份前停止应用并确认托管容器全部停止。除完整 `dataDir` 外，还需备份用户选择的外置工作目录。针对每个环境记录的 `container_name`，使用对应引擎保存可写层与配置：
+
+```sh
+docker inspect <container-name> > <backup-dir>/container.json
+docker commit <container-name> llm-chat-backup:<environment-id>
+docker save -o <backup-dir>/environment.tar llm-chat-backup:<environment-id>
+```
+
+Podman 使用相同子命令。镜像归档不包含 bind mount 中的工作目录、附件和运行脚本；它们必须随应用数据、外置目录和发布目录分别备份。归档可能包含容器内凭据，备份目录权限应为 `0700`。
+
+恢复时先载入归档镜像，再按保存的 inspect 配置重建原容器名、所有权标签、host 网络和挂载；不要运行原任务。恢复应用数据与外置目录后启动应用。程序会检查容器所有权并清理旧进程。
+
+真实引擎测试使用独立临时数据和带服务标识的测试容器：
+
+```sh
+LLM_CHAT_TEST_CONTAINER_ENGINES=docker,podman pnpm exec vitest run apps/server/src/container-integration.test.ts
+```
+
+未指定该变量时常规测试不启动容器；不要将未运行的引擎集成测试报告为已通过。
+
+桌面和手机端的容器设置、免审批执行及停止、重置流程可使用：
+
+```sh
+LLM_CHAT_TEST_CONTAINER_ENGINES=docker pnpm exec playwright test e2e/container-environments.spec.ts --project=chromium --project=mobile-chromium
+```

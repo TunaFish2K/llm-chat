@@ -1,5 +1,6 @@
 import type { ProviderMessage } from "@llm-chat/providers";
 import type {
+  ExecutionEnvironment,
   AgentSearchConfig,
   AgentRoleplayConfig,
   CharacterCardV2,
@@ -71,6 +72,7 @@ export interface AgentSnapshot {
   skillRevisions: Record<string, string>;
   toolRevisions: Record<string, string>;
   execution: {
+    environment?: ExecutionEnvironment;
     modelId: string;
     visionModelId: string | null;
     search: AgentSearchConfig;

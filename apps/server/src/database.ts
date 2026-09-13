@@ -227,7 +227,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 43) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 44) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1142,6 +1142,19 @@ function migrate(sqlite: DatabaseSyncType): void {
         }
       }
       sqlite.exec("PRAGMA user_version = 43;");
+    }
+    if (current < 44) {
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS conversation_environments (
+        id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, engine TEXT NOT NULL,
+        image TEXT NOT NULL, workspace_path TEXT NOT NULL, container_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'created', error TEXT, last_used_at INTEGER NOT NULL,
+        idle_timeout_minutes INTEGER NOT NULL, created_at INTEGER NOT NULL,
+        UNIQUE(conversation_id, engine, image, workspace_path)
+      );
+      PRAGMA user_version = 44;`);
+      for (const column of ["environment_id", "environment_config_json"]) {
+        if (!hasColumn(sqlite, "background_tasks", column)) sqlite.exec(`ALTER TABLE background_tasks ADD COLUMN ${column} TEXT`);
+      }
     }
     sqlite.exec("COMMIT");
   } catch (error) {
