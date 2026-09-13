@@ -64,6 +64,25 @@ describe("provider HTTP helpers", () => {
     });
   });
 
+  it.each(["openai-chat", "openai-responses", "anthropic-messages"] as const)("reports invalid legacy credentials before making a %s request", async protocol => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const connection = { ...request(protocol).connection, apiKey: "test-使用说明-private-suffix" };
+    const error = await listModelEndpoint(connection).catch(error => error);
+    expect(error).toMatchObject({ code: "provider_config_error", status: 400, i18n: { key: "error.invalid_connection_api_key" } });
+    expect(error.message).not.toContain(connection.apiKey);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([{ "x-key": "private-中文" }, { "bad name": "private-value" }, { "x-key": "private\r\nvalue" }])("rejects invalid headers without echoing their values", async secretHeaders => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await listModelEndpoint({ ...request("openai-chat").connection, secretHeaders }).catch(error => error);
+    expect(error).toMatchObject({ code: "provider_config_error", status: 400, i18n: { key: "error.invalid_connection_headers" } });
+    expect(error.message).not.toContain("private");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     [401, { error: { message: "bad key" } }, "provider_auth_error"],
     [403, { error: "forbidden" }, "provider_auth_error"],

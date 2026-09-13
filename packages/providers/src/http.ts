@@ -1,4 +1,5 @@
 import { withMessage } from "@llm-chat/i18n";
+import { httpHeaderNameSchema, httpHeaderValueSchema } from "@llm-chat/contracts";
 import { ProviderError, type ProviderConnection, type ProviderRequestContext } from "./types";
 
 const textDecoder = new TextDecoder();
@@ -18,6 +19,9 @@ export function headers(
 ): Record<string, string> {
   const result: Record<string, string> = { "content-type": "application/json" };
   if (connection.apiKey) {
+    if (!httpHeaderValueSchema.safeParse(connection.apiKey).success) {
+      throw withMessage(new ProviderError("provider_config_error", "API Key 含有无效字符。请重新填写服务商提供的密钥，不要粘贴说明文字或换行。", 400), "error.invalid_connection_api_key");
+    }
     if (connection.protocol === "anthropic-messages") {
       result["x-api-key"] = connection.apiKey;
       result["anthropic-version"] = "2023-06-01";
@@ -25,15 +29,18 @@ export function headers(
       result.authorization = `Bearer ${connection.apiKey}`;
     }
   }
-  const merged = { ...result, ...connection.secretHeaders };
+  let merged = { ...result, ...connection.secretHeaders };
   if (connection.providerId === "opencode-go" && requestContext) {
-    return {
+    merged = {
       ...merged,
       "x-opencode-session": requestContext.sessionId,
       "x-opencode-request": requestContext.requestId,
       "x-opencode-client": requestContext.clientId,
       "User-Agent": requestContext.userAgent
     };
+  }
+  if (Object.entries(merged).some(([name, value]) => !httpHeaderNameSchema.safeParse(name).success || !httpHeaderValueSchema.safeParse(value).success)) {
+    throw withMessage(new ProviderError("provider_config_error", "请求头格式无效。请检查请求头名称，移除值中的中文、换行或其他控制字符。", 400), "error.invalid_connection_headers");
   }
   return merged;
 }

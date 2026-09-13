@@ -1473,5 +1473,7 @@
   "environment.running": "运行中",
   "environment.stopped": "已停止",
   "environment.error": "异常",
-  "environment.refresh": "刷新状态"
+  "environment.refresh": "刷新状态",
+  "error.invalid_connection_api_key": "API Key 含有无效字符。请重新填写服务商提供的密钥，不要粘贴说明文字或换行。",
+  "error.invalid_connection_headers": "请求头格式无效。请检查请求头名称，移除值中的中文、换行或其他控制字符。"
 }

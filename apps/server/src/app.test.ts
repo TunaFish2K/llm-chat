@@ -823,6 +823,34 @@ describe("server API", () => {
     expect(internal.json()).toEqual({ error: { code: "internal_error", message: "服务端发生错误", i18n: { key: "error.internal" } } });
   });
 
+  it("rejects malformed connection credentials at save and reports legacy bad credentials as a configuration error", async () => {
+    const app = await testApp();
+    const input = { name: "Malformed key", protocol: "openai-responses" as const, baseUrl: "https://example.test/v1", apiKey: "key-使用说明-private", secretHeaders: {} };
+    const created = await app.inject({ method: "POST", url: "/api/connections", payload: input });
+    expect(created.statusCode).toBe(400);
+    expect(created.body).not.toContain(input.apiKey);
+    // Old releases accepted this value, so exercise an existing persisted record.
+    const connection = app.store.createConnection(input);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const path of ["test", "models/discover"]) {
+      const tested = await app.inject({ method: "POST", url: `/api/connections/${connection.id}/${path}` });
+      expect(tested.statusCode).toBe(400);
+      expect(tested.json().error).toMatchObject({ code: "provider_config_error", i18n: { key: "error.invalid_connection_api_key" } });
+      expect(tested.body).not.toContain(input.apiKey);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    const invalidPatch = await app.inject({ method: "PATCH", url: `/api/connections/${connection.id}`, payload: { apiKey: "different-中文" } });
+    expect(invalidPatch.statusCode).toBe(400);
+    expect(app.store.getConnection(connection.id)?.apiKey).toBe(input.apiKey);
+    const repaired = await app.inject({ method: "PATCH", url: `/api/connections/${connection.id}`, payload: { apiKey: "corrected-test-key" } });
+    expect(repaired.statusCode).toBe(200);
+    fetchMock.mockResolvedValue(Response.json({ data: [{ id: "working-model" }] }));
+    const tested = await app.inject({ method: "POST", url: `/api/connections/${connection.id}/test` });
+    expect(tested.statusCode).toBe(200);
+    expect(tested.json()).toEqual({ ok: true, modelsFound: 1 });
+  });
+
   it("rescans the injected Agent Skills root", async () => {
     const app = await testApp();
     const source = join(app.store.dataDir, "agent-skills", "api-helper");

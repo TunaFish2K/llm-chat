@@ -12,7 +12,7 @@ import type {
   ProviderPresetId,
   ProviderProtocol
 } from "@llm-chat/contracts";
-import { providerPreset, providerPresetDefinitions, resolveModelProtocol } from "@llm-chat/contracts";
+import { httpHeaderNameSchema, httpHeaderValueSchema, providerPreset, providerPresetDefinitions, resolveModelProtocol } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { appStore, refreshConnectionsAndModels, toast, toastError } from "../lib/app-state";
 import { formatTime, formatTokens } from "../lib/format";
@@ -298,6 +298,14 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
       const secretHeaders: Record<string, string> = {};
       for (const header of headers) {
         if (header.name.trim()) secretHeaders[header.name.trim()] = header.value;
+      }
+      if (!httpHeaderValueSchema.safeParse(apiKey).success) {
+        setError(localized("error.invalid_connection_api_key"));
+        return;
+      }
+      if (Object.entries(secretHeaders).some(([name, value]) => !httpHeaderNameSchema.safeParse(name).success || !httpHeaderValueSchema.safeParse(value).success)) {
+        setError(localized("error.invalid_connection_headers"));
+        return;
       }
       let saved: ConnectionDto;
       if (connection) {

@@ -270,13 +270,16 @@ export const balanceConfigSchema = z.object({
 });
 export type BalanceConfig = z.infer<typeof balanceConfigSchema>;
 
+export const httpHeaderNameSchema = z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "Invalid HTTP header name");
+export const httpHeaderValueSchema = z.string().regex(/^[\t\x20-\x7e\x80-\xff]*$/, "Invalid HTTP header value");
+
 const connectionInputObjectSchema = z.object({
   name: z.string().trim().min(1).max(80),
   providerId: providerPresetIdSchema.default("custom"),
   protocol: protocolSchema,
   baseUrl: z.string().url(),
-  apiKey: z.string().max(4096).optional(),
-  secretHeaders: z.record(z.string(), z.string().max(4096)).default({}),
+  apiKey: httpHeaderValueSchema.max(4096).optional(),
+  secretHeaders: z.record(httpHeaderNameSchema, httpHeaderValueSchema.max(4096)).default({}),
   balanceConfig: balanceConfigSchema.optional()
 });
 

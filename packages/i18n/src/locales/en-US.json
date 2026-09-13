@@ -1489,5 +1489,7 @@
   "environment.running": "Running",
   "environment.stopped": "Stopped",
   "environment.error": "Error",
-  "environment.refresh": "Refresh status"
+  "environment.refresh": "Refresh status",
+  "error.invalid_connection_api_key": "The API key contains invalid characters. Enter the key from your provider without instructions or line breaks.",
+  "error.invalid_connection_headers": "Invalid HTTP headers. Check the header names and remove unsupported characters, line breaks or other control characters from the values."
 }
