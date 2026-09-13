@@ -1247,6 +1247,44 @@
 
 /* Model picker ----------------------------------------------------------- */
 
+.model-field-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-field-trigger:hover:not(:disabled) { background: var(--surface-2); }
+.model-field-trigger:disabled { opacity: .55; cursor: not-allowed; }
+.model-field-trigger > .model-brand-icon,
+.model-field-trigger > svg { flex-shrink: 0; }
+.model-field-value { flex: 1; min-width: 0; }
+.model-field-value > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-field-value > small { color: var(--text-muted); }
+
+.model-picker-popover mark { color: var(--accent); background: var(--accent-soft); }
+.model-picker-popover .model-option[data-selected] mark { color: var(--text-invert); background: var(--accent); }
+.model-picker-popover[data-searching] .model-option strong,
+.model-picker-popover[data-searching] .model-option small { white-space: normal; overflow-wrap: anywhere; }
+.model-picker-popover .model-option {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 15px;
+  gap: 6px 10px;
+}
+.model-picker-popover .model-option > .model-brand-icon { grid-column: 1; grid-row: 1 / span 2; }
+.model-picker-popover .model-option > span:nth-child(2) { grid-column: 2; grid-row: 1; }
+.model-picker-popover .model-option > .model-badges { grid-column: 2; grid-row: 2; flex-wrap: wrap; }
+.model-picker-popover .model-option > svg:last-child { grid-column: 3; grid-row: 1; }
+.model-picker-popover .model-group h3 > span:first-child { margin-left: 0; min-width: 0; overflow-wrap: anywhere; }
+
 .model-mark {
   display: inline-flex;
   align-items: center;
