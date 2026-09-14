@@ -145,3 +145,89 @@ it("blocks switching with an unstarted queued task and allows it after cancellat
   const job = await manager.prepare(conversation.id, other, null, "true", "/workdir");
   job.release();
 });
+
+it("rejects unavailable conversations, unsupported preloads, and cancelled preparation", async () => {
+  const { manager, conversation, config, calls } = await fixture();
+  await expect(manager.register("missing", config, null)).rejects.toThrow("unavailable");
+  await expect(manager.register(conversation.id, { ...config, preloadResourceIds: ["builtin:tools"] }, null)).rejects.toThrow("managed Alpine");
+  const controller = new AbortController();
+  controller.abort(new Error("cancel preparation"));
+  await expect(manager.prepare(conversation.id, config, null, "pwd", "/workdir", false, controller.signal)).rejects.toThrow("cancel preparation");
+  expect(calls).toEqual([]);
+  await expect(manager.stop(conversation.id, "missing")).rejects.toThrow("not found");
+  await manager.close();
+  await manager.sweep();
+  await expect(manager.register(conversation.id, config, null)).rejects.toThrow("unavailable");
+});
+
+it("passes terminal options and stop signals, and releases each lease once", async () => {
+  const { manager, conversation, config, calls, store } = await fixture();
+  const selected = join(store.dataDir, 'work,"space');
+  const first = await manager.prepare(conversation.id, config, selected, "pwd", "/workdir/subdir", true);
+  const second = await manager.prepare(conversation.id, config, selected, "true", "/workdir");
+  expect(first.args).toEqual(expect.arrayContaining(["-t", "/workdir/subdir", "pwd"]));
+  expect(calls.find(call => call.args[0] === "create")!.args).toContain(`type=bind,"src=${selected.replaceAll('"', '""')}",dst=/workdir`);
+  await first.stop();
+  await first.stop("SIGKILL");
+  expect(calls.filter(call => call.args.includes("stop") && call.args[0] === "exec").map(call => call.args.at(-1))).toEqual(["SIGTERM", "SIGKILL"]);
+  first.release(); first.release();
+  await expect(manager.stop(conversation.id, first.environmentId)).rejects.toThrow("active tools");
+  second.release();
+  await manager.enterHost(conversation.id);
+  expect(manager.list(conversation.id)[0]!.status).toBe("stopped");
+  await manager.stop(conversation.id, first.environmentId, true);
+  expect(manager.list(conversation.id)).toEqual([]);
+});
+
+it.each([{}, { Config: {} }, { Config: { Labels: { "fish.2kb.llm-chat.runtime": "unknown" } } }])("refuses incompatible runtime image metadata %j", async metadata => {
+  const { manager, conversation, config, engines, containers } = await fixture();
+  const run = engines.docker.run;
+  engines.docker.run = (args, input, timeout) => args[0] === "image" ? Promise.resolve(JSON.stringify([metadata])) : run(args, input, timeout);
+  await expect(manager.prepare(conversation.id, config, null, "true", "/workdir")).rejects.toThrow("compatible runtime");
+  expect(containers.size).toBe(0);
+  expect(manager.list(conversation.id)[0]!.status).toBe("error");
+});
+
+it("never stops a container whose ownership changed", async () => {
+  const { manager, conversation, config, containers, calls } = await fixture();
+  const job = await manager.prepare(conversation.id, config, null, "pwd", "/workdir");
+  job.release();
+  [...containers.values()][0]!.owner = "other-service";
+  await expect(manager.prepare(conversation.id, config, null, "pwd", "/workdir")).rejects.toThrow("ownership");
+  await manager.initialize();
+  expect(manager.list(conversation.id)[0]).toMatchObject({ status: "error", error: expect.stringContaining("ownership") });
+  await manager.sweep(Date.now() + 3600000);
+  await manager.close();
+  expect(calls.filter(call => call.args[0] === "stop")).toHaveLength(0);
+});
+
+it("retains failed cleanup records and retries after the engine recovers", async () => {
+  const { manager, store, conversation, config, engines, containers } = await fixture();
+  const job = await manager.prepare(conversation.id, config, null, "pwd", "/workdir");
+  job.release();
+  const run = engines.docker.run;
+  engines.docker.run = (args, input, timeout) => args[0] === "stop" ? Promise.reject("engine disconnected") : run(args, input, timeout);
+  store.deleteConversation(conversation.id);
+  await manager.cleanupDeleted();
+  expect(manager.list(conversation.id)[0]).toMatchObject({ status: "error", error: "engine disconnected" });
+  expect(containers.size).toBe(1);
+  engines.docker.run = run;
+  await manager.cleanupDeleted();
+  expect(containers.size).toBe(0);
+  expect(manager.list(conversation.id)).toEqual([]);
+});
+
+it("cancels startup while waiting for runtime readiness and stops the container", async () => {
+  const { manager, conversation, config, engines, containers } = await fixture();
+  const controller = new AbortController();
+  const run = engines.docker.run;
+  engines.docker.run = (args, input, timeout) => {
+    if (args.includes("/run/llm-chat/ready")) {
+      controller.abort(new Error("startup cancelled"));
+      return Promise.reject(new Error("not ready"));
+    }
+    return run(args, input, timeout);
+  };
+  await expect(manager.prepare(conversation.id, config, null, "pwd", "/workdir", false, controller.signal)).rejects.toThrow("startup cancelled");
+  expect([...containers.values()].some(value => value.running)).toBe(false);
+});

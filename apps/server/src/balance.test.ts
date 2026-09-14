@@ -156,3 +156,49 @@ function connection(): BalanceConnection {
     }
   };
 }
+
+it.each([
+  ["", {}], ["1".repeat(1025), {}], ["1 2", {}], ["(1+2", {}],
+  ["value.", { value: {} }], ["value[-1]", { value: [] }], ["value[0", { value: [1] }],
+  ["value[99999999999999999999]", { value: [1] }], ["value[0]", { value: {} }],
+  ["value", { value: null }], ["value", { value: "  " }], ["value.x", { value: 2 }],
+  ["1e308 * 1e308", {}], [Array(140).fill("1").join("+"), {}]
+])("rejects malformed balance expression %s", (expression, document) => {
+  expect(() => evaluateBalanceExpression(expression as string, document)).toThrowError(expect.objectContaining({ code: "balance_invalid_result" }));
+});
+
+it("validates balance endpoint schemes and paths before network access", async () => {
+  const fetcher = vi.fn();
+  const service = new BalanceService({ fetch: fetcher });
+  for (const baseUrl of ["not a URL", "file:///tmp/balance"]) {
+    await expect(service.get({ ...connection(), baseUrl })).rejects.toMatchObject({ code: "balance_invalid_config" });
+  }
+  for (const apiPath of ["relative", "/account\\balance"]) {
+    await expect(service.get({ ...connection(), balanceConfig: { ...connection().balanceConfig!, apiPath } })).rejects.toMatchObject({ code: "balance_invalid_config" });
+  }
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("bounds declared response sizes and reports absent or broken response streams", async () => {
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response("{}", { headers: { "content-length": "1048577" } }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockResolvedValueOnce(new Response(new ReadableStream({ start(controller) { controller.error(new Error("socket reset")); } })));
+  const service = new BalanceService({ fetch: fetcher });
+  await expect(service.get(connection())).rejects.toMatchObject({ code: "balance_invalid_result" });
+  await expect(service.get(connection())).rejects.toMatchObject({ code: "balance_invalid_result" });
+  await expect(service.get(connection())).rejects.toMatchObject({ code: "balance_upstream_error" });
+});
+
+it("shares cached balances across header order changes and expires other connection entries", async () => {
+  let now = 0;
+  const fetcher = vi.fn(async () => Response.json({ account: { cents: 100 } }));
+  const service = new BalanceService({ fetch: fetcher, now: () => now, cacheTtlMs: 10 });
+  const first = { ...connection(), secretHeaders: { "X-Z": "z", "X-A": "a" } };
+  await service.get(first);
+  expect((await service.get({ ...first, secretHeaders: { "X-A": "a", "X-Z": "z" } })).cached).toBe(true);
+  now = 20;
+  await service.get({ ...first, id: "another" });
+  expect((await service.get(first)).cached).toBe(false);
+  expect(fetcher).toHaveBeenCalledTimes(3);
+});

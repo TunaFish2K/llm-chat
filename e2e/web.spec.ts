@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "./fixtures";
-import { agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded, openMessageActions } from "./helpers.mjs";
+import { reasoningModel, agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 const unique = () => Math.random().toString(36).slice(2, 8);
@@ -202,8 +202,9 @@ test.describe("应用外壳", () => {
     expect(apiResponse.headers()["cache-control"]).toBe("no-store");
   });
 
-  test("PWA 离线保留应用壳且不会缓存 API", async ({ page, context }) => {
+  test("PWA 无离线记录时保留应用壳、显示错误并允许联网重试", async ({ page, context }) => {
     test.skip(test.info().project.name !== "chromium", "Chromium 负责可靠的离线网络模拟");
+    await page.addInitScript(() => localStorage.setItem("llm-chat.offline-enabled", "false"));
     await page.goto(APP_URL);
     expect(await waitForServiceWorkerControl(page)).toBe(true);
 
@@ -219,10 +220,13 @@ test.describe("应用外壳", () => {
       })).toBe(false);
       await page.goto(`${APP_URL}/settings/general`, { waitUntil: "domcontentloaded" });
       await expect(page.locator("#root")).not.toBeEmpty();
-      await expect(page.getByRole("alert")).toContainText("无法连接服务");
+      await expect(page.getByRole("alert")).toContainText(/本机尚未保存离线记录|网络请求失败/);
+      await expect(page.getByRole("button", { name: "重试", exact: true })).toBeEnabled();
     } finally {
       await context.setOffline(false);
     }
+    await page.getByRole("button", { name: "重试", exact: true }).click();
+    await expect(page.getByLabel("主题", { exact: true })).toBeVisible();
   });
 });
 
@@ -407,8 +411,8 @@ test.describe("会话与流式生成", () => {
   });
 
   test("会话执行覆盖完整编辑", async ({ page, request }) => {
-    // Dedicated agent without a model; overrides are edited and verified via API.
-    const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`覆盖-${unique()}`));
+    const model = await reasoningModel(request);
+    const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`覆盖-${unique()}`, model.id));
     try {
       const conversation = await api(request, APP_URL, "POST", "/api/conversations", {
         agentId: agent.id,
@@ -420,7 +424,7 @@ test.describe("会话与流式生成", () => {
       await expect(modal).toBeVisible();
 
       await modal.getByLabel("上下文策略").selectOption("full");
-      await modal.getByLabel("推理档位").selectOption("high");
+      await modal.getByLabel("推理档位").selectOption("effort:high");
       await modal.getByLabel("温度").fill("0.7");
       await modal.getByLabel("最大输出 token").fill("2048");
       await modal.getByLabel("覆盖停止序列").check();
@@ -439,7 +443,7 @@ test.describe("会话与流式生成", () => {
         .poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides)
         .toMatchObject({
           contextPolicy: "full",
-          reasoningEffort: "high",
+          reasoningSelection: { mode: "effort", value: "high" },
           generation: {
             common: { temperature: 0.7, maxOutputTokens: 2048, stopSequences: ["STOP"] },
             protocol: { reasoningSummary: "detailed", thinkingBudgetTokens: 2048 }
@@ -708,6 +712,11 @@ test.describe("设置分区", () => {
       secretHeaders: {}
     });
 
+    await api(request, APP_URL, "POST", "/api/models", {
+      connectionId: connection.id, modelKey: "layout-model", displayName: "Layout model", contextWindow: 4096, maxOutputTokens: 128,
+      capabilities: { tools: true }, defaultSettings: { common: { maxOutputTokens: 128, stopSequences: [] }, protocol: {} }, enabled: true
+    });
+
     const assertActionLayout = async (selector: string, stacked: boolean) => {
       const report = await page.locator(selector).evaluateAll((groups) => groups.map((group) => {
         const groupRect = group.getBoundingClientRect();
@@ -792,7 +801,8 @@ test.describe("设置分区", () => {
     expect(await skillTool.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(86);
     await skillTool.click();
     const toolDialog = page.getByRole("dialog", { name: "工具详情 · 加载 Skill" });
-    await expect(toolDialog).toContainText("command-execution-guide");
+    await expect(toolDialog).toContainText("use_skill");
+    await expect(toolDialog).toContainText("按需加载服务端 Skills 目录中的专用说明");
     await expect(toolDialog).not.toContainText("coding-supervisor");
     await toolDialog.getByRole("button", { name: "关闭对话框" }).click();
     await expect(skillTool).toBeFocused();

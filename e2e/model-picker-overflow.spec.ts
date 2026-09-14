@@ -24,7 +24,7 @@ test("model pickers fit small screens, landscape and changing viewport heights",
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id, executionOverrides: { modelId: models[0].id } });
   const panel = page.locator(".model-picker-popover");
   const search = panel.getByRole("searchbox");
-  const rows = panel.locator(".model-group .model-option");
+  const rows = panel.locator(".model-group").filter({ has: page.getByRole("heading", { name: connection.name, exact: true }) }).locator(".model-option");
   const checkSearch = async () => {
     await expectModelPickerInsideViewport(page);
     await expect(rows).toHaveCount(30);

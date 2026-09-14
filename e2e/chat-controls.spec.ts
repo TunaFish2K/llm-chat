@@ -85,6 +85,9 @@ test("生成期间断网，联网后恢复完整回复并清理生成状态", as
   }
 });
 
+test.describe("工具栏请求状态", () => {
+  test.use({ serviceWorkers: "block" });
+
 test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌色适配主题", async ({ page, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 60_000 });
   const fixture = await setup(request, provider.baseUrl);
@@ -174,6 +177,8 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
         .toBe(await brand.evaluate((element) => getComputedStyle(element).color));
     }
   } finally { await fixture.cleanup(); await provider.close(); }
+});
+
 });
 
 test("生成中排队、跨设备同步、删除与取消后继续", async ({ page, browser, request }) => {
@@ -314,7 +319,7 @@ test("聊天排版实时预览且仅在同一浏览器同步，离线可调整",
     });
     await lineHeight.focus();
     await lineHeight.press("ArrowRight");
-    await expect(page.getByLabel("输入消息")).toHaveCSS("line-height", `${value * 1.6}px`);
+    await expect.poll(() => page.getByLabel("输入消息").evaluate(element => parseFloat(getComputedStyle(element).lineHeight))).toBeCloseTo(value * 1.6, 3);
     await expect(second.getByRole("slider", { name: "行间距", exact: true })).toHaveValue("1.6");
     await expect(independentSize).toHaveValue(originalSize);
     expect(typographyWrites).toBe(0);
@@ -369,6 +374,10 @@ test("排版调整保留历史段落位置，悬浮面板打开时仍能滚动�
     await size.focus();
     await size.press("ArrowRight");
     await expect.poll(() => scroller.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop)).toBeLessThan(2);
+    const scrollBox = (await scroller.boundingBox())!;
+    await page.mouse.move(scrollBox.x + scrollBox.width - 10, scrollBox.y + 20);
+    await page.mouse.wheel(0, -300);
+    await expect(page.getByRole("button", { name: "回到最新消息" })).toBeVisible();
     const paragraph = page.getByText(paragraphs[20]!, { exact: true });
     await paragraph.evaluate((element) => {
       const container = element.closest('.chat-scroll')!;
@@ -404,6 +413,8 @@ test("远端删除只提示一次并清理离线记录，保留冲突草稿", as
   const id = fixture.conversation.id;
   try {
     await page.goto(APP_URL);
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
     await page.getByLabel("输入消息").fill("原来的新会话草稿");
     await page.goto(`${APP_URL}/c/${id}`);
     await page.getByLabel("输入消息").fill("被删除会话的草稿");
@@ -440,6 +451,7 @@ test("远端删除只提示一次并清理离线记录，保留冲突草稿", as
     await page.goto(`${APP_URL}/c/${id}`);
     await expect(page).toHaveURL(APP_URL + "/");
     await expect(page.getByText("会话已删除", { exact: true })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => Boolean(navigator.serviceWorker.controller))).toBe(true);
     await page.context().setOffline(true);
     await page.reload();
     await expect(page.getByLabel("输入消息")).toHaveValue("被删除会话的草稿");

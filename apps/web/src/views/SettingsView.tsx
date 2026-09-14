@@ -1,3 +1,4 @@
+import { uploadManager } from "../lib/file-upload-manager";
 import { ContainerResourceSettings } from "../components/ContainerResourceSettings";
 import { displayStore, saveDisplayPreferences, useDisplayPreferences, type DisplayPreferences } from "../lib/local-display";
 import { toolLabel, toolDescription, toolError, skillName, skillDescription } from "../lib/catalog-i18n";
@@ -245,11 +246,11 @@ function GeneralSection() {
       </div>
 
       <div className="card"><h3>{t("SettingsView.chat_typography")}</h3><ChatTypographySettings preview /></div>
-      <fieldset disabled={offline} className="offline-settings-fields settings-panels">
       <AppUpdateCard />
       <div className="card"><h3>{t("SettingsView.quick_tour")}</h3><p className="hint">{t("SettingsView.tour_progress_is_saved_only_in_this_browser_and_does")}</p>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
 
+      <fieldset disabled={offline} className="offline-settings-fields settings-panels">
       <div className="card">
         <h3>{t("SettingsView.default_agent")}</h3>
         <Field label={t("SettingsView.default_agent")}>
@@ -333,6 +334,7 @@ function SecuritySection() {
   };
 
   const logout = async () => {
+    uploadManager.reset();
     setBusy(true);
     try {
       await stopNotificationSession();

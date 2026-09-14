@@ -1,3 +1,4 @@
+import { uploadManager } from "./file-upload-manager";
 import { errorDisplayMessage } from "./error-display";
 import { t, type DisplayMessage, localized } from "./i18n";
 import { RefreshScheduler } from "./refresh-scheduler";
@@ -89,6 +90,7 @@ export async function bootstrap(conversationId?: string, background = false): Pr
     if (!isOffline()) reconcileConversations(data.conversations, conversationId ?? null, knownIds);
     data.conversations = data.conversations.filter((item) => !conversationDeleted(item.id));
     if (conversationId && conversationDeleted(conversationId)) { delete data.messages; replaceRoute("/"); }
+    if (data.sourceId && !isOffline()) uploadManager.setSource(data.sourceId);
     initializeDisplayPreferences(data.settings);
     const normalizedMessages = data.messages ? normalizeMessages(data.messages) : undefined;
     const bootMessages = conversationId && normalizedMessages ? { [conversationId]: normalizedMessages } : {};
@@ -527,6 +529,7 @@ export async function refreshTaskCounts(): Promise<void> {
 
 export function initAuthGate(): () => void {
   const requireAuth = (event?: Event) => {
+    uploadManager.reset();
     messageSession++; messageReads.clear();
     stopNotificationSession();
     stopAppEvents();
@@ -578,4 +581,8 @@ window.addEventListener("popstate", () => {
   releaseInactiveMessages();
   const id = location.pathname.match(/^\/c\/([^/]+)/)?.[1];
   if (id && conversationDeleted(id)) replaceRoute("/");
+});
+
+window.addEventListener("llm-chat:conversations-deleted", (event) => {
+  for (const id of (event as CustomEvent<{ ids: string[] }>).detail.ids) uploadManager.removeConversation(id);
 });

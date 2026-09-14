@@ -1,3 +1,6 @@
+import { Readable } from "node:stream";
+import { FileUploads, registerFileUploadRoutes, UploadError } from "./file-uploads";
+import { createReadStream } from "node:fs";
 import { ContainerResources } from "./container-resources";
 import { registerContainerResourceRoutes } from "./container-resource-routes";
 import { errorI18n, withMessage } from "@llm-chat/i18n";
@@ -128,6 +131,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   recoverInterruptedWork(store.sqlite);
   const imageService = new ImageService(store);
   await imageService.initialize();
+  const uploads = new FileUploads(store, imageService);
+  await uploads.initialize();
   const visionService = new VisionService(store, imageService);
   const auth = new AuthManager(store, options.authAnnounce ?? ((message) => {
     if (options.logger !== false) process.stderr.write(`\n${message}\n`);
@@ -182,6 +187,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.decorateRequest("authIdentity", null);
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof UploadError) {
+      return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, i18n: errorI18n(error) } });
+    }
+    if ((error as { code?: string }).code === "FST_ERR_CTP_BODY_TOO_LARGE") {
+      return reply.code(413).send({ error: { code: "file_too_large", message: "Request exceeds the size limit", i18n: { key: "uploads.request_limit" } } });
+    }
     if (error instanceof ZodError) {
       return reply.code(400).send({
         error: { code: "validation_error", i18n: { key: "error.validation" }, message: "请求参数无效", details: z.treeifyError(error) }
@@ -208,7 +219,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   app.get("/api/health", async () => ({ ok: true }));
 
-  app.addHook("preHandler", async (request, reply) => {
+  app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;
     if (!isReadMethod(request.method)) requireMutationSource(request);
     if (isPublicApiRoute(request)) return;
@@ -246,20 +257,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!Buffer.isBuffer(request.body)) throw withMessage(new StoreError("file_body_invalid", "文件请求体无效"), "error.invalid_file_request_body");
     return reply.code(201).send(await imageService.importFile(metadata.fileName, metadata.mimeType, request.body));
   });
-  app.get<{ Params: { id: string }; Querystring: { v?: string } }>("/api/files/:id", async (request, reply) => {
-    const { asset, bytes } = await imageService.readFileAsset(request.params.id);
-    if (request.query.v !== asset.sha256) {
-      return reply.header("cache-control", "no-store").redirect(asset.url, 307);
-    }
-    return sendFileAsset(request, reply, asset, bytes);
-  });
-  app.get<{ Params: { id: string }; Querystring: { v?: string } }>("/api/images/:id", async (request, reply) => {
-    const { asset, bytes } = await imageService.readAsset(request.params.id);
-    if (request.query.v !== asset.sha256) {
-      return reply.header("cache-control", "no-store").redirect(asset.url, 307);
-    }
-    return sendFileAsset(request, reply, asset, bytes);
-  });
+  await registerFileUploadRoutes(app, uploads);
+  for (const resource of ["files", "images"]) {
+    app.get<{ Params: { id: string }; Querystring: { v?: string } }>(`/api/${resource}/:id`, { config: { compress: false } }, async (request, reply) => {
+      const { asset, path } = await imageService.fileAssetLocation(request.params.id);
+      if (resource === "images" && asset.kind !== "image") throw new StoreError("image_asset_not_found", "Image asset not found");
+      if (request.query.v !== asset.sha256) return reply.header("cache-control", "no-store").redirect(asset.url, 307);
+      return sendFileAsset(request, reply, asset, path);
+    });
+  }
   app.get<{ Querystring: { url?: string } }>("/api/image-proxy", async (request, reply) => {
     const value = z.object({ url: z.string().url().max(4096) }).parse(request.query);
     const proxied = await imageService.proxy(value.url);
@@ -288,7 +294,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get<{ Querystring: { conversationId?: string } }>("/api/bootstrap", async (request) => {
     const conversationId = request.query.conversationId;
     const conversation = conversationId ? store.getConversation(conversationId) : undefined;
-    return {
+    return { sourceId: offlineSourceId(store),
       settings: store.getSettings(),
       agents: store.listAgents(),
       connections: store.listConnections(),
@@ -1038,6 +1044,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
 
   await registerWeb(app, webRoot);
 
+  app.addHook("preClose", async () => { await uploads.close(); });
   app.addHook("onClose", async () => {
     await queue.close();
     await runner.close();
@@ -1072,7 +1079,7 @@ function sendFileAsset(
   request: FastifyRequest,
   reply: FastifyReply,
   asset: FileAssetDto,
-  bytes: Uint8Array
+  path: string
 ) {
   const etag = `"${asset.sha256}"`;
   reply.header("etag", etag);
@@ -1088,21 +1095,23 @@ function sendFileAsset(
   }
   if (request.headers["if-none-match"] === etag) return reply.code(304).send();
   const range = request.headers.range;
-  if (!range) return reply.header("content-length", bytes.byteLength).send(Buffer.from(bytes));
+  if (!range) {
+    reply.header("content-length", asset.byteSize);
+    return reply.send(request.method === "HEAD" ? Readable.from([]) : createReadStream(path));
+  }
   const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-  if (!match) return reply.code(416).header("content-range", `bytes */${bytes.byteLength}`).send();
+  if (!match) return reply.code(416).header("content-range", `bytes */${asset.byteSize}`).send();
   const requestedStart = match[1] ? Number(match[1]) : null;
   const requestedEnd = match[2] ? Number(match[2]) : null;
-  const start = requestedStart ?? Math.max(0, bytes.byteLength - (requestedEnd ?? 0));
-  const end = requestedStart === null ? bytes.byteLength - 1 : Math.min(bytes.byteLength - 1, requestedEnd ?? bytes.byteLength - 1);
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= bytes.byteLength) {
-    return reply.code(416).header("content-range", `bytes */${bytes.byteLength}`).send();
+  const start = requestedStart ?? Math.max(0, asset.byteSize - (requestedEnd ?? 0));
+  const end = requestedStart === null ? asset.byteSize - 1 : Math.min(asset.byteSize - 1, requestedEnd ?? asset.byteSize - 1);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= asset.byteSize) {
+    return reply.code(416).header("content-range", `bytes */${asset.byteSize}`).send();
   }
-  const body = bytes.subarray(start, end + 1);
   return reply.code(206)
-    .header("content-range", `bytes ${start}-${end}/${bytes.byteLength}`)
-    .header("content-length", body.byteLength)
-    .send(Buffer.from(body));
+    .header("content-range", `bytes ${start}-${end}/${asset.byteSize}`)
+    .header("content-length", end - start + 1)
+    .send(request.method === "HEAD" ? Readable.from([]) : createReadStream(path, { start, end }));
 }
 
 function isStreamEnd(status: string): boolean {

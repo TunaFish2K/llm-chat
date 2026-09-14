@@ -22,7 +22,7 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
     const modelLabel = cn ? "模型" : "Model";
     const visionLabel = cn ? "备用识图模型" : "Fallback vision model";
     const panel = page.locator(".model-picker-popover");
-    const rows = panel.locator(".model-group .model-option");
+    const rows = panel.locator(".model-group").filter({ has: page.getByRole("heading", { name: connection.name, exact: true }) }).locator(".model-option");
     const search = panel.getByRole("searchbox");
     const save = async () => {
       await page.getByRole("button", { name: cn ? "保存修改" : "Save changes", exact: true }).click();

@@ -1,3 +1,4 @@
+import { GlobalFileUploads } from "./components/FileUploads";
 import { useErrorState } from "./lib/error-display";
 import { t, useLocale, localized } from "./lib/i18n";
 import { initOfflineHistory, isOffline } from "./lib/offline-history";
@@ -226,6 +227,7 @@ export function App() {
 
       {mobile ? <div className="mobile-back-feedback" aria-hidden="true" data-active={backOffset > 0 || undefined}
         data-ready={backOffset >= 64 || undefined} style={{ transform: `translateX(${backOffset - 44}px)` }}><ArrowLeft size={20} /></div> : null}
+      <GlobalFileUploads />
       <QuickTour />
       <ToastStack toasts={toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
         updating={["checking", "downloading", "applying"].includes(pwa.updateStatus)} updateError={pwa.updateError} />

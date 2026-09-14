@@ -125,7 +125,10 @@ export const Composer = memo(function Composer({
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [savingOverrides, setSavingOverrides] = useState(false);
-  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments(initialDraft?.attachments ?? [], conversation?.id);
+  const [attachmentSeed, setAttachmentSeed] = useState(initialDraft?.attachments ?? []);
+  const [newDraftScope, setNewDraftScope] = useState(() => initialDraft?.uploadScopeId ?? `draft:${crypto.randomUUID()}`);
+  const { attachments, setAttachments, uploading, uploadFiles, uploadScope, attachmentCount } = useAttachments(
+    attachmentSeed, conversation ? `conversation:${conversation.id}` : newDraftScope, conversation?.id);
   const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
   const wasGenerating = useRef(false);
   const currentDraft = useRef("");
@@ -137,10 +140,10 @@ export const Composer = memo(function Composer({
     const savedOverrides = { ...(conversation?.executionOverrides ?? newOverrides) };
     if (!text && !attachments.length && !explicitNewModel.current) delete savedOverrides.modelId;
     writeComposerDraft(conversation?.id ?? null, {
-      text, attachments, agentId: effectiveAgentId || null, overrides: savedOverrides,
+      uploadScopeId: uploadScope, text, attachments, agentId: effectiveAgentId || null, overrides: savedOverrides,
       workspace: conversation ? conversation.workspacePath : newWorkspace, greetingIndex
     });
-  }, [conversation?.id, text, attachments, effectiveAgentId, newOverrides, newWorkspace, greetingIndex]);
+  }, [conversation?.id, text, attachments, effectiveAgentId, newOverrides, newWorkspace, greetingIndex, uploadScope]);
   useEffect(() => {
     if (conversation && initialDraft && initialDraft.text !== conversation.draft) {
       scheduleServerDraft(conversation.id, initialDraft.text);
@@ -415,7 +418,7 @@ export const Composer = memo(function Composer({
         {isNew && recoveredDraftIds().length > 0 && <button type="button" className="btn small" onClick={() => {
           const draft = swapRecoveredDraft();
           if (!draft) return;
-          setText(draft.text); setAttachments(draft.attachments); setNewAgentId(draft.agentId);
+          setText(draft.text); setAttachmentSeed(draft.attachments); setNewDraftScope(draft.uploadScopeId ?? `draft:${crypto.randomUUID()}`); setNewAgentId(draft.agentId);
           setNewOverrides(draft.overrides); setNewWorkspace(draft.workspace);
           explicitNewModel.current = Object.hasOwn(draft.overrides, "modelId");
           onGreetingIndexChange(draft.greetingIndex);
@@ -429,7 +432,7 @@ export const Composer = memo(function Composer({
             const files = [...event.dataTransfer.files];
             if (files.length) {
               event.preventDefault();
-              if (!sending && !uploading) void uploadFiles(files);
+              if (!sending) void uploadFiles(files);
             }
           }}
         >
@@ -471,7 +474,7 @@ export const Composer = memo(function Composer({
               {generating && active ? <CancelGenerationButton conversationId={conversation!.id} generationId={active.id} className="composer-stop-button" /> : null}
               </div>
 
-              <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={uploading || sending} />
+              <AttachmentList uploadScope={uploadScope} attachments={attachments} setAttachments={setAttachments} disabled={sending} />
               {attachments.some((asset) => asset.kind === "image") && !imageConfigured ? (
                 <p className="composer-warning">{t("Composer.this_model_does_not_support_images_and_the_agent_has")}</p>
               ) : null}
@@ -530,7 +533,7 @@ export const Composer = memo(function Composer({
 
                 </div>
                 <div className="composer-action-group">
-                  <AttachmentMenu uploadFiles={uploadFiles} disabled={offline || sending || attachments.length >= 8} uploading={uploading} />
+                  <AttachmentMenu uploadFiles={uploadFiles} disabled={offline || sending || attachmentCount >= 8} uploading={uploading} />
 
                   <button
                     type="button"

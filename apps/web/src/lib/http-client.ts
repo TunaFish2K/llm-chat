@@ -46,7 +46,7 @@ export async function httpRequest<T>(method: string, path: string, body: unknown
       body: body !== undefined ? JSON.stringify(body) : null
     });
   } catch (error) {
-    throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : t("http_client.network_request_failed"));
+    throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"), undefined, { key: "http_client.network_request_failed" });
   }
   if (response.status === 401) {
     const text = await response.text();

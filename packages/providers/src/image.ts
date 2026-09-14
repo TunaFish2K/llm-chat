@@ -145,6 +145,7 @@ export class StabilityImageAdapter implements ImageGenerationAdapter {
     });
     if (response.status === 202) return { status: "pending", providerJobId, pollAfterMs: 2_000 };
     const payload = await responsePayload(response);
+    if (payload instanceof Uint8Array) return { status: "completed", providerJobId, result: { status: "completed", images: [{ data: payload, mimeType: normalizeMime(response.headers.get("content-type")?.split(";")[0]) }] } };
     const record = asRecord(payload);
     const images = collectImages(record);
     if (images.length) return { status: "completed", providerJobId, result: { status: "completed", images } };

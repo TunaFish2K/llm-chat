@@ -413,7 +413,7 @@ export class AppTools {
       const assetId = string(input, "asset_id");
       const owned = this.deps.store.conversationHasFileAsset(context!.conversationId, assetId);
       if (!owned) throw withMessage(new StoreError("file_asset_not_found", "当前会话没有该附件"), "error.this_conversation_does_not_contain_that_attachment");
-      const loaded = await this.deps.files.readFileAsset(assetId);
+      const loaded = await this.deps.files.readFileAsset(assetId, 10 * 1024 * 1024);
       return { bytes: loaded.bytes, fileName: loaded.asset.fileName };
     }
     if (source === "url") return this.deps.files.fetchPublicFile(string(input, "url"), 10 * 1024 * 1024, signal);

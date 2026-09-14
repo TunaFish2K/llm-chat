@@ -21,6 +21,7 @@ export function formatCachedTokens(cached: number | undefined, input: number | u
 
 export function formatBytes(value: number | null | undefined): string {
   if (value === null || value === undefined) return "—";
+  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GiB`;
   if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MiB`;
   if (value >= 1024) return `${(value / 1024).toFixed(1)} KiB`;
   return `${value} B`;

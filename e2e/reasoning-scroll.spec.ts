@@ -50,6 +50,17 @@ test("长推理展开后内外层跟随，手动上翻暂停并能恢复", async
       await page.mouse.wheel(0, -180);
     }
     await expect.poll(() => inner.evaluate(gap)).toBeGreaterThan(100);
+    // A wheel action returns before WebKit's smooth scrolling has settled.
+    await inner.evaluate(element => new Promise<void>(resolve => {
+      let previous = element.scrollTop, stableFrames = 0;
+      const frame = () => {
+        const next = element.scrollTop;
+        stableFrames = next === previous ? stableFrames + 1 : 0;
+        previous = next;
+        if (stableFrames >= 6) resolve(); else requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+    }));
     const position = await inner.evaluate((element) => element.scrollTop);
     const content = await inner.textContent();
     await expect.poll(() => inner.textContent()).not.toBe(content);

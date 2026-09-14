@@ -1,10 +1,10 @@
 import { writeFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventHub } from "./events";
 import { TaskManager } from "./background-tasks";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
 
-afterEach(() => cleanupStores());
+afterEach(() => { vi.unstubAllEnvs(); cleanupStores(); });
 
 describe("TaskManager", () => {
   it("runs pipe tasks, exposes incremental output, and keeps audit reasons", async () => {
@@ -115,3 +115,59 @@ async function until(predicate: () => boolean, timeout = 5_000): Promise<void> {
 function expectProcessGone(pid: number): void {
   expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
 }
+
+it("validates stale task actions and stops queued tasks without starting a process", async () => {
+  const { store, record } = generation(); const manager = new TaskManager(store, new EventHub());
+  const input = { conversationId: record.conversationId, generationId: record.id, snapshot: record.agentSnapshot, command: "printf should-not-run", mode: "pipe" as const, expectedDurationMs: null, hardTimeoutMs: null };
+  try {
+    expect(() => manager.create({ ...input, snapshot: { ...input.snapshot, workspacePath: null } })).toThrow("no workspace");
+    await expect(manager.read("missing", 0)).rejects.toThrow("not found"); await expect(manager.wait("missing", 0, 1, 0)).rejects.toThrow("not found");
+    expect(() => manager.write("missing", "x", "")).toThrow("reason is required"); expect(() => manager.write("missing", "x", "audit")).toThrow("not running");
+    expect(() => manager.stop("missing", "")).toThrow("reason is required"); expect(() => manager.stop("missing", "audit")).toThrow("not found"); manager.resize("missing", 80, 24);
+    const agent = store.getAgent(record.agentSnapshot.agentId!)!; store.updateAgent(agent.id, { execution: { ...agent.execution, maxBackgroundTasks: 0 } });
+    const task = manager.create(input);
+    expect(manager.hasNonterminalForAgent(agent.id)).toBe(true); expect(manager.hasNonterminalForConversation(record.conversationId)).toBe(true);
+    expect(manager.runtimePrompt(record.conversationId)).toContain(task.id);
+    expect((await manager.read(task.id, 0)).raw).toBe(""); expect(manager.stop(task.id, "cancel before start").status).toBe("stopped");
+    expect(manager.stop(task.id, "again").status).toBe("stopped"); expect(manager.runtimePrompt(record.conversationId)).toBe("");
+    expect((await manager.wait(task.id, 0, 500, 100)).task.status).toBe("stopped");
+    const queued = manager.create(input); await manager.close(); expect(manager.get(queued.id)?.status).toBe("interrupted");
+  } finally { await manager.close(); }
+});
+
+it("rotates large logs, reports cursor gaps and enforces bounded reads", async () => {
+  const { store, record } = generation(); const manager = new TaskManager(store, new EventHub());
+  try {
+    const task = manager.create({ conversationId: record.conversationId, generationId: record.id,
+      snapshot: { ...record.agentSnapshot, execution: { ...record.agentSnapshot.execution, taskLogLimitBytes: 1024 * 1024 } },
+      command: `node -e 'process.stdout.write("x".repeat(2300000))'`, mode: "pipe", expectedDurationMs: null, hardTimeoutMs: 5000 });
+    await until(() => manager.get(task.id)?.status === "completed");
+    const result = await manager.read(task.id, 0, 1000000);
+    expect(result.gap).toBe(true); expect(result.earliestCursor).toBeGreaterThan(0); expect(result.text).toHaveLength(32 * 1024);
+    expect((await manager.read(task.id, result.cursor, 0)).raw).toBe("x");
+    expect((await manager.read(task.id, 2300000)).raw).toBe("");
+  } finally { await manager.close(); }
+});
+
+it("reports nonzero process exit and hard timeout as distinct terminal outcomes", async () => {
+  const { store, record } = generation(); const manager = new TaskManager(store, new EventHub());
+  const input = { conversationId: record.conversationId, generationId: record.id, snapshot: record.agentSnapshot, mode: "pipe" as const, expectedDurationMs: 1, hardTimeoutMs: null };
+  try {
+    const failed = manager.create({ ...input, command: "printf stderr >&2; exit 7" });
+    await until(() => manager.get(failed.id)?.status === "failed"); expect(manager.get(failed.id)).toMatchObject({ exitCode: 7, errorI18n: { key: "background.exit_code", params: { code: 7 } } });
+    expect((await manager.read(failed.id, 0)).text).toContain("stderr");
+    const timeout = manager.create({ ...input, command: "sleep 10", hardTimeoutMs: 50 });
+    await until(() => manager.get(timeout.id)?.status === "timed_out"); expect(manager.eventsFor(timeout.id)).toContainEqual(expect.objectContaining({ type: "warning", reason: "达到硬超时" }));
+    const container = manager.create({ ...input, command: "true", snapshot: { ...input.snapshot, execution: { ...input.snapshot.execution, environment: { type: "container", engine: "docker", image: "test", idleTimeoutMinutes: 15 } } } });
+    await until(() => manager.get(container.id)?.status === "failed"); expect(manager.get(container.id)?.error).toBe("Container environment unavailable");
+  } finally { await manager.close(); }
+});
+
+it("reports a missing shell executable", async () => {
+  const { store, record } = generation(); const manager = new TaskManager(store, new EventHub());
+  const input = { conversationId: record.conversationId, generationId: record.id, snapshot: record.agentSnapshot, command: "true", mode: "pipe" as const, expectedDurationMs: null, hardTimeoutMs: null };
+  try {
+    vi.stubEnv("SHELL", `${store.dataDir}/missing-shell`);
+    const failed = manager.create(input); await until(() => manager.get(failed.id)?.status === "failed"); expect(manager.get(failed.id)?.error).toContain("ENOENT");
+  } finally { await manager.close(); }
+});

@@ -2,6 +2,8 @@ import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
+test.use({ serviceWorkers: "block" });
+
 test("首条消息跳转及上翻后再次发送都保持底部", async ({ page, request }) => {
   const provider = await startMockProvider({
     responseText: Array.from({ length: 35 }, (_, i) => `滚动回答第 ${i + 1} 段。`).join("\n\n")

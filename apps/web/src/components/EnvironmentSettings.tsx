@@ -3,6 +3,7 @@ import type { ContainerResourceItem } from "@llm-chat/contracts";
 import { Button } from "./ui";
 import { useEffect, useState } from "react";
 import type { ContainerEngineDto, ConversationEnvironmentDto, ExecutionEnvironment } from "@llm-chat/contracts";
+import { linkClick, routes } from "../lib/router";
 import { endpoints } from "../lib/api";
 import { t, useLocale } from "../lib/i18n";
 import { Field } from "../lib/ui";
@@ -47,19 +48,19 @@ export function EnvironmentSettings({ value, onChange }: { value: ExecutionEnvir
             onChange={event => onChange({ ...current, idleTimeoutMinutes: Number(event.target.value) || 15 })} />
         </Field>
       </div>
-      {current.image === "llm-chat-runtime:alpine" ? <fieldset>
+      {current.image === "llm-chat-runtime:alpine" ? <fieldset className="choice-fieldset">
         <legend>{t("container_resources.preload")}</legend>
         <p className="hint">{t("container_resources.preload_hint")}</p>
         {[...resources.filter(item => !["builtin:alpine", "builtin:runtime"].includes(item.id)).map(item => ({ id: item.id, name: resourceName(item), available: item.available })),
           ...(current.preloadResourceIds ?? ["builtin:tools"]).filter(id => !resources.some(item => item.id === id)).map(id => ({ id, name: id, available: true }))].map(item => {
           const selectedIds = current.preloadResourceIds ?? ["builtin:tools"];
-          return <label className="row" key={item.id}>
+          return <label className="checkbox-row" key={item.id}>
             <input type="checkbox" checked={selectedIds.includes(item.id)} disabled={!item.available && !selectedIds.includes(item.id)}
               onChange={event => onChange({ ...current, preloadResourceIds: event.target.checked ? [...selectedIds, item.id] : selectedIds.filter(id => id !== item.id) })} />
             {item.name}
           </label>;
         })}
-        <a href="/settings/container-resources">{t("container_resources.title")}</a>
+        <a className="text-link" href={routes.settings("container-resources")} onClick={linkClick(routes.settings("container-resources"))}>{t("container_resources.title")}</a>
       </fieldset> : null}
     </> : null}
   </section>;

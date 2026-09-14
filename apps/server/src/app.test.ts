@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { providerReasoningEffort } from "@llm-chat/contracts";
 import { seedModel as seedStoreModel } from "./test-helpers";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -329,6 +330,45 @@ describe("server API", () => {
     });
     expect(privateProxy.statusCode).toBe(400);
     expect(privateProxy.json()).toMatchObject({ error: { code: "image_proxy_private_address" } });
+  });
+
+  it("uploads resumable files through authenticated stream routes and serves HEAD and suffix ranges", async () => {
+    const app = await testApp();
+    const bytes = Buffer.from("0123456789");
+    const input = { id: randomUUID(), fileName: "报告.html", mimeType: "text/html", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+    const created = await app.inject({ method: "POST", url: "/api/file-uploads", payload: input });
+    expect(created.statusCode).toBe(201);
+    expect((await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).headers["cache-control"]).toBe("no-store");
+    const put = (offset: number, payload: Buffer) => app.inject({ method: "PATCH", url: `/api/file-uploads/${input.id}?offset=${offset}`, headers: { "content-type": "application/octet-stream" }, payload });
+    expect((await put(0, bytes.subarray(0, 4))).json()).toMatchObject({ offset: 4 });
+    expect((await put(0, bytes)).statusCode).toBe(409);
+    expect((await put(4, bytes.subarray(4))).json()).toMatchObject({ offset: 10 });
+    expect((await app.inject({ method: "POST", url: `/api/file-uploads/${input.id}/complete` })).statusCode).toBe(202);
+    let asset: import("@llm-chat/contracts").FileAssetDto;
+    await vi.waitFor(async () => {
+      const status = (await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).json();
+      expect(status.state).toBe("completed"); asset = status.asset;
+    });
+    const head = await app.inject({ method: "HEAD", url: asset!.url });
+    expect(head.statusCode).toBe(200); expect(head.body).toBe(""); expect(head.headers["content-length"]).toBe("10");
+    const suffix = await app.inject({ method: "GET", url: asset!.url, headers: { range: "bytes=-3", "accept-encoding": "gzip" } });
+    expect(suffix.statusCode).toBe(206); expect(suffix.body).toBe("789"); expect(suffix.headers["content-encoding"]).toBeUndefined();
+    const headRange = await app.inject({ method: "HEAD", url: asset!.url, headers: { range: "bytes=1-3" } });
+    expect(headRange.statusCode).toBe(206); expect(headRange.body).toBe(""); expect(headRange.headers["content-length"]).toBe("3");
+    expect((await app.inject({ method: "POST", url: `/api/file-uploads/${input.id}/complete` })).json()).toMatchObject({ asset: { id: input.id } });
+    expect((await app.inject({ method: "DELETE", url: `/api/file-uploads/${input.id}` })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).statusCode).toBe(404);
+    expect((await app.inject({ method: "PATCH", url: "/api/file-uploads/bad?offset=-1", payload: {} })).statusCode).toBe(400);
+    const badBody = await app.inject({ method: "PATCH", url: `/api/file-uploads/${randomUUID()}?offset=0`, payload: {} });
+    expect(badBody.statusCode).toBe(400);
+    const unauthenticated = await app.inject({ method: "PATCH", url: `/api/file-uploads/${randomUUID()}?offset=0`, headers: { cookie: "", "content-type": "application/octet-stream" }, payload: bytes });
+    expect(unauthenticated.statusCode).toBe(401);
+    const forbidden = await app.inject({ method: "POST", url: "/api/file-uploads", headers: { "sec-fetch-site": "cross-site" }, payload: input });
+    expect(forbidden.statusCode).toBe(403);
+    const big = { ...input, id: randomUUID(), byteSize: 8 * 1024 ** 2 };
+    expect((await app.inject({ method: "POST", url: "/api/file-uploads", payload: big })).statusCode).toBe(201);
+    const oversized = await app.inject({ method: "PATCH", url: `/api/file-uploads/${big.id}?offset=0`, headers: { "content-type": "application/octet-stream" }, payload: Buffer.alloc(4 * 1024 ** 2 + 1) });
+    expect(oversized.statusCode).toBe(413);
   });
 
   it("uploads arbitrary files and serves immutable, ranged downloads without trusting their MIME type", async () => {
@@ -1288,4 +1328,81 @@ it("adapts inherited efforts before saving the snapshot and contacting the provi
   expect(app.store.getAgent(agent.id)!.execution.reasoningEffort).toBe("max");
   expect(fetchImpl).toHaveBeenCalled();
   expect(JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).reasoning_effort).toBe("xhigh");
+});
+
+it("returns typed not-found responses for stale settings, conversations and task links", async () => {
+  const app = await testApp(); const id = randomUUID();
+  const requests: Array<[NonNullable<InjectOptions["method"]>, string, Record<string, unknown> | undefined, string]> = [
+    ["GET", `/api/agents/${id}`, undefined, "agent_not_found"],
+    ["PATCH", `/api/agents/${id}`, {}, "agent_not_found"],
+    ["DELETE", `/api/agents/${id}`, undefined, "agent_not_found"],
+    ["GET", `/api/agents/${id}/avatar`, undefined, "agent_not_found"],
+    ["DELETE", `/api/agents/${id}/avatar`, undefined, "agent_not_found"],
+    ["PUT", `/api/agents/${id}/avatar`, { fileName: "avatar.png", dataBase64: "iVBORw0KGgo=" }, "agent_not_found"],
+    ["GET", `/api/agents/${id}/export`, undefined, "agent_not_found"],
+    ["PATCH", "/api/settings", { lastAgentId: id }, "agent_not_found"],
+    ["PATCH", `/api/agents/${id}/search-secret`, { provider: "searxng", apiKey: "key" }, "agent_not_found"],
+    ["POST", `/api/agents/${id}/roleplay/assets`, { fileName: "text.txt", dataBase64: "dGV4dA==" }, "agent_not_found"],
+    ["DELETE", `/api/agents/${id}/roleplay/assets/${id}`, undefined, "agent_not_found"],
+    ["POST", `/api/agents/${id}/roleplay/presets/import`, { fileName: "preset.json", dataBase64: "e30=" }, "agent_not_found"],
+    ["PATCH", `/api/connections/${id}`, {}, "connection_not_found"],
+    ["DELETE", `/api/connections/${id}`, undefined, "connection_not_found"],
+    ["POST", `/api/connections/${id}/test`, {}, "connection_not_found"],
+    ["POST", `/api/connections/${id}/models/discover`, {}, "connection_not_found"],
+    ["PATCH", `/api/models/${id}`, {}, "model_not_found"],
+    ["DELETE", `/api/models/${id}`, undefined, "model_not_found"],
+    ["POST", `/api/models/${id}/catalog/restore`, {}, "model_not_found"],
+    ["GET", `/api/offline/conversations/${id}`, undefined, "conversation_not_found"],
+    ["GET", `/api/conversations/${id}/messages`, undefined, "conversation_not_found"],
+    ["GET", `/api/conversations/${id}/context/compact`, undefined, "conversation_not_found"],
+    ["GET", `/api/conversations/${id}/roleplay-scripts/audit`, undefined, "conversation_not_found"],
+    ["GET", `/api/conversations/${id}/image-generations`, undefined, "conversation_not_found"],
+    ["GET", `/api/image-generations/${id}`, undefined, "image_generation_not_found"],
+    ["POST", `/api/image-generations/${id}/cancel`, {}, "image_generation_not_found"],
+    ["POST", `/api/image-generations/${id}/retry`, {}, "image_generation_not_found"],
+    ["GET", `/api/generations/${id}`, undefined, "generation_not_found"],
+    ["GET", `/api/generations/${id}/events`, undefined, "generation_not_found"],
+    ["POST", `/api/generations/${id}/cancel`, {}, "generation_not_found"],
+    ["POST", `/api/tool-calls/${id}/approval`, { approved: true }, "tool_call_not_found"],
+    ["PATCH", `/api/messages/${id}/active-generation`, { generationId: id }, "generation_not_found"]
+  ];
+  for (const [method, url, payload, code] of requests) {
+    const response = await app.inject({ method, url, ...(payload ? { payload } : {}) });
+    expect({ status: response.statusCode, error: response.json().error?.code }, `${method} ${url}: ${response.body}`).toEqual({ status: 404, error: code });
+  }
+});
+
+it("rejects malformed imports and restores roleplay asset references on deletion", async () => {
+  const app = await testApp(); const agent = app.store.getAgent(app.store.getSettings().defaultAgentId)!;
+  for (const dataBase64 of [Buffer.from("not json").toString("base64"), Buffer.from("null").toString("base64")]) {
+    const result = await app.inject({ method: "POST", url: `/api/agents/${agent.id}/roleplay/presets/import`, payload: { fileName: "preset.json", dataBase64 } });
+    expect(result.statusCode).toBe(400); expect(result.json().error.code).toBe("roleplay_preset_invalid");
+  }
+  const badAvatar = await app.inject({ method: "PUT", url: `/api/agents/${agent.id}/avatar`, payload: { fileName: "text.txt", dataBase64: "dGV4dA==" } });
+  expect(badAvatar.json().error.code).toBe("agent_avatar_invalid");
+  expect((await app.inject({ method: "GET", url: `/api/agents/${agent.id}/avatar` })).json().error.code).toBe("agent_avatar_not_found");
+  const upload = await app.inject({ method: "POST", url: `/api/agents/${agent.id}/roleplay/assets`, payload: { fileName: "picture", dataBase64: "iVBORw0KGgo=", type: "icon" } });
+  expect(upload.statusCode).toBe(201);
+  const asset = upload.json().roleplay.assets[0];
+  app.store.updateAgent(agent.id, { roleplay: { ...app.store.getAgent(agent.id)!.roleplay, personas: [{ id: randomUUID(), name: "user", description: "", avatarAssetId: asset.id }] } });
+  const removed = await app.inject({ method: "DELETE", url: `/api/agents/${agent.id}/roleplay/assets/${asset.id}` });
+  expect(removed.statusCode).toBe(204); expect(app.store.getAgent(agent.id)!.roleplay.personas[0]!.avatarAssetId).toBeNull();
+  expect((await app.inject({ method: "DELETE", url: `/api/agents/${agent.id}/roleplay/assets/${asset.id}` })).json().error.code).toBe("roleplay_asset_not_found");
+});
+
+it("serves bounded attachment ranges and rejects invalid range requests", async () => {
+  const app = await testApp();
+  const upload = await app.inject({ method: "POST", url: "/api/files", headers: { "content-type": "application/octet-stream", "x-file-name": "data.txt" }, payload: Buffer.from("0123456789") });
+  expect(upload.statusCode).toBe(201); const asset = upload.json();
+  for (const [range, body] of [["bytes=2-", "23456789"], ["bytes=-100", "0123456789"], ["bytes=2-100", "23456789"]]) {
+    const result = await app.inject({ method: "GET", url: asset.url, headers: { range } });
+    expect(result.statusCode).toBe(206); expect(result.body).toBe(body);
+    const head = await app.inject({ method: "HEAD", url: asset.url, headers: { range } });
+    expect(head.statusCode).toBe(206); expect(head.body).toBe(""); expect(Number(head.headers["content-length"])).toBe(body!.length);
+  }
+  for (const range of ["bytes=-", "bytes=-0", "bytes=7-2", "bytes=10-", "bytes=0-1,3-4", "items=0-1", "bytes=9007199254740992-"]) {
+    const result = await app.inject({ method: "GET", url: asset.url, headers: { range } }); expect(result.statusCode, range).toBe(416); expect(result.headers["content-range"]).toBe("bytes */10");
+  }
+  expect((await app.inject({ method: "GET", url: `/api/images/${asset.id}` })).statusCode).toBe(404);
+  const redirect = await app.inject({ method: "GET", url: `/api/files/${asset.id}?v=old` }); expect(redirect.statusCode).toBe(307); expect(redirect.headers.location).toBe(asset.url);
 });

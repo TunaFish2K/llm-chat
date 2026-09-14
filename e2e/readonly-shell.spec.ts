@@ -1,10 +1,12 @@
 import { test, expect } from "./fixtures";
-import { agentInput, api, APP_URL } from "./helpers.mjs";
+import { agentInput, api, APP_URL, gotoPath } from "./helpers.mjs";
+
+test.use({ serviceWorkers: "block" });
 
 test("只读命令策略可保存并恢复", async ({ page, request }) => {
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`readonly-${Date.now()}`));
   try {
-    await page.goto(`${APP_URL}/agents/${agent.id}`);
+    await gotoPath(page, `${APP_URL}/agents/${agent.id}`);
     await page.getByRole("tab", { name: "工具", exact: true }).click();
     await expect(page.getByText("只读、不联网；默认免审批。", { exact: true })).toBeVisible();
     for (const [label, choice] of [["启用策略", "停用"], ["直接性", "惰性"], ["审批策略", "每次"]]) {
@@ -25,12 +27,12 @@ test("只读沙箱不可用时显示具体原因", async ({ page, request }) => 
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`readonly-unavailable-${Date.now()}`));
   try {
     await page.route("**/api/tools/catalog*", async (route) => {
-      const response = await route.fetch();
+      const response = await route.fetch({ headers: { ...route.request().headers(), "accept-encoding": "identity" } });
       const entries = await response.json();
       await route.fulfill({ response, json: entries.map((entry) => entry.name === "workspace_shell_readonly"
         ? { ...entry, available: false, error: "需要 Bubblewrap 0.12.0 或更高版本，请升级后重启服务" } : entry) });
     });
-    await page.goto(`${APP_URL}/agents/${agent.id}`);
+    await gotoPath(page, `${APP_URL}/agents/${agent.id}`);
     await page.getByRole("tab", { name: "工具", exact: true }).click();
     await expect(page.getByText(/只读、不联网；默认免审批。需要 Bubblewrap 0.12.0/)).toBeVisible();
   } finally { await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`); }

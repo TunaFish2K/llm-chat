@@ -2,7 +2,7 @@ import { withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { constants } from "node:fs";
-import { access, copyFile, mkdir, readFile, readdir, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, readdir, realpath, rename, rm, unlink, writeFile, link, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import { basename, isAbsolute, resolve, sep } from "node:path";
 import type { FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
@@ -109,9 +109,38 @@ export class ImageService {
     return this.importFile(basename(canonical), declaredMimeType, new Uint8Array(await readFile(canonical)));
   }
 
-  async readFileAsset(id: string): Promise<{ asset: FileAssetDto; bytes: Uint8Array }> {
+  async fileAssetLocation(id: string): Promise<{ asset: FileAssetDto; path: string }> {
     const record = this.store.getFileAssetRecord(id);
     if (!record) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
+    const path = resolve(this.root, record.storageKey);
+    const info = await stat(path);
+    if (!info.isFile() || info.size !== record.byteSize) throw new StoreError("file_asset_invalid", "File asset is incomplete");
+    return { asset: toDto(record), path };
+  }
+
+  /** The caller has verified size and SHA-256 and stopped all writes to the staging file. */
+  async commitUploadedFile(path: string, input: import("@llm-chat/contracts").FileUploadInput, header: Uint8Array): Promise<FileAssetDto> {
+    const existing = this.store.getFileAsset(input.id);
+    if (existing) {
+      if (existing.sha256 !== input.sha256 || existing.byteSize !== input.byteSize) throw new StoreError("file_asset_conflict", "File asset ID is already in use");
+      return existing;
+    }
+    const imageType = sniffImage(header);
+    if (imageType && input.byteSize > MAX_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "图片必须小于 5 MiB"), "error.the_remote_image_exceeds_5_mib");
+    const storageKey = imageType ? `${input.sha256}.${extensionFor(imageType)}` : input.sha256;
+    // Linking publishes a fully synced file without copying it or exposing a partial blob.
+    await link(path, resolve(this.root, storageKey)).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    });
+    return toDto(this.store.createFileAsset({ id: input.id, sha256: input.sha256, byteSize: input.byteSize,
+      fileName: cleanFileName(input.fileName), mimeType: imageType ?? cleanMimeType(input.mimeType),
+      kind: imageType ? "image" : "file", storageKey }));
+  }
+
+  async readFileAsset(id: string, maxBytes = MAX_FILE_BYTES): Promise<{ asset: FileAssetDto; bytes: Uint8Array }> {
+    const record = this.store.getFileAssetRecord(id);
+    if (!record) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
+    if (record.byteSize > maxBytes) throw withMessage(new StoreError("file_too_large", "文件超过此操作的读取上限"), "uploads.read_limit");
     return { asset: toDto(record), bytes: new Uint8Array(await readFile(resolve(this.root, record.storageKey))) };
   }
 
@@ -130,7 +159,7 @@ export class ImageService {
     await mkdir(targetRoot, { recursive: true, mode: 0o700 });
     for (const asset of this.store.messageFiles(messageId)) {
       const record = this.store.getFileAssetRecord(asset.id)!;
-      await copyFile(resolve(this.root, record.storageKey), resolve(targetRoot, attachmentFileName(asset)));
+      await copyFile(resolve(this.root, record.storageKey), resolve(targetRoot, attachmentFileName(asset)), constants.COPYFILE_FICLONE);
     }
   }
 

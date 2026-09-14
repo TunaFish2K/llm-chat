@@ -118,6 +118,7 @@ export const api = {
 };
 
 export interface BootstrapDto {
+  sourceId?: string;
   settings: AppSettings;
   agents: AgentSummaryDto[];
   connections: ConnectionDto[];

@@ -12,7 +12,8 @@ for (const locale of ["zh-CN", "en-US"] as const) {
     const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
     expect(model.catalogManaged).toBe(true);
     await page.goto("/settings/connections");
-    const row = page.locator("tr").filter({ hasText: model.displayName }).filter({ hasText: "e2e-chat" });
+    const card = page.locator(".card").filter({ has: page.locator("h3 strong").filter({ hasText: connection.name }) });
+    const row = card.locator("tbody tr").filter({ hasText: model.displayName }).filter({ hasText: "e2e-chat" });
     await row.getByRole("button", { name: locale === "zh-CN" ? "编辑" : "Edit", exact: true }).click();
     const dialog = page.getByRole("dialog");
     const protocol = dialog.getByLabel(locale === "zh-CN" ? "模型协议" : "Model protocol", { exact: true });

@@ -15,6 +15,7 @@
     "start": "pnpm --filter @llm-chat/server start",
     "audit:prod": "pnpm audit --prod",
     "test": "vitest run",
+    "test:upload:large": "tsx scripts/test-large-upload.ts",
     "test:deploy": "node scripts/deployment-smoke.mjs",
     "test:e2e": "playwright test",
     "test:web:budget": "node scripts/test-web-budget.mjs",
