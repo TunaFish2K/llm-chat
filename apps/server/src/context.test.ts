@@ -317,3 +317,58 @@ describe("context builder", () => {
     expect(error).toMatchObject({ code: "code", message: "message" });
   });
 });
+
+it("explains manual compaction prerequisites without invoking a provider", async () => {
+  const store = createStore();
+  const { model } = seedModel(store);
+  const controller = new AbortController();
+  await expect(compactConversationContext(store, "missing", controller.signal)).rejects.toMatchObject({ code: "conversation_not_found" });
+  const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+  await expect(compactConversationContext(store, conversation.id, controller.signal)).rejects.toMatchObject({ code: "context_compaction_disabled" });
+  store.updateConversation(conversation.id, { contextPolicy: "auto" });
+  store.updateModel(model.id, { contextWindow: null });
+  await expect(compactConversationContext(store, conversation.id, controller.signal)).rejects.toMatchObject({ code: "context_window_required" });
+  store.updateModel(model.id, { contextWindow: 300 });
+  await expect(compactConversationContext(store, conversation.id, controller.signal)).rejects.toMatchObject({ code: "context_budget_invalid" });
+  store.updateModel(model.id, { contextWindow: 8192 });
+  completeTurn(store, conversation.id, "one", "answer");
+  await expect(compactConversationContext(store, conversation.id, controller.signal)).rejects.toMatchObject({ code: "context_compaction_not_needed" });
+  completeTurn(store, conversation.id, "two", "answer");
+  completeTurn(store, conversation.id, "three", "answer");
+  controller.abort(new Error("cancel compaction"));
+  await expect(compactConversationContext(store, conversation.id, controller.signal)).rejects.toThrow("cancel compaction");
+  expect(adapterFor).not.toHaveBeenCalled();
+  expect(store.getLatestSummary(conversation.id)).toBeUndefined();
+});
+
+it("compacts successive chunks, accumulates partial usage and invalidates edited source checkpoints", async () => {
+  const store = createStore();
+  const { model } = seedModel(store);
+  store.updateModel(model.id, { contextWindow: 4096, capabilities: { ...model.capabilities, temperature: false } });
+  const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "auto" });
+  const first = completeTurn(store, conversation.id, "first ".repeat(200), "answer ".repeat(200));
+  completeTurn(store, conversation.id, "second ".repeat(200), "answer ".repeat(200));
+  completeTurn(store, conversation.id, "third", "answer");
+  completeTurn(store, conversation.id, "fourth", "answer");
+  const requests: Parameters<ProviderAdapter["stream"]>[0][] = [];
+  vi.mocked(adapterFor).mockReturnValue({ protocol: "openai-chat", listModels: async () => [], async *stream(request) {
+    requests.push(request);
+    yield { type: "block", index: 0, blockType: "reasoning", content: "ignored", complete: true };
+    yield { type: "block", index: 1, blockType: "text", content: `summary ${requests.length}`, complete: true };
+    yield { type: "usage", usage: requests.length === 1 ? { inputTokens: 20, cachedInputTokens: 5 } : { outputTokens: 7, inputTokens: 10 } };
+  } });
+  const checkpoint = await compactConversationContext(store, conversation.id, new AbortController().signal);
+  expect(requests).toHaveLength(2);
+  expect(checkpoint.usage).toEqual({ inputTokens: 30, outputTokens: 7, cachedInputTokens: 5 });
+  expect(requests[1]!.messages[0]!.text).toContain("现有摘要：\nsummary 1");
+  expect(requests[0]!.settings.common).not.toHaveProperty("temperature");
+  store.sqlite.prepare("UPDATE messages SET text = ? WHERE id = ?").run("corrected first question", first.userMessageId!);
+  const replacement = await compactConversationContext(store, conversation.id, new AbortController().signal);
+  expect(replacement.id).not.toBe(checkpoint.id);
+  expect(requests[2]!.messages[0]!.text).toContain("corrected first question");
+  expect(requests[2]!.messages[0]!.text).not.toContain("现有摘要");
+  completeTurn(store, conversation.id, "fifth", "answer");
+  const incremental = await compactConversationContext(store, conversation.id, new AbortController().signal);
+  expect(incremental.throughOrdinal).toBeGreaterThan(replacement.throughOrdinal);
+  expect(requests.at(-1)!.messages[0]!.text).toContain(`现有摘要：\n${replacement.text}`);
+});

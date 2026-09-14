@@ -78,11 +78,24 @@ export async function openDrawerIfNeeded(page) {
 }
 
 export async function gotoPath(page, path) {
-  await page.goto(path, { waitUntil: "domcontentloaded" });
+  // A rendered app is the readiness signal; Firefox can miss lifecycle notifications.
+  await page.goto(path, { waitUntil: "commit" });
   await expect(page.locator(".app-frame")).toBeVisible();
 }
 
 /** Bring the always-visible message actions into the viewport. */
 export async function openMessageActions(page, message) {
   await message.locator(".stream-actions").scrollIntoViewIfNeeded();
+}
+
+/** A local, explicit model profile for tests that edit reasoning preferences. */
+export async function reasoningModel(request) {
+  const connection = await api(request, APP_URL, "POST", "/api/connections", {
+    name: `Reasoning ${crypto.randomUUID()}`, protocol: "openai-chat", baseUrl: "http://127.0.0.1:1/v1", secretHeaders: {}
+  });
+  return api(request, APP_URL, "POST", "/api/models", {
+    connectionId: connection.id, modelKey: "reasoning-test", displayName: "Reasoning test",
+    contextWindow: 128000, maxOutputTokens: 4096, reasoningEffortsOverride: ["low", "medium", "high"],
+    capabilities: { reasoning: true }, defaultSettings: { common: { maxOutputTokens: 4096, stopSequences: [] }, protocol: {} }, enabled: true
+  });
 }

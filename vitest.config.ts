@@ -68,10 +68,10 @@ export default defineConfig({
         "apps/web/src/lib/ui.tsx"
       ],
       thresholds: {
-        statements: 90,
-        lines: 90,
+        statements: 95,
+        lines: 95,
         functions: 90,
-        branches: 85,
+        branches: 90,
         "apps/server/src/generations.ts": criticalCoverageThreshold,
         "apps/server/src/mcp.ts": criticalCoverageThreshold,
         "apps/server/src/tools.ts": criticalCoverageThreshold,

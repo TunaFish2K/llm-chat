@@ -275,3 +275,62 @@ function cardData(name: string, extensions: Record<string, unknown> = {}) {
     tags: [], creator: "", character_version: "", extensions
   };
 }
+
+describe("portable character asset boundaries", () => {
+  afterEach(cleanupStores);
+
+  it("supplies inert defaults for sparse imported regex and quick replies", () => {
+    const store = createStore();
+    const imported = importCharacterCard(store, "sparse.json", Buffer.from(JSON.stringify(card("Sparse", {
+      regex_scripts: [{}], quick_replies: [{}], llm_chat: { version: 1 }
+    }))));
+    expect(imported.roleplay.regexScripts[0]).toMatchObject({ name: "导入正则 1", pattern: "", replacement: "", flags: "gu", enabled: false });
+    expect(imported.roleplay.quickReplySets[0]!.replies[0]).toMatchObject({ label: "快捷回复 1", content: "", tooltip: "", enabled: true });
+  });
+
+  it("defaults CHARX asset metadata and safely filters absolute, repeated and Windows paths", async () => {
+    const store = createStore();
+    const files = new ImageService(store);
+    await files.initialize();
+    const archive = zipSync({
+      "card.json": strToU8(JSON.stringify({ spec: "chara_card_v3", data: {
+        ...cardData("Defaults"), extensions: null,
+        assets: [{ uri: "embedded://assets/note.txt" }, {}, { uri: "assets/noextension" }, { uri: "assets/custom.xyz" }]
+      } })),
+      "assets/note.txt": strToU8("note"), "assets/noextension": strToU8("binary"), "assets/custom.xyz": strToU8("custom"),
+      "/absolute.txt": strToU8("ignored"), "assets//empty.txt": strToU8("ignored"), "assets\\windows.txt": strToU8("ignored")
+    });
+    const imported = await importCharacterCardWithAssets(store, files, "defaults.charx", archive);
+    expect(imported.roleplay.assets).toEqual([
+      expect.objectContaining({ type: "asset", name: "note.txt", ext: "txt", mimeType: "text/plain" }),
+      expect.objectContaining({ name: "noextension", ext: "bin", mimeType: "application/octet-stream" }),
+      expect.objectContaining({ name: "custom.xyz", ext: "xyz", mimeType: "application/octet-stream" })
+    ]);
+    const exported = await exportCharacterCardWithAssets(store, files, { ...imported, name: "" }, "charx");
+    expect(exported.fileName).toBe("character.charx");
+    expect((await exportCharacterCardWithAssets(store, files, imported, "json")).contentType).toContain("application/json");
+  });
+
+  it("rejects archives beyond entry and expanded-byte limits before importing any Agent", () => {
+    const store = createStore();
+    const before = store.listAgents().length;
+    const many = Object.fromEntries(Array.from({ length: 513 }, (_, index) => [`entry-${index}`, strToU8("x")]));
+    expect(() => importCharacterCard(store, "many.charx", zipSync(many))).toThrow("安全限制");
+    const large = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`entry-${index}`, new Uint8Array(10 * 1024 * 1024)]));
+    expect(() => importCharacterCard(store, "large.charx", zipSync(large))).toThrow("安全限制");
+    expect(store.listAgents()).toHaveLength(before);
+  });
+
+  it("replaces existing PNG card metadata on export", () => {
+    const store = createStore();
+    const first = importCharacterCard(store, "first.json", Buffer.from(JSON.stringify(card("First"))));
+    store.setAgentAvatar(first.id, ONE_PIXEL_PNG);
+    const embedded = exportCharacterCard(store, first, "png");
+    const second = importCharacterCard(store, "second.json", Buffer.from(JSON.stringify(card("Second"))));
+    store.setAgentAvatar(second.id, embedded.bytes);
+    const replaced = exportCharacterCard(store, second, "png");
+    const imported = importCharacterCard(store, "roundtrip.png", replaced.bytes);
+    expect(imported.card.data.name).toBe("Second (2)");
+    expect(Buffer.from(replaced.bytes).toString("latin1").split("chara\0")).toHaveLength(2);
+  });
+});

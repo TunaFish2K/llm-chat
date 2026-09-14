@@ -327,3 +327,59 @@ async function until(predicate: () => boolean, timeout = 2_000): Promise<void> {
   }
   throw new Error("condition timed out");
 }
+
+it("validates discovered YAML metadata and recovers a previously unloaded revision", async () => {
+  const store = createStore();
+  const root = resolve(store.dataDir, "discovery");
+  const source = resolve(root, "valid");
+  mkdirSync(source, { recursive: true });
+  const path = resolve(source, "SKILL.md");
+  const content = "---\nname: valid\ndescription: Valid skill\n---\nInstructions";
+  writeFileSync(path, content);
+  const manager = new SkillManager(store, new EventHub(), root);
+  try {
+    expect((await manager.discover()).discovered).toBe(1);
+    for (const invalid of [
+      "No frontmatter", "---\n- list\n---", "---\nname: [invalid\n---",
+      "---\nname: Upper\ndescription: text\n---", "---\nname: valid\ndescription: ''\n---",
+      "---\nname: valid\ndescription: text\ncompatibility: " + "x".repeat(501) + "\n---",
+      "---\nname: valid\ndescription: 42\n---"
+    ]) {
+      writeFileSync(path, invalid);
+      expect((await manager.discover()).errors).toHaveLength(1);
+      expect(manager.list()[0]!.state).toBe("error");
+    }
+    writeFileSync(path, content);
+    expect((await manager.discover()).updated).toBe(1);
+    expect(manager.list()[0]!.state).toBe("loaded");
+    rmSync(source, { recursive: true });
+    expect((await manager.discover()).unloaded).toBe(1);
+    expect((await manager.discover()).unloaded).toBe(0);
+    mkdirSync(source);
+    writeFileSync(path, content);
+    expect((await manager.discover()).updated).toBe(1);
+    expect(manager.list()[0]!.state).toBe("loaded");
+  } finally { manager.close(); }
+});
+
+it("normalizes tool maps and approval arrays and reports unreadable discovery roots", async () => {
+  const store = createStore();
+  const source = resolve(store.dataDir, "metadata");
+  mkdirSync(source);
+  const root = resolve(store.dataDir, "not-directory");
+  writeFileSync(root, "file");
+  const manager = new SkillManager(store, new EventHub(), { agentsSkillsRoot: root });
+  try {
+    writeSkill(source, "metadata", "Metadata", [
+      'requiredTools: { workspace_read_file: true, ignored: false, absent: null, workspace_grep: default }',
+      'recommendedApprovals: ["workspace_read_file=never", { tool: workspace_grep, policy: default }, { workspace_shell: always }, null, 42, { tool: "", policy: never }, { tool: 42, policy: always }]'
+    ]);
+    expect(await manager.install(source)).toMatchObject({ requiredTools: ["workspace_read_file", "workspace_grep"],
+      recommendedApprovals: { workspace_read_file: "never", workspace_grep: "default", workspace_shell: "always" } });
+    expect((await manager.discover()).errors).toEqual([expect.objectContaining({ path: root, message: expect.stringContaining("ENOTDIR") })]);
+    writeSkill(source, "metadata", "Metadata", ['requiredTools: [workspace_read_file, null, 12, workspace_read_file]']);
+    expect(await manager.reload("metadata")).toMatchObject({ requiredTools: ["workspace_read_file"] });
+    writeSkill(source, "metadata", "Metadata", ['requiredTools: 42']);
+    expect(await manager.reload("metadata")).toMatchObject({ requiredTools: [] });
+  } finally { manager.close(); }
+});

@@ -89,7 +89,7 @@ export function localizedToolFormatters(name: string, locale: Locale) {
           } else if (["image_generate", "workspace_publish_image", "workspace_publish_file"].includes(name)) {
             const { assets, asset, markdown: _markdown, ...rest } = value;
             const files = Array.isArray(assets) ? assets : asset ? [asset] : [];
-            detail = fields(rest) + "\n\n" + files.filter(object).map((file) => typeof file.url === "string" && /^\/api\/(images|files)\//.test(file.url) ? `[${inline(file.fileName ?? t("tool.file"))}](${file.url.replace(/[()\s]/g, encodeURIComponent)})` : fields(file)).join("\n\n");
+            detail = fields(rest) + "\n\n" + files.filter(object).map((file) => typeof file.url === "string" && /^\/api\/(images|files)\//.test(file.url) ? `[${inline(file.fileName ?? t("tool.file"))}](${file.url.replace(/[()\s]/g, character => character === "(" ? "%28" : character === ")" ? "%29" : encodeURIComponent(character))})` : fields(file)).join("\n\n");
             summary = error ? summary : t("tool.files", { count: files.length });
           } else if (name === "workspace_read_file") {
             const { content, text: fileText, ...rest } = value;

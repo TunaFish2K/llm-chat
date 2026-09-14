@@ -182,7 +182,7 @@ describe("resource management", () => {
     await resources.initialize();
     expect(await resources.files.has(artifact)).toBe(true);
     expect(await readFile(join(uploads, "legacy"), "utf8")).toBe("runtime");
-    expect(store.sqlite.prepare("PRAGMA user_version").get()).toEqual({ user_version: 45 });
+    expect(store.sqlite.prepare("PRAGMA user_version").get()).toEqual({ user_version: 46 });
     await resources.clearCache();
     expect(await resources.files.has(artifact)).toBe(false);
     await expect(readFile(join(uploads, "orphan"))).rejects.toMatchObject({ code: "ENOENT" });

@@ -1317,3 +1317,15 @@
   color: var(--text);
   background: var(--surface-3);
 }
+
+.choice-fieldset {
+  min-width: 0;
+  margin: var(--space-3) 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.choice-fieldset legend { padding: 0 5px; color: var(--text-muted); font-size: var(--text-sm); }
+.choice-fieldset .checkbox-row { min-height: 32px; align-items: center; overflow-wrap: anywhere; cursor: pointer; }
+.choice-fieldset .checkbox-row input { flex: 0 0 auto; margin: 0; width: 15px; height: 15px; }
+.choice-fieldset .checkbox-row:has(input:disabled) { opacity: 0.55; cursor: default; }

@@ -1,3 +1,4 @@
+import { uploadManager } from "../src/lib/file-upload-manager";
 import { displayStore, DISPLAY_DEFAULTS } from "../src/lib/local-display";
 import { setLocalePreference } from "../src/lib/i18n";
 import { typographyStore, CHAT_TYPOGRAPHY_DEFAULTS } from "../src/lib/local-typography";
@@ -83,6 +84,8 @@ beforeEach(() => { setLocalePreference("zh-CN"); });
 afterEach(() => {
   offlineStore.set({ offline: false });
   cleanup();
+  uploadManager.reset();
+  uploadManager.setSource("local");
   displayStore.set({ values: { ...DISPLAY_DEFAULTS }, initialized: false, saved: true });
   typographyStore.set({ values: { ...CHAT_TYPOGRAPHY_DEFAULTS }, initialized: false, saved: true });
   setConversationSource(crypto.randomUUID());

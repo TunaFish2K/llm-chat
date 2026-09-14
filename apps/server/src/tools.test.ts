@@ -591,3 +591,78 @@ it("allows local HTTP targets only for the container environment and still valid
   await expect(fetcher.execute({ url: "file:///etc/passwd" }, new AbortController().signal)).rejects.toThrow("Only HTTP");
   await expect(fetcher.execute({ url: "http://user:password@localhost" }, new AbortController().signal)).rejects.toThrow("credentials");
 });
+
+it("reports missing workspace and runtime prerequisites before performing tools", async () => {
+  const store = createStore();
+  const tools = await buildServerTools(store, true, { workspacePath: null });
+  for (const workspace of ["project", "attachments"]) {
+    await expect(tool(tools, "workspace_list").execute({ workspace }, signal())).rejects.toThrow(workspace === "project" ? "no project workspace" : "attachment workspace is unavailable");
+  }
+  await expect(tool(tools, "workspace_shell_readonly").execute({ command: "pwd" }, signal())).rejects.toThrow("运行时不可用");
+  for (const name of ["image_generate", "workspace_publish_image", "workspace_publish_file"]) {
+    await expect(tool(tools, name).execute({}, signal())).rejects.toThrow("service and tool context are required");
+  }
+  const execute = vi.fn().mockResolvedValue("read only");
+  const readonlyShell = { available: true, error: null, execute } as never;
+  const enabled = tool(await buildServerTools(store, true, { readonlyShell, attachmentWorkspacePath: join(store.dataDir, "attachments") }), "workspace_shell_readonly");
+  await enabled.execute({ command: "pwd", workspace: "attachments", cwd: "docs", timeout: 999 }, signal());
+  expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ workspace: "attachments", cwd: "docs", timeout: 120000 }), expect.any(AbortSignal));
+  await enabled.execute({ command: "pwd" }, signal());
+  expect(execute).toHaveBeenLastCalledWith(expect.objectContaining({ workspace: "project", cwd: ".", timeout: 30000 }), expect.any(AbortSignal));
+});
+
+it.each(["google-imagen", "google-interactions"] as const)("discovers supported %s image operations and reports cancelled jobs", async imageProtocol => {
+  const store = createStore();
+  const { model } = seedModel(store);
+  store.updateModel(model.id, { imageProtocol, capabilities: { ...model.capabilities, imageOutput: true } });
+  const createAndWait = vi.fn().mockResolvedValue({ status: "cancelled", error: null });
+  const imageTool = tool(await buildServerTools(store, false, { imageManager: { createAndWait } as never }), "image_generate");
+  const { models } = JSON.parse(await imageTool.execute({ action: "list_models" }, signal()));
+  expect(models[0].operations).toEqual(imageProtocol === "google-imagen" ? ["generate"] : ["generate", "edit"]);
+  await expect(imageTool.execute({ model_id: model.id, prompt: "a tree" }, signal(), { conversationId: "chat", toolCallId: "call" } as never)).rejects.toThrow("cancelled");
+  expect(createAndWait).toHaveBeenCalledWith(expect.objectContaining({ input: expect.objectContaining({ modelId: model.id }) }), expect.any(AbortSignal));
+});
+
+it("handles sparse search results, empty bodies, custom endpoints, and service selection", async () => {
+  const store = createStore();
+  new ServiceSettings(store).update({ searchEngines: [
+    { id: "tavily", provider: "tavily", enabled: true, baseUrl: "https://search.test/custom", apiKey: "secret" },
+    { id: "searxng", provider: "searxng", enabled: true, baseUrl: "https://search.test/search" }
+  ] });
+  const search = tool(await buildServerTools(store), "search_web");
+  expect(JSON.parse(await search.execute({ action: "list_engines" }, signal())).engines).toEqual([
+    { id: "tavily", name: "Tavily", priority: 1 }, { id: "searxng", name: "SearXNG", priority: 2 }
+  ]);
+  const fetchMock = vi.fn().mockResolvedValueOnce(Response.json({ results: [{}] }))
+    .mockResolvedValueOnce(Response.json({})).mockResolvedValueOnce(Response.json({})).mockResolvedValueOnce(new Response("bad", { status: 503 }));
+  vi.stubGlobal("fetch", fetchMock);
+  expect(JSON.parse(await search.execute({ engine_id: "tavily", query: "tree" }, signal()))).toEqual([{ id: 1, title: "", url: "", text: "" }]);
+  expect(String(fetchMock.mock.calls[0]![0])).toBe("https://search.test/custom");
+  expect(await search.execute({ engine_id: "tavily", query: "tree" }, signal())).toBe("[]");
+  expect(await search.execute({ engine_id: "searxng", query: "tree" }, signal())).toBe("[]");
+  expect(fetchMock.mock.calls[2]![1].headers).not.toHaveProperty("authorization");
+  await expect(search.execute({ engine_id: "tavily", query: "tree" }, signal())).rejects.toThrow("503");
+  await expect(search.execute({ engine_id: "missing", query: "tree" }, signal())).rejects.toThrow("No matching");
+});
+
+it("bounds workspace searches and resolves legacy attachment paths without escaping roots", async () => {
+  const store = createStore();
+  const attachments = join(store.dataDir, "attachments");
+  const tools = await buildServerTools(store, false, { attachmentWorkspacePath: attachments });
+  const write = tool(tools, "workspace_write_file");
+  await write.execute({ workspace: "attachments", path: "/attachments/log.txt", text: "needle\n".repeat(250), overwrite: false }, signal());
+  expect(JSON.parse(await tool(tools, "workspace_grep").execute({ workspace: "attachments", query: "needle" }, signal()))).toHaveLength(200);
+  expect(JSON.parse(await tool(tools, "workspace_list").execute({ workspace: "attachments", path: "/attachments/" }, signal()))[0].path).toBe("log.txt");
+  await tool(tools, "workspace_edit_file").execute({ workspace: "attachments", path: "log.txt", old_text: "needle", replace_all: true }, signal());
+  expect(JSON.parse(await tool(tools, "workspace_read_file").execute({ workspace: "attachments", path: "/attachments/log.txt" }, signal())).text).toBe("\n".repeat(250));
+  symlinkSync(join(attachments, "log.txt"), join(attachments, "link.txt"));
+  expect(JSON.parse(await tool(tools, "workspace_list").execute({ workspace: "attachments" }, signal()))).toContainEqual(expect.objectContaining({ path: "link.txt", type: "other" }));
+  for (const path of ["/workdir/", "/workspace/"]) {
+    expect(JSON.parse(await tool(tools, "workspace_glob").execute({ pattern: path }, signal()))).toEqual(["."]);
+  }
+  writeFileSync(join(store.dataDir, "skills", "README.md"), "not a skill directory");
+  mkdirSync(join(store.dataDir, "skills", "plain"));
+  writeFileSync(join(store.dataDir, "skills", "plain", "SKILL.md"), "Plain instructions without metadata");
+  const skill = tool(await buildServerTools(store), "use_skill");
+  expect(await skill.execute({ name: "plain" }, signal())).toBe("Plain instructions without metadata");
+});

@@ -2,6 +2,7 @@ import { conversationExecutionOverridesSchema, type ConversationExecutionOverrid
 import { conversationDeleted } from "./conversation-lifecycle";
 
 export interface ComposerDraft {
+  uploadScopeId?: string;
   text: string;
   attachments: FileAssetDto[];
   agentId: string | null;
@@ -87,3 +88,15 @@ export function removeStoredComposerDraft(id: string): void {
   try { sessionStorage.removeItem(keyFor(id)); } catch {}
 }
 
+
+/** Merge only attachment references; background uploads must not restore stale text or settings. */
+export function updateDraftAttachments(scopeId: string, attachments: FileAssetDto[]): void {
+  const keys = new Set(fallback.keys());
+  try { for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i)!); } catch {}
+  for (const key of keys) {
+    if (!key.startsWith(prefix)) continue;
+    const id = key.slice(prefix.length) === "new" ? null : key.slice(prefix.length);
+    const draft = readComposerDraft(id);
+    if (draft?.uploadScopeId === scopeId) writeComposerDraft(id, { ...draft, attachments });
+  }
+}

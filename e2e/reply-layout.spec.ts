@@ -3,6 +3,8 @@ import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
+test.use({ serviceWorkers: "block" });
+
 test("回复密度、常驻操作和推理展开在宽窄屏保持稳定", async ({ page, request }, testInfo) => {
   const provider = await startMockProvider({ responseText: "你好！有需要尽管说。", cachedInputTokens: 8 });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Reply layout", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });

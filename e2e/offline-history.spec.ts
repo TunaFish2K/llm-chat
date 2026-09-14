@@ -27,6 +27,9 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     cold.on("request", (req) => { if (req.url().includes("/api/") && !["GET", "HEAD"].includes(req.method())) mutations.push(req.url()); });
     await cold.goto(`${APP_URL}/c/${first.conversation.id}`);
     await expect(cold.locator(".offline-banner")).toContainText("离线查阅");
+    expect(await cold.evaluate(async () => {
+      try { await fetch("/api/health", { cache: "no-store" }); return true; } catch { return false; }
+    })).toBe(false);
     await expect(cold.locator('.msg[data-role="assistant"]').last()).toContainText("离线测试正文");
     await expect.poll(() => cold.getByAltText("离线图片").last().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     await cold.getByRole("button", { name: "上一版本", exact: true }).click();
@@ -118,7 +121,7 @@ test.describe("离线同步失败与清除", () => {
     const pending = new Promise<void>((resolve) => { release = resolve; });
     let downloading = false;
     await page.route(route, async (intercept) => {
-      const response = await intercept.fetch();
+      const response = await intercept.fetch({ headers: { ...intercept.request().headers(), "accept-encoding": "identity" } });
       downloading = true;
       await pending;
       await intercept.fulfill({ response }).catch(() => {});

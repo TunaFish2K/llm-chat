@@ -151,8 +151,9 @@ export function ChatView({
     }
   }, [conversation, conversationId, conversations]);
 
+  useEffect(() => { setRoleplayOpen(false); }, [conversation?.id, conversation?.agentId]);
+
   useEffect(() => {
-    setRoleplayOpen(false);
     const summary = conversations.length && conversation?.agentId
       ? appStore.get().agents.find((agent) => agent.id === conversation.agentId)
       : undefined;
@@ -379,6 +380,7 @@ export function ChatView({
 
       {editingMessage ? (
         <EditForkDialog
+          conversationId={conversation?.id}
           message={editingMessage}
           busy={branching}
           onClose={() => setEditingMessage(null)}

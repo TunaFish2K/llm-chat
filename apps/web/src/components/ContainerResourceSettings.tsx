@@ -71,7 +71,7 @@ export function ContainerResourceSettings() {
       {!resource.available ? <p>{resource.availabilityError ?? t("environment.unavailable")}</p> : <details>
         <summary>{t("container_resources.files")} · {resource.files.filter(file => file.cached).length}/{resource.files.length}</summary>
         <ul className="container-resource-files">{resource.files.map(file => <li key={file.sha256}>
-          <a href={file.downloadUrl} target="_blank" rel="noreferrer">{file.name}</a> · {bytes(file.size)} {file.cached ? `· ${t("container_resources.cached")}` : ""}
+          <a className="text-link" href={file.downloadUrl} target="_blank" rel="noreferrer">{file.name}</a> · {bytes(file.size)} {file.cached ? `· ${t("container_resources.cached")}` : ""}
         </li>)}</ul>
       </details>}
     </div>)}</div>

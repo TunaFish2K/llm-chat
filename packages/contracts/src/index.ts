@@ -1112,6 +1112,24 @@ export const fileUploadMetadataSchema = z.object({
 });
 export type FileUploadMetadata = z.infer<typeof fileUploadMetadataSchema>;
 
+export const MAX_ATTACHMENT_FILE_BYTES = 2 * 1024 ** 3;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 4 * 1024 ** 3;
+export const FILE_UPLOAD_CHUNK_BYTES = 4 * 1024 ** 2;
+export const fileUploadInputSchema = fileUploadMetadataSchema.extend({
+  id: z.string().uuid(),
+  byteSize: z.number().int().positive().max(MAX_ATTACHMENT_FILE_BYTES),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/)
+});
+export type FileUploadInput = z.infer<typeof fileUploadInputSchema>;
+export interface FileUploadDto extends FileUploadInput {
+  offset: number;
+  state: "uploading" | "checking" | "completed" | "failed";
+  expiresAt: number;
+  asset: FileAssetDto | null;
+  error: string | null;
+}
+
+
 export interface GenerationCreatedDto {
   userMessageId?: string;
   assistantMessageId: string;

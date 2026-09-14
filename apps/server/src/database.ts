@@ -1,3 +1,4 @@
+import { MAX_MESSAGE_ATTACHMENT_BYTES } from "@llm-chat/contracts";
 import { withMessage, errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { StoreError } from "./errors";
 import type { ConnectionRecord, ContextMessageRecord, ContextGenerationStep, GenerationRecord, AgentSnapshot } from "./generation-types";
@@ -227,7 +228,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 45) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 46) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1180,6 +1181,14 @@ function migrate(sqlite: DatabaseSyncType): void {
         PRAGMA user_version = 45;
       `);
     }
+    if (current < 46) {
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS file_uploads (
+        id TEXT PRIMARY KEY, file_name TEXT NOT NULL, mime_type TEXT NOT NULL,
+        byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL, offset INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'uploading', expires_at INTEGER NOT NULL, error TEXT
+      );
+      PRAGMA user_version = 46;`);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -2093,7 +2102,7 @@ export class Store {
     const assets = unique.map((id) => this.getFileAsset(id));
     if (assets.some((asset) => !asset)) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     const total = assets.reduce((sum, asset) => sum + (asset?.byteSize ?? 0), 0);
-    if (total > 128 * 1024 * 1024) throw withMessage(new StoreError("file_attachments_too_large", "每条消息的附件总大小不能超过 128 MiB"), "error.attachments_cannot_exceed_128_mib_per_message");
+    if (total > MAX_MESSAGE_ATTACHMENT_BYTES) throw withMessage(new StoreError("file_attachments_too_large", "每条消息的附件总大小不能超过 4 GiB"), "uploads.message_limit");
     const images = assets.filter((asset): asset is ImageAssetDto => asset?.kind === "image");
     if (images.length > 4) throw withMessage(new StoreError("image_attachment_invalid", "每条消息最多包含 4 张图片"), "error.each_message_can_contain_up_to_4_images");
     if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > imageBytesLimit) {
@@ -2231,6 +2240,7 @@ export class Store {
         AND NOT EXISTS (SELECT 1 FROM agent_file_assets r WHERE r.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM vision_analyses v WHERE v.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM queued_message_assets q WHERE q.asset_id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM file_uploads u WHERE u.id = a.id)
     `).all(before) as Row[]).map(fileAssetRecord);
   }
 
@@ -3419,7 +3429,7 @@ export class Store {
     const row = this.sqlite.prepare(`
       SELECT * FROM context_summaries WHERE conversation_id = ? AND through_ordinal <=
         (SELECT COALESCE(MAX(ordinal), 0) FROM messages WHERE conversation_id = context_summaries.conversation_id AND history_active = 1)
-      ORDER BY through_ordinal DESC LIMIT 1
+      ORDER BY through_ordinal DESC, created_at DESC, rowid DESC LIMIT 1
     `).get(conversationId) as Row | undefined;
     return row ? {
       id: String(row.id),

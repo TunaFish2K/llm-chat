@@ -23,18 +23,20 @@ import { AttachmentList, AttachmentMenu, useAttachments } from "./AttachmentEdit
 /** Rewrite a user message into a new branch and immediately regenerate. */
 export function EditForkDialog({
   message,
+  conversationId,
   busy,
   onClose,
   onSubmit
 }: {
   message: MessageDto;
+  conversationId?: string | undefined;
   busy: boolean;
   onClose: () => void;
   onSubmit: (text: string, assetIds: string[]) => void;
 }) {
   useLocale();
   const [text, setText] = useState(message.text ?? "");
-  const { attachments, setAttachments, uploading, uploadFiles } = useAttachments(message.attachments ?? [], message.id);
+  const { attachments, setAttachments, uploading, uploadFiles, uploadScope, attachmentCount } = useAttachments(message.attachments ?? [], `edit:${message.id}`, conversationId);
   const valid = (text.trim().length > 0 || attachments.length > 0) && text.length <= 1_000_000;
   return (
     <Modal
@@ -62,8 +64,8 @@ export function EditForkDialog({
           onDrop={(event) => { event.preventDefault(); void uploadFiles([...event.dataTransfer.files]); }}
         />
       </Field>
-      <AttachmentList attachments={attachments} setAttachments={setAttachments} disabled={busy || uploading} />
-      <AttachmentMenu uploadFiles={uploadFiles} disabled={busy || attachments.length >= 8} uploading={uploading} />
+      <AttachmentList uploadScope={uploadScope} attachments={attachments} setAttachments={setAttachments} disabled={busy} />
+      <AttachmentMenu uploadFiles={uploadFiles} disabled={busy || attachmentCount >= 8} uploading={uploading} />
       <p className="small muted">{t("dialogs.saving_immediately_generates_a_reply_in_the_new_branch_the")}</p>
     </Modal>
   );
@@ -124,7 +126,7 @@ export function ExecutionOverridesDialog({
   onClose,
   onSave
 }: {
-  conversationId?: string;
+  conversationId?: string | undefined;
   value: ConversationExecutionOverrides;
   agent: AgentSummaryDto | undefined;
   models: ModelDto[];
