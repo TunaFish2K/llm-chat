@@ -40,7 +40,7 @@ import { ConnectionsView } from "./ConnectionsView";
 import { DirectoryPicker } from "../components/DirectoryPicker";
 import { OverflowText } from "../components/OverflowText";
 import { ExpandableTextarea } from "../components/ExpandableTextarea";
-import { applyUpdate, checkForUpdates, getPwaState, subscribePwa } from "../lib/pwa";
+import { applyUpdate, checkForUpdates, forceUpdate, getPwaState, subscribePwa } from "../lib/pwa";
 import { ServiceSettingsPanel } from "../components/ServiceSettingsPanel";
 
 function getSECTIONS(): Array<[string, string]> { return [
@@ -134,7 +134,7 @@ function ImageGenerationSection() {
 function AppUpdateCard() {
   useLocale();
   const pwa = useSyncExternalStore(subscribePwa, getPwaState);
-  const busy = ["checking", "downloading", "applying"].includes(pwa.updateStatus);
+  const busy = ["checking", "downloading", "applying", "repairing"].includes(pwa.updateStatus);
   const status = {
     idle: t("SettingsView.check_for_a_newer_version_of_the_app_on_this"),
     checking: t("SettingsView.checking_for_updates"),
@@ -142,14 +142,17 @@ function AppUpdateCard() {
     current: t("SettingsView.up_to_date"),
     ready: t("SettingsView.the_new_version_is_ready_updating_will_refresh_this_page"),
     applying: t("SettingsView.applying_the_new_version"),
+    repairing: t("SettingsView.redownloading_app_resources"),
     error: pwa.updateError ? displayError({ message: pwa.updateError, ...(pwa.updateErrorI18n ? { i18n: pwa.updateErrorI18n } : {}) }) : t("SettingsView.update_failed_try_again")
   }[pwa.updateStatus];
   return <div className="card" aria-label={t("SettingsView.app_updates")}>
     <h3>{t("SettingsView.app_updates")}</h3>
     {pwa.supported ? <>
+      <p className="hint">{t("SettingsView.force_update_description")}</p>
       <p className="hint" role={pwa.updateStatus === "error" ? "alert" : "status"}>{status}</p>
       <div className="row">
         <button type="button" className="btn" disabled={busy} onClick={() => void checkForUpdates()}>{t("SettingsView.check_for_updates")}</button>
+        <button type="button" className="btn" disabled={busy} onClick={() => void forceUpdate()}>{t("SettingsView.force_update")}</button>
         {pwa.updateAvailable ? <button type="button" className="btn primary" disabled={busy} onClick={() => void applyUpdate()}>{t("SettingsView.update_and_refresh")}</button> : null}
       </div>
     </> : <>

@@ -88,6 +88,20 @@ test.describe("应用外壳", () => {
     expect((await api(request, APP_URL, "GET", "/api/settings")).theme).toBe(before);
   });
 
+  test("PWA 在主题脚本和样式未加载时也使用黑色开屏", async ({ page }) => {
+    await page.route("**/theme-init.js", route => route.fulfill({ contentType: "text/javascript", body: "" }));
+    await page.route("**/assets/*", route => route.fulfill({
+      contentType: new URL(route.request().url()).pathname.endsWith(".css") ? "text/css" : "text/javascript", body: ""
+    }));
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.goto(APP_URL);
+      await expect(page.locator("html")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+      await expect(page.locator("body")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#000000");
+    }
+  });
+
   test("PWA 在应用脚本加载前恢复系统栏主题", async ({ page }) => {
     // Hold back React to verify the cold-start theme, rather than the later hook update.
     await page.route("**/assets/*.js", (route) => route.fulfill({ contentType: "text/javascript", body: "" }));
@@ -211,8 +225,8 @@ test.describe("应用外壳", () => {
     expect(await manifest.json()).toMatchObject({
       name: "Chat",
       short_name: "Chat",
-      theme_color: "#f5f7f5",
-      background_color: "#f5f7f5",
+      theme_color: "#000000",
+      background_color: "#000000",
       icons: [
         { src: "/icons/icon-192-v2.png", sizes: "192x192" },
         { src: "/icons/icon-512-v2.png", sizes: "512x512" },
@@ -228,7 +242,7 @@ test.describe("应用外壳", () => {
     expect(await sw.text()).toContain("theme-init.js");
     for (const locale of ["zh-CN", "en-US"]) {
       const localizedManifest = await page.request.get(`${APP_URL}/manifest.${locale}.webmanifest`);
-      expect(await localizedManifest.json()).toMatchObject({ theme_color: "#f5f7f5", background_color: "#f5f7f5" });
+      expect(await localizedManifest.json()).toMatchObject({ theme_color: "#000000", background_color: "#000000" });
     }
     await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", "/icons/apple-touch-icon-180-v2.png");
     const apiResponse = await page.request.get(`${APP_URL}/api/health`);

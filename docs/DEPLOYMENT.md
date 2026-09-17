@@ -391,6 +391,21 @@ E2E 在每个用例后清理新建会话、Agent 和连接。需要拦截 API �
 密码登录。手动验收应使用当前版本的桌面 Safari、Chrome、Firefox，以及平台提供的移动 Safari、Chrome、
 Firefox。非本机 HTTP 下普通网页可用，但 Service Worker、PWA 安装和离线缓存不作保证。
 
+## 客户端更新与开屏
+
+在「设置 → 通用 → 应用更新」中，「检查更新」准备新版本，「更新并刷新」启用已下载的版本。
+如果页面更新异常、资源缺失，或显示最新版本但怀疑缓存损坏，使用「强制更新」。它会重新检查
+服务器当前发布版本，绕过 HTTP 缓存下载应用资源，完整下载并核对服务器版本后修复前端缓存，
+最后刷新当前页面。离线、下载失败或发布版本变化时显示错误，恢复联网后可重试。
+登录 Cookie、草稿、显示偏好、IndexedDB 历史和离线图片保留。
+
+PWA 的系统开屏背景和初始网页背景固定为黑色。网页启动后应用已保存的浅色、深色或纯黑主题，
+系统栏仍随页面主题变化。Android 已安装 PWA 的系统开屏来自 Chrome 保存的安装信息；
+网页的「强制更新」能修复网页资源，但不能直接强制 Chrome 更新 WebAPK。
+如果新版网页已生效而系统开屏仍是旧色，按
+[Chrome 的 manifest 更新说明](https://web.dev/articles/manifest-updates#updates_on_chrome_for_android)
+检查安装信息；系统开屏需在 Android 真机上验收。
+
 ## 故障诊断
 
 启用日志时，服务每 60 秒输出一条 `Runtime memory`，记录 `rss`、`heapTotal`、`heapUsed`、`external`、

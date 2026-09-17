@@ -9,7 +9,7 @@ export interface PwaState {
   updateAvailable: boolean;
   installAvailable: boolean;
   offlineReady: boolean;
-  updateStatus: "idle" | "checking" | "downloading" | "current" | "ready" | "applying" | "error";
+  updateStatus: "idle" | "checking" | "downloading" | "current" | "ready" | "applying" | "repairing" | "error";
   updateError: string | null;
   updateErrorI18n?: LocalizedMessage | undefined;
 }
@@ -32,21 +32,21 @@ let registration: ServiceWorkerRegistration | undefined;
 let registrationError: Error | null = null;
 let lastUpdateCheck = 0;
 let operation: Promise<void> | null = null;
-let finishReload: (() => void) | null = null;
+let finishActivation: (() => void) | null = null;
 let watchingUpdates = false;
 const UPDATE_TIMEOUT = 30_000;
 
 function ready(): void {
-  emit({ updateAvailable: true, updateStatus: state.updateStatus === "applying" ? "applying" : "ready", updateError: null });
+  emit({ updateAvailable: true, updateStatus: ["applying", "repairing"].includes(state.updateStatus) ? state.updateStatus : "ready", updateError: null });
 }
 
 function failure(error: unknown): void {
   emit({ updateStatus: "error", updateErrorI18n: errorI18n(error), updateError: error instanceof Error ? error.message : t("SettingsView.update_failed_try_again") });
 }
 
-function withTimeout<T>(promise: Promise<T>, key: MessageKey): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, key: MessageKey, timeout = UPDATE_TIMEOUT): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(localizedError(key)), UPDATE_TIMEOUT);
+    const timer = window.setTimeout(() => reject(localizedError(key)), timeout);
     promise.then(resolve, reject).finally(() => window.clearTimeout(timer));
   });
 }
@@ -153,7 +153,7 @@ function registerServiceWorker(): void {
     immediate: true,
     onNeedRefresh: ready,
     // Activation in another tab must not refresh this tab without confirmation.
-    onNeedReload() { finishReload?.(); },
+    onNeedReload() { finishActivation?.(); },
     onOfflineReady() { emit({ offlineReady: true }); },
     onRegisterError(error) {
       registrationError = localizedError("pwa.could_not_start_the_update_service", { value1: (error instanceof Error ? error.message : String(error)) });
@@ -193,41 +193,93 @@ export async function promptInstall(): Promise<void> {
   emit({ installAvailable: false });
 }
 
+async function activateWorker(worker: ServiceWorker): Promise<void> {
+  if (navigator.serviceWorker.controller === worker) return;
+  let cleanup = () => {};
+  try {
+    await withTimeout(new Promise<void>((resolve, reject) => {
+      let finished = false;
+      const changed = () => {
+        if (finished || navigator.serviceWorker.controller !== worker) return;
+        finished = true;
+        resolve();
+      };
+      finishActivation = changed;
+      const failed = () => {
+        if (worker.state === "redundant") reject(localizedError("pwa.could_not_apply_the_new_version_try_again"));
+      };
+      navigator.serviceWorker.addEventListener("controllerchange", changed);
+      worker.addEventListener("statechange", failed);
+      cleanup = () => {
+        navigator.serviceWorker.removeEventListener("controllerchange", changed);
+        worker.removeEventListener("statechange", failed);
+        finishActivation = null;
+      };
+      worker.postMessage({ type: "SKIP_WAITING" });
+      changed();
+    }), "pwa.applying_the_new_version_timed_out_try_again");
+  } finally { cleanup(); }
+}
+
+function reloadUpdatedPage(): void {
+  emit({ updateAvailable: false, updateStatus: "current", updateError: null });
+  window.location.reload();
+}
+
 export function applyUpdate(): Promise<void> {
   return runOperation(async () => {
     if (!state.updateAvailable) return;
     emit({ updateStatus: "applying", updateError: null });
     const current = await getRegistration();
-    const worker = current.waiting;
     // Another tab may have activated the prepared version already.
-    if (!worker) { window.location.reload(); return; }
-    const previousController = navigator.serviceWorker.controller;
-    let cleanup = () => {};
+    if (current.waiting) await activateWorker(current.waiting);
+    reloadUpdatedPage();
+  });
+}
+
+async function publishedBuild(): Promise<string> {
+  const response = await fetch(`/readyz?update=${Date.now()}`, {
+    cache: "no-store", signal: AbortSignal.timeout(UPDATE_TIMEOUT)
+  });
+  if (!response.ok) throw localizedError("pwa.server_not_ready_for_update");
+  const data = await response.json() as { ok?: boolean; buildId?: string };
+  if (data.ok !== true || typeof data.buildId !== "string") throw localizedError("pwa.server_not_ready_for_update");
+  return data.buildId;
+}
+
+/** Repair the current release even when the service worker has not changed. */
+export function forceUpdate(): Promise<void> {
+  return runOperation(async () => {
+    if (!state.supported) throw localizedError("pwa.this_browser_does_not_support_app_updates_refresh_the_page");
+    if (navigator.onLine === false) throw localizedError("pwa.you_are_offline_connect_and_try_again");
+    emit({ updateStatus: "checking", updateError: null });
+    const build = await publishedBuild();
+    const current = await withTimeout(navigator.serviceWorker.register("/sw.js", {
+      scope: "/", updateViaCache: "none"
+    }), "pwa.update_check_timed_out_try_again");
+    registration = current;
+    registrationError = null;
+    await withTimeout(current.update(), "pwa.update_check_timed_out_try_again");
+    emit({ updateStatus: "downloading" });
+    if (current.installing) await waitForInstallation(current.installing);
+    const worker = current.waiting ?? current.active;
+    if (!worker) throw localizedError("pwa.update_service_is_not_ready_try_again");
+    emit({ updateStatus: "applying" });
+    await activateWorker(worker);
+    emit({ updateStatus: "repairing" });
+    const channel = new MessageChannel();
     try {
       await withTimeout(new Promise<void>((resolve, reject) => {
-        let finished = false;
-        finishReload = () => {
-          if (finished) return;
-          finished = true;
-          emit({ updateAvailable: false, updateStatus: "current", updateError: null });
-          window.location.reload();
-          resolve();
+        channel.port1.onmessage = (event) => {
+          if (event.data?.ok === true) resolve();
+          else reject(localizedError("pwa.repair_failed_try_again"));
         };
-        const changed = () => {
-          if (navigator.serviceWorker.controller && navigator.serviceWorker.controller !== previousController) finishReload?.();
-        };
-        const failed = () => {
-          if (worker.state === "redundant") reject(localizedError("pwa.could_not_apply_the_new_version_try_again"));
-        };
-        navigator.serviceWorker.addEventListener("controllerchange", changed);
-        worker.addEventListener("statechange", failed);
-        cleanup = () => {
-          navigator.serviceWorker.removeEventListener("controllerchange", changed);
-          worker.removeEventListener("statechange", failed);
-          finishReload = null;
-        };
-        worker.postMessage({ type: "SKIP_WAITING" });
-      }), "pwa.applying_the_new_version_timed_out_try_again");
-    } finally { cleanup(); }
+        worker.postMessage({ type: "REPAIR_PRECACHE", buildId: build }, [channel.port2]);
+      }), "pwa.repair_failed_try_again", 120_000);
+    } finally { channel.port1.close(); channel.port2.close(); }
+    if (navigator.serviceWorker.controller !== worker || await publishedBuild() !== build) {
+      throw localizedError("pwa.version_changed_try_again");
+    }
+    reloadUpdatedPage();
   });
 }

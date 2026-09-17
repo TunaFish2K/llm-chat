@@ -682,7 +682,7 @@
   "pwa.could_not_start_the_update_service": "无法启动更新服务：{{value1}}",
   "pwa.could_not_start_the_update_service_refresh_and_try_again": "无法启动更新服务，请刷新页面后重试",
   "pwa.could_not_apply_the_new_version_try_again": "新版启用失败，请重试",
-  "pwa.applying_the_new_version_timed_out_try_again": "启用新版超时，请重试",
+  "pwa.applying_the_new_version_timed_out_try_again": "启用新版超时，请关闭其他 Chat 页面后重试",
   "offline_history.storage_is_full_some_records_or_images_have_not_been": "存储空间不足，部分记录或图片尚未保存",
   "offline_history.could_not_save_offline_history": "离线记录保存失败",
   "offline_history.sign_in_again": "请重新登录",
@@ -1534,5 +1534,11 @@
   "uploads.summary": "文件上传（{{count}}）",
   "uploads.progress": "{{name}} 上传进度",
   "uploads.resume_hint": "切换页面后继续上传；刷新后请选择原文件续传。",
-  "uploads.limit_hint": "单文件最大 2 GiB，每条消息合计 4 GiB。"
+  "uploads.limit_hint": "单文件最大 2 GiB，每条消息合计 4 GiB。",
+  "SettingsView.force_update": "强制更新",
+  "SettingsView.force_update_description": "重新下载当前服务器版本并刷新，用于修复更新异常。保留登录、草稿和离线记录。",
+  "SettingsView.redownloading_app_resources": "正在重新下载并修复应用资源…",
+  "pwa.server_not_ready_for_update": "服务器暂时无法提供更新，请稍后重试",
+  "pwa.repair_failed_try_again": "应用资源修复失败，请保持联网后重试",
+  "pwa.version_changed_try_again": "服务器版本已变化，请再次强制更新"
 }
