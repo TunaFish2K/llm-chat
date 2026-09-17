@@ -268,7 +268,7 @@
   gap: var(--space-2);
   padding: 6px var(--space-2);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-deep);
+  background: var(--bg);
 }
 
 .mobile-appbar strong {
