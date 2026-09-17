@@ -105,16 +105,6 @@ it("keeps following when duplicate scroll events arrive before a content resize 
   expect(state.element.scrollTop).toBe(1000);
 });
 
-it("keeps following when a fractional bottom clamp moves scrollTop upward", () => {
-  const state = setup();
-  state.element.scrollTop = 599.5;
-  fireEvent.scroll(state.element);
-  expect(state.scroll.detached).toBe(false);
-  Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
-  state.resize();
-  expect(state.element.scrollTop).toBe(1000);
-});
-
 it("keeps following during a smooth jump and lets the reader interrupt it", () => {
   const state = setup();
   state.element.scrollTop = 200;

@@ -123,9 +123,7 @@ export function useStickToBottom(
       if (jumpFrames.current > 0) jumpFrames.current = JUMP_SETTLE_FRAMES;
       follow(); return;
     }
-    // A viewport resize or subpixel clamp can move scrollTop upward while the
-    // reader is still at the bottom. That must not disarm the next content follow.
-    const nextFollowing = atBottom;
+    const nextFollowing = !movedUp && atBottom;
     following.current = nextFollowing;
     setDetached(!nextFollowing);
   }, [enabled, follow]);
