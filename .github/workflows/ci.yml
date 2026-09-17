@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Test deployment automation
+        run: python3 -m unittest discover -s scripts/deployment/tests -v
+
       - name: Install read-only sandbox runtime
         run: bash scripts/install-ci-bubblewrap.sh
 
@@ -46,3 +49,25 @@ jobs:
 
       - name: Run browser end-to-end tests
         run: pnpm test:e2e
+
+  deploy:
+    needs: quality
+    if: >-
+      github.event_name == 'push' &&
+      startsWith(github.ref, 'refs/tags/') &&
+      github.event.created == true &&
+      github.event.deleted == false &&
+      github.event.forced != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the CI-verified commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Deploy and wait for readiness
+        env:
+          LLM_CHAT_DEPLOY_URL: ${{ vars.LLM_CHAT_DEPLOY_URL }}
+          LLM_CHAT_DEPLOY_SECRET: ${{ secrets.LLM_CHAT_DEPLOY_SECRET }}
+        run: python3 scripts/deployment/notify.py

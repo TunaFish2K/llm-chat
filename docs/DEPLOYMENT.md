@@ -178,6 +178,76 @@ SHA-256，再发布到现有文件资产目录；下载也按流或 Range 读取
 
 ## 更新和回滚
 
+### prv1：新 tag 经 CI 验证后自动部署
+
+推送新 tag 会运行现有 CI。`quality` 全部通过后，`deploy` 任务调用
+`scripts/deployment/notify.py`，向 `https://prv1v4.2kb.fish:8443/hooks/llm-chat`
+发送签名请求，并等待服务器完成部署。所有 tag 名称均可使用；分支、PR、删除 tag 和强制修改
+已有 tag 不部署，不需要创建 GitHub Release。tag 必须包含这版 CI 工作流；历史版本不会自动获得新工作流。
+GitHub 一次推送超过三个 tag 时可能不产生对应事件，因此发布 tag 应逐个推送。
+
+GitHub 仓库变量 `LLM_CHAT_DEPLOY_URL` 保存上述 URL，Secret `LLM_CHAT_DEPLOY_SECRET`
+与服务器的 `webhook.secret` 保持一致。通知携带仓库、tag、提交 SHA、CI run ID、run number 和
+attempt；签名覆盖时间戳、HTTP 方法、路径及原始请求体，有效窗口为五分钟。密钥至少 32 字节，
+只存入 Actions Secret 和权限为 `0600` 的服务器文件，不进入仓库、命令输出或部署日志。
+
+`scripts/deployment/service.py` 使用 Python 3 标准库，依赖服务器已有的 Git、curl、tar、Node、
+pnpm、served 和 llm-chat lifecycle 脚本。配置字段见同目录的 `config.example.json`。
+部署器作为独立的 `llm-chat-deploy` 服务运行，只监听 `127.0.0.1:11113`。现有 Tunnel 继续转发至
+Caddy 的 `127.0.0.1:11112`；在该站点的聊天反向代理之前按 Host 分流：
+
+```caddyfile
+@deployment header Host prv1v4.2kb.fish:8443
+handle @deployment {
+    reverse_proxy 127.0.0.1:11113
+}
+handle {
+    # 原有聊天应用 reverse_proxy 及其响应头配置放在这里。
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+公网端口用于分流，HMAC 签名用于授权。部署器仅提供 `POST /hooks/llm-chat` 和
+`GET /hooks/llm-chat/<run_id>`，两者都验证签名；其他请求不提供管理能力。新增任务持久落盘后
+返回 `202`，查询结果包含 `id`、`status`、`phase`、`error`。状态为 `queued`、`running`、
+`succeeded`、`failed` 或 `superseded`；详细日志仅保存在服务器。
+
+服务器重新获取 tag，并将轻量或附注 tag 解析为提交，与通知 SHA 比较。它在独立目录安装冻结
+依赖、构建并运行部署冒烟检查，切换前再次核对 tag。构建失败不会停服。切换时立即平滑停止
+应用及其进行中的任务，备份完整数据、配置和 lifecycle，然后启动新程序；本机与两个公网
+`/readyz` 必须返回目标 `buildId`。不用 served 自身的短停止期限直接终止应用。
+
+同一时间只执行一个部署，使用与手动发布共用的 `deploy.lock`。run ID 防止重复部署，run number
+决定发布顺序：保留最新待部署任务，迟到的旧通知不能覆盖新版本。一个失败任务只有在 Actions
+重新运行、attempt 增加后才重试；成功任务重跑只查询已有结果。通知网络失败会重试，Actions
+等待超时不会取消服务器已保存的任务，可重跑 `deploy` 任务重新连接。
+
+部署器恢复时会检查阶段和实际版本：构建中断可重建，已健康启动的新版本可直接确认成功，
+停服或切换中断则恢复旧程序。切换失败时先停止新程序，只有数据库 `user_version` 未变化才
+自动恢复旧程序；发生迁移或恢复失败时，暂停后续部署并保留数据及备份，不自动覆盖数据库。
+
+服务器文件及运维入口：
+
+- 程序：`~/.local/lib/llm-chat-autodeploy/`；更新部署器程序需单独安装，应用 tag 不会替换运行中的部署器。
+- 配置及密钥：`~/.config/llm-chat-deployment/config.json`、`webhook.secret`。
+- 队列：`~/.local/state/llm-chat-autodeploy/jobs.sqlite`；日志：同目录 `logs/<run_id>.log`。
+- 发布与备份继续使用现有目录；不自动删除旧版本，旧会话容器可能仍引用其运行时文件。
+- `served list` 查看服务，`served history llm-chat-deploy --stdout` 查看接收服务状态；Actions 的
+  `deploy` 任务显示进度和最终结果。
+
+如果部署因数据库迁移而暂停，按下文的停服、完整数据恢复规则处理。人工确认旧版或新版恢复
+健康后，在服务器运行以下命令解除暂停，再重跑失败的 Actions `deploy` 任务：
+
+```bash
+python3 ~/.local/lib/llm-chat-autodeploy/service.py \
+  --config ~/.config/llm-chat-deployment/config.json --clear-block
+```
+
+自动化测试：`python3 -m unittest discover -s scripts/deployment/tests -v`。测试使用临时 Git 仓库、
+SQLite 和发布目录，覆盖请求认证、重复与乱序通知、tag 变化、备份与回滚、迁移失败和中断恢复。
+
+### 手动发布
+
 更新时先在新的发布目录安装依赖并构建。构建将版本标识直接写入服务端代码，同时输出
 `apps/server/dist/build-info.json` 供部署核对；运行时不读取配置或环境变量覆盖标识。
 

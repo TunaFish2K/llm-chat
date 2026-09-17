@@ -1,0 +1,19 @@
+{
+  "repository": "TunaFish2K/llm-chat",
+  "git_url": "https://github.com/TunaFish2K/llm-chat.git",
+  "port": 11113,
+  "state_dir": "/home/tuna/.local/state/llm-chat-autodeploy",
+  "secret_file": "/home/tuna/.config/llm-chat-deployment/webhook.secret",
+  "deploy_lock": "/home/tuna/.local/state/llm-chat-deployment/deploy.lock",
+  "lifecycle": "/home/tuna/.local/lib/llm-chat-deployment/llm-chat-lifecycle.py",
+  "app_service_dir": "/home/tuna/served-services/llm-chat",
+  "app_config": "/home/tuna/.config/llm-chat/config.json",
+  "data_dir": "/home/tuna/.local/share/llm-chat",
+  "releases_dir": "/home/tuna/.local/opt/llm-chat/releases",
+  "backups_dir": "/home/tuna/.local/state/llm-chat-backups",
+  "ready_url": "http://127.0.0.1:3000/readyz",
+  "public_probes": [
+    { "url": "https://prv1.2kb.fish:11111/readyz", "family": "6" },
+    { "url": "https://prv1v4.2kb.fish/readyz", "family": "4" }
+  ]
+}
