@@ -23,7 +23,9 @@ it("suppresses native anchoring until typography layout settles and restores the
   offset += 100;
   act(() => window.dispatchEvent(new Event("llm-chat:after-typography")));
   expect(state.element.scrollTop).toBe(400);
+  offset += 3;
   act(() => vi.advanceTimersByTime(17));
+  expect(state.element.scrollTop).toBe(403);
   expect(state.element.style.overflowAnchor).toBe("none");
   act(() => vi.advanceTimersByTime(32));
   expect(state.element.style.overflowAnchor).toBe("auto");
@@ -103,6 +105,16 @@ it("keeps following when duplicate scroll events arrive before a content resize 
   expect(state.element.scrollTop).toBe(1000);
 });
 
+it("keeps following when a fractional bottom clamp moves scrollTop upward", () => {
+  const state = setup();
+  state.element.scrollTop = 599.5;
+  fireEvent.scroll(state.element);
+  expect(state.scroll.detached).toBe(false);
+  Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
+  state.resize();
+  expect(state.element.scrollTop).toBe(1000);
+});
+
 it("keeps following during a smooth jump and lets the reader interrupt it", () => {
   const state = setup();
   state.element.scrollTop = 200;
@@ -168,6 +180,20 @@ it("resumes if content grows between reaching the bottom and delivery of the scr
   state.update();
   act(() => vi.advanceTimersByTime(20));
   expect(state.scroll.detached).toBe(false);
+  expect(state.element.scrollTop).toBe(1000);
+});
+
+it("follows through a temporary content collapse whose scroll event arrives after layout", () => {
+  const state = setup();
+  Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
+  state.resize();
+  expect(state.element.scrollTop).toBe(1000);
+  // A markdown replacement can clamp the viewport, then restore its height
+  // before the browser delivers the resulting scroll event.
+  state.element.scrollTop = 600;
+  fireEvent.scroll(state.element);
+  expect(state.scroll.detached).toBe(false);
+  act(() => vi.advanceTimersByTime(60));
   expect(state.element.scrollTop).toBe(1000);
 });
 

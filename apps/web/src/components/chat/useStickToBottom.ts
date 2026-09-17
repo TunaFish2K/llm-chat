@@ -84,7 +84,12 @@ export function useStickToBottom(
       if (!following.current) { following.current = true; setDetached(false); }
       smooth.current = false;
       const target = Math.max(0, height - viewport);
-      if (top !== target) element.scrollTop = target;
+      if (top !== target) {
+        // Rendering can briefly collapse and restore content before its queued
+        // scroll event arrives. Settle layout jumps just like explicit jumps.
+        jumpFrames.current = JUMP_SETTLE_FRAMES;
+        element.scrollTop = target;
+      }
       previousScrollTop.current = target;
     }
   }, [enabled]);
@@ -118,7 +123,9 @@ export function useStickToBottom(
       if (jumpFrames.current > 0) jumpFrames.current = JUMP_SETTLE_FRAMES;
       follow(); return;
     }
-    const nextFollowing = !movedUp && atBottom;
+    // A viewport resize or subpixel clamp can move scrollTop upward while the
+    // reader is still at the bottom. That must not disarm the next content follow.
+    const nextFollowing = atBottom;
     following.current = nextFollowing;
     setDetached(!nextFollowing);
   }, [enabled, follow]);
@@ -218,13 +225,22 @@ export function useStickToBottom(
     const after = () => {
       const element = ref.current;
       if (!enabled || !element) return;
-      if (wasFollowing) toBottom();
-      else if (anchor?.isConnected) {
-        element.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
-        previousScrollTop.current = element.scrollTop;
-      }
+      const restorePosition = () => {
+        if (wasFollowing) toBottom();
+        else if (anchor?.isConnected) {
+          element.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+          previousScrollTop.current = element.scrollTop;
+        }
+      };
+      restorePosition();
+      // Composer sizing and browser layout can settle after the typography
+      // event. Keep the same paragraph offset through those layout frames.
       anchoringFrame = requestAnimationFrame(() => {
-        anchoringFrame = requestAnimationFrame(restoreAnchoring);
+        restorePosition();
+        anchoringFrame = requestAnimationFrame(() => {
+          restorePosition();
+          restoreAnchoring();
+        });
       });
     };
     window.addEventListener("llm-chat:before-typography", before);

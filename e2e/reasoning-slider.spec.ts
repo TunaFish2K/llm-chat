@@ -26,7 +26,11 @@ for (const locale of ["zh-CN", "en-US"] as const) {
         await expect(slider).toHaveAttribute("aria-orientation", "vertical");
         await expect(composer).not.toBeFocused();
         const changes: string[] = [];
-        page.on("request", req => { if (req.method() === "PATCH" && req.url().endsWith(`/api/conversations/${conversation.id}`)) changes.push(req.postData() ?? ""); });
+        page.on("request", req => {
+          if (req.method() === "PATCH" && req.url().endsWith(`/api/conversations/${conversation.id}`) && req.postDataJSON()?.executionOverrides) {
+            changes.push(req.postData() ?? "");
+          }
+        });
         const rail = (await page.locator(".reasoning-slider").boundingBox())!;
         const thumb = (await slider.boundingBox())!;
         const x = thumb.x + thumb.width / 2;

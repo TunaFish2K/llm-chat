@@ -1,6 +1,7 @@
 import { withMessage } from "@llm-chat/i18n";
-import { chmod, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { chmod, link, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 
 const REMOVED_CONFIG_KEYS = new Set(["authMode", "trustProxy", "serveWeb", "shutdownTimeoutMs", "buildId"]);
 const CONFIG_KEYS = new Set(["host", "port", "dataDir"]);
@@ -68,9 +69,13 @@ export async function loadRuntimeConfig(
       throw withMessage(new Error(`无法读取配置文件 (${configPath}): ${formatError(error)}`, { cause: error }), "error.cannot_read_configuration_file", { value1: configPath, value2: formatError(error) });
     }
     source = `${JSON.stringify(DEFAULT_RUNTIME_CONFIG, null, 2)}\n`;
+    const temporaryPath = join(dirname(configPath), `.llm-chat-config-${randomUUID()}.tmp`);
     try {
-      await writeFile(configPath, source, { encoding: "utf8", flag: "wx", mode: 0o600 });
-      try { await chmod(configPath, 0o600); } catch {}
+      await writeFile(temporaryPath, source, { encoding: "utf8", flag: "wx", mode: 0o600 });
+      try { await chmod(temporaryPath, 0o600); } catch {}
+      // Publish a complete file without replacing another creator's config.
+      // Writing directly with wx exposes an empty file to concurrent readers.
+      await link(temporaryPath, configPath);
       generated = true;
     } catch (writeError) {
       if (!isNodeError(writeError, "EEXIST")) {
@@ -81,6 +86,8 @@ export async function loadRuntimeConfig(
       } catch (readError) {
         throw withMessage(new Error(`无法读取并发生成的配置文件 (${configPath}): ${formatError(readError)}`, { cause: readError }), "error.cannot_read_concurrently_created_configuration_file", { value1: configPath, value2: formatError(readError) });
       }
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => {});
     }
   }
 
