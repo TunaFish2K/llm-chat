@@ -195,9 +195,21 @@ export function useStickToBottom(
     let anchor: Element | undefined;
     let anchorTop = 0;
     let wasFollowing = false;
+    let anchoringFrame: number | null = null;
+    let anchoringStyle: string | undefined;
+    const restoreAnchoring = () => {
+      anchoringFrame = null;
+      if (ref.current && anchoringStyle !== undefined) ref.current.style.overflowAnchor = anchoringStyle;
+      anchoringStyle = undefined;
+    };
     const before = () => {
       const element = ref.current;
       if (!enabled || !element) return;
+      if (anchoringFrame !== null) cancelAnimationFrame(anchoringFrame);
+      anchoringStyle ??= element.style.overflowAnchor;
+      // Native text-baseline anchoring can add another adjustment after our
+      // paragraph offset is restored. Suppress it through the layout frames.
+      element.style.overflowAnchor = "none";
       wasFollowing = following.current;
       const top = element.getBoundingClientRect().top;
       anchor = [...element.querySelectorAll(".msg-bubble, .markdown :is(p, li, h1, h2, h3, h4, pre, table), .process-reasoning > div, .reply-footer")].find((item) => item.getClientRects().length && item.getBoundingClientRect().bottom > top);
@@ -211,10 +223,15 @@ export function useStickToBottom(
         element.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
         previousScrollTop.current = element.scrollTop;
       }
+      anchoringFrame = requestAnimationFrame(() => {
+        anchoringFrame = requestAnimationFrame(restoreAnchoring);
+      });
     };
     window.addEventListener("llm-chat:before-typography", before);
     window.addEventListener("llm-chat:after-typography", after);
     return () => {
+      if (anchoringFrame !== null) cancelAnimationFrame(anchoringFrame);
+      restoreAnchoring();
       window.removeEventListener("llm-chat:before-typography", before);
       window.removeEventListener("llm-chat:after-typography", after);
     };
