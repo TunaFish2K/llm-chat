@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { strToU8, zipSync } from "fflate";
+import { readFileSync } from "node:fs";
 import {
   exportCharacterCard,
   exportCharacterCardWithAssets,
@@ -316,10 +317,12 @@ describe("portable character asset boundaries", () => {
     const before = store.listAgents().length;
     const many = Object.fromEntries(Array.from({ length: 513 }, (_, index) => [`entry-${index}`, strToU8("x")]));
     expect(() => importCharacterCard(store, "many.charx", zipSync(many))).toThrow("安全限制");
-    const large = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`entry-${index}`, new Uint8Array(10 * 1024 * 1024)]));
-    expect(() => importCharacterCard(store, "large.charx", zipSync(large))).toThrow("安全限制");
+    // Seven deflated entries, each containing 10 MiB of zero bytes. Keep the
+    // fixture compressed so CI measures import limits, not repeated compression.
+    const large = readFileSync(new URL("./test-fixtures/expanded-limit.charx", import.meta.url));
+    expect(() => importCharacterCard(store, "large.charx", large)).toThrow("安全限制");
     expect(store.listAgents()).toHaveLength(before);
-  }, 30_000); // Compresses 70 MiB while the coverage suite shares CI runner CPU.
+  }, 30_000);
 
   it("replaces existing PNG card metadata on export", () => {
     const store = createStore();
