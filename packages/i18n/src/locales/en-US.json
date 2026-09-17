@@ -682,7 +682,7 @@
   "pwa.could_not_start_the_update_service": "Could not start the update service: {{value1}}",
   "pwa.could_not_start_the_update_service_refresh_and_try_again": "Could not start the update service. Refresh and try again.",
   "pwa.could_not_apply_the_new_version_try_again": "Could not apply the new version. Try again.",
-  "pwa.applying_the_new_version_timed_out_try_again": "Applying the new version timed out. Try again.",
+  "pwa.applying_the_new_version_timed_out_try_again": "Activating the new version timed out. Close other Chat pages and try again.",
   "offline_history.storage_is_full_some_records_or_images_have_not_been": "Storage is full. Some records or images have not been saved.",
   "offline_history.could_not_save_offline_history": "Could not save offline history",
   "offline_history.sign_in_again": "Sign in again",
@@ -1550,5 +1550,11 @@
   "uploads.summary": "File uploads ({{count}})",
   "uploads.progress": "Upload progress for {{name}}",
   "uploads.resume_hint": "Uploads continue when you navigate. After refreshing, select the original file to resume.",
-  "uploads.limit_hint": "Up to 2 GiB per file and 4 GiB per message."
+  "uploads.limit_hint": "Up to 2 GiB per file and 4 GiB per message.",
+  "SettingsView.force_update": "Force update",
+  "SettingsView.force_update_description": "Download the current server version again and refresh to repair update problems. Keeps your login, drafts, and offline history.",
+  "SettingsView.redownloading_app_resources": "Downloading and repairing app resources…",
+  "pwa.server_not_ready_for_update": "The server is not ready to provide an update. Try again shortly.",
+  "pwa.repair_failed_try_again": "Could not repair app resources. Stay online and try again.",
+  "pwa.version_changed_try_again": "The server version changed. Force update again."
 }

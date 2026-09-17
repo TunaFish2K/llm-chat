@@ -9,7 +9,7 @@ class Worker extends EventTarget {
   postMessage = vi.fn();
   change(state: string) { this.state = state; this.dispatchEvent(new Event("statechange")); }
 }
-let container: EventTarget & { controller: Worker | null };
+let container: EventTarget & { controller: Worker | null; register: ReturnType<typeof vi.fn> };
 let current: { active: Worker | null; waiting: Worker | null; installing: Worker | null; update: ReturnType<typeof vi.fn> };
 let reload: ReturnType<typeof vi.fn>;
 let options: Options;
@@ -17,7 +17,7 @@ let online: { onLine: boolean; serviceWorker: typeof container };
 
 beforeEach(() => {
   vi.resetModules(); register.mockReset(); vi.useFakeTimers();
-  container = Object.assign(new EventTarget(), { controller: new Worker() as Worker | null });
+  container = Object.assign(new EventTarget(), { controller: new Worker() as Worker | null, register: vi.fn() });
   current = { active: container.controller, waiting: null, installing: null, update: vi.fn() };
   current.update.mockResolvedValue(current);
   online = { onLine: true, serviceWorker: container };
@@ -184,4 +184,65 @@ it("keeps update error metadata so the same failure can be shown in another lang
   expect(state.updateError).toContain("离线");
   expect(renderMessage("en-US", { message: state.updateError!, i18n: state.updateErrorI18n! })).toContain("offline");
   expect(renderMessage("zh-CN", { message: state.updateError!, i18n: state.updateErrorI18n! })).toBe(state.updateError);
+});
+
+function prepareRepair() {
+  container.register.mockResolvedValue(current);
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, buildId: "latest" })));
+  vi.stubGlobal("MessageChannel", class {
+    port1 = { onmessage: null as null | ((event: { data: unknown }) => void), close: vi.fn() };
+    port2 = { postMessage: (data: unknown) => this.port1.onmessage?.({ data }), close: vi.fn() };
+  });
+  container.controller!.postMessage.mockImplementation((message, ports) => {
+    if (message.type === "REPAIR_PRECACHE") ports[0].postMessage({ ok: true });
+  });
+}
+
+it("repairs the same version without a waiting update and refreshes only after success", async () => {
+  const pwa = await boot(); prepareRepair();
+  const first = pwa.forceUpdate();
+  expect(pwa.forceUpdate()).toBe(first);
+  await first;
+  expect(container.register).toHaveBeenCalledWith("/sw.js", { scope: "/", updateViaCache: "none" });
+  expect(container.controller!.postMessage).toHaveBeenCalledWith({ type: "REPAIR_PRECACHE", buildId: "latest" }, expect.any(Array));
+  expect(reload).toHaveBeenCalledOnce();
+});
+
+it("keeps a failed repair retryable without reloading or requiring an available update", async () => {
+  const pwa = await boot(); prepareRepair();
+  container.controller!.postMessage.mockImplementationOnce((_message, ports) => ports[0].postMessage({ ok: false }));
+  await pwa.forceUpdate();
+  expect(pwa.getPwaState().updateError).toContain("修复失败");
+  expect(reload).not.toHaveBeenCalled();
+  await pwa.forceUpdate();
+  expect(reload).toHaveBeenCalledOnce();
+});
+
+it("rejects offline and unavailable servers before touching the worker", async () => {
+  const pwa = await boot(); prepareRepair(); online.onLine = false;
+  await pwa.forceUpdate();
+  expect(container.register).not.toHaveBeenCalled();
+  online.onLine = true;
+  vi.mocked(fetch).mockResolvedValueOnce(new Response("down", { status: 503 }));
+  await pwa.forceUpdate();
+  expect(pwa.getPwaState().updateError).toContain("服务器");
+  expect(container.register).not.toHaveBeenCalled();
+  expect(reload).not.toHaveBeenCalled();
+});
+
+it("rejects a server version change during repair", async () => {
+  const pwa = await boot(); prepareRepair();
+  vi.mocked(fetch).mockResolvedValueOnce(Response.json({ ok: true, buildId: "previous" }));
+  await pwa.forceUpdate();
+  expect(pwa.getPwaState().updateError).toContain("版本已变化");
+  expect(reload).not.toHaveBeenCalled();
+});
+
+it("times out a worker that does not answer and closes the channel", async () => {
+  const pwa = await boot(); prepareRepair();
+  container.controller!.postMessage.mockReset();
+  const updating = pwa.forceUpdate();
+  await vi.advanceTimersByTimeAsync(120_001); await updating;
+  expect(pwa.getPwaState().updateStatus).toBe("error");
+  expect(reload).not.toHaveBeenCalled();
 });

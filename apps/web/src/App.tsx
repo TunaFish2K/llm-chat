@@ -79,6 +79,7 @@ export function App() {
   const [leftWidth, setLeftWidth] = useStoredNumber("llm-chat.sidebar-width", 276, LEFT_MIN, LEFT_MAX);
   const [rightWidth, setRightWidth] = useStoredNumber("llm-chat.inspector-width", 360, RIGHT_MIN, RIGHT_MAX);
   const [pwa, setPwa] = useState(getPwaState());
+  const applyingUpdate = pwa.updateStatus === "applying";
   const preferencesApplied = useRef(false);
   const display = useDisplayPreferences(settings);
   const displayInitialized = useStore(displayStore, (state) => state.initialized);
@@ -96,12 +97,14 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (auth !== "ready") return;
+    // Release SSE held by workers from older releases before activating a new
+    // worker. A failed update reconnects; server-side generation keeps running.
+    if (auth !== "ready" || applyingUpdate) return;
     initOfflineHistory();
     startAppEvents();
     void refreshTaskCounts();
     return stopAppEvents;
-  }, [auth]);
+  }, [auth, applyingUpdate]);
 
   useEffect(() => {
     const reconnect = () => void bootstrap(location.pathname.match(/^\/c\/([^/]+)/)?.[1], true).then(() => { startAppEvents(); });
@@ -230,7 +233,7 @@ export function App() {
       <GlobalFileUploads />
       <QuickTour />
       <ToastStack toasts={toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
-        updating={["checking", "downloading", "applying"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
+        updating={["checking", "downloading", "applying", "repairing"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
     </AppFrame>
   );
 }
