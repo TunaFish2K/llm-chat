@@ -237,7 +237,6 @@ test.describe("应用外壳", () => {
     await expect(page).toHaveTitle("Chat");
     const sw = await page.request.get(`${APP_URL}/sw.js`);
     expect(sw.ok()).toBeTruthy();
-    expect(await sw.text()).toContain("/api/");
     expect(await sw.text()).toContain("icons/icon-v2.svg");
     expect(await sw.text()).toContain("theme-init.js");
     for (const locale of ["zh-CN", "en-US"]) {
@@ -245,8 +244,17 @@ test.describe("应用外壳", () => {
       expect(await localizedManifest.json()).toMatchObject({ theme_color: "#000000", background_color: "#000000" });
     }
     await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", "/icons/apple-touch-icon-180-v2.png");
-    const apiResponse = await page.request.get(`${APP_URL}/api/health`);
-    expect(apiResponse.headers()["cache-control"]).toBe("no-store");
+    expect(await waitForServiceWorkerControl(page)).toBe(true);
+    const apiCache = await page.evaluate(async () => {
+      const response = await fetch("/api/health");
+      const keys = (await Promise.all((await caches.keys()).map(async name =>
+        (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname)
+      ))).flat();
+      return { status: response.status, cacheControl: response.headers.get("cache-control"), keys };
+    });
+    expect(apiCache.status).toBe(200);
+    expect(apiCache.cacheControl).toBe("no-store");
+    expect(apiCache.keys.filter(path => path.startsWith("/api/"))).toEqual([]);
   });
 
   test("PWA 无离线记录时保留应用壳、显示错误并允许联网重试", async ({ page, context }) => {
