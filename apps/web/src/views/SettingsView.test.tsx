@@ -16,10 +16,14 @@ function json(body: unknown, status = 200): Response {
 }
 
 describe("SettingsView", () => {
-  it("renders the general section with theme control", () => {
+  it("keeps general settings separate from appearance and interaction", () => {
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
-    expect(screen.getByLabelText("主题")).toHaveValue("dark");
+    expect(screen.queryByLabelText("主题")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("默认折叠侧边栏")).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "字号" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "开启会话通知" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab").slice(0, 4).map(tab => tab.textContent)).toEqual(["通用", "外观", "交互", "安全"]);
     expect(screen.queryByLabelText("默认推理档位")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("默认模型")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("默认上下文策略")).not.toBeInTheDocument();
@@ -66,36 +70,43 @@ describe("SettingsView", () => {
     const write = vi.spyOn(endpoints, "updateSettings");
     offlineStore.set({ offline });
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
-    render(<SettingsView section="general" />);
+    const { rerender } = render(<SettingsView section="appearance" />);
     await user.selectOptions(screen.getByLabelText("主题"), "light");
     await user.click(screen.getByRole("button", { name: "蓝色" }));
     await user.click(screen.getByLabelText("深色模式使用纯黑背景"));
+    fireEvent.change(screen.getByRole("slider", { name: "字号" }), { target: { value: "20" } });
+    expect(screen.queryByRole("checkbox", { name: /生成时振动/ })).not.toBeInTheDocument();
+    rerender(<SettingsView section="interaction" />);
+    expect(screen.queryByLabelText("主题")).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "字号" })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "开启会话通知" })).toBeInTheDocument();
     await user.click(screen.getByLabelText("默认折叠侧边栏"));
     await user.click(screen.getByRole("checkbox", { name: /生成时振动/ }));
     await user.selectOptions(screen.getByLabelText("推理块折叠策略"), "never-auto-collapse");
-    fireEvent.change(screen.getByRole("slider", { name: "字号" }), { target: { value: "20" } });
     expect(JSON.parse(localStorage.getItem(DISPLAY_KEY)!)).toEqual({
       theme: "light", accentColor: "#018EEE", amoled: true, sidebarCollapsed: true,
       generationHaptics: false, reasoningCollapsePolicy: "never-auto-collapse"
     });
     expect(JSON.parse(localStorage.getItem("llm-chat.typography.v1")!)).toMatchObject({ chatFontSize: 20 });
     expect(write).not.toHaveBeenCalled();
+    rerender(<SettingsView section="general" />);
     expect(screen.getByLabelText("默认 Agent").matches(":disabled")).toBe(offline);
   });
 
-  it("keeps a failed local preview and retries saving without a server request", async () => {
+  it.each(["appearance", "interaction"])("retries failed local preferences in %s without a server request", async (section) => {
     const user = userEvent.setup();
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
-    render(<SettingsView section="general" />);
+    render(<SettingsView section={section} />);
     const write = vi.spyOn(endpoints, "updateSettings");
     vi.spyOn(localStorage, "setItem").mockImplementationOnce(() => { throw new Error("full"); });
-    await user.selectOptions(screen.getByLabelText("主题"), "light");
+    if (section === "appearance") await user.selectOptions(screen.getByLabelText("主题"), "light");
+    else await user.selectOptions(screen.getByLabelText("推理块折叠策略"), "never-auto-collapse");
     const alert = screen.getByText("未能保存显示设置，刷新后可能丢失。");
     expect(alert).toHaveAttribute("role", "alert");
-    expect(screen.getByLabelText("主题")).toHaveValue("light");
+    expect(screen.getByLabelText(section === "appearance" ? "主题" : "推理块折叠策略")).toHaveValue(section === "appearance" ? "light" : "never-auto-collapse");
     await user.click(within(alert).getByRole("button", { name: "重试" }));
     expect(alert).not.toBeInTheDocument();
-    expect(JSON.parse(localStorage.getItem(DISPLAY_KEY)!)).toMatchObject({ theme: "light" });
+    expect(JSON.parse(localStorage.getItem(DISPLAY_KEY)!)).toMatchObject(section === "appearance" ? { theme: "light" } : { reasoningCollapsePolicy: "never-auto-collapse" });
     expect(write).not.toHaveBeenCalled();
   });
 

@@ -281,12 +281,12 @@ test("聊天排版实时预览且仅在同一浏览器同步，离线可调整",
     await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();
     await page.getByLabel("输入消息").fill("保留这份草稿\nHello, typography preview");
     const independent = await other.newPage();
-    await independent.goto(`${APP_URL}/settings/general`);
+    await independent.goto(`${APP_URL}/settings/appearance`);
     const independentSize = independent.getByRole("slider", { name: "字号", exact: true });
     await expect(independentSize).toBeVisible();
     const originalSize = await independentSize.inputValue();
     const second = await page.context().newPage();
-    await second.goto(`${APP_URL}/settings/general`);
+    await second.goto(`${APP_URL}/settings/appearance`);
     await expect(second.getByRole("slider", { name: "字号", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "低频设置" }).click();
     await page.getByRole("button", { name: /聊天排版/ }).click();

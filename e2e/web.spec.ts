@@ -65,7 +65,7 @@ test.describe("应用外壳", () => {
     }
 
     await gotoPath(page, "/settings/general");
-    await expect(page.getByLabel("主题")).toBeVisible();
+    await expect(page.getByLabel("默认 Agent")).toBeVisible();
 
     // Direct deep link into the SPA, served by the history fallback.
     await page.goto(`${APP_URL}/settings/memories`);
@@ -73,7 +73,7 @@ test.describe("应用外壳", () => {
   });
 
   test("主题切换只在当前浏览器持久化", async ({ page, request }) => {
-    await gotoPath(page, "/settings/general");
+    await gotoPath(page, "/settings/appearance");
     const before = (await api(request, APP_URL, "GET", "/api/settings")).theme;
     const next = before === "dark" ? "light" : "dark";
     await page.getByLabel("主题").selectOption(next);
@@ -119,7 +119,7 @@ test.describe("应用外壳", () => {
   test("桌面收起栏在所有主页面保持可导航和可展开", async ({ page }) => {
     test.skip(test.info().project.name === "mobile-chromium", "移动端使用完整导航抽屉");
 
-    await gotoPath(page, "/settings/general");
+    await gotoPath(page, "/settings/appearance");
     await page.getByRole("button", { name: "折叠会话栏" }).click();
 
     const rail = page.locator(".workspace-sidebar[data-compact]");
@@ -251,7 +251,7 @@ test.describe("应用外壳", () => {
           return false;
         }
       })).toBe(false);
-      await page.goto(`${APP_URL}/settings/general`, { waitUntil: "domcontentloaded" });
+      await page.goto(`${APP_URL}/settings/appearance`, { waitUntil: "domcontentloaded" });
       await expect(page.locator("#root")).not.toBeEmpty();
       await expect(page.getByRole("alert")).toContainText(/本机尚未保存离线记录|网络请求失败/);
       await expect(page.getByRole("button", { name: "重试", exact: true })).toBeEnabled();
