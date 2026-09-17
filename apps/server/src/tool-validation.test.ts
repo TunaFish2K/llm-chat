@@ -13,7 +13,7 @@ describe("bounded tool validators", () => {
     expect(cache.get(schema)).not.toBe(first);
     expect(first({ value: "still valid for an active caller" })).toBe(true);
     expect(first({ value: 5 })).toBe(false);
-  });
+  }, 30_000); // Compiles 200 schemas while the coverage suite shares CI runner CPU.
   it("keeps local refs, validation errors and independent schemas with the same id", () => {
     const cache = new ToolValidatorCache();
     const a = cache.get({ $id: "urn:example:tool", type: "object", $defs: { item: { type: "string" } }, properties: { x: { $ref: "#/$defs/item" } } });

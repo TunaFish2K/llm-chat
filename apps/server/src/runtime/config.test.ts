@@ -1,7 +1,8 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_RUNTIME_CONFIG,
   loadRuntimeConfig,
@@ -9,10 +10,16 @@ import {
   selectRuntimeConfig
 } from "./config";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, writeFile: vi.fn(actual.writeFile) };
+});
+
 const projectRoot = "/srv/llm-chat";
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const directory of tempDirs.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
@@ -94,6 +101,36 @@ describe("runtime config", () => {
     expect(results.filter((result) => result.generated)).toHaveLength(1);
     expect(results[0]!.config).toEqual(results[1]!.config);
     expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(DEFAULT_RUNTIME_CONFIG);
+  });
+
+  it("never exposes an unfinished default file to another creator", async () => {
+    const directory = await temporaryDirectory();
+    const configPath = join(directory, "config.json");
+    const originalWrite = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).writeFile;
+    let opened!: () => void;
+    let finish!: () => void;
+    const emptyFileCreated = new Promise<void>((resolve) => { opened = resolve; });
+    const resumeWrite = new Promise<void>((resolve) => { finish = resolve; });
+    vi.mocked(fs.writeFile).mockImplementationOnce(async (file, data, options) => {
+      await originalWrite(file, "", options);
+      opened();
+      await resumeWrite;
+      await originalWrite(file, data, { encoding: "utf8", flag: "w", mode: 0o600 });
+    });
+    const first = loadRuntimeConfig(configPath, projectRoot, true);
+    try {
+      await emptyFileCreated;
+      const second = await loadRuntimeConfig(configPath, projectRoot, true);
+      expect(second.generated).toBe(true);
+      expect(second.config.port).toBe(DEFAULT_RUNTIME_CONFIG.port);
+      expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual(DEFAULT_RUNTIME_CONFIG);
+      finish();
+      expect((await first).generated).toBe(false);
+      expect(await fs.readdir(directory)).toEqual(["config.json"]);
+    } finally {
+      finish();
+      await first;
+    }
   });
 
   it("does not create missing maintenance config or a missing parent directory", async () => {
