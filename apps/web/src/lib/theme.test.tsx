@@ -27,6 +27,10 @@ describe("useTheme", () => {
     const meta = document.createElement("meta");
     meta.name = "theme-color";
     document.head.append(meta);
+    const scheme = document.createElement("meta");
+    scheme.name = "color-scheme";
+    scheme.content = "light dark";
+    document.head.append(scheme);
     const favicon = document.createElement("link");
     favicon.id = "app-favicon";
     favicon.href = "/icons/icon-v2.svg";
@@ -38,15 +42,18 @@ describe("useTheme", () => {
 
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(meta.content).toBe(THEME_COLORS.dark);
+    expect(scheme.content).toBe("dark");
     expect(favicon.getAttribute("href")).toBe("/icons/icon-v2.svg");
 
     rerender({ theme: "light" });
     expect(document.documentElement.dataset.theme).toBe("light");
     expect(meta.content).toBe(THEME_COLORS.light);
+    expect(scheme.content).toBe("light");
     expect(favicon.getAttribute("href")).toBe("/icons/icon-v2.svg");
 
     unmount();
     meta.remove();
+    scheme.remove();
     favicon.remove();
     delete document.documentElement.dataset.theme;
     document.documentElement.style.removeProperty("color-scheme");
