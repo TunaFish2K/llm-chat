@@ -24,6 +24,8 @@ export function useTheme(preferences: DisplayPreferences): void {
         root.style.setProperty("--text-invert", luminance > .179 ? "#000000" : "#ffffff");
       }
       root.style.colorScheme = resolved;
+      document.querySelector<HTMLMetaElement>('meta[name="color-scheme"]')
+        ?.setAttribute("content", resolved);
       document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
         ?.setAttribute("content", amoled && resolved === "dark" ? "#000000" : THEME_COLORS[resolved]);
     };

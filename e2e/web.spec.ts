@@ -88,6 +88,34 @@ test.describe("应用外壳", () => {
     expect((await api(request, APP_URL, "GET", "/api/settings")).theme).toBe(before);
   });
 
+  test("PWA 在应用脚本加载前恢复系统栏主题", async ({ page }) => {
+    // Hold back React to verify the cold-start theme, rather than the later hook update.
+    await page.route("**/assets/*.js", (route) => route.fulfill({ contentType: "text/javascript", body: "" }));
+    const cases = [
+      { system: "light", stored: null, theme: "light", color: "#f5f7f5", amoled: false },
+      { system: "dark", stored: null, theme: "dark", color: "#0d100e", amoled: false },
+      { system: "dark", stored: '{"theme":"light","amoled":true}', theme: "light", color: "#f5f7f5", amoled: false },
+      { system: "light", stored: '{"theme":"dark"}', theme: "dark", color: "#0d100e", amoled: false },
+      { system: "light", stored: '{"theme":"dark","amoled":true}', theme: "dark", color: "#000000", amoled: true },
+      { system: "light", stored: '{"theme":"system"}', theme: "light", color: "#f5f7f5", amoled: false },
+      { system: "light", stored: "invalid json", theme: "light", color: "#f5f7f5", amoled: false }
+    ] as const;
+    await page.goto(APP_URL);
+    for (const entry of cases) {
+      await page.emulateMedia({ colorScheme: entry.system });
+      await page.evaluate((stored) => {
+        if (stored === null) localStorage.removeItem("llm-chat.display.v1");
+        else localStorage.setItem("llm-chat.display.v1", stored);
+      }, entry.stored);
+      await page.reload();
+      await expect(page.locator("#root")).toBeEmpty();
+      await expect(page.locator("html")).toHaveAttribute("data-theme", entry.theme);
+      await expect(page.locator("html")).toHaveAttribute("data-amoled", String(entry.amoled));
+      await expect(page.locator('meta[name="color-scheme"]')).toHaveAttribute("content", entry.theme);
+      await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", entry.color);
+    }
+  });
+
   test("桌面收起栏在所有主页面保持可导航和可展开", async ({ page }) => {
     test.skip(test.info().project.name === "mobile-chromium", "移动端使用完整导航抽屉");
 
@@ -183,8 +211,8 @@ test.describe("应用外壳", () => {
     expect(await manifest.json()).toMatchObject({
       name: "Chat",
       short_name: "Chat",
-      theme_color: "#0d100e",
-      background_color: "#0d100e",
+      theme_color: "#f5f7f5",
+      background_color: "#f5f7f5",
       icons: [
         { src: "/icons/icon-192-v2.png", sizes: "192x192" },
         { src: "/icons/icon-512-v2.png", sizes: "512x512" },
@@ -197,6 +225,11 @@ test.describe("应用外壳", () => {
     expect(sw.ok()).toBeTruthy();
     expect(await sw.text()).toContain("/api/");
     expect(await sw.text()).toContain("icons/icon-v2.svg");
+    expect(await sw.text()).toContain("theme-init.js");
+    for (const locale of ["zh-CN", "en-US"]) {
+      const localizedManifest = await page.request.get(`${APP_URL}/manifest.${locale}.webmanifest`);
+      expect(await localizedManifest.json()).toMatchObject({ theme_color: "#f5f7f5", background_color: "#f5f7f5" });
+    }
     await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute("href", "/icons/apple-touch-icon-180-v2.png");
     const apiResponse = await page.request.get(`${APP_URL}/api/health`);
     expect(apiResponse.headers()["cache-control"]).toBe("no-store");
