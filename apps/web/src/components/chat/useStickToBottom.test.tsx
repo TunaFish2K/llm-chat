@@ -70,6 +70,32 @@ function setup() {
   };
 }
 
+it("ignores the fractional sliver of the preceding paragraph when preserving typography position", () => {
+  const state = setup();
+  fireEvent.wheel(state.element, { deltaY: -100 });
+  state.element.scrollTop = 300;
+  fireEvent.scroll(state.element);
+  const markdown = document.createElement("div");
+  markdown.className = "markdown";
+  const previous = document.createElement("p");
+  const current = document.createElement("p");
+  markdown.append(previous, current);
+  state.element.append(markdown);
+  let previousOffset = 260.5;
+  let previousHeight = 40;
+  let currentOffset = 300.5;
+  for (const paragraph of [previous, current]) paragraph.getClientRects = () => [new DOMRect()] as unknown as DOMRectList;
+  previous.getBoundingClientRect = () => new DOMRect(0, previousOffset - state.element.scrollTop, 100, previousHeight);
+  current.getBoundingClientRect = () => new DOMRect(0, currentOffset - state.element.scrollTop, 100, 40);
+  act(() => window.dispatchEvent(new Event("llm-chat:before-typography")));
+  previousOffset += 100;
+  previousHeight += 3;
+  currentOffset += 103;
+  act(() => window.dispatchEvent(new Event("llm-chat:after-typography")));
+  expect(state.element.scrollTop).toBe(403);
+  expect(current.getBoundingClientRect().top).toBe(0.5);
+});
+
 it("follows a disclosure resize without a message update, but stops for an upward wheel gesture", () => {
   const state = setup();
   Object.defineProperty(state.element, "scrollHeight", { value: 1400 });

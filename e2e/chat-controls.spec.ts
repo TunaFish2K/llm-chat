@@ -381,13 +381,18 @@ test("排版调整保留历史段落位置，悬浮面板打开时仍能滚动�
     const paragraph = page.getByText(paragraphs[20]!, { exact: true });
     await paragraph.evaluate((element) => {
       const container = element.closest('.chat-scroll')!;
-      container.scrollTop += element.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      const offset = container.scrollTop + element.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      // Reproduce font metrics that leave half a pixel of the preceding
+      // paragraph visible after the browser rounds its scroll position.
+      const thread = container.querySelector<HTMLElement>('.chat-thread')!;
+      thread.style.transform = `translateY(${0.5 - (offset - Math.floor(offset))}px)`;
+      container.scrollTop = Math.floor(offset);
     });
     await expect(page.getByRole("button", { name: "回到最新消息" })).toBeVisible();
     const before = (await paragraph.boundingBox())!.y;
     await size.focus();
     await size.press("ArrowRight");
-    await expect.poll(async () => Math.abs((await paragraph.boundingBox())!.y - before)).toBeLessThan(2);
+    await expect.poll(async () => Math.abs((await paragraph.boundingBox())!.y - before)).toBeLessThan(1);
     const scrollBefore = await scroller.evaluate((element) => element.scrollTop);
     const bounds = (await scroller.boundingBox())!;
     await page.mouse.move(bounds.x + bounds.width - 10, bounds.y + 20);

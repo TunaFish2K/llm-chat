@@ -217,7 +217,9 @@ export function useStickToBottom(
       element.style.overflowAnchor = "none";
       wasFollowing = following.current;
       const top = element.getBoundingClientRect().top;
-      anchor = [...element.querySelectorAll(".msg-bubble, .markdown :is(p, li, h1, h2, h3, h4, pre, table), .process-reasoning > div, .reply-footer")].find((item) => item.getClientRects().length && item.getBoundingClientRect().bottom > top);
+      // Integer scroll positions can leave a subpixel sliver of the previous
+      // paragraph visible. Anchor the paragraph being read, not that sliver.
+      anchor = [...element.querySelectorAll(".msg-bubble, .markdown :is(p, li, h1, h2, h3, h4, pre, table), .process-reasoning > div, .reply-footer")].find((item) => item.getClientRects().length && item.getBoundingClientRect().bottom > top + 1);
       anchorTop = anchor?.getBoundingClientRect().top ?? 0;
     };
     const after = () => {
