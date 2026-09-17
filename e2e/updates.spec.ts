@@ -69,7 +69,7 @@ test("下载新版后等待确认，再接管并刷新当前设置页面", async
     await expect(page.locator(".toast-stack").getByRole("button", { name: "更新并刷新" })).toBeEnabled();
     await Promise.all([page.waitForEvent("domcontentloaded"), apply.click()]);
     await expect(page).toHaveURL(url);
-    await expect(page.getByLabel("主题")).toBeVisible();
+    await expect(page.getByLabel("应用更新", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { updateMarker?: string }).updateMarker)).toBeUndefined();
     const activeVersion = await page.evaluate(() => new Promise<number>((resolve) => {
       const channel = new MessageChannel();

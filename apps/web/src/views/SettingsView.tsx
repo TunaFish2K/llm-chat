@@ -45,6 +45,8 @@ import { ServiceSettingsPanel } from "../components/ServiceSettingsPanel";
 
 function getSECTIONS(): Array<[string, string]> { return [
   ["general", t("SettingsView.general")],
+  ["appearance", t("SettingsView.appearance")],
+  ["interaction", t("SettingsView.interaction")],
   ["security", t("SettingsView.security")],
   ["connections", t("SettingsView.connections_and_models")],
   ["search", t("SettingsView.search_engines")],
@@ -93,7 +95,7 @@ export function SettingsView({ section }: { section: string }) {
           </a>
         ))}
       </div>
-      {offline && !["general", "security"].includes(active) ? (
+      {offline && !["general", "appearance", "interaction", "security"].includes(active) ? (
         <div className="panel-scroll"><div className="panel-inner"><p className="hint">{t("SettingsView.connect_to_view_and_change_these_settings")}</p></div></div>
       ) : active === "connections" ? (
         <ConnectionsView embedded />
@@ -101,6 +103,8 @@ export function SettingsView({ section }: { section: string }) {
         <div className="panel-scroll">
           <div className="panel-inner">
             {active === "general" ? <GeneralSection /> : null}
+            {active === "appearance" ? <AppearanceSection /> : null}
+            {active === "interaction" ? <InteractionSection /> : null}
             {active === "search" ? <ServiceSettingsPanel kind="search" /> : null}
             {active === "security" ? <SecuritySection /> : null}
             {active === "image-generation" ? <ImageGenerationSection /> : null}
@@ -155,46 +159,26 @@ function AppUpdateCard() {
   </div>;
 }
 
-function GeneralSection() {
+function DisplayPreferencesNotice() {
   useLocale();
-  const offline = useStore(offlineStore, (state) => state.offline);
-  const settings = useStore(appStore, (s) => s.settings);
-  const display = useDisplayPreferences(settings);
   const displaySaved = useStore(displayStore, (state) => state.saved);
-  const agents = useStore(appStore, (s) => s.agents);
-  const [pickingWorkspace, setPickingWorkspace] = useState(false);
-  const hapticsSupported = generationHapticsSupported();
-  const patchSequence = useRef(Promise.resolve());
-  const patchVersion = useRef(0);
+  return <>
+    <p className="hint">{t("SettingsView.display_preferences_are_local")}</p>
+    {!displaySaved ? <p role="alert">{t("SettingsView.display_preferences_not_saved")}
+      <button type="button" className="btn small" onClick={() => saveDisplayPreferences()}>{t("NotificationSettings.retry")}</button>
+    </p> : null}
+  </>;
+}
 
-  if (!settings) return <LoadingState />;
-
-  const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
-    const revision = ++patchVersion.current;
-    const current = appStore.get().settings ?? settings;
-    appStore.set({ settings: { ...current, ...value } });
-    patchSequence.current = patchSequence.current.then(async () => {
-      await endpoints.updateSettings(value);
-      if (revision !== patchVersion.current) return;
-      const saved = await endpoints.settings();
-      if (revision === patchVersion.current) {
-        acceptSettings(saved);
-        toast("success", localized("SettingsView.settings_saved"));
-      }
-    }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
-  };
-
+function AppearanceSection() {
+  useLocale();
+  const settings = useStore(appStore, (state) => state.settings);
+  const display = useDisplayPreferences(settings);
   return (
     <div className="settings-panels">
-      <div className="card"><LanguagePicker /></div>
-      <OfflineHistorySettings />
-      <NotificationSettings />
       <div className="card">
-        <h3>{t("SettingsView.appearance_and_interaction")}</h3>
-        <p className="hint">{t("SettingsView.display_preferences_are_local")}</p>
-        {!displaySaved ? <p role="alert">{t("SettingsView.display_preferences_not_saved")}
-          <button type="button" className="btn small" onClick={() => saveDisplayPreferences()}>{t("NotificationSettings.retry")}</button>
-        </p> : null}
+        <h3>{t("SettingsView.appearance")}</h3>
+        <DisplayPreferencesNotice />
         <Field label={t("SettingsView.theme")}>
           <select
             className="select"
@@ -210,6 +194,22 @@ function GeneralSection() {
         <AccentPicker value={display.accentColor ?? null} onChange={(accentColor) => saveDisplayPreferences({ accentColor })} />
         <label className="checkbox-row"><input type="checkbox" checked={display.amoled ?? false}
           onChange={(event) => saveDisplayPreferences({ amoled: event.target.checked })} />{t("SettingsView.use_a_pure_black_background_in_dark_mode")}</label>
+      </div>
+      <div className="card"><h3>{t("SettingsView.chat_typography")}</h3><ChatTypographySettings preview /></div>
+    </div>
+  );
+}
+
+function InteractionSection() {
+  useLocale();
+  const settings = useStore(appStore, (state) => state.settings);
+  const display = useDisplayPreferences(settings);
+  const hapticsSupported = generationHapticsSupported();
+  return (
+    <div className="settings-panels">
+      <div className="card">
+        <h3>{t("SettingsView.interaction")}</h3>
+        <DisplayPreferencesNotice />
         <label className="checkbox-row">
           <input
             type="checkbox"
@@ -244,8 +244,41 @@ function GeneralSection() {
           </select>
         </Field>
       </div>
+      <NotificationSettings />
+    </div>
+  );
+}
 
-      <div className="card"><h3>{t("SettingsView.chat_typography")}</h3><ChatTypographySettings preview /></div>
+function GeneralSection() {
+  useLocale();
+  const offline = useStore(offlineStore, (state) => state.offline);
+  const settings = useStore(appStore, (s) => s.settings);
+  const agents = useStore(appStore, (s) => s.agents);
+  const [pickingWorkspace, setPickingWorkspace] = useState(false);
+  const patchSequence = useRef(Promise.resolve());
+  const patchVersion = useRef(0);
+
+  if (!settings) return <LoadingState />;
+
+  const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
+    const revision = ++patchVersion.current;
+    const current = appStore.get().settings ?? settings;
+    appStore.set({ settings: { ...current, ...value } });
+    patchSequence.current = patchSequence.current.then(async () => {
+      await endpoints.updateSettings(value);
+      if (revision !== patchVersion.current) return;
+      const saved = await endpoints.settings();
+      if (revision === patchVersion.current) {
+        acceptSettings(saved);
+        toast("success", localized("SettingsView.settings_saved"));
+      }
+    }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
+  };
+
+  return (
+    <div className="settings-panels">
+      <div className="card"><LanguagePicker /></div>
+      <OfflineHistorySettings />
       <AppUpdateCard />
       <div className="card"><h3>{t("SettingsView.quick_tour")}</h3><p className="hint">{t("SettingsView.tour_progress_is_saved_only_in_this_browser_and_does")}</p>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>

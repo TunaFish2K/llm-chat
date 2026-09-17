@@ -21,7 +21,7 @@ test.beforeEach(async ({ context }) => {
 });
 
 async function ready(page: Page) {
-  await page.goto(`${APP_URL}/settings/general`);
+  await page.goto(`${APP_URL}/settings/interaction`);
   await page.evaluate(async () => { await navigator.serviceWorker.ready; });
   await expect(page.getByRole("switch", { name: "开启会话通知" })).toBeEnabled();
 }
@@ -185,7 +185,7 @@ test("退出登录清除现存通知并停止接收新通知", async ({ page, co
 
 test("不支持通知时禁用开关并说明原因", async ({ page }) => {
   await page.addInitScript(() => { Object.defineProperty(window, "Notification", { configurable: true, value: undefined }); });
-  await page.goto(`${APP_URL}/settings/general`);
+  await page.goto(`${APP_URL}/settings/interaction`);
   const card = page.getByLabel("会话通知", { exact: true });
   await expect(card.getByRole("switch", { name: "开启会话通知" })).toBeDisabled();
   await expect(card.getByRole("status")).toContainText("当前浏览器不支持会话通知");

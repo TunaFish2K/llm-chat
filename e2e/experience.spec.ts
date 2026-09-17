@@ -26,16 +26,18 @@ test("强调色、HSV 与纯黑背景持久化，振动提示分行", async ({ p
   const original = await api(request, APP_URL, "GET", "/api/settings");
   try {
     await page.addInitScript(() => Object.defineProperty(navigator, "vibrate", { configurable: true, value: undefined }));
-    await page.goto(`${APP_URL}/settings/general`);
+    await page.goto(`${APP_URL}/settings/appearance`);
     await page.getByLabel("主题", { exact: true }).selectOption("dark");
     await page.getByRole("button", { name: "蓝色", exact: true }).click();
     await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue("--accent"))).toBe("#018EEE");
     await page.getByLabel("深色模式使用纯黑背景").check();
     await expect(page.locator("html")).toHaveAttribute("data-amoled", "true");
     expect(await page.locator("html").evaluate((element) => getComputedStyle(element).getPropertyValue("--bg").trim())).toBe("#000000");
+    await page.getByRole("tab", { name: "交互", exact: true }).click();
     const label = page.locator(".haptics-label");
     expect(await label.evaluate((element) => element.children[1]!.getBoundingClientRect().top >= element.children[0]!.getBoundingClientRect().bottom)).toBe(true);
     await page.reload(); await expect(page.locator("html")).toHaveAttribute("data-amoled", "true");
+    await page.getByRole("tab", { name: "外观", exact: true }).click();
     await page.getByText("自定义 HSV 颜色", { exact: true }).click();
     await page.getByLabel("色相", { exact: true }).fill("120");
     await page.getByLabel("饱和度", { exact: true }).fill("100");
