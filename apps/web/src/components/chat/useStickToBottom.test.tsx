@@ -4,6 +4,37 @@ import { useStickToBottom, type StickToBottom } from "./useStickToBottom";
 
 afterEach(() => vi.useRealTimers());
 
+it("suppresses native anchoring until typography layout settles and restores the previous style", () => {
+  const state = setup();
+  state.element.style.overflowAnchor = "auto";
+  fireEvent.wheel(state.element, { deltaY: -100 });
+  state.element.scrollTop = 300;
+  fireEvent.scroll(state.element);
+  const paragraph = document.createElement("p");
+  const markdown = document.createElement("div");
+  markdown.className = "markdown";
+  markdown.append(paragraph);
+  state.element.append(markdown);
+  let offset = 330;
+  paragraph.getClientRects = () => [new DOMRect()] as unknown as DOMRectList;
+  paragraph.getBoundingClientRect = () => new DOMRect(0, offset - state.element.scrollTop, 100, 40);
+  act(() => window.dispatchEvent(new Event("llm-chat:before-typography")));
+  expect(state.element.style.overflowAnchor).toBe("none");
+  offset += 100;
+  act(() => window.dispatchEvent(new Event("llm-chat:after-typography")));
+  expect(state.element.scrollTop).toBe(400);
+  act(() => vi.advanceTimersByTime(17));
+  expect(state.element.style.overflowAnchor).toBe("none");
+  act(() => vi.advanceTimersByTime(32));
+  expect(state.element.style.overflowAnchor).toBe("auto");
+  act(() => {
+    window.dispatchEvent(new Event("llm-chat:before-typography"));
+    window.dispatchEvent(new Event("llm-chat:after-typography"));
+  });
+  state.view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 function setup() {
   vi.useFakeTimers();
   let resize!: ResizeObserverCallback;
