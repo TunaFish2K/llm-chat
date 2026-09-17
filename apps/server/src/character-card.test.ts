@@ -319,7 +319,7 @@ describe("portable character asset boundaries", () => {
     const large = Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`entry-${index}`, new Uint8Array(10 * 1024 * 1024)]));
     expect(() => importCharacterCard(store, "large.charx", zipSync(large))).toThrow("安全限制");
     expect(store.listAgents()).toHaveLength(before);
-  });
+  }, 30_000); // Compresses 70 MiB while the coverage suite shares CI runner CPU.
 
   it("replaces existing PNG card metadata on export", () => {
     const store = createStore();
