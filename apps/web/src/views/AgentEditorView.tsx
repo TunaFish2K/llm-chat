@@ -214,6 +214,32 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
     });
   const [bookJson, setBookJson] = useState(() => JSON.stringify(data.character_book ?? null, null, 2));
   const [bookError, setBookError] = useErrorState(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const resetRequest = useRef<symbol | null>(null);
+  useEffect(() => () => { resetRequest.current = null; }, [agent.id]);
+  const closeReset = () => {
+    resetRequest.current = null;
+    setConfirmReset(false);
+    setResetting(false);
+  };
+  const resetPrompt = async () => {
+    if (resetRequest.current) return;
+    const request = Symbol();
+    resetRequest.current = request;
+    setResetting(true);
+    try {
+      const defaults = await endpoints.agentDefaults();
+      if (resetRequest.current !== request) return;
+      mutate((draft) => { draft.execution.baseSystemPrompt = defaults.baseSystemPrompt; });
+      closeReset();
+    } catch (cause) {
+      if (resetRequest.current !== request) return;
+      resetRequest.current = null;
+      setResetting(false);
+      toastError(cause);
+    }
+  };
 
   return (
     <div>
@@ -328,7 +354,18 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
       <Field label={t("AgentEditorView.base_system_prompt")} hint={t("AgentEditorView.applies_only_to_this_agent_used_when_the_character_card")}>
         <ExpandableTextarea label={t("AgentEditorView.base_system_prompt")} value={agent.execution.baseSystemPrompt ?? ""}
           onChange={(value) => mutate((draft) => { draft.execution.baseSystemPrompt = value; })} />
+        <button type="button" className="btn ghost" onClick={() => setConfirmReset(true)}>
+          {t("AgentEditorView.reset_default_prompt")}
+        </button>
       </Field>
+      {confirmReset ? <ConfirmModal
+        title={t("AgentEditorView.reset_default_prompt_title")}
+        message={t("AgentEditorView.reset_default_prompt_message")}
+        confirmLabel={resetting ? t("DirectoryPicker.processing") : t("AgentEditorView.reset_default_prompt")}
+        confirmDisabled={resetting}
+        onClose={closeReset}
+        onConfirm={() => void resetPrompt()}
+      /> : null}
       <Field label={t("AgentEditorView.system_prompt")} hint={t("AgentEditorView.the_character_card_system_prompt_overrides_the_base_prompt_use")}>
         <ExpandableTextarea
           label={t("AgentEditorView.system_prompt")}

@@ -518,12 +518,12 @@ describe("GenerationRunner tools and approval", () => {
     expect((requests[2]!.tools ?? []).map((tool) => tool.name)).toEqual(["lazy_approval", "search_tools"]);
   });
 
-  it("exposes only authorized required tools after use_skill activation", async () => {
+  it.each([false, true])("exposes only authorized required tools after use_skill activation (lazy=%s)", async (lazy) => {
     const store = createStore();
     const generation = seedGeneration(store);
     const record = store.getGenerationRecord(generation.generationId)!;
     record.agentSnapshot.execution.tools.overrides.disabled_required = false;
-    record.agentSnapshot.execution.tools.directOverrides = { enabled_required: false };
+    record.agentSnapshot.execution.tools.directOverrides = { enabled_required: false, use_skill: !lazy };
     store.updateGenerationExtensionSnapshot(generation.generationId, record.agentSnapshot);
     const useSkill = serverTool("use_skill", async () => "skill instructions");
     useSkill.activatesTools = async () => ["enabled_required", "disabled_required", "absent_required"];
@@ -531,6 +531,7 @@ describe("GenerationRunner tools and approval", () => {
     unavailable.available = false;
     const requests: GenerateRequest[] = [];
     const scripts: ProviderEvent[][] = [
+      ...(lazy ? [[toolCall("find-skill", "search_tools", '{"query":"use_skill"}')]] : []),
       [toolCall("skill-call", "use_skill", '{"id":"agents.helper"}')],
       [{ type: "complete", stopReason: "stop" }]
     ];
@@ -546,8 +547,10 @@ describe("GenerationRunner tools and approval", () => {
 
     runner.start(generation.generationId);
     await terminal(store, generation.generationId);
-    expect((requests[0]!.tools ?? []).map((tool) => tool.name)).toEqual(["use_skill", "search_tools"]);
-    expect((requests[1]!.tools ?? []).map((tool) => tool.name)).toEqual(["use_skill", "enabled_required", "search_tools"]);
+    if (lazy) expect((requests[0]!.tools ?? []).map((tool) => tool.name)).toEqual(["search_tools"]);
+    const offset = lazy ? 1 : 0;
+    expect((requests[offset]!.tools ?? []).map((tool) => tool.name)).toEqual(["use_skill", "search_tools"]);
+    expect((requests[offset + 1]!.tools ?? []).map((tool) => tool.name)).toEqual(["use_skill", "enabled_required", "search_tools"]);
     const sentNames = requests.flatMap((request) => (request.tools ?? []).map((tool) => tool.name));
     expect(sentNames).not.toContain("disabled_required");
     expect(sentNames).not.toContain("absent_required");
