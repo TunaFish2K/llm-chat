@@ -1,4 +1,7 @@
 {
+  "AgentEditorView.reset_default_prompt": "重置默认",
+  "AgentEditorView.reset_default_prompt_title": "重置基础系统提示？",
+  "AgentEditorView.reset_default_prompt_message": "将用当前版本的默认基础系统提示替换此输入框内容，保存后生效。其他设置不受影响。",
   "App.cannot_save_your_draft_locally_unsent_content_may_be_lost": "无法保存本地草稿，刷新后可能丢失未发送内容",
   "App.loading_the_interface": "正在加载界面…",
   "App.close_navigation": "关闭导航",

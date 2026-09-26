@@ -120,13 +120,13 @@ export async function buildServerTools(
       if (!engine) throw new Error("No matching enabled search engine. Use action=list_engines to see available services.");
       return searchWeb(engine, engine.apiKey, requiredString(input, "query"), optionalInteger(input, "limit", 5, 1, 10), signal);
     }),
-    tool("image_generate", "生成图片", "local", "Use action=list_models to list available image models and readable model_id values in recommended order. Prefer earlier models unless another fits the task better. Use action=generate (default) with prompt and optional model_id to generate, edit, inpaint, or vary images. Omit model_id to use the first available model. Results are saved as image assets.", {
+    tool("image_generate", "生成图片", "local", "Use action=list_models to list available image models and readable model_id values in recommended order. Prefer earlier models unless another fits the task better. Use action=generate (default) with prompt and optional model_id to generate, edit, inpaint, or vary images. Omit model_id to use the first available model. For image edits, prefer operation=edit with the original reference_asset_ids and a natural-language description of the desired change and what to preserve. Delegate visual localization, removal, and background reconstruction to the image model. For example, to remove UI in the upper-right corner, send the original image and that instruction directly. Do not first measure coordinates, crop, create masks, or run image-processing scripts unless the user explicitly requests pixel-level control, or a direct edit fails and such processing is necessary. Results are saved as image assets.", {
       action: { type: "string", enum: ["list_models", "generate"] },
       model_id: stringProperty("Readable model id returned by list_models, for example openai/gpt-image-2"),
-      prompt: stringProperty("Image prompt"),
+      prompt: stringProperty("Natural-language image request. For edits, describe the desired change and what to preserve; semantic locations such as 'upper-right UI' are sufficient without measured coordinates."),
       operation: { type: "string", enum: ["generate", "edit", "inpaint", "variation"] },
-      reference_asset_ids: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 4 },
-      mask_asset_id: { type: ["string", "null"], format: "uuid" },
+      reference_asset_ids: { type: "array", items: { type: "string", format: "uuid" }, maxItems: 4, description: "Original image asset IDs to edit or use as references. Prefer passing the original directly rather than preprocessing it." },
+      mask_asset_id: { type: ["string", "null"], format: "uuid", description: "Optional mask for precise region control; omit for ordinary natural-language edits." },
       negative_prompt: stringProperty("Optional negative prompt"),
       count: integerProperty("Number of images, 1 to 4"),
       aspect_ratio: stringProperty("Optional aspect ratio such as 1:1 or 16:9"),

@@ -277,14 +277,20 @@ export class SkillManager {
     this.watchers.clear();
   }
 
-  tool(record?: GenerationRecord): ServerTool {
+  async tool(record?: GenerationRecord): Promise<ServerTool> {
     const installed = this.installedSkills();
     const retiredIds = new Set(installed.filter(isRetiredBundledSkill).map((skill) => skill.id));
     const current = installed.filter((skill) => !retiredIds.has(skill.id) && (skill.state === "loaded" || skill.state === "pending-reload"));
     const selectedIds = record ? new Set(Object.keys(record.agentSnapshot.skillRevisions).filter((id) => !retiredIds.has(id))) : null;
     const available = selectedIds ? selectedIds.size > 0 : current.length > 0;
-    const descriptions = current.filter((skill) => !selectedIds || selectedIds.has(skill.id))
-      .map((skill) => `${skill.id}: ${skill.description}`).join("; ");
+    const catalog = record
+      ? await Promise.all([...selectedIds!].map(async (id) => {
+          const revision = record.agentSnapshot.skillRevisions[id]!;
+          const content = await readFile(resolve(this.revisionPath(id, revision), "SKILL.md"), "utf8");
+          return { id, description: parseMetadata(content, id, "manual").description };
+        }))
+      : current;
+    const descriptions = catalog.map((skill) => `${skill.id}: ${skill.description}`).join("; ");
     const pinned = (input: Record<string, unknown>): { id: string; revision: string } => {
       const id = typeof input.id === "string" ? input.id : typeof input.name === "string" ? input.name : "";
       const revision = record?.agentSnapshot.skillRevisions[id] ?? current.find((skill) => skill.id === id)?.revision;
@@ -296,7 +302,7 @@ export class SkillManager {
     return {
       definition: {
         name: "use_skill",
-        description: `Load an enabled skill or one of its referenced files. ${descriptions}`,
+        description: `Load instructions for a skill relevant to the user's task before applying it. Omit path to read SKILL.md; read referenced files only as needed. Do not load every skill or enumerate its files. Loading a skill exposes only its already-authorized required tools and does not grant permissions. Available skills: ${descriptions}`,
         inputSchema: {
           type: "object",
           properties: { id: { type: "string" }, path: { type: "string" } },

@@ -183,6 +183,7 @@ export const endpoints = {
   updateSettings: (patch: Omit<AppSettingsUpdate, "theme" | "uiPreferences">) => api.patch<AppSettings>("/api/settings", patch),
 
   agents: () => api.get<AgentSummaryDto[]>("/api/agents"),
+  agentDefaults: () => api.get<{ baseSystemPrompt: string }>("/api/agents/defaults"),
   agent: (id: string) => api.get<AgentDto>(`/api/agents/${id}`),
   createAgent: (input: AgentInput) => api.post<AgentDto>("/api/agents", input),
   updateAgent: (id: string, patch: Partial<AgentInput>) => api.patch<AgentDto>(`/api/agents/${id}`, patch),

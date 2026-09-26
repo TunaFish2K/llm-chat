@@ -42,14 +42,14 @@ describe("server tool catalog", () => {
     }, controller.signal);
     const reference = "00000000-0000-4000-8000-000000000001";
     await imageTool.execute({
-      model_id: "mock/mock-model", prompt: "edit the landscape", operation: "edit", reference_asset_ids: [reference],
-      mask_asset_id: null, negative_prompt: "text", count: 2, aspect_ratio: "16:9", size: "1536x1024",
+      model_id: "mock/mock-model", prompt: "Remove the upper-right UI and preserve the rest of the image", operation: "edit", reference_asset_ids: [reference],
+      negative_prompt: "text", count: 2, aspect_ratio: "16:9", size: "1536x1024",
       quality: "high", output_format: "webp", seed: 42, strength: 0.5, provider_options: { custom: true }
     }, controller.signal, context);
     expect(createAndWait).toHaveBeenLastCalledWith({
       conversationId: conversation.id, toolCallId: "image-call", input: {
-        modelId: model.id, prompt: "edit the landscape", operation: "edit", referenceAssetIds: [reference],
-        maskAssetId: null, negativePrompt: "text", count: 2, aspectRatio: "16:9", size: "1536x1024",
+        modelId: model.id, prompt: "Remove the upper-right UI and preserve the rest of the image", operation: "edit", referenceAssetIds: [reference],
+        negativePrompt: "text", count: 2, aspectRatio: "16:9", size: "1536x1024",
         quality: "high", outputFormat: "webp", seed: 42, strength: 0.5, providerOptions: { custom: true }
       }
     }, controller.signal);

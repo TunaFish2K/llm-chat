@@ -1,4 +1,7 @@
 {
+  "AgentEditorView.reset_default_prompt": "Reset to default",
+  "AgentEditorView.reset_default_prompt_title": "Reset base system prompt?",
+  "AgentEditorView.reset_default_prompt_message": "Replace this field with the current default base system prompt. The change takes effect after you save. Other settings are unaffected.",
   "App.cannot_save_your_draft_locally_unsent_content_may_be_lost": "Cannot save your draft locally. Unsent content may be lost if you refresh.",
   "App.loading_the_interface": "Loading the interface…",
   "App.close_navigation": "Close navigation",

@@ -126,7 +126,7 @@ export class ToolRegistry {
       } : {})
     })).filter((tool) => tool.definition.name !== "use_skill");
     const management = this.appTools ? this.appTools.tools() : this.managementTools();
-    const all = [...builtins, this.skills.tool(record), ...management, ...await this.plugins.tools(record)];
+    const all = [...builtins, await this.skills.tool(record), ...management, ...await this.plugins.tools(record)];
     const policy = record?.agentSnapshot.execution.tools;
     for (const tool of all) {
       if (tool.sourceKind !== "plugin" && tool.category !== "mcp") Object.assign(tool, builtinToolFormatters(tool.definition.name));

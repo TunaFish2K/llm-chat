@@ -33,9 +33,9 @@ describe("SkillManager", () => {
       expect(manager.activeRevisions([installed.id, "command-execution-guide"])).toEqual({
         "command-execution-guide": expect.any(String)
       });
-      expect(manager.tool().definition.description).not.toContain(installed.id);
-      expect(manager.tool(record).available).toBe(false);
-      await expect(manager.tool(record).execute({ id: installed.id }, signal())).rejects.toThrow("not enabled");
+      expect((await manager.tool()).definition.description).not.toContain(installed.id);
+      expect((await manager.tool(record)).available).toBe(false);
+      await expect((await manager.tool(record)).execute({ id: installed.id }, signal())).rejects.toThrow("not enabled");
       await expect(manager.reload(installed.id)).rejects.toThrow("Skill not found");
       await expect(manager.install(source, true)).rejects.toThrow("此内置 Skill 已停用");
       await expect(manager.install(source)).rejects.toThrow("already owned by bundled");
@@ -60,7 +60,7 @@ describe("SkillManager", () => {
       expect(manager.list()).toContainEqual(expect.objectContaining({ id: installed.id, sourceKind: "manual", state: "loaded" }));
       expect(manager.activeRevisions([installed.id])).toEqual({ [installed.id]: installed.revision });
       await expect(manager.reload(installed.id)).resolves.toMatchObject({ id: installed.id, state: "loaded" });
-      await expect(manager.tool().execute({ id: installed.id }, signal())).resolves.toContain("User Instructions");
+      await expect((await manager.tool()).execute({ id: installed.id }, signal())).resolves.toContain("User Instructions");
     } finally { manager.close(); }
   });
 
@@ -104,6 +104,8 @@ describe("SkillManager", () => {
     });
     expect(discovered.requiredTools).not.toContain("workspace_shell");
     expect(manager.list().some((skill) => skill.id === "agents.nested-skill")).toBe(false);
+    const record = generation(store);
+    record.agentSnapshot.skillRevisions = manager.activeRevisions([discovered.id]);
 
     writeFileSync(resolve(source, "SKILL.md"), [
       "---", "name: review-helper", "description: Updated", "requiredTools: [workspace_read_file]", "---", "Updated"
@@ -117,11 +119,30 @@ describe("SkillManager", () => {
     const reloaded = await manager.reload(discovered.id);
     expect(reloaded).toMatchObject({ state: "loaded", description: "Updated", sourceKind: "agents" });
     expect(reloaded.revision).not.toBe(discovered.revision);
+    const oldTool = await manager.tool(record);
+    expect(oldTool.definition.description).toContain(`${discovered.id}: ${discovered.description}`);
+    expect(oldTool.definition.description).not.toContain(`${discovered.id}: Updated`);
+    await expect(oldTool.execute({ id: discovered.id }, signal())).resolves.toContain("# Review helper");
+    await expect(oldTool.activatesTools?.({ id: discovered.id })).resolves.toEqual(["workspace_read_file", "workspace_grep"]);
+    const freshRecord = generation(store);
+    freshRecord.agentSnapshot.skillRevisions = manager.activeRevisions([discovered.id]);
+    const freshTool = await manager.tool(freshRecord);
+    expect(freshTool.definition.description).toContain(`${discovered.id}: Updated`);
+    await expect(freshTool.execute({ id: discovered.id }, signal())).resolves.toContain("\nUpdated");
+    await expect(freshTool.activatesTools?.({ id: discovered.id })).resolves.toEqual(["workspace_read_file"]);
 
     rmSync(source, { recursive: true, force: true });
     expect(await manager.discover()).toMatchObject({ unloaded: 1 });
     expect(manager.list().find((skill) => skill.id === discovered.id)?.state).toBe("unloaded");
     expect(manager.activeRevisions([discovered.id])).toEqual({});
+    const restoredTool = await manager.tool(record);
+    expect(restoredTool.available).toBe(true);
+    expect(restoredTool.definition.description).toContain(`${discovered.id}: ${discovered.description}`);
+    await expect(restoredTool.execute({ id: discovered.id }, signal())).resolves.toContain("# Review helper");
+    freshRecord.agentSnapshot.skillRevisions = manager.activeRevisions([discovered.id]);
+    const emptyTool = await manager.tool(freshRecord);
+    expect(emptyTool.available).toBe(false);
+    expect(emptyTool.definition.description).not.toContain(discovered.id);
     expect(store.sqlite.prepare("SELECT COUNT(*) AS count FROM skill_revisions WHERE skill_id = ?")
       .get(discovered.id)).toMatchObject({ count: 2 });
     manager.close();
@@ -177,7 +198,7 @@ describe("SkillManager", () => {
     expect(manager.activeRevisions(["docs-helper", "missing"])).toEqual({ "docs-helper": installed.revision });
     expect(manager.activeRevisions([])).toEqual({});
 
-    const unpinned = manager.tool();
+    const unpinned = await manager.tool();
     expect(unpinned.available).toBe(true);
     expect(await unpinned.requiresApproval({})).toBe(false);
     await expect(unpinned.execute({ id: "docs-helper" }, signal())).resolves.toContain("# Docs Helper");
@@ -193,14 +214,15 @@ describe("SkillManager", () => {
 
     const record = generation(store);
     record.agentSnapshot.skillRevisions = { "docs-helper": installed.revision };
-    const pinned = manager.tool(record);
+    const pinned = await manager.tool(record);
     expect(pinned.definition.description).toContain("docs-helper");
     await expect(pinned.execute({ id: "docs-helper" }, signal())).resolves.toContain("# Docs Helper");
     await expect(pinned.execute({ id: "other" }, signal())).rejects.toThrow("not enabled");
     record.agentSnapshot.skillRevisions = {};
-    expect(manager.tool(record).available).toBe(false);
+    expect((await manager.tool(record)).available).toBe(false);
+    expect((await manager.tool(record)).definition.description).not.toContain("docs-helper");
     record.agentSnapshot.skillRevisions = { "docs-helper": "missing-revision" };
-    await expect(manager.tool(record).execute({ id: "docs-helper" }, signal())).rejects.toThrow("Skill revision not found");
+    await expect(manager.tool(record)).rejects.toThrow("Skill revision not found");
     record.agentSnapshot.skillRevisions = { "docs-helper": installed.revision };
 
     writeFileSync(resolve(source, "SKILL.md"), `${await unpinned.execute({ id: "docs-helper" }, signal())}\nChanged`);

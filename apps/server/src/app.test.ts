@@ -10,6 +10,7 @@ import { buildApp } from "./app";
 import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
 import { LocalContainerEngine } from "./container-engine";
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
 
 const dirs: string[] = [];
 const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
@@ -23,6 +24,33 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("serves authenticated prompt defaults without changing existing Agents or snapshots", async () => {
+    const app = await testApp();
+    const id = app.store.getSettings().defaultAgentId!;
+    const agent = app.store.getAgent(id)!;
+    app.store.updateAgent(id, { execution: { ...agent.execution, baseSystemPrompt: "existing prompt" } });
+    seedStoreModel(app.store);
+    const conversation = app.store.createConversation({ systemPrompt: "" });
+    const generation = app.store.createMessageGeneration(conversation.id, "keep snapshot");
+    app.store.finishGeneration(generation.generationId, "completed", {});
+    const snapshot = app.store.getGenerationRecord(generation.generationId)!.agentSnapshot;
+    expect((await app.inject({ method: "GET", url: "/api/agents/defaults", headers: { cookie: "" } })).statusCode).toBe(401);
+    const response = await app.inject({ method: "GET", url: "/api/agents/defaults" });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ baseSystemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT });
+    for (const baseSystemPrompt of [undefined, "custom prompt", ""]) {
+      const created = await app.inject({ method: "POST", url: "/api/agents", payload: {
+        card: agent.card, execution: { ...agent.execution, baseSystemPrompt }
+      } });
+      expect(created.statusCode, created.body).toBe(201);
+      expect(created.json().execution.baseSystemPrompt).toBe(baseSystemPrompt ?? DEFAULT_AGENT_SYSTEM_PROMPT);
+    }
+    await app.close();
+    const reopened = await testApp({ dir: app.dir, password: app.password });
+    expect(reopened.store.getAgent(id)!.execution.baseSystemPrompt).toBe("existing prompt");
+    expect(reopened.store.getGenerationRecord(generation.generationId)!.agentSnapshot).toEqual(snapshot);
+  });
+
   it("reports local engines and scopes environment controls to their conversation", async () => {
     const probe = vi.spyOn(LocalContainerEngine.prototype, "probe").mockImplementation(async function (this: LocalContainerEngine) {
       return { engine: this.engine, available: false, version: null, error: "Not installed" };

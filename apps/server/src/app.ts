@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
 import { Readable } from "node:stream";
 import { FileUploads, registerFileUploadRoutes, UploadError } from "./file-uploads";
 import { createReadStream } from "node:fs";
@@ -320,6 +321,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     eventHub.emit({ type: "resource-changed", resource: "settings" });
     return saved;
   });
+  app.get("/api/agents/defaults", async () => ({ baseSystemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT }));
   app.get("/api/agents", async () => store.listAgents());
   app.post("/api/agents", async (request, reply) => {
     const value = agentInputSchema.parse(request.body);
