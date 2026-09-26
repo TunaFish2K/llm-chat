@@ -18,6 +18,24 @@ afterEach(() => {
 });
 
 describe("Store", () => {
+  it("preserves existing base prompts and generation snapshots after reopening", () => {
+    const store = createStore();
+    seedModel(store);
+    updateDefaultAgentExecution(store, { baseSystemPrompt: "existing prompt" });
+    const id = store.getSettings().defaultAgentId!;
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const generation = store.createMessageGeneration(conversation.id, "keep snapshot");
+    store.finishGeneration(generation.generationId, "completed", {});
+    const snapshot = store.getGenerationRecord(generation.generationId)!.agentSnapshot;
+    const path = join(store.dataDir, "test.sqlite");
+    store.close();
+    const reopened = new Store(path);
+    try {
+      expect(reopened.getAgent(id)!.execution.baseSystemPrompt).toBe("existing prompt");
+      expect(reopened.getGenerationRecord(generation.generationId)!.agentSnapshot).toEqual(snapshot);
+    } finally { reopened.close(); }
+  });
+
   it.each([39, 40])("opens schema %i without losing messages or retained submission receipts", (version) => {
     const store = createStore();
     seedModel(store);

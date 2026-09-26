@@ -179,7 +179,8 @@ describe("ordered history replay", () => {
   it("summarizes the ordered tool transcript rather than only visible prose", async () => {
     const f = setup(); const {store,conversation} = f;
     f.model = store.updateModel(f.model.id, { contextWindow: 1000 })!;
-    updateDefaultAgentExecution(store, { contextPolicy: "summarize" });
+    // Keep this small-window transcript test independent of the product default prompt.
+    updateDefaultAgentExecution(store, { contextPolicy: "summarize", baseSystemPrompt: "Summarize prior context when needed." });
     const first = store.createMessageGeneration(conversation.id, "old question");
     store.updateGenerationBlock(first.generationId, 1, "text", "BEFORE_TOOL", true);
     store.upsertToolCall(first.generationId, { id: "summary-tool", name: "lookup", arguments: '{"query":"facts"}' }, 0, 0, false);
