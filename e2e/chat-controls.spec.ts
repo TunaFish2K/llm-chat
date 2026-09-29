@@ -88,6 +88,45 @@ test("生成期间断网，联网后恢复完整回复并清理生成状态", as
 test.describe("工具栏请求状态", () => {
   test.use({ serviceWorkers: "block" });
 
+for (const failedRead of ["messages", "conversations"] as const) {
+  test(`首条消息已发送但 ${failedRead} 读取失败时仍进入会话`, async ({ page, request, isMobile }) => {
+    const provider = await startMockProvider();
+    const fixture = await setup(request, provider.baseUrl);
+    let blockReads = true;
+    try {
+      await page.goto(APP_URL);
+      await page.getByLabel("选择 Agent", { exact: true }).click();
+      await page.getByRole("button", { name: fixture.agent.name, exact: true }).click();
+      await page.route(failedRead === "messages" ? /\/api\/conversations\/[^/]+\/messages$/ : /\/api\/conversations$/, async (route) => {
+        if (blockReads && route.request().method() === "GET") {
+          await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "read_failed", message: "发送后的读取失败" } }) });
+        } else await route.continue();
+      });
+      await page.getByLabel("输入消息").fill("消息已经送达");
+      const accepted = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/api/conversations/start"));
+      const send = page.getByRole("button", { name: "发送", exact: true });
+      if (isMobile) await send.tap(); else await send.click();
+      const result = await (await accepted).json();
+      const path = `${APP_URL}/c/${result.conversation.id}`;
+      await expect(page).toHaveURL(path);
+      await expect(page.locator(".welcome")).toHaveCount(0);
+      await expect(page.getByLabel("输入消息")).toHaveValue("");
+      if (failedRead === "messages") {
+        await expect(page.locator(".chat-thread")).toContainText("发送后的读取失败");
+        blockReads = false;
+        await page.locator(".chat-thread").getByRole("button", { name: "重试" }).click();
+      } else blockReads = false;
+      await expect(page.locator('.msg[data-role="user"]')).toContainText("消息已经送达");
+      await expect(page.locator('.msg[data-role="assistant"]')).toContainText("这是 E2E 流式回复");
+      await expect(page).toHaveURL(path);
+      const messages = await api(request, APP_URL, "GET", `/api/conversations/${result.conversation.id}/messages`);
+      expect(messages.filter((message: { role: string }) => message.role === "user")).toHaveLength(1);
+      await page.goto(APP_URL);
+      await expect(page.getByLabel("输入消息")).toHaveValue("");
+    } finally { blockReads = false; await fixture.cleanup(); await provider.close(); }
+  });
+}
+
 test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌色适配主题", async ({ page, request }) => {
   const provider = await startMockProvider({ firstResponseDelayMs: 60_000 });
   const fixture = await setup(request, provider.baseUrl);

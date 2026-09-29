@@ -337,15 +337,24 @@ export const Composer = memo(function Composer({
         setNewOverrides({});
         setNewAgentId(null);
         onGreetingIndexChange(0);
-        appStore.set((state) => ({ settings: state.settings ? { ...state.settings, lastAgentId: effectiveAgent.id } : null }));
+        // Navigation can unmount this composer before its draft effect runs.
+        writeComposerDraft(null, {
+          uploadScopeId: uploadScope, text: "", attachments: [], agentId: effectiveAgent.id,
+          overrides: {}, workspace: newWorkspace, greetingIndex: 0
+        });
+        appStore.set((state) => ({
+          settings: state.settings ? { ...state.settings, lastAgentId: effectiveAgent.id } : null,
+          conversations: state.conversations.some((item) => item.id === result.conversation.id)
+            ? state.conversations : [result.conversation, ...state.conversations]
+        }));
+        // The send is committed. Follow it even if a subsequent read fails.
+        trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
+        navigate(routes.chat(result.conversation.id));
         if (effectiveAgent.roleplayEnabled) {
           await endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "" })
             .catch(() => undefined);
         }
-        await refreshConversations();
-        await loadMessages(result.conversation.id);
-        trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
-        navigate(routes.chat(result.conversation.id));
+        await Promise.all([refreshConversations(), loadMessages(result.conversation.id)]);
       } else if (active || (!queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
         await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
         setText(""); setAttachments([]); persistDraft("");
@@ -361,8 +370,8 @@ export const Composer = memo(function Composer({
         setAttachments([]);
         persistDraft("");
         if (!result) await reloadQueue();
-        await loadMessages(conversation.id);
         if (result) trackGeneration(conversation.id, result.assistantMessageId, result.generationId);
+        await loadMessages(conversation.id);
         await refreshConversations();
       }
     } catch (error) {
