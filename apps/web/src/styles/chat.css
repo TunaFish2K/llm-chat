@@ -246,7 +246,6 @@
   flex-direction: column;
   gap: 6px;
   min-width: 0;
-  animation: fade-rise var(--dur-med) var(--ease);
 }
 
 .msg[data-role="user"] {
@@ -469,7 +468,7 @@
 }
 
 .reasoning-block[open] > summary,
-.tool-call[open] > summary {
+.tool-call[data-expanded="true"] > summary {
   border-bottom: 1px solid var(--border);
 }
 
@@ -479,7 +478,7 @@
 }
 
 .reasoning-block[open] > summary .chev,
-.tool-call[open] > summary .chev {
+.tool-call[data-expanded="true"] > summary .chev {
   transform: rotate(180deg);
 }
 
@@ -1617,12 +1616,12 @@
 .process-disclosure > summary > span:first-of-type { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .process-disclosure > summary svg { flex-shrink: 0; }
 .process-count { color: var(--text-faint); white-space: nowrap; }
-.process-disclosure[open] > summary .chev { transform: rotate(180deg); }
+.process-disclosure[data-expanded="true"] > summary .chev { transform: rotate(180deg); }
 .process-steps { display: flex; flex-direction: column; gap: 8px; padding: 6px 0 8px; }
 .process-reasoning > div { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-muted); max-height: 460px; overflow-y: auto; }
 .process-steps .tool-call { background: transparent; border: 0; border-radius: 0; }
 .process-steps .tool-call > summary { padding: 4px 0; font-size: 12px; }
-.process-steps .tool-call[open] > summary { border-bottom: 0; }
+.process-steps .tool-call[data-expanded="true"] > summary { border-bottom: 0; }
 .process-steps .tool-call-details { padding: 6px 0; }
 .process-error { color: var(--err); font-size: 12px; overflow-wrap: anywhere; }
 @media (max-width: 767px), (hover: none) {
@@ -1638,7 +1637,7 @@
 .tool-presentation .markdown { font-size: 12px; overflow-wrap: anywhere; }
 .tool-call-name { max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-markdown-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-muted); }
-.tool-call[open] > summary .tool-markdown-summary { display: none; }
+.tool-call[data-expanded="true"] > summary .tool-markdown-summary { display: none; }
 .markdown-inline { display: inline; white-space: nowrap; font-size: inherit; }
 .markdown-inline :is(p, div, pre, span, code) { display: inline; white-space: nowrap; font-size: inherit; padding: 0; margin: 0; }
 .markdown-inline :is(img, table, button, svg) { display: none; }

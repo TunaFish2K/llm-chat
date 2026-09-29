@@ -1,3 +1,4 @@
+import { PopoverLayer, Presence } from "../../lib/motion";
 import { effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
 import { useErrorState } from "../../lib/error-display";
 import { t, useLocale, localized } from "../../lib/i18n";
@@ -24,7 +25,6 @@ import type {
   ConversationRoleplayState,
   AgentDto,
 } from "@llm-chat/contracts";
-import { useBackLayer } from "../../lib/mobile-navigation";
 import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
 import { ApiRequestError, endpoints } from "../../lib/api";
 import { appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
@@ -120,8 +120,6 @@ export const Composer = memo(function Composer({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [typographyOpen, setTypographyOpen] = useState(false);
   const inputAreaRef = useRef<HTMLDivElement>(null);
-  useBackLayer(moreOpen, () => setMoreOpen(false));
-  useBackLayer(settingsOpen, () => setSettingsOpen(false));
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [savingOverrides, setSavingOverrides] = useState(false);
@@ -521,7 +519,7 @@ export const Composer = memo(function Composer({
                       {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
                     </button></Popover.Trigger>
                     <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}
-                      onInteractOutside={(event) => { if (typographyOpen) event.preventDefault(); }}>
+                      onInteractOutside={(event) => { if (typographyOpen) event.preventDefault(); }}><PopoverLayer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
                       {typographyOpen ? <>
                         <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>{t("Composer.back")}</button><strong>{t("SettingsView.chat_typography")}</strong>
                           <button type="button" aria-label={t("Composer.close_typography_settings")} onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
@@ -574,7 +572,7 @@ export const Composer = memo(function Composer({
                       </button>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10}>
+                      <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10}><PopoverLayer open={moreOpen} onClose={() => setMoreOpen(false)} />
                         {roleplayAvailable ? (
                           <button type="button" aria-label={t("RoleplayConversationDialog.roleplay_conversation_settings")} onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
                             <Drama size={16} aria-hidden="true" />
@@ -601,14 +599,14 @@ export const Composer = memo(function Composer({
                     </Popover.Portal>
                   </Popover.Root>), actionsHost) : null}
 
-      {pickingWorkspace ? (
+      <Presence>{pickingWorkspace ? (
         <DirectoryPicker
           initialPath={workspace}
           onClose={() => setPickingWorkspace(false)}
           onSelect={(path) => void chooseWorkspace(path)}
         />
-      ) : null}
-      {editingOverrides ? (
+      ) : null}</Presence>
+      <Presence>{editingOverrides ? (
         <ExecutionOverridesDialog
           {...(conversation ? { conversationId: conversation.id } : {})}
           value={overrides}
@@ -620,10 +618,10 @@ export const Composer = memo(function Composer({
             setEditingOverrides(false);
           }}
         />
-      ) : null}
-      {pendingAgent ? (
+      ) : null}</Presence>
+      <Presence>{pendingAgent ? (
         <AgentSwitchDialog onClose={() => setPendingAgent(null)} onConfirm={() => void applyAgent(pendingAgent)} />
-      ) : null}
+      ) : null}</Presence>
     </div>
   );
 });

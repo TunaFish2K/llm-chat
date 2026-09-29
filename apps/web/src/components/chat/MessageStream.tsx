@@ -1,3 +1,4 @@
+import { AnimatedDisclosure } from "../AnimatedDisclosure";
 import { displayStore } from "../../lib/local-display";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
@@ -57,6 +58,7 @@ export const MessageItem = memo(function MessageItem({
   branchGroups = [],
   retryTargetId,
   imageJobs,
+  enter = false,
   callbacks
 }: {
   conversationId: string;
@@ -65,8 +67,10 @@ export const MessageItem = memo(function MessageItem({
   retryTargetId?: string | undefined;
   imageJobs?: ImageJobsByToolCall | undefined;
   callbacks: StreamCallbacks;
+  enter?: boolean;
 }) {
   useLocale();
+  const [animateEntrance] = useState(enter);
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
   const imageJob = message.imageGenerationJob ?? null;
   const generation = message.role === "assistant" ? activeGeneration(message) : null;
@@ -74,7 +78,7 @@ export const MessageItem = memo(function MessageItem({
 
   if (message.role === "user") {
     return (
-      <article className="msg" data-role="user">
+      <article className="msg" data-enter={animateEntrance || undefined} data-role="user">
         {attachments.length ? <AssetGallery assets={attachments} /> : null}
         {message.text ? <div className="msg-bubble">{message.text}</div> : null}
         <MessageFooter metadata={<time>{formatTime(message.createdAt)}</time>}>
@@ -96,7 +100,7 @@ export const MessageItem = memo(function MessageItem({
   }
 
   return (
-    <article className="msg" data-role="assistant" aria-label={generatedAgent?.name ?? t("MessageStream.assistant_reply")}>
+    <article className="msg" data-enter={animateEntrance || undefined} data-role="assistant" aria-label={generatedAgent?.name ?? t("MessageStream.assistant_reply")}>
       {attachments.length ? <AssetGallery assets={attachments} /> : null}
       {generation ? (
         <GenerationTimeline
@@ -355,19 +359,18 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }:
   const incomplete = thinking || Boolean(activeTool);
   const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? t("MessageStream.processing_failed") : t("MessageStream.processing_stopped")) : pending ? t("index.waiting_for_approval") : activeTool && busy ? t("MessageStream.calling", { value1: (activeTool.name) }) : active ? t("MessageStream.reasoning") : t("MessageStream.reasoning_process");
   return <div className="process-group">
-    <details className="process-disclosure" open={open}>
-      <summary onClick={(event) => { event.preventDefault(); setManualOpen(!open); }}>
+    <AnimatedDisclosure className="process-disclosure" open={open} onOpenChange={setManualOpen} summary={<>
         {active ? <LoaderCircle size={13} className="spin" /> : <Gauge size={13} />}
         <span role={active ? "status" : undefined}>{label}</span>
         {tools.length ? <span className="process-count">{t("MessageStream.tool_calls", { count: Number((tools.length)), value1: (tools.length) })}</span> : null}
         <ChevronDown size={13} className="chev" />
-      </summary>
+      </>}>
       <div className="process-steps">
         {entries.map((entry) => entry.kind === "tool"
           ? <ToolCallDisclosure key={entry.call.id} call={entry.call} imageJobs={imageJobs?.get(entry.call.id)} onInspect={() => onInspect(entry.call.id)} />
           : <ReasoningContent key={`block:${entry.block.stepIndex}:${entry.block.index}`} content={entry.block.content} open={open} busy={busy} />)}
       </div>
-    </details>
+    </AnimatedDisclosure>
     {!open ? tools.filter((call) => call.error && !imageJobs?.get(call.id)?.some((job) => job.error?.message === call.error)).map((call) => <div key={call.id} className="process-error" role="alert">
       <button className="link-button" onClick={() => onInspect(call.id)}>{call.name}</button>：{toolError(call)}{toolStderr(call.output)}
     </div>) : null}
@@ -450,8 +453,7 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
   const inlineAssets = new Set(imageJobs?.flatMap((job) => job.outputAssets.map((asset) => asset.id)));
   const artifacts = call.artifacts.filter((asset) => !inlineAssets.has(asset.id));
   return (
-    <details className="tool-call" data-state={call.approvalState}>
-      <summary>
+    <AnimatedDisclosure className="tool-call" state={call.approvalState} summary={<>
         <Wrench size={15} aria-hidden="true" />
         <code className="tool-call-name" title={call.name}>{call.name}</code>
         <ToolCallSummary call={call} />
@@ -472,12 +474,12 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
           <Settings2 size={14} />
         </button>
         <ChevronDown className="chev" size={14} aria-hidden="true" />
-      </summary>
+      </>}>
       <div className="tool-call-details">
         <ToolCallContent key={call.id} call={call} />
         {artifacts.length ? <AssetGallery assets={artifacts} /> : null}
       </div>
-    </details>
+    </AnimatedDisclosure>
   );
 }
 

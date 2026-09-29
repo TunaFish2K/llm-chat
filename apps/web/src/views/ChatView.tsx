@@ -1,3 +1,5 @@
+import { useMessageEntrance } from "../components/chat/useMessageEntrance";
+import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
 import { isOffline, offlineStore } from "../lib/offline-history";
@@ -96,6 +98,7 @@ export function ChatView({
   const [roleplayOpen, setRoleplayOpen] = useState(false);
   const [roleplaySession, setRoleplaySession] = useState<{ agent: AgentDto; state: ConversationRoleplayState } | null>(null);
   const scroller = useStickToBottom([messages], view === "chat");
+  const enteringMessages = useMessageEntrance(conversationId, messages, !scroller.detached);
 
   const busy = Boolean(
     messages?.some((message) => message.generations.some((generation) => isGenerationActive(generation.status)))
@@ -310,6 +313,7 @@ export function ChatView({
                   transcript.messages.map((message) => (
                     <MessageItem
                       key={message.id}
+                      enter={enteringMessages.has(message.id)}
                       conversationId={conversationId}
                       message={message}
                       imageJobs={transcript.imageJobs}
@@ -378,7 +382,7 @@ export function ChatView({
         </section>
       ) : null}
 
-      {editingMessage ? (
+      <Presence>{editingMessage ? (
         <EditForkDialog
           conversationId={conversation?.id}
           message={editingMessage}
@@ -399,8 +403,8 @@ export function ChatView({
             })();
           }}
         />
-      ) : null}
-      {roleplayOpen && conversation && roleplaySession ? (
+      ) : null}</Presence>
+      <Presence>{roleplayOpen && conversation && roleplaySession ? (
         <RoleplayConversationDialog
           conversationId={conversation.id}
           agent={roleplaySession.agent}
@@ -408,7 +412,7 @@ export function ChatView({
           onClose={() => setRoleplayOpen(false)}
           onSaved={(state) => setRoleplaySession((current) => current ? { ...current, state } : current)}
         />
-      ) : null}
+      ) : null}</Presence>
     </div>
   );
 }

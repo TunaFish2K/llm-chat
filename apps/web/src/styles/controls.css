@@ -567,7 +567,7 @@
   padding: var(--space-4);
   background: rgb(0 0 0 / 55%);
   backdrop-filter: blur(3px);
-  animation: fade-rise var(--dur-med) var(--ease);
+
 }
 
 .modal {

@@ -1,3 +1,4 @@
+import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
 import { useCallback, useEffect, useState } from "react";
@@ -214,20 +215,20 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
         </div>
       </div>
 
-      {editingConnection ? (
+      <Presence>{editingConnection ? (
         <ConnectionEditor
           connection={editingConnection === "new" ? null : editingConnection}
           onClose={() => setEditingConnection(null)}
         />
-      ) : null}
-      {editingModel ? (
+      ) : null}</Presence>
+      <Presence>{editingModel ? (
         <ModelEditor
           model={editingModel === "new" ? null : editingModel}
           {...(newModelConnection ? { initialConnectionId: newModelConnection } : {})}
           onClose={() => setEditingModel(null)}
         />
-      ) : null}
-      {deletingConnection ? (
+      ) : null}</Presence>
+      <Presence>{deletingConnection ? (
         <ConfirmModal
           title={t("ConnectionsView.delete_connection", { value1: (deletingConnection.name) })}
           message={t("ConnectionsView.deleting_this_connection_also_deletes_all_its_models_and_clears")}
@@ -243,8 +244,8 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
               .catch(toastError);
           }}
         />
-      ) : null}
-      {deletingModel ? (
+      ) : null}</Presence>
+      <Presence>{deletingModel ? (
         <ConfirmModal
           title={t("ConnectionsView.delete_model", { value1: (deletingModel.displayName) })}
           message={t("ConnectionsView.delete_this_model")}
@@ -260,7 +261,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
               .catch(toastError);
           }}
         />
-      ) : null}
+      ) : null}</Presence>
     </>
   );
 }

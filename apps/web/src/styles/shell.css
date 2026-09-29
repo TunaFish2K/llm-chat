@@ -300,7 +300,6 @@
   padding: 0;
   background: rgb(0 0 0 / 55%);
   cursor: pointer;
-  animation: fade-in var(--dur-med) var(--ease);
 }
 
 @keyframes fade-in {
@@ -314,13 +313,7 @@
   width: min(320px, 86vw);
   height: 100%;
   box-shadow: var(--shadow-3);
-  animation: drawer-in var(--dur-med) var(--ease);
-  transition: transform var(--dur-fast) var(--ease);
   touch-action: pan-y;
-}
-
-.mobile-drawer .drawer-panel[data-dragging="true"] {
-  transition: none;
 }
 
 .mobile-drawer .conversation-scroll {
@@ -337,10 +330,6 @@
 
 @keyframes drawer-in {
   from { transform: translateX(-8%); opacity: 0.4; }
-}
-
-.mobile-drawer[data-side="right"] .drawer-panel {
-  animation-name: drawer-in-right;
 }
 
 @keyframes drawer-in-right {

@@ -374,7 +374,7 @@ describe("SettingsView", () => {
       apiKey: "secret-key"
     })));
     await waitFor(() => expect(discover).toHaveBeenCalledWith(connection.id));
-    expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument());
   });
 
   it("keeps the connection editor open when creation fails", async () => {

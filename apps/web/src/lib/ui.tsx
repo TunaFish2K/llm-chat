@@ -1,7 +1,7 @@
+import { Modal } from "../components/AnimatedModal";
+export { Modal };
 import { t, useLocale } from "./i18n";
-import { useEffect, useRef, type ReactNode } from "react";
-import { useBackLayer } from "./mobile-navigation";
-import { X } from "lucide-react";
+import type { ReactNode } from "react";
 
 export function Spinner({ label = t("index.loading") }: { label?: string }) {
   useLocale();
@@ -91,99 +91,6 @@ export function Switch({
       <span className="switch-track" aria-hidden="true"><span /></span>
       <span className={hideLabel ? "sr-only" : "switch-label"}>{label}</span>
     </label>
-  );
-}
-
-export function Modal({
-  title,
-  onClose,
-  children,
-  footer,
-  wide,
-  fullscreen
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-  footer?: ReactNode;
-  wide?: boolean;
-  fullscreen?: boolean;
-}) {
-  useLocale();
-  useBackLayer(true, onClose);
-  const ref = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusableSelector = [
-      "a[href]",
-      "button:not([disabled])",
-      "input:not([disabled])",
-      "select:not([disabled])",
-      "textarea:not([disabled])",
-      '[tabindex]:not([tabindex="-1"])'
-    ].join(",");
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || !ref.current) return;
-      const focusable = [...ref.current.querySelectorAll<HTMLElement>(focusableSelector)].filter(
-        (element) => element.offsetParent !== null
-      );
-      if (focusable.length === 0) {
-        event.preventDefault();
-        ref.current.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    ref.current?.querySelector<HTMLElement>(focusableSelector)?.focus();
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previouslyFocused?.focus();
-    };
-  }, []);
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        className={`modal${wide ? " wide" : ""}${fullscreen ? " fullscreen" : ""}`}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        ref={ref}
-        tabIndex={-1}
-      >
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button className="btn ghost icon" onClick={onClose} aria-label={t("index.close_dialog")}>
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-        <div className="modal-body">{children}</div>
-        {footer ? <div className="modal-footer">{footer}</div> : null}
-      </div>
-    </div>
   );
 }
 

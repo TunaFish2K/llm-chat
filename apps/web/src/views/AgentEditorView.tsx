@@ -1,3 +1,4 @@
+import { Presence } from "../lib/motion";
 import { ModelPicker } from "../components/ModelPicker";
 import { effectiveReasoningSelection } from "@llm-chat/contracts";
 import { EnvironmentSettings } from "../components/EnvironmentSettings";
@@ -194,13 +195,13 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
           {tab === "user" ? <UserProfileTab agent={agent} mutate={mutate} /> : null}
         </div>
       </div>
-      {leavePath ? <ConfirmModal title={t("AgentEditorView.discard_unsaved_changes")} message={t("AgentEditorView.changes_to_this_agent_have_not_been_saved")} confirmLabel={t("AgentEditorView.discard_changes")}
+      <Presence>{leavePath ? <ConfirmModal title={t("AgentEditorView.discard_unsaved_changes")} message={t("AgentEditorView.changes_to_this_agent_have_not_been_saved")} confirmLabel={t("AgentEditorView.discard_changes")}
         onClose={() => setLeavePath(null)} onConfirm={() => {
           allowLeave.current = true;
           navigate(leavePath);
           allowLeave.current = false;
           setLeavePath(null);
-        }} /> : null}
+        }} /> : null}</Presence>
     </>
   );
 }
@@ -358,14 +359,14 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           {t("AgentEditorView.reset_default_prompt")}
         </button>
       </Field>
-      {confirmReset ? <ConfirmModal
+      <Presence>{confirmReset ? <ConfirmModal
         title={t("AgentEditorView.reset_default_prompt_title")}
         message={t("AgentEditorView.reset_default_prompt_message")}
         confirmLabel={resetting ? t("DirectoryPicker.processing") : t("AgentEditorView.reset_default_prompt")}
         confirmDisabled={resetting}
         onClose={closeReset}
         onConfirm={() => void resetPrompt()}
-      /> : null}
+      /> : null}</Presence>
       <Field label={t("AgentEditorView.system_prompt")} hint={t("AgentEditorView.the_character_card_system_prompt_overrides_the_base_prompt_use")}>
         <ExpandableTextarea
           label={t("AgentEditorView.system_prompt")}
@@ -506,7 +507,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
           <p className="small muted">{t("AgentEditorView.the_avatar_must_be_a_png_smaller_than_10_mib")}</p>
         </div>
       </div>
-      {confirmRemove ? (
+      <Presence>{confirmRemove ? (
         <ConfirmModal
           title={t("AgentEditorView.delete_avatar")}
           message={t("AgentEditorView.delete_this_agent_s_avatar")}
@@ -528,7 +529,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
               .finally(() => setBusy(false));
           }}
         />
-      ) : null}
+      ) : null}</Presence>
     </div>
   );
 }

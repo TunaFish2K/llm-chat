@@ -1,3 +1,4 @@
+import { Presence } from "../lib/motion";
 import { uploadManager } from "../lib/file-upload-manager";
 import { ContainerResourceSettings } from "../components/ContainerResourceSettings";
 import { displayStore, saveDisplayPreferences, useDisplayPreferences, type DisplayPreferences } from "../lib/local-display";
@@ -329,7 +330,7 @@ function GeneralSection() {
         <button className="btn" onClick={() => setPickingWorkspace(true)}>{t("SettingsView.choose_working_directory")}</button>
       </div>
 
-      {pickingWorkspace ? (
+      <Presence>{pickingWorkspace ? (
         <DirectoryPicker
           initialPath={settings.lastWorkspacePath}
           onClose={() => setPickingWorkspace(false)}
@@ -338,7 +339,7 @@ function GeneralSection() {
             patch({ lastWorkspacePath: path });
           }}
         />
-      ) : null}
+      ) : null}</Presence>
       </fieldset>
     </div>
   );
@@ -599,11 +600,11 @@ function ToolsSection() {
           </tbody>
         </table>
       </div>
-      {detail?.kind === "tool" ? (
-        <ToolDetailModal tool={detail.tool} onClose={() => setDetail(null)} />
+      <Presence>{detail?.kind === "tool" ? (
+        <ToolDetailModal key="tool" tool={detail.tool} onClose={() => setDetail(null)} />
       ) : detail?.kind === "text" ? (
-        <TextDetailModal title={detail.title} text={detail.text} onClose={() => setDetail(null)} />
-      ) : null}
+        <TextDetailModal key="text" title={detail.title} text={detail.text} onClose={() => setDetail(null)} />
+      ) : null}</Presence>
     </div>
   );
 }
@@ -773,7 +774,7 @@ function SkillsSection() {
           </div>
         ))
       )}
-      {inspecting ? <SkillDetailModal skill={inspecting} onClose={() => setInspecting(null)} /> : null}
+      <Presence>{inspecting ? <SkillDetailModal skill={inspecting} onClose={() => setInspecting(null)} /> : null}</Presence>
     </div>
   );
 }
@@ -932,10 +933,10 @@ function PluginsSection() {
           </div>
         ))
       )}
-      {configuring ? (
+      <Presence>{configuring ? (
         <PluginConfigModal plugin={configuring} onClose={() => setConfiguring(null)} onSaved={load} />
-      ) : null}
-      {removing ? (
+      ) : null}</Presence>
+      <Presence>{removing ? (
         <ConfirmModal
           title={t("SettingsView.delete_plugin", { value1: (removing.manifest.name) })}
           message={t("SettingsView.its_registered_tools_will_no_longer_be_available")}
@@ -951,7 +952,7 @@ function PluginsSection() {
               .catch(toastError);
           }}
         />
-      ) : null}
+      ) : null}</Presence>
     </div>
   );
 }
@@ -1114,10 +1115,10 @@ function McpSection() {
           ))
         )}
       </div>
-      {editing ? (
+      <Presence>{editing ? (
         <McpEditor server={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={load} />
-      ) : null}
-      {removing ? (
+      ) : null}</Presence>
+      <Presence>{removing ? (
         <ConfirmModal
           title={t("SettingsView.delete_mcp_server", { value1: (removing.name) })}
           message={t("SettingsView.tools_provided_by_this_server_will_no_longer_be_available")}
@@ -1133,7 +1134,7 @@ function McpSection() {
               .catch(toastError);
           }}
         />
-      ) : null}
+      ) : null}</Presence>
     </div>
   );
 }

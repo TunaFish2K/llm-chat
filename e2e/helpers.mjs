@@ -69,7 +69,11 @@ export function agentInput(name, modelId = null) {
 
 /** On mobile viewports the sidebar is a drawer; open it when the toggle is visible. */
 export async function openDrawerIfNeeded(page) {
-  if (await page.locator(".mobile-drawer .workspace-sidebar").isVisible()) return;
+  const drawer = page.locator('.mobile-drawer[data-side="left"]');
+  if (await drawer.isVisible()) {
+    if (await drawer.getAttribute("data-exiting")) await expect(drawer).toHaveCount(0);
+    else return;
+  }
   const toggle = page.getByRole("button", { name: "打开导航" });
   if (await toggle.isVisible()) {
     await toggle.click();

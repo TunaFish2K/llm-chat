@@ -1,5 +1,5 @@
+import { PopoverLayer } from "../lib/motion";
 import { t, useLocale, getLocale } from "../lib/i18n";
-import { useBackLayer } from "../lib/mobile-navigation";
 import { useEffect, useMemo, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, ChevronDown, RefreshCw, Search, Settings2, X } from "lucide-react";
@@ -31,8 +31,7 @@ export function ModelPicker({
   useLocale();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const changeOpen = (next: boolean) => { setOpen(next); if (!next) setQuery(""); };
-  useBackLayer(open, () => changeOpen(false));
+  const changeOpen = (next: boolean) => { setOpen(next); if (next) setQuery(""); };
   useEffect(() => { if (disabled) changeOpen(false); }, [disabled]);
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const touchLayout = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
@@ -41,7 +40,6 @@ export function ModelPicker({
   const unavailable = value !== null && (!effective?.enabled || !connection || (imageInputOnly && !effective.capabilities.imageInput));
   const selectedName = value === null ? emptyOption.label : effective?.displayName ?? value;
   const groups = useMemo(() => {
-    if (!open) return [];
     const eligible = models.filter(
       (model) => model.enabled && (!imageInputOnly || model.capabilities.imageInput) && connections.some((connection) => connection.id === model.connectionId)
     );
@@ -57,7 +55,7 @@ export function ModelPicker({
         )
       }))
       .filter((group) => group.models.length);
-  }, [open, models, connections, query, imageInputOnly]);
+  }, [models, connections, query, imageInputOnly]);
 
   useEffect(() => {
     if (!open) return;
@@ -88,7 +86,7 @@ export function ModelPicker({
           </> : null}
         </button>
       </Popover.Trigger>
-      {open ? <Popover.Portal>
+      <Popover.Portal>
         <Popover.Content
           className="picker-popover model-picker-popover"
           aria-label={label}
@@ -100,7 +98,7 @@ export function ModelPicker({
           onOpenAutoFocus={(event) => {
             if (touchLayout) event.preventDefault();
           }}
-        >
+        ><PopoverLayer open={open} onClose={() => changeOpen(false)} />
           <header>
             <div>
               <strong>{label}</strong>
@@ -183,7 +181,7 @@ export function ModelPicker({
           >
             <Settings2 size={15} aria-hidden="true" />{t("ModelPicker.manage_connections_and_models")}</button>
         </Popover.Content>
-      </Popover.Portal> : null}
+      </Popover.Portal>
     </Popover.Root>
   );
 }

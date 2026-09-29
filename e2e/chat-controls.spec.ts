@@ -155,7 +155,9 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
       await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
       await page.getByRole("searchbox", { name: "搜索 Agent" }).fill(fixture.agent.name);
       await page.getByRole("button", { name: fixture.agent.name, exact: true }).click();
+      await expect(page.locator(".agent-popover")).toHaveCount(0);
       await page.keyboard.press("Escape");
+      await expect(page.locator(".composer-settings-popover")).toHaveCount(0);
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(page.locator(".composer-tools").getByRole("button", { name: "选择 Agent", exact: true })).toBeVisible();
     }
