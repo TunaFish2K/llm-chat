@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
+import { useRoute } from "../lib/router";
 import { readComposerDraft, writeComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
@@ -56,6 +57,44 @@ beforeEach(() => {
 });
 
 describe("ChatView", () => {
+  it.each(["messages", "conversations"] as const)("opens an accepted first send even when reading %s fails", async (failedRead) => {
+    seedStore();
+    window.history.replaceState(null, "", "/");
+    const conversation = makeConversation({ id: `accepted-${failedRead}` });
+    const message = makeMessage({ id: "accepted-user", role: "user", text: "已经发送" });
+    const start = vi.spyOn(endpoints, "startConversation").mockResolvedValue({
+      conversation, generation: { userMessageId: message.id, assistantMessageId: "accepted-assistant", generationId: `accepted-generation-${failedRead}` }
+    });
+    const messages = vi.spyOn(endpoints, "messages").mockImplementation(async () => {
+      if (failedRead === "messages") throw new Error("读取消息失败");
+      return [message];
+    });
+    vi.spyOn(endpoints, "conversations").mockImplementation(async () => {
+      if (failedRead === "conversations") throw new Error("读取列表失败");
+      return [conversation];
+    });
+    function RoutedChat() {
+      const route = useRoute();
+      return <ChatView conversationId={route.name === "chat" ? route.conversationId : null} mobile />;
+    }
+    const user = userEvent.setup();
+    render(<RoutedChat />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "已经发送" } });
+    await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    await waitFor(() => expect(location.pathname).toBe(`/c/${conversation.id}`));
+    expect(appStore.get().conversations).toContainEqual(conversation);
+    expect(document.querySelector(".welcome")).toBeNull();
+    expect(readComposerDraft(null)?.text).toBe("");
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    if (failedRead === "messages") {
+      await screen.findByText("读取消息失败");
+      messages.mockResolvedValue([message]);
+      await user.click(screen.getByRole("button", { name: /重试/ }));
+    }
+    await screen.findByText("已经发送");
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
   it("does not rerender the composer or unchanged historical messages on text updates", async () => {
     const picker = vi.spyOn(modelPicker, "ModelPicker");
     const formatTime = vi.spyOn(formatting, "formatTime");
