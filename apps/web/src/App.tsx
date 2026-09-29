@@ -1,3 +1,4 @@
+import { Presence } from "./lib/motion";
 import { GlobalFileUploads } from "./components/FileUploads";
 import { useErrorState } from "./lib/error-display";
 import { t, useLocale, localized } from "./lib/i18n";
@@ -211,7 +212,7 @@ export function App() {
         </>
       ) : null}
 
-      {mobile && navDrawer ? (
+      {mobile ? <Presence>{navDrawer ? (
         <MobileDrawer side="left" closeLabel={t("App.close_navigation")} onClose={() => setNavDrawer(false)}>
           <WorkspaceSidebar
             route={route}
@@ -221,12 +222,12 @@ export function App() {
             onInstall={() => void promptInstall()}
           />
         </MobileDrawer>
-      ) : null}
-      {mobile && showInspector ? (
+      ) : null}</Presence> : null}
+      {mobile ? <Presence>{showInspector ? (
         <MobileDrawer side="right" closeLabel={t("App.close_inspector")} onClose={() => setInspectorOpen(false)}>
           {inspector}
         </MobileDrawer>
-      ) : null}
+      ) : null}</Presence> : null}
 
       {mobile ? <div className="mobile-back-feedback" aria-hidden="true" data-active={backOffset > 0 || undefined}
         data-ready={backOffset >= 64 || undefined} style={{ transform: `translateX(${backOffset - 44}px)` }}><ArrowLeft size={20} /></div> : null}

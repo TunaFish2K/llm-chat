@@ -1,3 +1,4 @@
+import { Presence } from "../lib/motion";
 import { t, useLocale } from "../lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { Maximize2 } from "lucide-react";
@@ -51,7 +52,7 @@ export function ExpandableTextarea({
         <span className={value ? "" : "muted"}>{value || placeholder || t("ExpandableTextarea.click_to_expand_editor")}</span>
         <Maximize2 size={16} aria-hidden="true" />
       </button>
-      {open ? (
+      <Presence>{open ? (
         <Modal
           title={label}
           onClose={close}
@@ -78,7 +79,7 @@ export function ExpandableTextarea({
             }}
           />
         </Modal>
-      ) : null}
+      ) : null}</Presence>
     </>
   );
 }

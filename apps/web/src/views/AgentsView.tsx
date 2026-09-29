@@ -1,3 +1,4 @@
+import { Presence } from "../lib/motion";
 import { t, useLocale, localized } from "../lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import type { AgentInput } from "@llm-chat/contracts";
@@ -197,7 +198,7 @@ export function AgentsView() {
             <button className="btn small" disabled={currentPage >= pages} onClick={() => setPage(currentPage + 1)}>{t("AgentsView.next_page")}</button></nav>
         </div>
       </div>
-      {creating ? (
+      <Presence>{creating ? (
         <Modal
           title={t("AgentsView.new_agent")}
           onClose={() => setCreating(false)}
@@ -221,8 +222,8 @@ export function AgentsView() {
             />
           </div>
         </Modal>
-      ) : null}
-      {deleting ? (
+      ) : null}</Presence>
+      <Presence>{deleting ? (
         <ConfirmModal
           title={t("AgentsView.delete_agent")}
           message={t("AgentsView.conversations_using_this_agent_will_remain_but_you_must_select")}
@@ -232,7 +233,7 @@ export function AgentsView() {
           onClose={() => setDeleting(null)}
           onConfirm={() => void remove()}
         />
-      ) : null}
+      ) : null}</Presence>
     </>
   );
 }

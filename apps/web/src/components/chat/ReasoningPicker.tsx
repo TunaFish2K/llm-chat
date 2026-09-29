@@ -1,5 +1,5 @@
+import { PopoverLayer } from "../../lib/motion";
 import { t, useLocale } from "../../lib/i18n";
-import { useBackLayer } from "../../lib/mobile-navigation";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Popover, Slider } from "radix-ui";
 import { Lightbulb } from "lucide-react";
@@ -57,7 +57,6 @@ export function ReasoningPicker(props: ReasoningControlProps) {
       if (document.activeElement === document.body) trigger.current?.focus({ preventScroll: true });
     }
   }, [open, props.disabled]);
-  useBackLayer(open, () => setOpen(false));
   const state = reasoningControl(props);
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Popover.Trigger asChild><button ref={trigger} type="button" className="chip reasoning-trigger" disabled={props.disabled}
@@ -72,7 +71,7 @@ export function ReasoningPicker(props: ReasoningControlProps) {
         event.preventDefault();
         restoreFocus.current = Boolean(trigger.current?.disabled);
         if (!restoreFocus.current) trigger.current?.focus({ preventScroll: true });
-      }}>
+      }}><PopoverLayer open={open} onClose={() => setOpen(false)} />
       <ReasoningSlider key={JSON.stringify([props.model?.id, state.options])}
         state={state} disabled={props.disabled} onChange={props.onChange} />
     </Popover.Content></Popover.Portal>

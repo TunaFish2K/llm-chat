@@ -1,0 +1,21 @@
+/* Animation owners: Motion for overlays, CSS for Radix presence and messages. */
+.msg[data-enter] { animation: message-enter 120ms var(--ease); }
+@keyframes message-enter { from { opacity: 0; transform: translateY(4px); } }
+
+.disclosure-body { overflow: hidden; }
+.process-disclosure > summary .chev { transition: transform 180ms var(--ease); }
+
+:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state] {
+  transform-origin: var(--radix-popover-content-transform-origin);
+  --popover-offset: 4px;
+}
+:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-side="bottom"] { --popover-offset: -4px; }
+:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state="open"] { animation: popover-in 180ms var(--ease); }
+:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state="closed"] { animation: popover-out 140ms var(--ease); pointer-events: none; }
+@keyframes popover-in { from { opacity: 0; transform: translateY(var(--popover-offset)); } }
+@keyframes popover-out { to { opacity: 0; transform: translateY(var(--popover-offset)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .msg[data-enter], [data-state="open"], [data-state="closed"] { animation: none !important; }
+  .process-disclosure > summary .chev { transition: none; }
+}

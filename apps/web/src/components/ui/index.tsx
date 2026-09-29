@@ -1,3 +1,5 @@
+import { Modal } from "../AnimatedModal";
+export { Modal };
 import { t, useLocale } from "../../lib/i18n";
 /**
  * The console's primitive layer.
@@ -7,9 +9,6 @@ import { t, useLocale } from "../../lib/i18n";
  * each of them re-deriving markup or class names.
  */
 import {
-  useEffect,
-  useId,
-  useRef,
   type ButtonHTMLAttributes,
   type ReactNode
 } from "react";
@@ -263,100 +262,6 @@ export function Segmented<T extends string>({
 }
 
 /* Modal ------------------------------------------------------------------- */
-
-const FOCUSABLE = [
-  "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  '[tabindex]:not([tabindex="-1"])'
-].join(",");
-
-export function Modal({
-  title,
-  onClose,
-  children,
-  footer,
-  wide
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-  footer?: ReactNode;
-  wide?: boolean;
-}) {
-  useLocale();
-  const ref = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  const headingId = useId();
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
-  useEffect(() => {
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (event.key !== "Tab" || !ref.current) return;
-      const focusable = [...ref.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-        (element) => element.offsetParent !== null
-      );
-      if (focusable.length === 0) {
-        event.preventDefault();
-        ref.current.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    ref.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      previouslyFocused?.focus();
-    };
-  }, []);
-
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        className={wide ? "modal wide" : "modal"}
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        aria-labelledby={headingId}
-        ref={ref}
-        tabIndex={-1}
-      >
-        <div className="modal-header">
-          <h3 id={headingId}>{title}</h3>
-          <button type="button" className="btn ghost icon" onClick={onClose} aria-label={t("index.close_dialog")}>
-            <X size={17} aria-hidden="true" />
-          </button>
-        </div>
-        <div className="modal-body">{children}</div>
-        {footer ? <div className="modal-footer">{footer}</div> : null}
-      </div>
-    </div>
-  );
-}
 
 export function ConfirmModal({
   title,

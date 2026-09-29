@@ -1,3 +1,4 @@
+import { animate, drawerSpring, m, motionTiming, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 /**
@@ -5,7 +6,7 @@ import { t, useLocale } from "../../lib/i18n";
  * mobile drawers, and the toast stack. Nothing here knows about conversations
  * or Agents — it only arranges regions and reports geometry back to `App`.
  */
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useBackLayer } from "../../lib/mobile-navigation";
 import { ArrowLeft, Menu, PanelRightOpen, RefreshCw } from "lucide-react";
 import type { ConversationDto } from "@llm-chat/contracts";
@@ -217,71 +218,132 @@ export function MobileDrawer({
   children: ReactNode;
 }) {
   useLocale();
-  useBackLayer(true, onClose, 10);
+  const [present, safeToRemove] = usePresence();
+  const reduced = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
-  const gesture = useRef<{ x: number; y: number; at: number; dragging: boolean } | null>(null);
-  const [dragOffset, setDragOffset] = useState(0);
-  const [dragging, setDragging] = useState(false);
+  const gesture = useRef<{ x: number; y: number; at: number; offset: number; dragging: boolean } | null>(null);
+  const closing = useRef(false);
+  const suppressClick = useRef(false);
+  const x = useMotionValue(0);
+  const width = useMotionValue(320);
+  const opacity = useTransform(() => Math.max(0, 1 - Math.abs(x.get()) / width.get()));
+  const animation = useRef<ReturnType<typeof animate> | null>(null);
+  const initialized = useRef(false);
+  const close = () => {
+    if (!present || closing.current) return;
+    closing.current = true;
+    onClose();
+  };
+  useBackLayer(true, close, 10);
+
+  useLayoutEffect(() => {
+    const element = panelRef.current;
+    if (!element) return;
+    const measure = () => {
+      const next = element.getBoundingClientRect().width;
+      if (!next || next === width.get()) return;
+      width.set(next);
+      if (initialized.current && gesture.current) {
+        gesture.current = null;
+        animation.current?.stop();
+        x.set(0);
+      }
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [width, x]);
+
+  useLayoutEffect(() => {
+    let active = true;
+    animation.current?.stop();
+    gesture.current = null;
+    if (!initialized.current) {
+      x.set(reduced ? 0 : (side === "left" ? -1 : 1) * width.get());
+      initialized.current = true;
+    }
+    if (present) closing.current = false;
+    const target = present ? 0 : (side === "left" ? -1 : 1) * width.get();
+    if (reduced) {
+      x.set(target);
+      if (!present) safeToRemove?.();
+    } else {
+      animation.current = animate(x, target, present ? drawerSpring : { duration: motionTiming.exit });
+      if (!present) void animation.current.then(() => { if (active) safeToRemove?.(); });
+    }
+    return () => { active = false; animation.current?.stop(); };
+  }, [present, reduced, side, safeToRemove, width, x]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented) return;
-      // A foreground dialog owns Escape even if its window listener runs later.
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-      onClose();
+      event.preventDefault();
+      close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  });
+
+  const cancel = () => {
+    if (!gesture.current) return;
+    gesture.current = null;
+    animation.current?.stop();
+    if (reduced) x.set(0);
+    else animation.current = animate(x, 0, drawerSpring);
+  };
 
   return (
-    <div className="mobile-drawer" data-side={side}>
-      <button type="button" className="drawer-scrim" onClick={onClose} aria-label={closeLabel} />
-      <div
-        ref={panelRef}
-        className="drawer-panel"
-        data-dragging={dragging || undefined}
-        style={{ transform: dragOffset ? `translateX(${dragOffset}px)` : undefined }}
+    <div className="mobile-drawer" data-side={side} data-exiting={!present || undefined}
+      onClickCapture={(event) => {
+        if (!present || (suppressClick.current && event.detail > 0)) {
+          event.preventDefault(); event.stopPropagation(); suppressClick.current = false;
+        }
+      }}>
+      <m.button type="button" className="drawer-scrim" style={{ opacity }} onClick={close} aria-label={closeLabel} />
+      <m.div ref={panelRef} className="drawer-panel" style={{ x }} inert={!present ? true : undefined}
         onPointerDown={(event) => {
-          if (event.pointerType === "mouse" && event.button !== 0) return;
-          gesture.current = { x: event.clientX, y: event.clientY, at: performance.now(), dragging: false };
+          if (!present || closing.current || (event.pointerType === "mouse" && event.button !== 0)) return;
+          suppressClick.current = false;
+          const target = event.target as Element;
+          if (target.closest("input, textarea, select, [contenteditable=true], [role=slider], [data-no-back-gesture]")) return;
+          if (window.getSelection()?.toString()) return;
+          for (let node: Element | null = target; node && node !== event.currentTarget; node = node.parentElement) {
+            if (node.scrollWidth > node.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(node).overflowX)) return;
+          }
+          gesture.current = { x: event.clientX, y: event.clientY, at: performance.now(), offset: x.get(), dragging: false };
         }}
         onPointerMove={(event) => {
           const start = gesture.current;
           if (!start) return;
-          const dx = event.clientX - start.x;
-          const dy = event.clientY - start.y;
+          const dx = event.clientX - start.x, dy = event.clientY - start.y;
           if (!start.dragging) {
+            if (Math.abs(dy) > 8 && Math.abs(dy) >= Math.abs(dx)) { gesture.current = null; return; }
             if (Math.abs(dx) < 8 || Math.abs(dx) <= Math.abs(dy)) return;
             start.dragging = true;
-            setDragging(true);
+            suppressClick.current = true;
+            animation.current?.stop();
             event.currentTarget.setPointerCapture(event.pointerId);
           }
-          const closingOffset = side === "left" ? Math.min(0, dx) : Math.max(0, dx);
-          setDragOffset(closingOffset);
+          const offset = start.offset + dx;
+          x.set(side === "left" ? Math.max(-width.get(), Math.min(0, offset)) : Math.min(width.get(), Math.max(0, offset)));
         }}
         onPointerUp={(event) => {
           const start = gesture.current;
           if (!start) return;
           const elapsed = Math.max(1, performance.now() - start.at);
           const dx = event.clientX - start.x;
-          const distance = Math.abs(side === "left" ? Math.min(0, dx) : Math.max(0, dx));
-          const width = panelRef.current?.offsetWidth ?? 320;
-          const velocity = distance / elapsed;
+          const closingDistance = side === "left" ? Math.max(0, -dx) : Math.max(0, dx);
+          const distance = Math.abs(x.get());
           gesture.current = null;
-          setDragging(false);
-          if (start.dragging && (distance >= Math.max(56, width * 0.22) || velocity >= 0.55)) onClose();
-          else setDragOffset(0);
+          if (start.dragging && closingDistance > 0 && (distance >= Math.max(56, width.get() * 0.22) || closingDistance / elapsed >= 0.55)) close();
+          else if (reduced) x.set(0);
+          else animation.current = animate(x, 0, drawerSpring);
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
         }}
-        onPointerCancel={() => {
-          gesture.current = null;
-          setDragging(false);
-          setDragOffset(0);
-        }}
-      >
-        {children}
-      </div>
+        onPointerCancel={cancel} onLostPointerCapture={event => { if (event.target === event.currentTarget) cancel(); }}
+      >{children}</m.div>
     </div>
   );
 }

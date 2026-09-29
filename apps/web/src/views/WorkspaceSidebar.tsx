@@ -1,3 +1,4 @@
+import { PopoverLayer, Presence } from "../lib/motion";
 import { t, useLocale, localized } from "../lib/i18n";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { offlineStore } from "../lib/offline-history";
@@ -25,7 +26,6 @@ import { formatTime } from "../lib/format";
 import { linkClick, navigate, routes, type Route } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, Modal } from "../lib/ui";
-import { useBackLayer } from "../lib/mobile-navigation";
 import { Popover } from "radix-ui";
 import { ConversationSearch } from "../components/ConversationSearch";
 import type { PwaState } from "../lib/pwa";
@@ -188,12 +188,12 @@ export function WorkspaceSidebar({
                         <small>{offline && !cachedIds.includes(conversation.activeBranchId ?? conversation.id) ? t("WorkspaceSidebar.not_downloaded") : formatTime(conversation.updatedAt)}</small>
                       </a>
                       <div className="conversation-actions">
-                        <ConversationPopover><Popover.Trigger asChild><button className="icon-button" aria-label={t("WorkspaceSidebar.conversation_actions", { value1: (conversation.title) })}><MoreHorizontal size={16} /></button></Popover.Trigger>
-                          <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4}>
+                        <ConversationPopover>{(open, close) => <><Popover.Trigger asChild><button className="icon-button" aria-label={t("WorkspaceSidebar.conversation_actions", { value1: (conversation.title) })}><MoreHorizontal size={16} /></button></Popover.Trigger>
+                          <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4}><PopoverLayer open={open} onClose={close} />
                             <Popover.Close asChild><button disabled={offline} aria-label={t("WorkspaceSidebar.rename", { value1: (conversation.title) })} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />{t("WorkspaceSidebar.edit_title")}</button></Popover.Close>
                             <Popover.Close asChild><button disabled={offline} className="danger-quiet" aria-label={t("WorkspaceSidebar.delete", { value1: (conversation.title) })} onClick={() => setDeleting(conversation)}><Trash2 size={14} />{t("WorkspaceSidebar.delete_conversation")}</button></Popover.Close>
                           </Popover.Content></Popover.Portal>
-                        </ConversationPopover>
+                        </>}</ConversationPopover>
                       </div>
                     </div>
                   ))}
@@ -217,8 +217,8 @@ export function WorkspaceSidebar({
           </footer> : null}
         </>
       )}
-      {searchOpen ? <ConversationSearch onClose={() => setSearchOpen(false)} /> : null}
-      {renaming ? (
+      <Presence>{searchOpen ? <ConversationSearch onClose={() => setSearchOpen(false)} /> : null}</Presence>
+      <Presence>{renaming ? (
         <Modal
           title={t("WorkspaceSidebar.rename_conversation")}
           onClose={() => setRenaming(null)}
@@ -226,10 +226,10 @@ export function WorkspaceSidebar({
         >
           <label className="field"><span>{t("WorkspaceSidebar.conversation_title")}</span><input className="input" aria-label={t("WorkspaceSidebar.conversation_title")} value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void rename(); }} /></label>
         </Modal>
-      ) : null}
-      {deleting ? (
+      ) : null}</Presence>
+      <Presence>{deleting ? (
         <ConfirmModal title={t("WorkspaceSidebar.delete_conversation")} message={t("WorkspaceSidebar.delete_and_all_its_branches_and_messages_this_cannot_be", { value1: (deleting.title) })} confirmLabel={t("WorkspaceSidebar.delete_2")} danger busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void remove()} />
-      ) : null}
+      ) : null}</Presence>
     </aside>
   );
 }
@@ -264,9 +264,8 @@ function groupConversations(conversations: ConversationDto[]): Array<{ label: st
   });
 }
 
-function ConversationPopover({ children }: { children: ReactNode }) {
+function ConversationPopover({ children }: { children: (open: boolean, close: () => void) => ReactNode }) {
   useLocale();
   const [open, setOpen] = useState(false);
-  useBackLayer(open, () => setOpen(false));
-  return <Popover.Root open={open} onOpenChange={setOpen}>{children}</Popover.Root>;
+  return <Popover.Root open={open} onOpenChange={setOpen}>{children(open, () => setOpen(false))}</Popover.Root>;
 }

@@ -1,3 +1,4 @@
+import { Presence } from "../lib/motion";
 import { useErrorState, displayError } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -95,7 +96,7 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
           {taskId ? <TaskDetail conversationId={conversationId} taskId={taskId} /> : null}
         </div>
       </div>
-      {stopping ? (
+      <Presence>{stopping ? (
         <StopTaskModal
           task={stopping}
           onClose={() => setStopping(null)}
@@ -104,7 +105,7 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
             void load();
           }}
         />
-      ) : null}
+      ) : null}</Presence>
     </div>
   );
 }
