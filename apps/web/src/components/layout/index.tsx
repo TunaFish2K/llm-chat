@@ -70,21 +70,14 @@ export function useMediaQuery(query: string): boolean {
 
 export function BootScreen({ error, onRetry }: { error: string | null; onRetry: () => void }) {
   useLocale();
-  return (
-    <div className="boot-screen">
-      <div className="boot-state">
-        <div className="boot-brand">
-          <img src="/icons/icon-192-v2.png" width={36} height={36} alt="" />
-          <strong>Chat</strong>
-        </div>
-        {error ? (
-          <ErrorState message={t("index.could_not_connect_to_the_service", { value1: (error) })} onRetry={onRetry} />
-        ) : (
-          <LoadingState label={t("index.starting_chat")} />
-        )}
-      </div>
-    </div>
-  );
+  return <div className="boot-shell">
+    <header className="boot-brand"><img src="/icons/icon-192-v2.png" width={28} height={28} alt="" /><strong>Chat</strong></header>
+    <aside className="boot-sidebar" aria-hidden="true"><div /><div /><div /></aside>
+    <main className="boot-content">
+      {error ? <ErrorState message={error} onRetry={onRetry} /> : <LoadingState label={t("index.starting_chat")} />}
+      <div className="boot-composer" aria-hidden="true" />
+    </main>
+  </div>;
 }
 
 export function AppFrame({

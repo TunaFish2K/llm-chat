@@ -1543,5 +1543,10 @@
   "SettingsView.redownloading_app_resources": "正在重新下载并修复应用资源…",
   "pwa.server_not_ready_for_update": "服务器暂时无法提供更新，请稍后重试",
   "pwa.repair_failed_try_again": "应用资源修复失败，请保持联网后重试",
-  "pwa.version_changed_try_again": "服务器版本已变化，请再次强制更新"
+  "pwa.version_changed_try_again": "服务器版本已变化，请再次强制更新",
+  "error.submission_conflict": "提交内容已变化，请重新发送",
+  "http_client.request_timeout": "请求超时，尚未确认是否接收。内容已保留，可重试。",
+  "Composer.send_failed": "发送失败",
+  "Composer.sync_failed_after_send": "消息已提交，内容同步失败。",
+  "App.refreshing_cached": "正在更新本机保存的内容…"
 }

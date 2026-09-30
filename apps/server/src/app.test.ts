@@ -136,6 +136,32 @@ describe("server API", () => {
     }
   });
 
+  it("deduplicates simultaneous starts and message retries before busy checks", async () => {
+    const app = await testApp(); seedStoreModel(app.store);
+    vi.spyOn(app.runner, "start").mockImplementation(() => {});
+    const payload = { agentId: app.store.getSettings().defaultAgentId!, text: "once", clientSubmissionId: randomUUID() };
+    const responses = await Promise.all([1, 2].map(() => app.inject({ method: "POST", url: "/api/conversations/start", payload })));
+    expect(responses.map(response => response.statusCode)).toEqual([202, 202]);
+    expect(responses[0]!.json()).toEqual(responses[1]!.json());
+    const first = responses[0]!.json();
+    app.store.finishGeneration(first.generation.generationId, "completed", {});
+    const next = { text: "second", clientSubmissionId: randomUUID() };
+    const url = `/api/conversations/${first.conversation.id}/messages`;
+    const original = await app.inject({ method: "POST", url, payload: next });
+    const repeated = await app.inject({ method: "POST", url, payload: next });
+    expect(original.statusCode).toBe(202); expect(repeated.statusCode).toBe(202);
+    expect(repeated.json()).toEqual(original.json());
+    expect(app.store.listMessages(first.conversation.id).filter(message => message.role === "user")).toHaveLength(2);
+    const conflict = await app.inject({ method: "POST", url, payload: { ...next, text: "different" } });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json().error.code).toBe("submission_conflict");
+    const queueUrl = `/api/conversations/${first.conversation.id}/queued-messages`;
+    const queued = { text: "queued once", clientSubmissionId: randomUUID(), mode: "queue" };
+    const one = await app.inject({ method: "POST", url: queueUrl, payload: queued });
+    const two = await app.inject({ method: "POST", url: queueUrl, payload: queued });
+    expect(one.statusCode).toBe(202); expect(two.json()).toEqual(one.json());
+  });
+
   it("rejects submissions from an unrefreshed client before writing, while legacy sends still work", async () => {
     const app = await testApp();
     seedStoreModel(app.store);
@@ -1142,13 +1168,16 @@ describe("server API", () => {
     const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
     const configured = app.store.getAgent(created.id)!;
     app.store.updateAgent(created.id, { roleplay: { ...configured.roleplay, enabled: true } });
-    const script = await app.inject({
-      method: "POST", url: `/api/conversations/${conversation.id}/roleplay-scripts/execute`,
-      payload: { script: "/setvar chapter 4 | /input \"continue\"", draft: "" }
-    });
+    const scriptRequest = {
+      method: "POST" as const, url: `/api/conversations/${conversation.id}/roleplay-scripts/execute`,
+      payload: { script: "/setvar chapter 4 | /input \"continue\"", draft: "", clientSubmissionId: randomUUID() }
+    };
+    const script = await app.inject(scriptRequest);
+    expect((await app.inject(scriptRequest)).json()).toEqual(script.json());
     expect(script.statusCode).toBe(200);
     expect(script.json()).toMatchObject({ draft: "continue", state: { variables: { chapter: 4 } }, commands: 2 });
     const audit = await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/roleplay-scripts/audit` });
+    expect(audit.json()).toHaveLength(1);
     expect(audit.json()[0]).toMatchObject({ sourceKind: "inline", success: true, commandCount: 2 });
 
     const roleplayAsset = await app.inject({

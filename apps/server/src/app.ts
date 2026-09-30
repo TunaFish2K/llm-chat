@@ -200,7 +200,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       });
     }
     if (error instanceof StoreError) {
-      const status = error.code === "client_update_required" ? 409 : error.code.endsWith("not_found") ? 404 : 400;
+      const status = ["client_update_required", "submission_conflict"].includes(error.code) ? 409 : error.code.endsWith("not_found") ? 404 : 400;
       return reply.code(status).send({ error: { code: error.code, message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error) } : {}) } });
     }
     if (error instanceof BalanceError) {
@@ -638,6 +638,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.post("/api/conversations/start", async (request, reply) => {
     requireCurrentMessageClient(request.body);
     const value = startConversationSchema.parse(request.body);
+    const submissionInput = structuredClone(value);
+    const previous = store.submissionResult<import("@llm-chat/contracts").ConversationStartedDto>(value.clientSubmissionId, "start", submissionInput);
+    if (previous) {
+      const result = previous.value;
+      if (!store.getConversation(result.conversation.id)) throw new StoreError("conversation_not_found", "Conversation not found");
+      if (store.getGeneration(result.generation.generationId)?.status === "queued") {
+        if (result.generation.userMessageId) await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
+        runner.start(result.generation.generationId);
+      }
+      return reply.code(202).send(result);
+    }
     value.executionOverrides = store.newConversationOverrides(value.agentId, value.executionOverrides);
     const imageAssetIds = attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image");
     if (imageAssetIds.length) {
@@ -648,7 +659,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       assertImageConfiguration(store, agent?.id ?? null, modelId, imageAssetIds);
     }
     const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
-    const result = store.startConversation({ ...value, workspacePath });
+    const result = store.acceptSubmission(value.clientSubmissionId, "start", submissionInput, () => store.startConversation({ ...value, workspacePath }));
     if (result.generation.userMessageId) {
       await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
     }
@@ -683,6 +694,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/roleplay-scripts/execute", async (request) => {
     const input = roleplayScriptExecutionSchema.parse(request.body);
+    return store.acceptSubmission(input.clientSubmissionId, `script:${request.params.id}`, input, () => {
     const conversation = store.getConversation(request.params.id);
     if (!conversation?.agentId) throw withMessage(new StoreError("conversation_agent_required", "请先为会话选择 Agent"), "error.select_an_agent_for_this_conversation_first");
     const agent = store.getAgent(conversation.agentId);
@@ -727,6 +739,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       }
     }
     return { draft, sendText, output, state, commands: commandCount };
+    });
   });
   app.get<{ Params: { id: string } }>("/api/conversations/:id/roleplay-scripts/audit", async (request) => {
     if (!store.getConversation(request.params.id)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
@@ -828,11 +841,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
     requireCurrentMessageClient(request.body);
+    const value = sendMessageSchema.parse(request.body);
+    if (!store.getConversation(request.params.id)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+    const result = store.acceptSubmission(value.clientSubmissionId, `messages:${request.params.id}`, value, () => {
     if (!store.isQueuePaused(request.params.id) && store.listQueuedMessages(request.params.id).some((item) => item.status !== "failed")) {
       throw withMessage(new StoreError("conversation_busy", "已有待发送消息，请加入队列"), "error.messages_are_already_waiting_add_this_message_to_the_queue");
     }
     if (store.isConversationBusy(request.params.id)) throw withMessage(new StoreError("conversation_busy", "该会话还有生成或工具审批未完成"), "error.this_conversation_has_an_unfinished_generation_or_tool_approval_2");
-    const value = sendMessageSchema.parse(request.body);
     const ids = attachmentIds(value);
     const imageAssetIds = ids.filter((id) => store.getFileAsset(id)?.kind === "image");
     if (imageAssetIds.length) {
@@ -841,11 +856,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       const resolved = store.resolveGeneration(conversation);
       assertImageConfiguration(store, resolved.agent.id, resolved.model.id, imageAssetIds);
     }
-    const result = store.createMessageGeneration(request.params.id, value.text, ids);
+    return store.createMessageGeneration(request.params.id, value.text, ids);
+    });
     if (result.userMessageId) {
       await imageService.materializeMessageAttachments(request.params.id, result.userMessageId);
     }
-    runner.start(result.generationId);
+    if (store.getGeneration(result.generationId)?.status === "queued") runner.start(result.generationId);
     return reply.code(202).send(result);
   });
 
@@ -854,7 +870,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     requireCurrentMessageClient(request.body);
     const value = sendMessageSchema.parse(request.body);
     const { mode } = z.object({ mode: z.enum(["queue", "steer"]).default("queue") }).parse(request.body);
-    const item = store.enqueueMessage(request.params.id, value.text, attachmentIds(value), mode);
+    if (!store.getConversation(request.params.id)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+    const item = store.acceptSubmission(value.clientSubmissionId, `queue:${request.params.id}`, { ...value, mode }, () => store.enqueueMessage(request.params.id, value.text, attachmentIds(value), mode));
     queue.changed(request.params.id);
     queue.kick(request.params.id);
     return reply.code(202).send(item);

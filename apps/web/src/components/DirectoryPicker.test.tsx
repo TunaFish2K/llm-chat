@@ -39,7 +39,7 @@ describe("DirectoryPicker", () => {
     vi.mocked(endpoints.listDirectories).mockResolvedValueOnce(listing("/中文 project "));
     await user.keyboard("{Enter}");
     await waitFor(() => expect(input).toHaveValue("/中文 project "));
-    expect(endpoints.listDirectories).toHaveBeenLastCalledWith("/中文 project /../alias");
+    expect(endpoints.listDirectories).toHaveBeenLastCalledWith("/中文 project /../alias", expect.any(AbortSignal));
     expect(onSelect).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "使用当前目录" }));
     expect(endpoints.validatePath).toHaveBeenCalledWith("/中文 project ");
@@ -58,7 +58,7 @@ describe("DirectoryPicker", () => {
     expect(screen.getByText("当前目录：/workspace")).toBeVisible();
     expect(screen.getByRole("button", { name: "使用当前目录" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "重试" }));
-    expect(endpoints.listDirectories).toHaveBeenLastCalledWith("/missing");
+    expect(endpoints.listDirectories).toHaveBeenLastCalledWith("/missing", expect.any(AbortSignal));
     expect(screen.getByText("当前目录：/missing")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -79,7 +79,7 @@ describe("DirectoryPicker", () => {
     expect(input).toHaveValue("/deleted");
     await user.click(screen.getByRole("button", { name: "打开根目录" }));
     await waitFor(() => expect(input).toHaveValue("/"));
-    expect(endpoints.listDirectories).toHaveBeenLastCalledWith(undefined);
+    expect(endpoints.listDirectories).toHaveBeenLastCalledWith(undefined, expect.any(AbortSignal));
     expect(screen.queryByRole("button", { name: /上级目录/ })).not.toBeInTheDocument();
   });
 

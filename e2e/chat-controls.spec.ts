@@ -114,7 +114,7 @@ for (const failedRead of ["messages", "conversations"] as const) {
       if (failedRead === "messages") {
         await expect(page.locator(".chat-thread")).toContainText("发送后的读取失败");
         blockReads = false;
-        await page.locator(".chat-thread").getByRole("button", { name: "重试" }).click();
+        await page.locator(".chat-thread").getByRole("alert").filter({ hasText: "发送后的读取失败" }).getByRole("button", { name: "重试", exact: true }).click();
       } else blockReads = false;
       await expect(page.locator('.msg[data-role="user"]')).toContainText("消息已经送达");
       await expect(page.locator('.msg[data-role="assistant"]')).toContainText("这是 E2E 流式回复");

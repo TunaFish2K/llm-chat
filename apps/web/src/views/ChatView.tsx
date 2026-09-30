@@ -297,13 +297,14 @@ export function ChatView({
                     onChange={(id) => void switchBranch(id)}
                   />
                 </div>
+                {loadError && messages !== null ? <ErrorState message={loadError} onRetry={() => conversationId && readMessages(conversationId)} /> : null}
                 {!conversationId ? (
                   <NewConversationWelcome
                     agentId={previewAgentId}
                     greetingIndex={newGreetingIndex}
                     onGreetingIndexChange={setNewGreetingIndex}
                   />
-                ) : loadError ? (
+                ) : loadError && messages === null ? (
                   <ErrorState message={loadError} onRetry={() => readMessages(conversationId)} />
                 ) : messages === null ? (
                   <LoadingState label={t("ChatView.loading_messages")} />

@@ -185,6 +185,44 @@ describe("ChatView", () => {
     expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", "Second");
   });
 
+  it("attempts a send despite offline state, and preserves typing during the request", async () => {
+    seedStore([]); vi.stubGlobal("fetch", messageFetch([]));
+    let resolve!: (value: { assistantMessageId: string; generationId: string }) => void;
+    const sending = vi.spyOn(endpoints, "sendMessage").mockImplementation(() => new Promise(done => { resolve = done; }));
+    // A stuck draft write must not block a message request.
+    let finishDraft!: (value: ReturnType<typeof makeConversation>) => void;
+    const draftWrite = new Promise<ReturnType<typeof makeConversation>>(resolve => { finishDraft = resolve; });
+    vi.spyOn(endpoints, "updateConversation").mockReturnValue(draftWrite);
+    render(<ChatView conversationId="conv-1" />);
+    act(() => offlineStore.set({ offline: true }));
+    const input = screen.getByLabelText("输入消息");
+    fireEvent.change(input, { target: { value: "first" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(sending).toHaveBeenCalledTimes(1));
+    expect(input).not.toBeDisabled();
+    fireEvent.change(input, { target: { value: "next draft" } });
+    await act(async () => resolve({ assistantMessageId: "answer", generationId: "generation" }));
+    expect(input).toHaveValue("next draft");
+    expect(readComposerDraft("conv-1")?.text).toBe("next draft");
+    await act(async () => finishDraft(makeConversation()));
+  });
+
+  it("reuses a failed submission after remount and does not retry without a click", async () => {
+    seedStore([]); vi.stubGlobal("fetch", messageFetch([]));
+    const send = vi.spyOn(endpoints, "sendMessage").mockRejectedValue(new Error("response lost"));
+    const first = render(<ChatView conversationId="conv-1" />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "retry once" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText("response lost");
+    const receipt = send.mock.calls[0]![3];
+    first.unmount(); render(<ChatView conversationId="conv-1" />);
+    expect(send).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    expect(send.mock.calls[1]![3]).toBe(receipt);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("retry once");
+  });
+
   it("keeps an unsent draft when the first send fails", async () => {
     seedStore(); vi.stubGlobal("fetch", messageFetch([]));
     vi.spyOn(endpoints, "startConversation").mockRejectedValue(new Error("发送失败测试"));
@@ -192,7 +230,7 @@ describe("ChatView", () => {
     const first = render(<ChatView conversationId={null} />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "失败后保留" } });
     await user.click(screen.getByRole("button", { name: /^发送$/ }));
-    await waitFor(() => expect(appStore.get().toasts.some((item) => item.text === "发送失败测试")).toBe(true));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("发送失败测试"));
     first.unmount();
     render(<ChatView conversationId={null} />);
     expect(screen.getByLabelText("输入消息")).toHaveValue("失败后保留");
@@ -499,7 +537,7 @@ describe("ChatView", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1/messages",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ text: "测试消息" }) })
+      expect.objectContaining({ method: "POST", body: expect.stringContaining('"text":"测试消息"') })
     ));
   });
 
@@ -593,7 +631,7 @@ describe("ChatView", () => {
       "/api/conversations/conv-1/messages",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ text: "", assetIds: [asset.id] })
+        body: expect.stringContaining(JSON.stringify([asset.id]))
       })
     ));
   });
@@ -876,19 +914,15 @@ describe("ChatView", () => {
     await user.type(screen.getByLabelText("输入消息"), "第一条消息");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/conversations/start",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          text: "第一条消息",
-          agentId: "agent-1",
-          greetingIndex: 0,
-          executionOverrides: { modelId: "model-2", reasoningSelection: { mode: "effort", value: "high" } },
-          workspacePath: null
-        })
-      })
-    ));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url, init]) => url === "/api/conversations/start" && init?.method === "POST");
+      expect(call).toBeDefined();
+      expect(JSON.parse(call![1]!.body as string)).toMatchObject({
+        text: "第一条消息", agentId: "agent-1", greetingIndex: 0,
+        executionOverrides: { modelId: "model-2", reasoningSelection: { mode: "effort", value: "high" } }, workspacePath: null,
+        clientSubmissionId: expect.any(String)
+      });
+    });
   });
 
   it("uses the selected Agent identity on a new conversation", () => {

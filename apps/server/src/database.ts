@@ -6,7 +6,7 @@ import { DEFAULT_AGENT_SYSTEM_PROMPT, effectiveModelId, resolveGenerationPlan } 
 import { repairTerminalToolCalls } from "./database-repair";
 import { migrateOfflineHistory } from "./offline-history";
 import { legacyToolPresentation } from "./tool-presentation";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname } from "node:path";
@@ -228,7 +228,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 46) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 47) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1189,6 +1189,12 @@ function migrate(sqlite: DatabaseSyncType): void {
       );
       PRAGMA user_version = 46;`);
     }
+    if (current < 47) {
+      sqlite.exec(`CREATE TABLE IF NOT EXISTS client_submissions (
+        scope TEXT NOT NULL, id TEXT NOT NULL, fingerprint TEXT NOT NULL, response_json TEXT NOT NULL,
+        PRIMARY KEY(scope, id)
+      ); PRAGMA user_version = 47;`);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1230,6 +1236,29 @@ function hasColumn(sqlite: DatabaseSyncType, table: string, column: string): boo
 export class Store {
   readonly sqlite: DatabaseSyncType;
   readonly dataDir: string;
+
+  private transactionDepth = 0;
+
+  submissionResult<T>(id: string | undefined, scope: string, input: unknown): { value: T } | null {
+    if (!id) return null;
+    const row = this.sqlite.prepare("SELECT fingerprint, response_json FROM client_submissions WHERE scope = ? AND id = ?").get(scope, id) as Row | undefined;
+    if (!row) return null;
+    const fingerprint = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    if (row.fingerprint !== fingerprint) throw withMessage(new StoreError("submission_conflict", "提交内容已变化，请重新发送"), "error.submission_conflict");
+    return { value: JSON.parse(String(row.response_json)) as T };
+  }
+
+  acceptSubmission<T>(id: string | undefined, scope: string, input: unknown, action: () => T): T {
+    if (!id) return action();
+    return this.transaction(() => {
+      const previous = this.submissionResult<T>(id, scope, input);
+      if (previous) return previous.value;
+      const result = action();
+      this.sqlite.prepare("INSERT INTO client_submissions(scope, id, fingerprint, response_json) VALUES (?, ?, ?, ?)")
+        .run(scope, id, createHash("sha256").update(JSON.stringify(input)).digest("hex"), JSON.stringify(result));
+      return result;
+    });
+  }
 
   constructor(path: string) {
     this.dataDir = dirname(path);
@@ -3461,7 +3490,9 @@ export class Store {
   }
 
   private transaction<T>(action: () => T): T {
+    if (this.transactionDepth > 0) return action();
     this.sqlite.exec("BEGIN IMMEDIATE");
+    this.transactionDepth++;
     try {
       const result = action();
       this.sqlite.exec("COMMIT");
@@ -3469,7 +3500,7 @@ export class Store {
     } catch (error) {
       this.sqlite.exec("ROLLBACK");
       throw error;
-    }
+    } finally { this.transactionDepth--; }
   }
 
   private visionAnalysisDto(row: Row, cached: boolean): VisionAnalysisDto {

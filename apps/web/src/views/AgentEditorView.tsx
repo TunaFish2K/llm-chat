@@ -1,3 +1,4 @@
+import { useResource } from "../lib/resource";
 import { Presence } from "../lib/motion";
 import { ModelPicker } from "../components/ModelPicker";
 import { effectiveReasoningSelection } from "@llm-chat/contracts";
@@ -40,12 +41,19 @@ function getTABS() { return [
 type Tab = ReturnType<typeof getTABS>[number][0];
 
 export function AgentEditorView({ agentId }: { agentId: string }) {
+  return <AgentEditorContent key={agentId} agentId={agentId} />;
+}
+
+function AgentEditorContent({ agentId }: { agentId: string }) {
   useLocale();
   const [agent, setAgent] = useState<AgentDto | null>(null);
-  const [error, setError] = useErrorState(null);
+  const agentResource = useResource(`agent:${agentId}`, () => endpoints.agent(agentId));
+  const catalogResource = useResource(`agent-tools:${agentId}`, () => endpoints.toolCatalog(agentId));
+  const skillsResource = useResource("skills", endpoints.skills);
+  const error = agentResource.error;
   const [tab, setTab] = useState<Tab>("card");
-  const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
-  const [skills, setSkills] = useState<SkillDto[]>([]);
+  const catalog = catalogResource.data ?? [];
+  const skills = skillsResource.data ?? [];
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [leavePath, setLeavePath] = useState<string | null>(null);
@@ -61,38 +69,17 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
   }, [dirty]);
 
 
-  useEffect(() => {
-    let cancelled = false;
-    setAgent(null);
-    setError(null);
-    setDirty(false);
-    Promise.all([endpoints.agent(agentId), endpoints.toolCatalog(agentId), endpoints.skills()])
-      .then(([agentData, catalogData, skillData]) => {
-        if (cancelled) return;
-        setAgent(agentData);
-        setCatalog(catalogData);
-        setSkills(skillData);
-      })
-      .catch((cause) => {
-        if (!cancelled) setError(cause instanceof Error ? cause : t("AgentEditorView.could_not_load_agent"));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agentId]);
-
+  useEffect(() => { if (!dirty && agentResource.data) setAgent(agentResource.data); }, [agentResource.data, dirty]);
   useEffect(() => {
     const refresh = (event: Event) => {
       const resource = (event as CustomEvent<{ resource?: string }>).detail?.resource;
-      if (resource === "agents" && !dirty) void endpoints.agent(agentId).then(setAgent).catch(toastError);
-      if (resource === "tools" || (resource === "agents" && !dirty)) {
-        void endpoints.toolCatalog(agentId).then(setCatalog).catch(toastError);
-      }
-      if (resource === "skills") void endpoints.skills().then(setSkills).catch(toastError);
+      if (resource === "agents" && !dirty) void agentResource.reload();
+      if (resource === "tools" || resource === "agents") void catalogResource.reload();
+      if (resource === "skills") void skillsResource.reload();
     };
     window.addEventListener("llm-chat:resource-changed", refresh);
     return () => window.removeEventListener("llm-chat:resource-changed", refresh);
-  }, [agentId, dirty]);
+  }, [dirty, agentResource.reload, catalogResource.reload, skillsResource.reload]);
 
   const mutate = (fn: (draft: AgentDto) => void) => {
     setAgent((current) => {
@@ -114,7 +101,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
         userProfile: agent.userProfile,
         roleplay: agent.roleplay
       });
-      setAgent(updated);
+      setAgent(updated); agentResource.setData(updated);
       setDirty(false);
       await refreshAgents();
       toast("success", localized("AgentEditorView.agent_saved"));
@@ -125,11 +112,11 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
     }
   };
 
-  if (error) {
+  if (error && !agent) {
     return (
       <div className="panel-scroll">
         <div className="panel-inner">
-          <ErrorState message={error} onRetry={() => navigate(routes.agents())} />
+          <ErrorState message={error} onRetry={() => void agentResource.reload()} />
         </div>
       </div>
     );
@@ -144,6 +131,7 @@ export function AgentEditorView({ agentId }: { agentId: string }) {
 
   return (
     <>
+      {error || catalogResource.error || skillsResource.error ? <ErrorState message={error || catalogResource.error || skillsResource.error!} onRetry={() => { if (!dirty) void agentResource.reload(); void catalogResource.reload(); void skillsResource.reload(); }} /> : null}
       <div className="page-header mobile-redundant-title">
         <h2>
           {agent.name}

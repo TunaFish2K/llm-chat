@@ -35,7 +35,7 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     await cold.getByRole("button", { name: "上一版本", exact: true }).click();
     await expect(cold.getByLabel("生成版本切换")).toContainText("1 / 2");
     await cold.getByLabel("输入消息", { exact: true }).fill("离线草稿");
-    await expect(cold.getByRole("button", { name: "发送", exact: true })).toBeDisabled();
+    await expect(cold.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
     await expect(cold.locator('.msg[data-role="assistant"]').last().getByRole("button", { name: "重试", exact: true })).toBeDisabled();
     await openDrawerIfNeeded(cold);
     await cold.getByRole("button", { name: "搜索会话", exact: true }).click();

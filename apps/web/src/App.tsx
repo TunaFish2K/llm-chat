@@ -51,7 +51,9 @@ const SettingsView = lazy(() => import("./views/SettingsView").then((module) => 
  */
 export function App() {
   useLocale();
+  const sourceId = useStore(appStore, state => state.sourceId);
   const auth = useStore(appStore, (state) => state.auth);
+  const bootRefreshing = useStore(appStore, state => state.bootRefreshing);
   const bootError = useStore(appStore, (state) => state.bootError);
   const settings = useStore(appStore, (state) => state.settings);
   const conversations = useStore(appStore, (state) => state.conversations);
@@ -146,7 +148,7 @@ export function App() {
   );
 
   return (
-    <AppFrame
+    <AppFrame key={sourceId}
       left={leftTrack}
       right={rightTrack}
       sidebarCollapsed={sidebarCollapsed}
@@ -174,6 +176,7 @@ export function App() {
 
       <main className="workspace-main">
         <OfflineBanner />
+        {bootError ? <div className="boot-refresh-notice" role="alert">{bootError}<button className="btn small" onClick={() => void bootstrap(route.name === "chat" ? route.conversationId ?? undefined : undefined, true)}>{t("NotificationSettings.retry")}</button></div> : bootRefreshing ? <div className="boot-refresh-notice" role="status">{t("App.refreshing_cached")}</div> : null}
         {route.name !== "chat" ? (
           <MobileAppBar
             title={routeTitle(route, conversations, agents)}
@@ -260,7 +263,7 @@ function RouteView({
   if (route.name === "agents") {
     return (
       <section className="admin-shell">
-        {route.agentId ? <AgentEditorView agentId={route.agentId} /> : <AgentsView />}
+        {route.agentId ? <AgentEditorView key={route.agentId} agentId={route.agentId} /> : <AgentsView />}
       </section>
     );
   }

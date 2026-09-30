@@ -18,6 +18,8 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
   const [items, setItems] = useState<Awaited<ReturnType<typeof endpoints.searchConversations>>>([]);
   const [error, setError] = useErrorState(null);
   const [loading, setLoading] = useState(false);
+  const [resolvedQuery, setResolvedQuery] = useState("");
+  const resultsCurrent = resolvedQuery === query.trim();
   const [selected, setSelected] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const results = useRef<HTMLDivElement>(null);
@@ -25,12 +27,13 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
   const conversations = useStore(appStore, (state) => state.conversations);
   useEffect(() => { if (!window.matchMedia("(pointer: coarse)").matches) input.current?.focus(); }, []);
   useEffect(() => {
-    let alive = true; setSelected(0); setError(""); setItems([]);
-    if (!query.trim()) { setLoading(false); return; }
+    const controller = new AbortController();
+    let alive = true; setSelected(0); setError("");
+    if (!query.trim()) { setItems([]); setLoading(false); return; }
     setLoading(true);
-    const timer = setTimeout(() => { void endpoints.searchConversations(query.trim()).then((result) => { if (alive) setItems(result.filter((item) => !conversationDeleted(item.conversationId))); })
+    const timer = setTimeout(() => { void endpoints.searchConversations(query.trim(), controller.signal).then((result) => { if (alive) { setItems(result.filter((item) => !conversationDeleted(item.conversationId))); setResolvedQuery(query.trim()); } })
       .catch((cause) => { if (alive) setError(cause.message ?? t("ConversationSearch.search_failed")); }).finally(() => { if (alive) setLoading(false); }); }, 180);
-    return () => { alive = false; clearTimeout(timer); };
+    return () => { alive = false; controller.abort(); clearTimeout(timer); };
   }, [query, offline]);
   useEffect(() => {
     const remove = () => { setItems((current) => current.filter((item) => !conversationDeleted(item.conversationId))); setSelected(0); };
@@ -38,6 +41,7 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("llm-chat:conversations-deleted", remove);
   }, []);
   const open = async (id: string) => {
+    if (loading || !resultsCurrent) return;
     if (conversationDeleted(id)) return;
     try {
       if (isOffline()) { browseOfflineBranch(id); onClose(); navigate(routes.chat(id)); return; }
@@ -57,7 +61,7 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
         }} />
       <p className="hint">{t("ConversationSearch.title_matches_come_first_then_recently_updated_conversations_shows_up", { value1: (offline ? t("detail.searching_records_synced_to_this_device") : "") })}</p>
       {loading ? <p role="status">{t("ConversationSearch.searching")}</p> : error ? <p role="alert">{error}</p> : query.trim() && !items.length ? <p>{t("ConversationSearch.no_matching_conversations")}</p> : null}
-      <div ref={results} className="conversation-search-results">{items.map((item, index) => <button className="conversation-search-result" data-selected={index === selected || undefined} key={item.conversationId}
+      <div ref={results} className="conversation-search-results" inert={loading || !resultsCurrent ? true : undefined} aria-busy={loading}>{items.map((item, index) => <button className="conversation-search-result" data-selected={index === selected || undefined} key={item.conversationId}
         onClick={() => void open(item.conversationId)}><strong><Highlight text={item.title} query={query} /></strong>
         <span><Highlight text={item.snippet || t("ConversationSearch.title_match")} query={query} /></span></button>)}</div>
     </div>

@@ -1,3 +1,4 @@
+import { DelayedLoading } from "../components/DelayedLoading";
 import { Modal } from "../components/AnimatedModal";
 export { Modal };
 import { t, useLocale } from "./i18n";
@@ -38,9 +39,9 @@ export function ErrorState({ message, onRetry }: { message: string; onRetry?: ()
 export function LoadingState({ label = t("index.loading_2") }: { label?: string }) {
   useLocale();
   return (
-    <div className="loading-box" role="status">
+    <DelayedLoading><div className="loading-box" role="status">
       <span className="spinner" aria-hidden="true" /> <span>{label}</span>
-    </div>
+    </div></DelayedLoading>
   );
 }
 
