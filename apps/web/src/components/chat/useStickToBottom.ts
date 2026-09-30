@@ -28,6 +28,7 @@ export function useStickToBottom(
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const following = useRef(initialFollowing);
+  const awaitingUpwardScroll = useRef(false);
   const dimensions = useRef({ height: 0, viewport: 0 });
   const smooth = useRef(false);
   const jumpFrames = useRef(0);
@@ -37,6 +38,7 @@ export function useStickToBottom(
 
   const reset = useCallback(() => {
     following.current = true;
+    awaitingUpwardScroll.current = false;
     smooth.current = false;
     jumpFrames.current = 0;
     previousScrollTop.current = null;
@@ -46,6 +48,7 @@ export function useStickToBottom(
   const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const element = ref.current;
     following.current = true;
+    awaitingUpwardScroll.current = false;
     setDetached(false);
     if (!element) return;
     smooth.current = behavior === "smooth";
@@ -75,7 +78,7 @@ export function useStickToBottom(
     const previous = dimensions.current;
     // A new chunk can arrive after the reader reaches the old bottom but before
     // the browser delivers their scroll event. Preserve that request to resume.
-    const returnedToBottom = previousScrollTop.current !== null &&
+    const returnedToBottom = !awaitingUpwardScroll.current && previousScrollTop.current !== null &&
       top > previousScrollTop.current &&
       previous.height > previous.viewport && previous.viewport === viewport &&
       top >= previous.height - previous.viewport - 1;
@@ -112,6 +115,11 @@ export function useStickToBottom(
     const movedUp = previous !== null && element.scrollTop < previous;
     previousScrollTop.current = element.scrollTop;
     dimensions.current = { height: element.scrollHeight, viewport: element.clientHeight };
+    // A resize can emit a bottom scroll before the compositor applies the wheel.
+    if (awaitingUpwardScroll.current) {
+      if (!movedUp) return;
+      awaitingUpwardScroll.current = false;
+    }
     if (smooth.current && !(movedUp && !resized)) {
       if (atBottom) smooth.current = false;
       return;
@@ -150,6 +158,7 @@ export function useStickToBottom(
     const detach = () => {
       if (element.scrollHeight <= element.clientHeight) return;
       jumpFrames.current = 0;
+      awaitingUpwardScroll.current = true;
       following.current = false;
       setDetached(true);
       if (smooth.current) {
@@ -157,7 +166,11 @@ export function useStickToBottom(
         element.scrollTo({ top: element.scrollTop, behavior: "auto" });
       }
     };
-    const wheel = (event: WheelEvent) => { if (ownsInput(event) && event.deltaY < 0) detach(); };
+    const wheel = (event: WheelEvent) => {
+      if (!ownsInput(event)) return;
+      if (event.deltaY < 0) detach();
+      else if (event.deltaY > 0) awaitingUpwardScroll.current = false;
+    };
     let touchY: number | undefined;
     const touchStart = (event: TouchEvent) => { touchY = ownsInput(event) ? event.touches[0]?.clientY : undefined; };
     const touchMove = (event: TouchEvent) => {
