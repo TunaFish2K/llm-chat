@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
-import { useRoute } from "../lib/router";
+import { navigate, useRoute } from "../lib/router";
+import { readSubmission } from "../lib/submission";
 import { readComposerDraft, writeComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
@@ -57,6 +58,57 @@ beforeEach(() => {
 });
 
 describe("ChatView", () => {
+  it("does not let incomplete or refreshed branch metadata navigate the reader", async () => {
+    const forkedFrom = { conversationId: "missing-parent", messageId: null, messageOrdinal: null, mode: "continue" as const, greetingIndex: null, sourceGreetingIndex: null };
+    const old = makeConversation({ id: "old", activeBranchId: "new", forkedFrom });
+    const next = makeConversation({ id: "new", activeBranchId: "old", forkedFrom });
+    seedStore(); appStore.set({ conversations: [old, next], messages: { old: [], new: [] } });
+    window.history.replaceState(null, "", "/c/old");
+    vi.stubGlobal("fetch", messageFetch([]));
+    function RoutedChat() {
+      const route = useRoute();
+      return <ChatView key={route.name === "chat" ? route.conversationId : "new"} conversationId={route.name === "chat" ? route.conversationId : null} />;
+    }
+    render(<RoutedChat />);
+    for (let index = 0; index < 10; index++) act(() => appStore.set({ conversations: [{ ...old }, { ...next }] }));
+    await act(async () => { await Promise.resolve(); });
+    expect(location.pathname).toBe("/c/old");
+  });
+
+  it("keeps a newer new-chat submission and draft when an older send completes after navigation", async () => {
+    seedStore(); window.history.replaceState(null, "", "/");
+    vi.stubGlobal("fetch", messageFetch([]));
+    vi.spyOn(endpoints, "conversations").mockImplementation(async () => appStore.get().conversations);
+    vi.spyOn(endpoints, "messages").mockResolvedValue([]);
+    const first = makeConversation({ id: "first-accepted" }), second = makeConversation({ id: "second-accepted" });
+    let acceptFirst!: (value: Awaited<ReturnType<typeof endpoints.startConversation>>) => void;
+    let acceptSecond!: (value: Awaited<ReturnType<typeof endpoints.startConversation>>) => void;
+    vi.spyOn(endpoints, "startConversation")
+      .mockImplementationOnce(() => new Promise(resolve => { acceptFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { acceptSecond = resolve; }));
+    function RoutedChat() {
+      const route = useRoute();
+      const id = route.name === "chat" ? route.conversationId : null;
+      return <ChatView key={id ?? "new"} conversationId={id} />;
+    }
+    const user = userEvent.setup(); render(<RoutedChat />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "first send" } });
+    await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    act(() => { navigate("/c/conv-1"); });
+    act(() => { navigate("/"); });
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "second send" } });
+    await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    const newer = readSubmission(null)!.id;
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "keep this newer draft" } });
+    const generation = (id: string) => ({ userMessageId: `${id}-user`, assistantMessageId: `${id}-assistant`, generationId: `${id}-generation` });
+    await act(async () => { acceptFirst({ conversation: first, generation: generation(first.id) }); });
+    expect(location.pathname).toBe("/");
+    expect(readSubmission(null)?.id).toBe(newer);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("keep this newer draft");
+    await act(async () => { acceptSecond({ conversation: second, generation: generation(second.id) }); });
+    expect(location.pathname).toBe(`/c/${second.id}`);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("keep this newer draft");
+  });
   it.each(["messages", "conversations"] as const)("opens an accepted first send even when reading %s fails", async (failedRead) => {
     seedStore();
     window.history.replaceState(null, "", "/");

@@ -1,8 +1,35 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { navigate, routes, useRoute } from "./router";
+import { captureNavigation, navigate, navigateAfterPaint, navigateIfCurrent, ownsNavigation, routes, useRoute } from "./router";
 
 describe("router", () => {
+  it("rejects a late navigation after leaving and returning to the same path", () => {
+    window.history.replaceState(null, "", "/");
+    const owner = captureNavigation();
+    navigate("/c/old"); navigate("/");
+    expect(ownsNavigation(owner)).toBe(false);
+    expect(navigateIfCurrent("/c/late", owner)).toBe(false);
+    expect(location.pathname).toBe("/");
+    const samePage = captureNavigation();
+    navigate("/");
+    expect(ownsNavigation(samePage)).toBe(false);
+  });
+
+  it("paints feedback first and only commits the newest deferred destination", () => {
+    vi.useFakeTimers();
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.push(callback); return frames.length; });
+    try {
+      window.history.replaceState(null, "", "/");
+      const feedback = vi.fn(() => expect(location.pathname).toBe("/"));
+      navigateAfterPaint("/c/old", feedback);
+      navigateAfterPaint("/c/new", feedback);
+      expect(feedback).toHaveBeenCalledTimes(2);
+      for (const frame of frames) frame(0);
+      vi.runOnlyPendingTimers();
+      expect(location.pathname).toBe("/c/new");
+    } finally { vi.useRealTimers(); }
+  });
   it("maps real paths to routes", () => {
     expect(routes.chat()).toBe("/");
     expect(routes.chat("abc")).toBe("/c/abc");

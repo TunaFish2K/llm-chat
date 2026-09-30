@@ -1,5 +1,5 @@
 import { useMessageEntrance } from "../components/chat/useMessageEntrance";
-import { useHistoryWindow } from "../components/chat/useHistoryWindow";
+import { VirtualMessageList } from "../components/chat/VirtualMessageList";
 import { submissionStore } from "../lib/submission";
 import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
@@ -22,7 +22,7 @@ import {
   trackGeneration
 } from "../lib/app-state";
 import type { InspectionTarget } from "../lib/inspection";
-import { navigate, routes } from "../lib/router";
+import { captureNavigation, navigate, navigateIfCurrent, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { AgentAvatar, AssetGallery } from "../components/chat/atoms";
@@ -102,7 +102,6 @@ export function ChatView({
   const [roleplayOpen, setRoleplayOpen] = useState(false);
   const [roleplaySession, setRoleplaySession] = useState<{ agent: AgentDto; state: ConversationRoleplayState } | null>(null);
   const scroller = useStickToBottom([messages], view === "chat");
-  const historyStart = useHistoryWindow(transcript.messages.length, scroller.ref, scroller.detached);
   const enteringMessages = useMessageEntrance(conversationId, messages, !scroller.detached);
 
   const busy = Boolean(
@@ -151,14 +150,6 @@ export function ChatView({
     };
   }, [conversationId]);
 
-  useEffect(() => {
-    if (!conversation || !conversationId || !conversation.activeBranchId) return;
-    const root = resolveConversationRoot(conversation, conversations);
-    if (!offline && root.id === conversation.id && conversation.activeBranchId !== conversationId) {
-      navigate(routes.chat(conversation.activeBranchId));
-    }
-  }, [conversation, conversationId, conversations]);
-
   useEffect(() => { setRoleplayOpen(false); }, [conversation?.id, conversation?.agentId]);
 
   useEffect(() => {
@@ -180,6 +171,7 @@ export function ChatView({
   const forkConversationFrom = useCallback(async (sourceConversationId: string, input: ForkConversationInput): Promise<boolean> => {
     const source = conversations.find((item) => item.id === sourceConversationId);
     if (!source || branching || busy) return false;
+    const owner = captureNavigation();
     setBranching(true);
     try {
       const result = await endpoints.forkConversation(source.id, input);
@@ -188,7 +180,7 @@ export function ChatView({
       if (result.generation) {
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
       }
-      navigate(routes.chat(result.conversation.id));
+      navigateIfCurrent(routes.chat(result.conversation.id), owner);
       toast("success", input.mode === "edit" ? t("ChatView.created_a_branch_from_the_edited_message") : t("ChatView.created_a_branch_from_the_checkpoint"));
       return true;
     } catch (error) {
@@ -272,7 +264,7 @@ export function ChatView({
     : undefined;
 
   return (
-    <div className="chat-workspace" data-roleplay-background={background ? true : undefined} style={roleplayStyle}>
+    <div className="chat-workspace" data-conversation-id={conversationId ?? "new"} data-roleplay-background={background ? true : undefined} style={roleplayStyle}>
       <ConversationHeader
         conversation={conversation}
         view={view}
@@ -316,7 +308,7 @@ export function ChatView({
                 ) : messages.length === 0 ? (
                   <EmptyState title={t("ChatView.this_conversation_has_no_messages_yet")} hint={t("ChatView.send_your_first_message_below")} />
                 ) : (
-                  transcript.messages.slice(historyStart).map((message) => (
+                  <VirtualMessageList messages={transcript.messages} scroller={scroller.ref} following={!scroller.detached} renderMessage={(message) => (
                     <MessageItem
                       key={message.id}
                       enter={enteringMessages.has(message.id)}
@@ -327,7 +319,7 @@ export function ChatView({
                       branchGroups={branchesByOrdinal.get(message.ordinal) ?? EMPTY_BRANCH_GROUPS}
                       callbacks={streamCallbacks}
                     />
-                  ))
+                  )} />
                 )}
                 {pendingSubmission ? <article className="msg pending-message" data-role="user" data-submission-id={pendingSubmission.id} aria-busy={pendingSubmission.status !== "unknown"}>
                   {pendingSubmission.text ? <div className="msg-bubble">{pendingSubmission.text}</div> : null}
