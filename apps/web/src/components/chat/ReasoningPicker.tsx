@@ -70,6 +70,8 @@ export function ReasoningPicker(props: ReasoningControlProps) {
       }}
       onCloseAutoFocus={event => {
         event.preventDefault();
+        const active = document.activeElement;
+        if (active && active !== document.body && active !== trigger.current && !(event.target instanceof Element && event.target.contains(active))) return;
         restoreFocus.current = Boolean(trigger.current?.disabled);
         if (!restoreFocus.current) trigger.current?.focus({ preventScroll: true });
       }}><PopoverLayer open={open} onClose={() => setOpen(false)} />

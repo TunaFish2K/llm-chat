@@ -23,6 +23,7 @@ beforeEach(() => {
   online = { onLine: true, serviceWorker: container };
   Object.assign(online, { languages: ["zh-CN"], language: "zh-CN" });
   vi.stubGlobal("navigator", online);
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ ok: true, buildId: "latest" })));
   reload = vi.fn();
   vi.stubGlobal("window", {
     addEventListener: vi.fn(), setInterval: vi.fn(),
@@ -94,6 +95,19 @@ it("reports offline and network errors and allows retry", async () => {
   current.update.mockRejectedValueOnce(new Error("HTTP 503"));
   await pwa.checkForUpdates();
   expect(pwa.getPwaState().updateError).toContain("503");
+  await pwa.checkForUpdates();
+  expect(pwa.getPwaState()).toMatchObject({ updateStatus: "current", updateError: null });
+});
+
+it("does not report the current version when update resolves but the server cannot be reached", async () => {
+  const pwa = await boot();
+  online.onLine = false;
+  vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Network unavailable"));
+  await pwa.checkForUpdates();
+  expect(current.update).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalled();
+  expect(pwa.getPwaState()).toMatchObject({ updateStatus: "error" });
+  expect(pwa.getPwaState().updateError).toContain("离线");
   await pwa.checkForUpdates();
   expect(pwa.getPwaState()).toMatchObject({ updateStatus: "current", updateError: null });
 });

@@ -106,6 +106,8 @@ export function checkForUpdates(): Promise<void> {
     await withTimeout(current.update().catch((error: unknown) => {
       throw localizedError("pwa.update_check_failed", { value1: (error instanceof Error ? error.message : String(error)) });
     }), "pwa.update_check_timed_out_try_again");
+    // Chromium can resolve update() using the existing worker while offline.
+    await publishedBuild();
     if (current.installing) {
       emit({ updateStatus: "downloading" });
       await waitForInstallation(current.installing);
