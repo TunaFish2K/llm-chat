@@ -516,9 +516,8 @@ test.describe("会话与流式生成", () => {
       await explicitModal.getByLabel("会话模型覆盖").selectOption("__none__");
       await explicitModal.getByLabel("停止序列（每行一个）").fill("");
       await explicitModal.getByRole("button", { name: "保存", exact: true }).click();
-      const explicit = (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides;
-      expect(explicit.modelId).toBeNull();
-      expect(explicit.generation?.common?.stopSequences).toEqual([]);
+      await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides)
+        .toMatchObject({ modelId: null, generation: { common: { stopSequences: [] } } });
 
       // Clearing removes every override field.
       await openExecutionSettings(page);

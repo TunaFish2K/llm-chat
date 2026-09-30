@@ -90,11 +90,16 @@ export function ModelPicker({
         <Popover.Content
           className="picker-popover model-picker-popover"
           aria-label={label}
+          aria-hidden={!open || undefined}
+          inert={!open}
           data-searching={Boolean(query.trim()) || undefined}
           side={appearance === "icon" ? "top" : "bottom"}
           align="start"
           sideOffset={10}
           collisionPadding={12}
+          onCloseAutoFocus={(event) => {
+            if (document.querySelector('.model-picker-popover[data-state="open"]')) event.preventDefault();
+          }}
           onOpenAutoFocus={(event) => {
             if (touchLayout) event.preventDefault();
           }}

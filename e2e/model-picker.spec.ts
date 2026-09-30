@@ -21,7 +21,7 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
     let conversationId: string | undefined;
     const modelLabel = cn ? "模型" : "Model";
     const visionLabel = cn ? "备用识图模型" : "Fallback vision model";
-    const panel = page.locator(".model-picker-popover");
+    const panel = page.locator('.model-picker-popover[data-state="open"]');
     const rows = panel.locator(".model-group").filter({ has: page.getByRole("heading", { name: connection.name, exact: true }) }).locator(".model-option");
     const search = panel.getByRole("searchbox");
     const save = async () => {
@@ -58,6 +58,8 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
       expect((await api(request, APP_URL, "GET", `/api/agents/${agent.id}`)).execution.modelId).toBeNull();
       await visionTrigger.click();
       await expect(search).toHaveValue("");
+      await expect(page.locator('.model-picker-popover[data-state="closed"]')).toHaveCount(0);
+      if (test.info().project.name !== "mobile-chromium") await expect(search).toBeFocused();
       await expect(rows).toHaveCount(1);
       await checkSearch();
       await search.fill("vision");
