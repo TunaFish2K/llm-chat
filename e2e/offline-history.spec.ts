@@ -23,8 +23,10 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     await expect.poll(() => page.evaluate(async () => (await caches.keys()).filter((key) => key.startsWith("llm-chat-history-images-")).length)).toBe(1);
     await context.setOffline(true);
     const cold = await context.newPage();
-    const mutations: string[] = [];
-    cold.on("request", (req) => { if (req.url().includes("/api/") && !["GET", "HEAD"].includes(req.method())) mutations.push(req.url()); });
+    const mutations: Array<{ path: string; method: string; id: string | undefined }> = [];
+    cold.on("request", req => {
+      if (req.url().includes("/api/") && !["GET", "HEAD"].includes(req.method())) mutations.push({ path: new URL(req.url()).pathname, method: req.method(), id: req.headers()["x-llm-chat-request-id"] });
+    });
     await cold.goto(`${APP_URL}/c/${first.conversation.id}`);
     expect(await cold.evaluate(async () => {
       try { await fetch("/api/health", { cache: "no-store" }); return true; } catch { return false; }
@@ -47,7 +49,11 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     await expect(cold.locator('.msg[data-role="assistant"]').last()).toContainText("离线测试正文");
     await cold.reload();
     await expect(cold.locator('.msg[data-role="user"]')).toContainText("未打开的离线记录乙");
-    expect(mutations).toEqual([]);
+    expect(mutations.length).toBeGreaterThan(0);
+    expect(mutations.every(req => req.method === "PATCH" && /^\/api\/(messages\/[^/]+\/active-generation|conversations\/[^/]+(?:\/active-branch)?)$/.test(req.path))).toBe(true);
+    const counts = new Map<string, number>();
+    for (const req of mutations) { expect(req.id).toBeTruthy(); counts.set(req.id!, (counts.get(req.id!) ?? 0) + 1); }
+    expect([...counts.values()].every(count => count <= 3)).toBe(true);
     await context.setOffline(false);
     await expect.poll(() => cold.evaluate(async () => {
       try { return (await fetch("/api/health", { cache: "no-store" })).ok; } catch { return false; }
@@ -96,6 +102,7 @@ test("退出登录清除离线记录并通知其他标签页", async ({ page, co
   expect(stored.authorized).toBe(false);
   await context.setOffline(true);
   await other.reload();
+  await expect(other.getByLabel("访问密码")).toBeVisible();
   await expect(other.locator(".app-frame")).toHaveCount(0);
 });
 

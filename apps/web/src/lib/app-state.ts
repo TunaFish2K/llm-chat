@@ -28,7 +28,7 @@ import { api, endpoints, onAuthRequired, ApiRequestError } from "./api";
 import { cancelGenerationHaptic, scheduleGenerationHaptic } from "./haptics";
 import { createStore } from "./store";
 import { resetRequestSession } from "./http-client";
-import { clearStartupCache, readStartupCache, scheduleStartupCache, type StartupSnapshot } from "./startup-cache";
+import { clearStartupCache, readStartupCache, scheduleStartupCache, setStartupAuthRequired, startupAuthRequired, type StartupSnapshot } from "./startup-cache";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
 
 export interface Toast {
@@ -58,7 +58,7 @@ export interface AppState {
 
 const startup = readStartupCache();
 export const appStore = createStore<AppState>({
-  auth: "loading",
+  auth: startupAuthRequired() ? "required" : "loading",
   bootError: null,
   bootRefreshing: false,
   sourceId: startup?.sourceId ?? null,
@@ -130,6 +130,7 @@ export async function bootstrap(conversationId?: string, background = false): Pr
   const valid = () => sequence === bootSequence && session === messageSession;
   const accept = (data: import("./api").BootstrapDto, cached: boolean) => {
     if (!valid() || (cached && networkFinished)) return;
+    setStartupAuthRequired(false);
     if (data.sourceId) setSubmissionSource(data.sourceId);
     if (cached) {
       if (!currentSource) currentSource = data.sourceId;
@@ -185,6 +186,8 @@ export async function bootstrap(conversationId?: string, background = false): Pr
     networkFinished = true;
     if (!valid()) return;
     if (error instanceof ApiRequestError && error.status === 401) {
+      setStartupAuthRequired(true);
+      clearStartupCache();
       appStore.set({ auth: "required" });
     } else {
       markOffline();
@@ -827,6 +830,7 @@ export async function refreshTaskCounts(): Promise<void> {
 
 export function initAuthGate(): () => void {
   const requireAuth = (event?: Event) => {
+    setStartupAuthRequired(true);
     resetRequestSession();
     resetComposerWrites();
     clearStartupCache();

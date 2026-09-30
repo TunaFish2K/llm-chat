@@ -121,6 +121,21 @@ it("does not detach when collapsing content clamps the scroll position", () => {
   expect(state.element.scrollTop).toBe(300);
 });
 
+it("does not resume following when a resize reaches the bottom before an upward wheel is applied", () => {
+  const state = setup();
+  fireEvent.wheel(state.element, { deltaY: -100 });
+  Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
+  state.element.scrollTop = 1000;
+  fireEvent.scroll(state.element);
+  state.resize();
+  expect(state.scroll.detached).toBe(true);
+  state.element.scrollTop = 0;
+  fireEvent.scroll(state.element);
+  state.resize();
+  expect(state.element.scrollTop).toBe(0);
+  expect(state.scroll.detached).toBe(true);
+});
+
 it("keeps following when duplicate scroll events arrive before a content resize is followed", () => {
   const state = setup();
   Object.defineProperty(state.element, "scrollHeight", { value: 1400 });

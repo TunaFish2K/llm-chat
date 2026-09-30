@@ -2,10 +2,19 @@ import type { BootstrapDto } from "./api";
 import { agentExecutionConfigSchema, appSettingsSchema, modelCapabilitiesSchema } from "@llm-chat/contracts";
 
 const KEY = "llm-chat.startup.v1";
+const AUTH_KEY = "llm-chat.auth-required.v1";
 export type StartupSnapshot = Omit<BootstrapDto, "messages"> & { sourceId: string };
 let pending: ReturnType<typeof setTimeout> | undefined;
 
+export function startupAuthRequired(): boolean {
+  try { return localStorage.getItem(AUTH_KEY) === "true"; } catch { return false; }
+}
+export function setStartupAuthRequired(required: boolean): void {
+  try { if (required) localStorage.setItem(AUTH_KEY, "true"); else localStorage.removeItem(AUTH_KEY); } catch {}
+}
+
 export function readStartupCache(): StartupSnapshot | undefined {
+  if (startupAuthRequired()) return;
   try {
     const value = JSON.parse(localStorage.getItem(KEY) ?? "null");
     if (value?.version !== 1 || typeof value.data?.sourceId !== "string" || !value.data.sourceId) return;

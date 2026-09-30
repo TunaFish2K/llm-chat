@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { makeAgent, makeConnection, makeConversation, makeModel, makeSettings } from "../../test/fixtures";
-import { clearStartupCache, readStartupCache, scheduleStartupCache } from "./startup-cache";
+import { clearStartupCache, readStartupCache, scheduleStartupCache, setStartupAuthRequired, startupAuthRequired } from "./startup-cache";
 
 const snapshot = () => ({ sourceId: "instance", settings: makeSettings(), agents: [makeAgent()], connections: [makeConnection()], models: [makeModel()], conversations: [makeConversation()] });
 afterEach(() => { clearStartupCache(); vi.useRealTimers(); });
@@ -11,12 +11,22 @@ it("restores startup catalogs independently of the full offline-history preferen
   expect(readStartupCache()).toEqual(snapshot());
 });
 
+it("remembers explicit logout before any network request and ignores old catalogs", () => {
+  localStorage.setItem("llm-chat.startup.v1", JSON.stringify({ version: 1, data: snapshot() }));
+  expect(startupAuthRequired()).toBe(false);
+  setStartupAuthRequired(true); expect(startupAuthRequired()).toBe(true);
+  expect(readStartupCache()).toBeUndefined();
+  setStartupAuthRequired(false); expect(readStartupCache()).toEqual(snapshot());
+});
+
 it.each([
   "broken json", JSON.stringify({ version: 2 }), JSON.stringify({ version: 1, data: { sourceId: "" } }),
   ...["settings", "agents", "models", "connections", "conversations"].map(field => JSON.stringify({ version: 1, data: { ...snapshot(), [field]: field === "settings" ? {} : [{ id: "corrupt" }] } }))
 ])("ignores damaged startup data without blocking the shell: %s", value => {
   localStorage.setItem("llm-chat.startup.v1", value);
   expect(readStartupCache()).toBeUndefined();
+  expect(() => setStartupAuthRequired(true)).not.toThrow();
+  expect(() => setStartupAuthRequired(false)).not.toThrow();
 });
 
 it("coalesces metadata writes, reads the newest state, and cancels writes on logout", () => {
