@@ -2,6 +2,19 @@ import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
+function waitForScrollSettled(element: HTMLElement) {
+  return new Promise<void>(resolve => {
+    let previous = element.scrollTop, stableFrames = 0;
+    const frame = () => {
+      const next = element.scrollTop;
+      stableFrames = next === previous ? stableFrames + 1 : 0;
+      previous = next;
+      if (stableFrames >= 6) resolve(); else requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+}
+
 test("长推理展开后内外层跟随，手动上翻暂停并能恢复", async ({ page, request }) => {
   const provider = await startMockProvider({
     reasoningChunks: Array.from({ length: 100 }, (_, i) => `第 ${i + 1} 步：继续推理，验证最新内容始终可读。\n`.repeat(3)),
@@ -51,16 +64,7 @@ test("长推理展开后内外层跟随，手动上翻暂停并能恢复", async
     }
     await expect.poll(() => inner.evaluate(gap)).toBeGreaterThan(100);
     // A wheel action returns before WebKit's smooth scrolling has settled.
-    await inner.evaluate(element => new Promise<void>(resolve => {
-      let previous = element.scrollTop, stableFrames = 0;
-      const frame = () => {
-        const next = element.scrollTop;
-        stableFrames = next === previous ? stableFrames + 1 : 0;
-        previous = next;
-        if (stableFrames >= 6) resolve(); else requestAnimationFrame(frame);
-      };
-      requestAnimationFrame(frame);
-    }));
+    await inner.evaluate(waitForScrollSettled);
     const position = await inner.evaluate((element) => element.scrollTop);
     const content = await inner.textContent();
     await expect.poll(() => inner.textContent()).not.toBe(content);
@@ -73,9 +77,13 @@ test("长推理展开后内外层跟随，手动上翻暂停并能恢复", async
     await expect.poll(() => inner.evaluate(gap)).toBeLessThan(2);
 
     // Give the outer page enough overflow even on a tall desktop viewport.
-    await page.setViewportSize({ width: page.viewportSize()!.width, height: 640 });
+    await page.setViewportSize({ width: page.viewportSize()!.width, height: 480 });
+    await expect.poll(() => outer.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100);
     await expect.poll(() => outer.evaluate(gap)).toBeLessThan(2);
-    await outer.evaluate((element) => { element.scrollTop = 0; });
+    await outer.hover({ position: { x: 5, y: 5 } });
+    await page.mouse.wheel(0, -1000);
+    await expect.poll(() => outer.evaluate(gap)).toBeGreaterThan(100);
+    await outer.evaluate(waitForScrollSettled);
     await expect(page.getByRole("button", { name: "回到最新消息" })).toBeVisible();
     const outerTop = await outer.evaluate((element) => element.scrollTop);
     const previousContent = await inner.textContent();

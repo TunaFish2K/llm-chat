@@ -22,7 +22,7 @@ test("model pickers fit small screens, landscape and changing viewport heights",
   }));
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("Overflow Agent"));
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id, executionOverrides: { modelId: models[0].id } });
-  const panel = page.locator(".model-picker-popover");
+  const panel = page.locator('.model-picker-popover[data-state="open"]');
   const search = panel.getByRole("searchbox");
   const rows = panel.locator(".model-group").filter({ has: page.getByRole("heading", { name: connection.name, exact: true }) }).locator(".model-option");
   const checkSearch = async () => {

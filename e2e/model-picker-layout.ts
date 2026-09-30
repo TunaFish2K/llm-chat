@@ -2,7 +2,7 @@ import { expect, type Page } from "./fixtures";
 
 /** Measure the visible viewport, including changes while a picker is open. */
 export async function expectModelPickerInsideViewport(page: Page) {
-  await expect.poll(async () => page.locator(".model-picker-popover").evaluate(element => {
+  await expect.poll(async () => page.locator('.model-picker-popover[data-state="open"]').evaluate(element => {
     const rect = element.getBoundingClientRect();
     const viewport = window.visualViewport;
     const left = viewport?.offsetLeft ?? 0;
