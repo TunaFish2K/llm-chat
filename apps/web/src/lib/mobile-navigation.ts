@@ -54,13 +54,24 @@ export function useMobileBackGesture(enabled: boolean, back: () => void): number
     let start: { x: number; y: number; id: number; locked: boolean } | null = null;
     let distance = 0;
     let suppressClickUntil = 0;
-    const cancel = () => { start = null; distance = 0; setOffset(0); };
+    let target: Element | null = null;
+    const cancel = () => {
+      target?.removeEventListener("touchmove", detachedMove, true);
+      target?.removeEventListener("touchend", detachedUp, true);
+      target?.removeEventListener("touchcancel", detachedCancel, true);
+      target = null; start = null; distance = 0; setOffset(0);
+    };
     const down = (event: TouchEvent) => {
       suppressClickUntil = 0;
       cancel();
       const touch = event.touches[0];
       if (event.touches.length !== 1 || !touch || touch.clientX > 24 || excludedTarget(event.target)) return;
       start = { x: touch.clientX, y: touch.clientY, id: touch.identifier, locked: false };
+      // Touch events keep their original target even when a refresh replaces it.
+      target = event.target as Element;
+      target.addEventListener("touchmove", detachedMove, { capture: true, passive: false });
+      target.addEventListener("touchend", detachedUp, true);
+      target.addEventListener("touchcancel", detachedCancel, true);
     };
     const move = (event: TouchEvent) => {
       if (!start) return;
@@ -79,12 +90,17 @@ export function useMobileBackGesture(enabled: boolean, back: () => void): number
       distance = Math.max(0, dx);
       setOffset(Math.min(distance, 96));
     };
-    const up = () => {
+    const up = (event: TouchEvent) => {
+      const touch = [...event.changedTouches].find(point => point.identifier === start?.id);
+      if (start?.locked && touch) distance = Math.max(0, touch.clientX - start.x);
       const commit = start?.locked && distance >= 64;
       suppressClickUntil = start?.locked ? performance.now() + 500 : 0;
       cancel();
       if (commit) callback.current();
     };
+    const detachedMove: EventListener = event => { if (target && !target.isConnected) move(event as TouchEvent); };
+    const detachedUp: EventListener = event => { if (target && !target.isConnected) up(event as TouchEvent); };
+    const detachedCancel: EventListener = () => { if (target && !target.isConnected) cancel(); };
     const click = (event: MouseEvent) => {
       if (performance.now() > suppressClickUntil || !suppressClickUntil) return;
       suppressClickUntil = 0;
@@ -97,6 +113,7 @@ export function useMobileBackGesture(enabled: boolean, back: () => void): number
     window.addEventListener("touchcancel", cancel, true);
     window.addEventListener("click", click, true);
     return () => {
+      cancel();
       window.removeEventListener("touchstart", down, true);
       window.removeEventListener("touchmove", move, true);
       window.removeEventListener("touchend", up, true);

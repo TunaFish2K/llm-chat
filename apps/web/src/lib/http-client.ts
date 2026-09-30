@@ -2,6 +2,8 @@ import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { displayError } from "./error-display";
 import { t } from "./i18n";
 import type { FileAssetDto } from "@llm-chat/contracts";
+import { requestRetries } from "./request-preferences";
+import { retryRequest } from "./request-retry";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -9,7 +11,8 @@ export class ApiRequestError extends Error {
     readonly code: string,
     message: string,
     readonly details?: unknown,
-    readonly i18n?: LocalizedMessage
+    readonly i18n?: LocalizedMessage,
+    readonly retryAfterMs?: number
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -42,15 +45,33 @@ export function withRequestSignal<T>(operation: Promise<T>, signal: AbortSignal)
     operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
-export function httpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
-  const deadline = AbortSignal.any([signal, AbortSignal.timeout(method === "GET" ? 15_000 : 30_000)]);
-  return withRequestSignal(performHttpRequest<T>(method, path, body, deadline), deadline).catch(error => {
+let requestSession = new AbortController();
+export function resetRequestSession(): void {
+  requestSession.abort();
+  requestSession = new AbortController();
+}
+export function requestBudget(method: string, retries = requestRetries()): number {
+  return (method === "GET" ? 15_000 : 30_000) * (retries + 1) + retries * 10_000 + 1_000;
+}
+export function httpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, options: { retries?: number; requestId?: string } = {}): Promise<HttpResult<T>> {
+  const maxRetries = options.retries ?? requestRetries();
+  const deadline = AbortSignal.any([signal, requestSession.signal, AbortSignal.timeout(requestBudget(method, maxRetries))]);
+  const requestId = method === "GET" || method === "HEAD" ? undefined : options.requestId ?? crypto.randomUUID();
+  const serialized = body !== undefined ? JSON.stringify(body) : null;
+  const action = () => {
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(method === "GET" ? 15_000 : 30_000)]);
+    return withRequestSignal(performHttpRequest<T>(method, path, serialized, attempt, requestId), attempt).catch(error => {
+      if (error instanceof ApiRequestError) throw error;
+      throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));
+    });
+  };
+  return withRequestSignal(retryRequest(action, deadline, maxRetries), deadline).catch(error => {
     if (error instanceof ApiRequestError) throw error;
     throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));
   });
 }
 
-async function performHttpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
+async function performHttpRequest<T>(method: string, path: string, body: string | null, signal: AbortSignal, requestId?: string): Promise<HttpResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -58,10 +79,10 @@ async function performHttpRequest<T>(method: string, path: string, body: unknown
       signal,
       credentials: "same-origin",
       headers: {
-        ...(body !== undefined ? { "content-type": "application/json" } : {}),
-        ...(method !== "GET" && method !== "HEAD" ? { "x-llm-chat-request": "1" } : {})
+        ...(body !== null ? { "content-type": "application/json" } : {}),
+        ...(requestId ? { "x-llm-chat-request": "1", "x-llm-chat-request-id": requestId } : {})
       },
-      body: body !== undefined ? JSON.stringify(body) : null
+      body
     });
   } catch (error) {
     throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"), undefined, { key: "http_client.network_request_failed" });
@@ -103,19 +124,43 @@ async function performHttpRequest<T>(method: string, path: string, body: unknown
       error?.code ?? "request_failed",
       error?.message ?? t("http_client.request_failed_http", { value1: (response.status) }),
       error?.details,
-      errorI18n(error)
+      errorI18n(error),
+      retryAfter(response.headers.get("retry-after"))
     );
   }
   return { data: data as T, status: response.status };
 }
 
-export async function uploadFileHttp(file: File): Promise<FileAssetDto> {
+function retryAfter(value: string | null): number | undefined {
+  if (!value) return;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+export function uploadFileHttp(file: File, signal = new AbortController().signal): Promise<FileAssetDto> {
+  const maxRetries = requestRetries();
+  const deadline = AbortSignal.any([signal, requestSession.signal, AbortSignal.timeout(requestBudget("POST", maxRetries))]);
+  const requestId = crypto.randomUUID();
+  return withRequestSignal(retryRequest(() => {
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(30_000)]);
+    return withRequestSignal(performFileUpload(file, requestId, attempt), attempt).catch(error => {
+      if (error instanceof ApiRequestError) throw error;
+      throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));
+    });
+  }, deadline, maxRetries), deadline);
+}
+
+async function performFileUpload(file: File, requestId: string, signal: AbortSignal): Promise<FileAssetDto> {
   const response = await fetch("/api/files", {
     method: "POST",
+    signal,
     credentials: "same-origin",
     headers: {
       "content-type": "application/octet-stream",
       "x-llm-chat-request": "1",
+      "x-llm-chat-request-id": requestId,
       "x-file-name": encodeURIComponent(file.name || "file"),
       "x-file-type": file.type || "application/octet-stream"
     },
@@ -125,8 +170,7 @@ export async function uploadFileHttp(file: File): Promise<FileAssetDto> {
   const data = await response.json() as FileAssetDto | { error?: { code?: string; message?: string } };
   if (!response.ok) {
     const error = (data as { error?: { code?: string; message?: string } }).error;
-    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? t("http_client.file_upload_failed"), undefined, errorI18n(error));
+    throw new ApiRequestError(response.status, error?.code ?? "upload_failed", error?.message ?? t("http_client.file_upload_failed"), undefined, errorI18n(error), retryAfter(response.headers.get("retry-after")));
   }
   return data as FileAssetDto;
 }
-

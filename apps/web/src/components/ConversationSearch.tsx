@@ -2,7 +2,7 @@ import { Highlight } from "./Highlight";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale } from "../lib/i18n";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
-import { isOffline, offlineStore } from "../lib/offline-history";
+import { offlineStore } from "../lib/offline-history";
 import { useEffect, useRef, useState } from "react";
 import { endpoints } from "../lib/api";
 import { appStore, browseOfflineBranch, refreshConversations, selectBranchImmediately, toastError } from "../lib/app-state";
@@ -46,7 +46,6 @@ export function ConversationSearch({ onClose, onNavigate = navigate }: { onClose
     browseOfflineBranch(id); onClose(); onNavigate(routes.chat(id));
     window.dispatchEvent(new Event("llm-chat:reveal-conversation"));
     try {
-      if (isOffline()) return;
       const conversation = conversations.find((item) => item.id === id);
       if (conversation) await selectBranchImmediately(resolveConversationRoot(conversation, conversations).id, id);
       void refreshConversations().catch(toastError);

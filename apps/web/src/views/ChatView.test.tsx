@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
 import { navigate, useRoute } from "../lib/router";
-import { readSubmission } from "../lib/submission";
+import { readSubmission, recordSubmissionAcceptance } from "../lib/submission";
 import { readComposerDraft, writeComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
@@ -213,7 +213,7 @@ describe("ChatView", () => {
     expect(select).not.toHaveBeenCalled();
   });
 
-  it("waits for the chosen model to save before enabling send", async () => {
+  it("keeps controls available while a chosen model saves and waits internally before sending", async () => {
     seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
     const updated = makeConversation({ modelId: "model-2", executionOverrides: { modelId: "model-2" } });
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -227,13 +227,18 @@ describe("ChatView", () => {
       if (patch.modelId) await pending;
       return updated;
     });
+    const send = vi.spyOn(endpoints, "sendMessage").mockResolvedValue({ userMessageId: "u", assistantMessageId: "a", generationId: "g" });
     const user = userEvent.setup(); render(<ChatView conversationId="conv-1" />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "next turn" } });
     await user.click(screen.getByRole("button", { name: "选择模型" }));
     await user.click(screen.getByRole("button", { name: /Second/ }));
-    expect(screen.getByRole("button", { name: /^发送$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^发送$/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "选择模型" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    expect(send).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "选择模型" })).toBeEnabled();
     finish();
-    await waitFor(() => expect(screen.getByRole("button", { name: /^发送$/ })).toBeEnabled());
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
     expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", "Second");
   });
 
@@ -265,7 +270,7 @@ describe("ChatView", () => {
     const first = render(<ChatView conversationId="conv-1" />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "retry once" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByText("response lost");
+    await screen.findByRole("alert", { name: "response lost" });
     const receipt = send.mock.calls[0]![3];
     first.unmount(); render(<ChatView conversationId="conv-1" />);
     expect(send).toHaveBeenCalledTimes(1);
@@ -282,10 +287,29 @@ describe("ChatView", () => {
     const first = render(<ChatView conversationId={null} />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "失败后保留" } });
     await user.click(screen.getByRole("button", { name: /^发送$/ }));
-    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("发送失败测试"));
+    await screen.findByRole("alert", { name: "发送失败测试" });
     first.unmount();
     render(<ChatView conversationId={null} />);
     expect(screen.getByLabelText("输入消息")).toHaveValue("失败后保留");
+  });
+
+  it("stops retries immediately and cancels a generation confirmed after stopping a pending send", async () => {
+    seedStore(); appStore.set({ sourceId: "server" }); vi.stubGlobal("fetch", messageFetch([]));
+    const send = vi.spyOn(endpoints, "sendMessage").mockImplementation((_id, _text, _assets, _submission, signal) => new Promise((_resolve, reject) => {
+      signal!.addEventListener("abort", () => reject(new DOMException("cancelled", "AbortError")), { once: true });
+    }));
+    const stop = vi.spyOn(endpoints, "cancelGeneration").mockResolvedValue({ ok: true, status: "stopping" });
+    render(<ChatView conversationId="conv-1" />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "stop this submission" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    const id = readSubmission("conv-1")!.id;
+    fireEvent.click(screen.getByRole("button", { name: "停止生成" }));
+    await waitFor(() => expect(readSubmission("conv-1")).toMatchObject({ cancelRequested: true, status: "unknown" }));
+    act(() => { recordSubmissionAcceptance({ clientSubmissionId: id, sourceId: "server", kind: "send", conversation: makeConversation(), messages: [],
+      result: { userMessageId: "user", assistantMessageId: "assistant", generationId: "late-generation" } }); });
+    await waitFor(() => expect(stop).toHaveBeenCalledExactlyOnceWith("conv-1", "late-generation"));
+    expect(readSubmission("conv-1")).toBeNull(); expect(send).toHaveBeenCalledOnce();
   });
 
   it("restores text and attachments after unmounting, keeping branches isolated", () => {

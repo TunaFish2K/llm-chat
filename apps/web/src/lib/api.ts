@@ -1,8 +1,7 @@
 import type { ContainerResourceCatalog, ContainerResourceJob, ContainerResourceNode } from "@llm-chat/contracts";
-import { t } from "./i18n";
 import { ApiRequestError, httpRequest, uploadFileHttp, type HttpResult } from "./http-client";
 import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
-import { isOffline, markOffline, offlineRequest } from "./offline-history";
+import { markOffline, offlineRequest, offlineStore } from "./offline-history";
 import type {
   ContainerEngineDto,
   ConversationEnvironmentDto,
@@ -81,19 +80,11 @@ async function request<T>(method: string, path: string, body?: unknown, context:
 }
 
 async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, context: RequestContext = {}): Promise<HttpResult<T>> {
-  if (!context.allowOffline && method !== "GET" && method !== "HEAD" && (isOffline() || navigator.onLine === false) && path !== "/api/auth/login" && path !== "/api/auth/logout") {
-    throw new ApiRequestError(0, "offline_readonly", t("api.you_are_offline_this_action_requires_a_connection"));
-  }
   const offline = async (): Promise<HttpResult<T>> => ({ data: await offlineRequest(path) as T, status: 200 });
-  if (!context.networkOnly && method === "GET" && (isOffline() || navigator.onLine === false)) {
-    markOffline();
-    try { return await offline(); }
-    catch (error) {
-      if (navigator.onLine === false || !path.startsWith("/api/bootstrap")) throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : t("api.this_record_is_not_saved_on_this_device"));
-    }
-  }
   try {
-    return await httpRequest<T>(method, path, body, signal);
+    const result = await httpRequest<T>(method, path, body, signal);
+    if (offlineStore.get().offline) offlineStore.set({ offline: false });
+    return result;
   } catch (error) {
     if (signal.aborted) throw error;
     if (!context.networkOnly && method === "GET" && error instanceof ApiRequestError) {
@@ -108,7 +99,6 @@ async function performRequest<T>(method: string, path: string, body: unknown, si
 }
 
 async function uploadFile(file: File): Promise<FileAssetDto> {
-  if (isOffline()) throw new ApiRequestError(0, "offline_readonly", t("api.you_are_offline_attachments_cannot_be_uploaded"));
   return uploadFileHttp(file);
 }
 

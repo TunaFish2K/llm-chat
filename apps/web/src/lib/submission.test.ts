@@ -34,10 +34,15 @@ it("uses the first notification and ignores a late HTTP error", async () => {
   let reject!: (error: Error) => void;
   const result = { generationId: "generation", assistantMessageId: "assistant" };
   const receipt = { clientSubmissionId: attempt.id, kind: "send" as const, sourceId: "source", conversation: makeConversation(), messages: [], result };
-  const write = waitForSubmission(attempt.id, () => new Promise<typeof result>((_, failed) => { reject = failed; }));
+  let requestSignal!: AbortSignal;
+  const write = waitForSubmission(attempt.id, signal => {
+    requestSignal = signal;
+    return new Promise<typeof result>((_, failed) => { reject = failed; });
+  });
   expect(recordSubmissionAcceptance(receipt)).toBe(true);
   expect(recordSubmissionAcceptance(receipt)).toBe(false);
   await expect(write).resolves.toMatchObject({ ...result, acceptance: receipt });
+  expect(requestSignal.aborted).toBe(true);
   reject(new Error("response lost"));
   await Promise.resolve();
   const request = vi.fn();

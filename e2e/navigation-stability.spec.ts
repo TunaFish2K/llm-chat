@@ -14,7 +14,7 @@ test("千条变高消息仅挂载视口，能阅读开头并返回最新消息",
   }));
   await page.addInitScript(() => localStorage.setItem("llm-chat.offline-enabled", "false"));
   await page.route("**/api/bootstrap*", async route => {
-    const response = await route.fetch();
+    const response = await route.fetch({ headers: { ...route.request().headers(), "accept-encoding": "identity" } });
     await route.fulfill({ response, json: { ...await response.json(), messages } });
   });
   await page.route(`**/api/conversations/${conversation.id}/messages`, route => route.fulfill({ json: messages }));
@@ -45,7 +45,7 @@ test("不完整缓存和后台分支更新下连续切换 100 次，始终停在
   const conversations = [{ ...old, activeBranchId: next.id, forkedFrom: origin }, { ...next, activeBranchId: old.id, forkedFrom: origin }];
   await page.addInitScript(() => localStorage.setItem("llm-chat.offline-enabled", "false"));
   await page.route("**/api/bootstrap*", async route => {
-    const response = await route.fetch();
+    const response = await route.fetch({ headers: { ...route.request().headers(), "accept-encoding": "identity" } });
     await route.fulfill({ response, json: { ...await response.json(), conversations, messages: [] } });
   });
   await page.route("**/api/conversations", route => route.request().method() === "GET" ? route.fulfill({ json: conversations }) : route.continue());

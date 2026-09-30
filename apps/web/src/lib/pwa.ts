@@ -41,6 +41,7 @@ function ready(): void {
 }
 
 function failure(error: unknown): void {
+  if (navigator.onLine === false) error = localizedError("pwa.you_are_offline_connect_and_try_again");
   emit({ updateStatus: "error", updateErrorI18n: errorI18n(error), updateError: error instanceof Error ? error.message : t("SettingsView.update_failed_try_again") });
 }
 
@@ -99,7 +100,6 @@ function runOperation(action: () => Promise<void>): Promise<void> {
 export function checkForUpdates(): Promise<void> {
   return runOperation(async () => {
     if (!state.supported) throw localizedError("pwa.this_browser_does_not_support_app_updates_refresh_the_page");
-    if (navigator.onLine === false) throw localizedError("pwa.you_are_offline_connect_and_try_again");
     emit({ updateStatus: "checking", updateError: null });
     const current = await getRegistration();
     const hadActiveWorker = Boolean(current.active || navigator.serviceWorker.controller);
@@ -251,7 +251,6 @@ async function publishedBuild(): Promise<string> {
 export function forceUpdate(): Promise<void> {
   return runOperation(async () => {
     if (!state.supported) throw localizedError("pwa.this_browser_does_not_support_app_updates_refresh_the_page");
-    if (navigator.onLine === false) throw localizedError("pwa.you_are_offline_connect_and_try_again");
     emit({ updateStatus: "checking", updateError: null });
     const build = await publishedBuild();
     const current = await withTimeout(navigator.serviceWorker.register("/sw.js", {

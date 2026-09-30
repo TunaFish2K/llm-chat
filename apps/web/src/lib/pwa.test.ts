@@ -86,9 +86,10 @@ it("waits for installation and only reloads after explicit apply and controller 
 it("reports offline and network errors and allows retry", async () => {
   const pwa = await boot();
   online.onLine = false;
+  current.update.mockRejectedValueOnce(new TypeError("Network unavailable"));
   await pwa.checkForUpdates();
   expect(pwa.getPwaState().updateError).toContain("离线");
-  expect(current.update).not.toHaveBeenCalled();
+  expect(current.update).toHaveBeenCalledOnce();
   online.onLine = true;
   current.update.mockRejectedValueOnce(new Error("HTTP 503"));
   await pwa.checkForUpdates();
@@ -178,6 +179,7 @@ it("reports installation timeouts and removes the obsolete listener", async () =
 it("keeps update error metadata so the same failure can be shown in another language", async () => {
   const pwa = await boot();
   online.onLine = false;
+  current.update.mockRejectedValueOnce(new TypeError("Network unavailable"));
   await pwa.checkForUpdates();
   const { renderMessage } = await import("@llm-chat/i18n");
   const state = pwa.getPwaState();
@@ -218,9 +220,11 @@ it("keeps a failed repair retryable without reloading or requiring an available 
   expect(reload).toHaveBeenCalledOnce();
 });
 
-it("rejects offline and unavailable servers before touching the worker", async () => {
+it("attempts an update despite offline telemetry and stops on actual server failure", async () => {
   const pwa = await boot(); prepareRepair(); online.onLine = false;
+  vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Network unavailable"));
   await pwa.forceUpdate();
+  expect(fetch).toHaveBeenCalled();
   expect(container.register).not.toHaveBeenCalled();
   online.onLine = true;
   vi.mocked(fetch).mockResolvedValueOnce(new Response("down", { status: 503 }));

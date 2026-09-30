@@ -19,7 +19,6 @@ import { displayStore, useDisplayPreferences } from "./lib/local-display";
 import { ErrorState, LoadingState } from "./components/ui";
 import {
   AppFrame,
-  BootScreen,
   LEFT_MAX,
   LEFT_MIN,
   MobileAppBar,
@@ -45,15 +44,14 @@ const AgentEditorView = lazy(() =>
 );
 const SettingsView = lazy(() => import("./views/SettingsView").then((module) => ({ default: module.SettingsView })));
 
-/**
- * Root of the console. It owns the shell's geometry and the three global
- * gates — boot, authentication and route — and delegates everything else.
- */
+/** Owns shell geometry, authentication and routing. */
 export function App() {
   useLocale();
   const sourceId = useStore(appStore, state => state.sourceId);
   const auth = useStore(appStore, (state) => state.auth);
-  const bootError = useStore(appStore, (state) => state.bootError);
+  const shell = useRef({ sourceId, key: sourceId ?? "initial" });
+  if (sourceId && shell.current.sourceId && sourceId !== shell.current.sourceId) shell.current.key = sourceId;
+  if (sourceId) shell.current.sourceId = sourceId;
   const settings = useStore(appStore, (state) => state.settings);
   const conversations = useStore(appStore, (state) => state.conversations);
   const agents = useStore(appStore, (state) => state.agents);
@@ -78,7 +76,7 @@ export function App() {
     if (parent) navigate(parent);
     else setNavDrawer(true);
   };
-  const backOffset = useMobileBackGesture(mobile && auth === "ready", back);
+  const backOffset = useMobileBackGesture(mobile && auth !== "required", back);
   useEffect(() => {
     if (!mobile) return;
     window.addEventListener("llm-chat:back", back);
@@ -144,9 +142,6 @@ export function App() {
   const leftTrack = mobile ? 0 : sidebarCollapsed ? RAIL_WIDTH : leftWidth;
   const rightTrack = mobile || !showInspector ? 0 : rightWidth;
 
-  if (auth === "loading") {
-    return <BootScreen error={bootError} onRetry={() => void bootstrap(initialConversation.current)} />;
-  }
   if (auth === "required") return <LoginView />;
 
   const inspector = (
@@ -154,7 +149,7 @@ export function App() {
   );
 
   return (
-    <AppFrame key={sourceId}
+    <AppFrame key={shell.current.key}
       left={leftTrack}
       right={rightTrack}
       sidebarCollapsed={sidebarCollapsed}

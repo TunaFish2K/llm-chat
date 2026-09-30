@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiRequestError, api, endpoints, onAuthRequired } from "./api";
+import { offlineStore } from "./offline-history";
 
 function mockResponse(status: number, body: unknown): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -9,6 +10,17 @@ function mockResponse(status: number, body: unknown): Response {
 }
 
 describe("api client", () => {
+  it("attempts reads and writes even when both connection telemetry sources say offline", async () => {
+    offlineStore.set({ offline: true });
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const network = vi.fn().mockImplementation(async () => mockResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", network);
+    for (const operation of [api.get, api.post, api.put, api.patch, api.delete]) {
+      offlineStore.set({ offline: true });
+      await expect(operation("/api/independent-command")).resolves.toEqual({ ok: true });
+    }
+    expect(network).toHaveBeenCalledTimes(5);
+  });
   it("parses JSON responses for GET requests", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mockResponse(200, { ok: true })));
     vi.stubGlobal("fetch", fetchMock);

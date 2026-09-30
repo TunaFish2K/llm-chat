@@ -1,11 +1,42 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { endpoints } from "./api";
-import { acceptSettings, acceptSubmission, appStore, loadMessages, refreshConversations, selectBranchImmediately, selectGenerationImmediately, stopAppEvents, updateConversationImmediately, updateSettingsImmediately } from "./app-state";
+import { acceptSettings, acceptSubmission, appStore, loadMessages, refreshConversations, selectBranchImmediately, selectGenerationImmediately, stopAppEvents, submitConversation, updateConversationImmediately, updateSettingsImmediately } from "./app-state";
 import { makeConversation, makeGeneration, makeMessage, makeSettings } from "../../test/fixtures";
 import { offlineStore } from "./offline-history";
 
 beforeEach(() => { appStore.set({ auth: "ready", conversations: [makeConversation()], settings: makeSettings() }); offlineStore.set({ offline: false }); });
 afterEach(() => stopAppEvents());
+
+it("shows later model choices immediately while sends use the preceding saved choice", async () => {
+  let confirm!: (value: ReturnType<typeof makeConversation>) => void;
+  const order: string[] = [];
+  vi.spyOn(endpoints, "updateConversation")
+    .mockImplementationOnce(() => { order.push("first model"); return new Promise(done => { confirm = done; }); })
+    .mockImplementationOnce(async () => { order.push("later model"); return makeConversation({ modelId: "later" }); });
+  const first = updateConversationImmediately("conv-1", { modelId: "first" });
+  const send = submitConversation("conv-1", async () => { order.push("send"); });
+  const later = updateConversationImmediately("conv-1", { modelId: "later" });
+  expect(appStore.get().conversations[0]?.modelId).toBe("later");
+  await vi.waitFor(() => expect(order).toEqual(["first model"]));
+  confirm(makeConversation({ modelId: "first" }));
+  await Promise.all([first, send, later]);
+  expect(order).toEqual(["first model", "send", "later model"]);
+});
+
+it("preserves failed local conversation choices across refresh and permits a manual retry", async () => {
+  vi.spyOn(endpoints, "updateConversation").mockRejectedValueOnce(new Error("offline"));
+  await expect(updateConversationImmediately("conv-1", { modelId: "local-model" })).rejects.toThrow("offline");
+  vi.spyOn(endpoints, "conversations").mockResolvedValue([makeConversation()]);
+  await refreshConversations();
+  expect(appStore.get().conversations[0]?.modelId).toBe("local-model");
+  const send = vi.fn(async () => {});
+  await expect(submitConversation("conv-1", send)).rejects.toThrow();
+  expect(send).not.toHaveBeenCalled();
+  vi.mocked(endpoints.updateConversation).mockResolvedValueOnce(makeConversation({ modelId: "local-model" }));
+  await updateConversationImmediately("conv-1", { modelId: "local-model" });
+  await submitConversation("conv-1", send);
+  expect(send).toHaveBeenCalledOnce();
+});
 
 it("applies the latest title immediately while writes remain ordered and failed predecessors roll back only their own patch", async () => {
   let reject!: (error: Error) => void;
@@ -59,7 +90,7 @@ it("preserves a queued version choice while an earlier selection fails and stale
   expect(appStore.get().messages["conv-1"]?.[0]?.activeGenerationId).toBe("latest");
 });
 
-it("restores authoritative settings after a rejected toggle and protects pending settings from refreshes", async () => {
+it("keeps unsaved settings after failure and stale refresh until a manual retry succeeds", async () => {
   let reject!: (error: Error) => void;
   vi.spyOn(endpoints, "updateSettings").mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
   const write = updateSettingsImmediately({ lastWorkspacePath: "/pending" });
@@ -69,7 +100,13 @@ it("restores authoritative settings after a rejected toggle and protects pending
   expect(appStore.get().settings?.lastWorkspacePath).toBe("/pending");
   await Promise.resolve(); await Promise.resolve();
   reject(new Error("offline")); await failed;
-  expect(appStore.get().settings?.lastWorkspacePath).toBeNull();
+  expect(appStore.get().settings?.lastWorkspacePath).toBe("/pending");
+  acceptSettings(makeSettings({ lastWorkspacePath: "/stale" }));
+  expect(appStore.get().settings?.lastWorkspacePath).toBe("/pending");
+  vi.mocked(endpoints.updateSettings).mockResolvedValueOnce(makeSettings({ lastWorkspacePath: "/pending" }));
+  await updateSettingsImmediately({ lastWorkspacePath: "/pending" });
+  acceptSettings(makeSettings({ lastWorkspacePath: "/confirmed" }));
+  expect(appStore.get().settings?.lastWorkspacePath).toBe("/confirmed");
 });
 
 it("retains identity for unchanged history and preserves canonical messages accepted during a stale read", async () => {

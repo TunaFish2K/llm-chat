@@ -10,7 +10,8 @@ import { t, useLocale, localized } from "../lib/i18n";
 import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { stopNotificationSession } from "../lib/notifications";
-import { clearOfflineHistory, offlineStore } from "../lib/offline-history";
+import { clearOfflineHistory } from "../lib/offline-history";
+import { saveRequestRetries, useRequestPreferences } from "../lib/request-preferences";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Maximize2 } from "lucide-react";
 import type {
@@ -77,7 +78,6 @@ function useResourceEvents(resources: string[], load: () => Promise<void>): void
 
 export function SettingsView({ section }: { section: string }) {
   useLocale();
-  const offline = useStore(offlineStore, (state) => state.offline);
   const active = getSECTIONS().some(([key]) => key === section) ? section : "general";
   return (
     <>
@@ -98,9 +98,7 @@ export function SettingsView({ section }: { section: string }) {
           </a>
         ))}
       </div>
-      {offline && !["general", "appearance", "interaction", "security"].includes(active) ? (
-        <div className="panel-scroll"><div className="panel-inner"><p className="hint">{t("SettingsView.connect_to_view_and_change_these_settings")}</p></div></div>
-      ) : active === "connections" ? (
+      {active === "connections" ? (
         <ConnectionsView embedded />
       ) : (
         <div className="panel-scroll">
@@ -255,14 +253,25 @@ function InteractionSection() {
   );
 }
 
+function RequestSettings() {
+  const preferences = useRequestPreferences();
+  return <div className="card">
+    <h3>{t("SettingsView.requests")}</h3>
+    <Field label={t("SettingsView.request_retries")}>
+      <input className="input" type="number" min={0} max={5} step={1} aria-label={t("SettingsView.request_retries")}
+        value={preferences.maxRetries} onChange={event => saveRequestRetries(event.currentTarget.valueAsNumber)} />
+    </Field>
+    {!preferences.saved ? <p className="small danger" role="alert">{t("SettingsView.request_preferences_not_saved")}</p> : null}
+  </div>;
+}
+
 function GeneralSection() {
   useLocale();
-  const offline = useStore(offlineStore, (state) => state.offline);
   const settings = useStore(appStore, (s) => s.settings);
   const agents = useStore(appStore, (s) => s.agents);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
 
-  if (!settings) return <LoadingState />;
+  if (!settings) return <div className="settings-panels"><RequestSettings /><LoadingState /></div>;
 
   const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
     void updateSettingsImmediately(value).then(() => toast("success", localized("SettingsView.settings_saved"))).catch(toastError);
@@ -271,12 +280,13 @@ function GeneralSection() {
   return (
     <div className="settings-panels">
       <div className="card"><LanguagePicker /></div>
+      <RequestSettings />
       <OfflineHistorySettings />
       <AppUpdateCard />
       <div className="card"><h3>{t("SettingsView.quick_tour")}</h3><p className="hint">{t("SettingsView.tour_progress_is_saved_only_in_this_browser_and_does")}</p>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
 
-      <fieldset disabled={offline} className="offline-settings-fields settings-panels">
+      <fieldset className="offline-settings-fields settings-panels">
       <div className="card">
         <h3>{t("SettingsView.default_agent")}</h3>
         <Field label={t("SettingsView.default_agent")}>
@@ -338,7 +348,6 @@ function GeneralSection() {
 
 function SecuritySection() {
   useLocale();
-  const offline = useStore(offlineStore, (state) => state.offline);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -407,7 +416,7 @@ function SecuritySection() {
         ) : null}
         <button
           className="btn primary"
-          disabled={offline || busy || password.length < 8 || password !== confirm}
+          disabled={busy || password.length < 8 || password !== confirm}
           onClick={() => void changePassword()}
         >{t("SettingsView.change_password")}</button>
       </div>

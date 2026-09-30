@@ -65,7 +65,6 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
 
 export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
   useLocale();
-  const offline = useStore(offlineStore, (state) => state.offline);
   const images = assets.filter((asset): asset is ImageAssetDto => asset.kind === "image");
   const files = assets.filter((asset) => asset.kind === "file");
   return (
@@ -74,9 +73,9 @@ export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
       {files.length ? (
         <div className="message-files">
           {files.map((asset) => (
-            <a key={asset.id} className="message-file" href={offline ? undefined : asset.url} aria-disabled={offline} download={asset.fileName}>
+            <a key={asset.id} className="message-file" href={asset.url} download={asset.fileName}>
               <FileText size={18} aria-hidden="true" />
-              <span><strong>{asset.fileName}</strong><small>{offline ? t("atoms.connect_to_download") : ""}{formatBytes(asset.byteSize)}</small></span>
+              <span><strong>{asset.fileName}</strong><small>{formatBytes(asset.byteSize)}</small></span>
               <Download size={16} aria-hidden="true" />
             </a>
           ))}

@@ -93,7 +93,7 @@ test("显示偏好一次迁移、客户端隔离、同浏览器共享，离线�
     await second.getByRole("tab", { name: "通用", exact: true }).click();
     await expect(second.getByLabel("离线记录", { exact: true })).toContainText("最后完整同步");
     await context.setOffline(true);
-    await expect(second.getByLabel("默认 Agent", { exact: true })).toBeDisabled();
+    await expect(second.getByLabel("默认 Agent", { exact: true })).toBeEnabled();
     await second.getByRole("tab", { name: "外观", exact: true }).click();
     await second.getByLabel("主题", { exact: true }).selectOption("dark");
     await expect(page.locator("html")).toHaveAttribute("data-amoled", "true");

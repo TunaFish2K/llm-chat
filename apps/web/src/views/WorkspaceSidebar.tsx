@@ -170,8 +170,8 @@ export function WorkspaceSidebar({
                       <div className="conversation-actions">
                         <ConversationPopover>{(open, close) => <><Popover.Trigger asChild><button className="icon-button" aria-label={t("WorkspaceSidebar.conversation_actions", { value1: (conversation.title) })}><MoreHorizontal size={16} /></button></Popover.Trigger>
                           <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4} inert={!open ? true : undefined} aria-hidden={!open || undefined}><PopoverLayer open={open} onClose={close} />
-                            <Popover.Close asChild><button disabled={offline} aria-label={t("WorkspaceSidebar.rename", { value1: (conversation.title) })} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />{t("WorkspaceSidebar.edit_title")}</button></Popover.Close>
-                            <Popover.Close asChild><button disabled={offline} className="danger-quiet" aria-label={t("WorkspaceSidebar.delete", { value1: (conversation.title) })} onClick={() => setDeleting(conversation)}><Trash2 size={14} />{t("WorkspaceSidebar.delete_conversation")}</button></Popover.Close>
+                            <Popover.Close asChild><button aria-label={t("WorkspaceSidebar.rename", { value1: (conversation.title) })} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />{t("WorkspaceSidebar.edit_title")}</button></Popover.Close>
+                            <Popover.Close asChild><button className="danger-quiet" aria-label={t("WorkspaceSidebar.delete", { value1: (conversation.title) })} onClick={() => setDeleting(conversation)}><Trash2 size={14} />{t("WorkspaceSidebar.delete_conversation")}</button></Popover.Close>
                           </Popover.Content></Popover.Portal>
                         </>}</ConversationPopover>
                       </div>
