@@ -1267,6 +1267,16 @@ export class Store {
     });
   }
 
+  completeCommand(id: string, scope: string, result: unknown): void {
+    this.sqlite.prepare("UPDATE client_submissions SET response_json = ? WHERE scope = ? AND id = ?")
+      .run(JSON.stringify(result), scope, id);
+  }
+
+  pruneCommands(before: number): void {
+    this.sqlite.prepare("DELETE FROM client_submissions WHERE scope LIKE 'command:%' AND json_extract(response_json, '$.createdAt') < ?")
+      .run(before);
+  }
+
   constructor(path: string) {
     this.dataDir = dirname(path);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

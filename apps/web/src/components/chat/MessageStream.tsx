@@ -3,13 +3,13 @@ import { displayStore } from "../../lib/local-display";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 import { useStickToBottom } from "./useStickToBottom";
-import { offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 import { memo, useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleAlert,
   Clipboard,
   Copy,
   Gauge,
@@ -33,6 +33,7 @@ import { useStore } from "../../lib/store";
 import { StatusTag } from "../ui";
 import { AssetGallery, copyText, MessageAction } from "./atoms";
 import { activeGeneration, answerText, groupTimeline, type ImageJobsByToolCall, type ProcessEntry } from "./model";
+import type { Submission, SubmissionActions } from "../../lib/submission";
 
 function toolStderr(output: string | null): string {
   if (!output) return "";
@@ -59,6 +60,7 @@ export const MessageItem = memo(function MessageItem({
   retryTargetId,
   imageJobs,
   enter = false,
+  submission,
   callbacks
 }: {
   conversationId: string;
@@ -68,6 +70,7 @@ export const MessageItem = memo(function MessageItem({
   imageJobs?: ImageJobsByToolCall | undefined;
   callbacks: StreamCallbacks;
   enter?: boolean;
+  submission?: { value: Submission; actions: SubmissionActions } | undefined;
 }) {
   useLocale();
   const [animateEntrance] = useState(enter);
@@ -77,19 +80,28 @@ export const MessageItem = memo(function MessageItem({
   const generatedAgent = message.greeting?.agent ?? generation?.generatedAgent;
 
   if (message.role === "user") {
+    const pending = Boolean(submission && submission.value.status !== "unknown");
+    const error = submission?.value.error;
     return (
-      <article className="msg" data-enter={animateEntrance || undefined} data-role="user">
+      <article className={submission ? "msg pending-message" : "msg"} data-enter={animateEntrance || undefined} data-role="user"
+        data-submission-id={submission?.value.id} aria-busy={pending || undefined}>
         {attachments.length ? <AssetGallery assets={attachments} /> : null}
         {message.text ? <div className="msg-bubble">{message.text}</div> : null}
-        <MessageFooter metadata={<time>{formatTime(message.createdAt)}</time>}>
+        <MessageFooter busy={pending} metadata={<>
+          <time>{formatTime(message.createdAt)}</time>
+          {pending ? <LoaderCircle className="spin message-request-state" size={13} role="status" aria-label={t("MessageStream.generating")} /> : null}
+          {submission && !pending ? <span className="message-request-state danger" role="alert" aria-label={error ? displayError(error) : t("Composer.submission_unknown")}
+            title={error ? displayError(error) : t("Composer.submission_unknown")}><CircleAlert size={13} /></span> : null}
+        </>} liveAction={submission ? <MessageAction label={t("CancelGenerationButton.stop_generation")} danger onClick={() => submission.actions.cancel(submission.value)}><Square size={14} fill="currentColor" /></MessageAction> : null}>
           <MessageAction label={t("MessageStream.copy_message")} onClick={() => void copyText(message.text ?? "")}>
             <Copy size={14} />
           </MessageAction>
-          <MessageAction label={t("dialogs.edit_and_branch")} disabled={callbacks.branching} onClick={() => callbacks.onEdit(message)}>
+          <MessageAction label={t("dialogs.edit_and_branch")} disabled={!submission && callbacks.branching} onClick={() => submission ? submission.actions.edit(submission.value) : callbacks.onEdit(message)}>
             <Pencil size={14} />
           </MessageAction>
-          <span title={retryTargetId ? t("MessageStream.regenerate_the_corresponding_reply") : t("MessageStream.no_reply_to_retry_yet")}>
-            <MessageAction label={t("MessageStream.retry_reply")} disabled={callbacks.branching || !retryTargetId} onClick={() => retryTargetId && callbacks.onRetry(retryTargetId)}>
+          <span title={submission ? t("NotificationSettings.retry") : retryTargetId ? t("MessageStream.regenerate_the_corresponding_reply") : t("MessageStream.no_reply_to_retry_yet")}>
+            <MessageAction label={submission ? t("NotificationSettings.retry") : t("MessageStream.retry_reply")} disabled={submission ? pending : callbacks.branching || !retryTargetId}
+              onClick={() => submission ? submission.actions.retry(submission.value) : retryTargetId && callbacks.onRetry(retryTargetId)}>
               <RotateCcw size={14} />
             </MessageAction>
           </span>
@@ -140,7 +152,6 @@ export const MessageItem = memo(function MessageItem({
 function ImageGenerationStatus({ conversationId, job }: { conversationId: string; job: ImageGenerationJobDto }) {
   useLocale();
   const [pending, setPending] = useState(false);
-  const offline = useStore(offlineStore, (state) => state.offline);
   const change = async (run: () => Promise<unknown>) => {
     if (pending) return;
     setPending(true);
@@ -167,7 +178,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
         <MessageAction
           label={t("MessageStream.stop_image_generation")}
           danger
-          disabled={offline || pending}
+          disabled={pending}
           onClick={() => void change(() => endpoints.cancelImageGeneration(conversationId, job.id))}
         >
           {pending ? <LoaderCircle size={14} className="spin" /> : <Square size={14} fill="currentColor" />}
@@ -175,7 +186,7 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
       ) : retryable ? (
         <MessageAction
           label={t("MessageStream.retry_image_generation")}
-          disabled={offline || pending}
+          disabled={pending}
           onClick={() => void change(() => endpoints.retryImageGeneration(conversationId, job.id))}
         >
           {pending ? <LoaderCircle size={14} className="spin" /> : <RotateCcw size={14} />}
@@ -206,8 +217,7 @@ function GenerationTimeline({
 }) {
   useLocale();
   const collapsePolicy = useStore(displayStore, (state) => state.values.reasoningCollapsePolicy);
-  const offline = useStore(offlineStore, (state) => state.offline);
-  const busy = !offline && isGenerationActive(generation.status);
+  const busy = isGenerationActive(generation.status);
   const timeline = groupTimeline(generation, imageJobs);
   const answer = answerText(generation);
   const versionIndex = message.generations.findIndex((item) => item.id === generation.id);
@@ -279,7 +289,6 @@ function GenerationTimeline({
         <p className="muted small">{t("MessageStream.stop_reason", { value1: (generation.stopReason) })}</p>
       ) : null}
 
-      {offline && isGenerationActive(generation.status) ? <p className="hint">{t("MessageStream.generation_status_has_not_changed_since_the_last_sync")}</p> : null}
       <MessageFooter busy={busy} liveAction={busy ? <CancelGenerationButton conversationId={conversationId} generationId={generation.id} className="act danger" /> : null}
         metadata={<>
           <span className="reply-identity" title={`${generation.generatedAgent?.name ?? t("MessageStream.assistant")} · ${message.generatedModel?.connectionName ?? generation.connectionName} / ${message.generatedModel?.displayName ?? generation.modelKey}`}>

@@ -107,6 +107,8 @@ for (const size of [50, 500, 2_000]) {
           const shortLink = `.conversation-row a[href="/c/${short.id}"]`;
           await expect(page.locator(shortLink)).toBeVisible();
           await press(shortLink, 0);
+          // Failed assertion polls build an accessibility tree; keep them out of latency.
+          if (repeat >= 2) await page.waitForFunction(count => (window as any).__interactionMetrics.navigation.length >= count, (repeat - 2) * 2 + 1);
           await expect(page).toHaveURL(`${APP_URL}/c/${short.id}`);
           if (isMobile) {
             await expect(page.locator('.mobile-drawer')).toHaveCount(0);
@@ -116,6 +118,7 @@ for (const size of [50, 500, 2_000]) {
           const longLink = `.conversation-row a[href="/c/${started.conversation.id}"]`;
           await expect(page.locator(longLink)).toBeVisible();
           await press(longLink, 0);
+          if (repeat >= 2) await page.waitForFunction(count => (window as any).__interactionMetrics.navigation.length >= count, (repeat - 2) * 2 + 2);
           await expect(page).toHaveURL(`${APP_URL}/c/${started.conversation.id}`);
           await expect(page.locator('.msg').last()).toContainText("历史内容");
           expect(await page.locator('.msg').count()).toBeLessThan(24);

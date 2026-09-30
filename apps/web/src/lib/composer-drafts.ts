@@ -6,10 +6,18 @@ export { readComposerDraft, writeComposerDraft, preserveDeletedDraft, recoveredD
 // Requests outlive the composer. A remount must share the same write ordering.
 const writes = new Map<string, Promise<unknown>>();
 const pending = new Map<string, { text: string; timer: ReturnType<typeof setTimeout> }>();
+let session = 0;
+
+export function resetComposerWrites(): void {
+  session++;
+  for (const item of pending.values()) clearTimeout(item.timer);
+  pending.clear(); writes.clear(); modelWrites.clear();
+}
 
 function writeServerDraft(id: string, text: string): Promise<unknown> {
+  const owner = session;
   const next = (writes.get(id) ?? Promise.resolve()).catch(() => undefined)
-    .then(() => conversationDeleted(id) ? undefined : endpoints.updateConversation(id, { draft: text }));
+    .then(() => owner !== session || conversationDeleted(id) ? undefined : endpoints.updateConversation(id, { draft: text }));
   writes.set(id, next);
   void next.finally(() => { if (writes.get(id) === next) writes.delete(id); }).catch(() => undefined);
   return next;
@@ -35,7 +43,11 @@ export async function flushServerDraft(id: string): Promise<void> {
 
 const modelWrites = new Map<string, Promise<unknown>>();
 export function serializeModelSelection<T>(agentId: string, select: () => Promise<T>): Promise<T> {
-  const next = (modelWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined).then(select);
+  const owner = session;
+  const next = (modelWrites.get(agentId) ?? Promise.resolve()).catch(() => undefined).then(() => {
+    if (owner !== session) throw new DOMException("Session changed", "AbortError");
+    return select();
+  });
   modelWrites.set(agentId, next);
   void next.finally(() => { if (modelWrites.get(agentId) === next) modelWrites.delete(agentId); }).catch(() => undefined);
   return next;

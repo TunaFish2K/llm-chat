@@ -2,6 +2,7 @@
 import type { SubmissionAcceptedDto } from "@llm-chat/contracts";
 import { createStore } from "./store";
 import type { NavigationOwner } from "./router";
+import type { DisplayMessage } from "./i18n";
 
 export interface Submission {
   id: string;
@@ -16,6 +17,14 @@ export interface Submission {
   status?: "preparing" | "submitting" | "unknown";
   route?: string;
   navigation?: NavigationOwner;
+  createdAt?: number;
+  error?: DisplayMessage;
+  cancelRequested?: boolean;
+}
+export interface SubmissionActions {
+  retry: (submission: Submission) => void;
+  edit: (submission: Submission) => void;
+  cancel: (submission: Submission) => void;
 }
 export const submissionStore = createStore<{ pending: Record<string, Submission>; accepted: Record<string, SubmissionAcceptedDto> }>({ pending: {}, accepted: {} });
 const memory = new Map<string, Submission>();
@@ -66,15 +75,16 @@ export function recordSubmissionAcceptance(value: SubmissionAcceptedDto): boolea
 }
 
 /** A notification may confirm the write before its HTTP response arrives. */
-export function waitForSubmission<T extends object>(id: string, request: () => Promise<T>): Promise<T & { acceptance?: SubmissionAcceptedDto }> {
+export function waitForSubmission<T extends object>(id: string, request: (signal: AbortSignal) => Promise<T>): Promise<T & { acceptance?: SubmissionAcceptedDto }> {
   return new Promise((resolve, reject) => {
+    const controller = new AbortController();
     const check = () => {
       const receipt = submissionStore.get().accepted[id];
-      if (receipt) { unsubscribe(); resolve({ ...receipt.result, acceptance: receipt } as unknown as T & { acceptance: SubmissionAcceptedDto }); }
+      if (receipt) { unsubscribe(); controller.abort(); resolve({ ...receipt.result, acceptance: receipt } as unknown as T & { acceptance: SubmissionAcceptedDto }); }
     };
     const unsubscribe = submissionStore.subscribe(check);
     const known = submissionStore.get().accepted[id];
     if (known) { check(); return; }
-    void request().then(value => { unsubscribe(); resolve({ ...value }); }, error => { unsubscribe(); reject(error); });
+    void request(controller.signal).then(value => { unsubscribe(); controller.abort(); resolve({ ...value }); }, error => { unsubscribe(); controller.abort(); reject(error); });
   });
 }

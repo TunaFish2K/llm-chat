@@ -2,6 +2,7 @@ import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { t, localizedError } from "./i18n";
 import { historyImageUrls } from "./offline-assets";
 import { prepareOfflineIndex } from "./offline-index";
+import { clearStartupCache } from "./startup-cache";
 export { historyImageUrls } from "./offline-assets";
 import { conversationDeleted, deletedConversationIds, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
 import { draftImageUrls } from "./composer-draft-storage";
@@ -204,6 +205,7 @@ export function syncOfflineHistory(): Promise<void> {
 }
 
 export async function clearOfflineHistory(options: { disable?: boolean; logout?: boolean; broadcast?: boolean } = {}): Promise<void> {
+  if (options.logout) clearStartupCache();
   controller?.abort();
   clearTimeout(reconnectTimer);
   clearTimeout(persistTimer); persistTimer = undefined; persistenceEpoch++; pendingMessages.clear();

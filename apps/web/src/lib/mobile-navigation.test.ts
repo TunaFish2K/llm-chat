@@ -5,6 +5,7 @@ import { dismissBackLayer, parentRoute, requestMobileBack, useBackLayer, useMobi
 function touch(type: string, points: Array<[number, number, number?]>, target: EventTarget = document.body, cancelable = true) {
   const event = new Event(type, { bubbles: true, cancelable });
   Object.defineProperty(event, "touches", { value: points.map(([clientX, clientY, identifier = 1]) => ({ clientX, clientY, identifier })) });
+  Object.defineProperty(event, "changedTouches", { value: points.map(([clientX, clientY, identifier = 1]) => ({ clientX, clientY, identifier })) });
   act(() => { target.dispatchEvent(event); });
   return event;
 }
@@ -38,6 +39,27 @@ it("dismisses the foreground layer and retains the latest close callback", () =>
 });
 
 describe("mobile edge gesture", () => {
+  it("finishes on the original touch target when background loading replaces it", () => {
+    const back = vi.fn(); const hook = renderHook(() => useMobileBackGesture(true, back));
+    const placeholder = document.createElement("div"); document.body.append(placeholder);
+    touch("touchstart", [[12, 300]], placeholder);
+    touch("touchmove", [[28, 300]], placeholder);
+    placeholder.remove();
+    expect(touch("touchmove", [[108, 300]], placeholder).defaultPrevented).toBe(true);
+    touch("touchend", [], placeholder);
+    expect(back).toHaveBeenCalledOnce(); expect(hook.result.current).toBe(0);
+    touch("touchend", [], placeholder); expect(back).toHaveBeenCalledOnce();
+  });
+
+  it("uses the final position when Chromium coalesces the last movement", () => {
+    const back = vi.fn(); renderHook(() => useMobileBackGesture(true, back));
+    touch("touchstart", [[12, 300]]); touch("touchmove", [[28, 300]]);
+    const event = new Event("touchend", { bubbles: true, cancelable: true });
+    Object.defineProperties(event, { touches: { value: [] }, changedTouches: { value: [{ clientX: 108, clientY: 300, identifier: 1 }] } });
+    act(() => { document.body.dispatchEvent(event); });
+    expect(back).toHaveBeenCalledOnce();
+  });
+
   it("commits once, suppresses the synthetic click and uses updated callbacks", () => {
     const back = vi.fn(); const latest = vi.fn();
     const hook = renderHook(({ callback }) => useMobileBackGesture(true, callback), { initialProps: { callback: back } });

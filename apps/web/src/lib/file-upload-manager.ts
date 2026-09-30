@@ -7,6 +7,8 @@ import { fileToBase64 } from "./format";
 import { createStore } from "./store";
 import { updateDraftAttachments } from "./composer-draft-storage";
 import { t } from "./i18n";
+import { requestRetries } from "./request-preferences";
+import { retryable, retryDelay } from "./request-retry";
 
 export type UploadStatus = "queued" | "hashing" | "uploading" | "checking" | "waiting" | "needs-file" | "failed";
 export interface UploadTask {
@@ -156,16 +158,16 @@ export class FileUploadManager {
     }
   }
   private async io<T>(task: UploadTask, signal: AbortSignal, action: () => Promise<T>): Promise<T> {
+    const maxRetries = requestRetries();
     for (let attempt = 0; ; attempt++) {
-      while (!this.deps.online()) { task.status = "waiting"; this.changed(); await this.deps.delay(1000, signal); }
       signal.throwIfAborted();
       try { return await action(); }
       catch (error) {
         signal.throwIfAborted();
-        const status = (error as { status?: number }).status;
-        if (attempt >= 3 || !(status === 0 || status === 408 || status === 429 || (status !== undefined && status >= 500 && status !== 507))) throw error;
+        if (attempt >= maxRetries || !retryable(error)) throw error;
         task.status = "waiting"; this.changed();
-        await this.deps.delay(1000 * 2 ** attempt, signal);
+        const retryAfter = (error as { retryAfterMs?: number }).retryAfterMs;
+        await this.deps.delay(retryAfter !== undefined ? Math.min(10_000, Math.max(0, retryAfter)) : retryDelay(attempt), signal);
       }
     }
   }

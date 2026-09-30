@@ -72,6 +72,7 @@ describe("explicit conversation request ownership", () => {
     await expect(endpoints.generation(id, "missing")).rejects.toMatchObject({ code: "generation_not_found" });
     expect(conversationDeleted(id)).toBe(false);
     offlineStore.set({ offline: true });
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
     await expect(endpoints.messages(id)).rejects.toMatchObject({ code: "network_error" });
     expect(conversationDeleted(id)).toBe(false);
   });

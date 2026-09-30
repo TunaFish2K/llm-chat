@@ -65,10 +65,11 @@ it("does not restore messages from an outstanding request after logout", async (
   let finish!: (value: Response) => void;
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; })));
   const read = loadMessages("current");
+  const cancelled = expect(read).rejects.toMatchObject({ code: "request_cancelled" });
   refreshMessages("current");
   await vi.advanceTimersByTimeAsync(100);
   window.dispatchEvent(new Event("llm-chat:offline-auth-required"));
-  finish(respond([makeMessage({ generations: [] })])); await read;
+  finish(respond([makeMessage({ generations: [] })])); await cancelled;
   await vi.advanceTimersByTimeAsync(100);
   expect(fetch).toHaveBeenCalledOnce();
   expect(appStore.get().auth).toBe("required"); expect(appStore.get().messages).toEqual({});

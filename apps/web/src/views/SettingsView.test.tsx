@@ -90,7 +90,7 @@ describe("SettingsView", () => {
     expect(JSON.parse(localStorage.getItem("llm-chat.typography.v1")!)).toMatchObject({ chatFontSize: 20 });
     expect(write).not.toHaveBeenCalled();
     rerender(<SettingsView section="general" />);
-    expect(screen.getByLabelText("默认 Agent").matches(":disabled")).toBe(offline);
+    expect(screen.getByLabelText("默认 Agent")).toBeEnabled();
   });
 
   it.each(["appearance", "interaction"])("retries failed local preferences in %s without a server request", async (section) => {

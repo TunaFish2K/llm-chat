@@ -4,7 +4,7 @@ import { ApiRequestError, httpRequest } from "./http-client";
 import { t } from "./i18n";
 
 async function request(method: string, path: string, signal: AbortSignal, body?: unknown): Promise<FileUploadDto> {
-  return (await httpRequest<FileUploadDto>(method, path, body, signal)).data;
+  return (await httpRequest<FileUploadDto>(method, path, body, signal, { retries: 0 })).data;
 }
 export const fileUploadHttp = {
   create: (input: FileUploadInput, signal: AbortSignal) => request("POST", "/api/file-uploads", signal, input),

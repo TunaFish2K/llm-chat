@@ -101,11 +101,18 @@ describe("inline image jobs", () => {
     expect(screen.getAllByRole("alert")).toHaveLength(2);
   });
 
-  it("renders a saved task offline while disabling task mutations", () => {
+  it("keeps saved task retry controls available offline", () => {
     offlineStore.set({ offline: true });
     render(imageReply(structuredClone(makeImageJob())));
     expect(screen.getByRole("alert")).toHaveTextContent("Upstream request failed");
-    expect(screen.getByRole("button", { name: "重试图片生成" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "重试图片生成" })).toBeEnabled();
+  });
+
+  it("keeps the generation stop action available despite offline telemetry", () => {
+    offlineStore.set({ offline: true });
+    const generation = makeGeneration({ status: "running" });
+    render(<MessageItem conversationId="conv-1" message={makeMessage({ generations: [generation], activeGenerationId: generation.id })} callbacks={callbacks} />);
+    expect(screen.getByRole("button", { name: "停止生成" })).toBeEnabled();
   });
 });
 

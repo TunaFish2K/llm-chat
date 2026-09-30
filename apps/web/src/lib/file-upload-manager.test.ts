@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { saveRequestRetries } from "./request-preferences";
 import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
 import type { FileUploadHttp } from "./file-upload-http";
 import type { hashFileInWorker } from "./file-hash-client";
@@ -8,6 +9,7 @@ import { readComposerDraft, updateDraftAttachments, writeComposerDraft } from ".
 
 const asset: FileAssetDto = { id: "asset", kind: "file", fileName: "data.bin", mimeType: "application/octet-stream", byteSize: 10, sha256: "a".repeat(64), url: "/api/files/asset", createdAt: 1 };
 const managers: FileUploadManager[] = [];
+beforeEach(() => saveRequestRetries(2));
 afterEach(() => { for (const manager of managers.splice(0)) manager.reset(); });
 function setup(storage = new Map<string, string>()) {
   let row: FileUploadDto;
@@ -51,7 +53,9 @@ describe("upload queue", () => {
     x.manager.enqueue(x.scope.id, [x.file]);
     await vi.waitFor(() => expect(x.scope.attachments).toEqual([asset]));
     expect(x.http.append).toHaveBeenCalledTimes(1);
-    expect(x.delay).toHaveBeenCalledWith(1000, expect.any(AbortSignal));
+    expect(x.delay).toHaveBeenCalledWith(expect.any(Number), expect.any(AbortSignal));
+    expect(x.delay.mock.calls[0]![0]).toBeGreaterThanOrEqual(400);
+    expect(x.delay.mock.calls[0]![0]).toBeLessThanOrEqual(600);
   });
 
   it("restores metadata without file contents and rejects a different reselected file", async () => {
@@ -137,14 +141,14 @@ describe("upload queue", () => {
   });
 });
 
-it("waits for connectivity and honors throttling without duplicating a completed asset", async () => {
+it("attempts uploads despite offline telemetry and retries throttling without duplicating an asset", async () => {
   const x = setup();
-  x.online.mockReturnValueOnce(false);
+  x.online.mockReturnValue(false);
   x.http.create.mockRejectedValueOnce(new ApiRequestError(429, "rate_limited", "slow down"));
   x.manager.setAttachments(x.scope.id, [asset]);
   x.manager.enqueue(x.scope.id, [x.file]);
   await vi.waitFor(() => expect(x.scope.tasks).toHaveLength(0));
-  expect(x.delay).toHaveBeenCalledTimes(2);
+  expect(x.delay).toHaveBeenCalledTimes(1);
   expect(x.http.create).toHaveBeenCalledTimes(2);
   expect(x.scope.attachments).toEqual([asset]);
   x.manager.reset();

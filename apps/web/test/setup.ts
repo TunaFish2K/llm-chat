@@ -6,6 +6,9 @@ import { setLocalePreference } from "../src/lib/i18n";
 import { typographyStore, CHAT_TYPOGRAPHY_DEFAULTS } from "../src/lib/local-typography";
 import { setConversationSource } from "../src/lib/conversation-lifecycle";
 import { offlineStore } from "../src/lib/offline-history";
+import { clearStartupCache } from "../src/lib/startup-cache";
+import { saveRequestRetries } from "../src/lib/request-preferences";
+import { resetComposerWrites } from "../src/lib/composer-drafts";
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -81,11 +84,12 @@ if (!window.matchMedia) {
   })) as unknown as typeof window.matchMedia;
 }
 
-beforeEach(() => { setLocalePreference("zh-CN"); });
+beforeEach(() => { setLocalePreference("zh-CN"); saveRequestRetries(0); });
 
 afterEach(() => {
   offlineStore.set({ offline: false });
   cleanup();
+  resetComposerWrites();
   clearResources();
   clearSubmissions();
   uploadManager.reset();
@@ -93,6 +97,7 @@ afterEach(() => {
   displayStore.set({ values: { ...DISPLAY_DEFAULTS }, initialized: false, saved: true });
   typographyStore.set({ values: { ...CHAT_TYPOGRAPHY_DEFAULTS }, initialized: false, saved: true });
   setConversationSource(crypto.randomUUID());
+  clearStartupCache();
   memoryStorage.clear();
   tabStorage.clear();
   vi.unstubAllGlobals();

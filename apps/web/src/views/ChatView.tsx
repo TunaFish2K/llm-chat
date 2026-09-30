@@ -1,10 +1,9 @@
 import { useMessageEntrance } from "../components/chat/useMessageEntrance";
 import { VirtualMessageList } from "../components/chat/VirtualMessageList";
-import { submissionStore } from "../lib/submission";
+import { submissionStore, type SubmissionActions } from "../lib/submission";
 import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
-import { isOffline, offlineStore } from "../lib/offline-history";
 import { browseOfflineBranch } from "../lib/app-state";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown } from "lucide-react";
@@ -25,7 +24,7 @@ import type { InspectionTarget } from "../lib/inspection";
 import { captureNavigation, navigate, navigateIfCurrent, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui";
-import { AgentAvatar, AssetGallery } from "../components/chat/atoms";
+import { AgentAvatar } from "../components/chat/atoms";
 import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
 import { BranchSwitchers, MessageItem, VersionSwitcher, type StreamCallbacks } from "../components/chat/MessageStream";
@@ -76,7 +75,6 @@ export function ChatView({
   onViewChange = noop
 }: ChatViewProps) {
   useLocale();
-  const offline = useStore(offlineStore, (state) => state.offline);
   const conversation = useStore(
     appStore,
     (state) => state.conversations.find((item) => item.id === conversationId) ?? null
@@ -84,6 +82,7 @@ export function ChatView({
   const conversations = useStore(appStore, (state) => state.conversations);
   const messages = useStore(appStore, (state) => (conversationId ? state.messages[conversationId] ?? null : null));
   const pendingSubmission = useStore(submissionStore, state => state.pending[conversationId ?? "new"]);
+  const submissionActions = useRef<SubmissionActions | null>(null);
   const runningTasks = useStore(appStore, (state) =>
     conversationId ? state.runningTasksByConversation[conversationId] ?? 0 : 0
   );
@@ -197,7 +196,6 @@ export function ChatView({
   const switchBranch = useCallback(async (branchId: string) => {
     if (!conversation) return;
     browseOfflineBranch(branchId); navigate(routes.chat(branchId));
-    if (isOffline()) return;
     try {
       await selectBranchImmediately(resolveConversationRoot(conversation, appStore.get().conversations).id, branchId);
       void refreshConversations().catch(toastError);
@@ -239,8 +237,8 @@ export function ChatView({
   const streamCallbacks = useMemo<StreamCallbacks>(() => ({
     onInspect, onEdit: setEditingMessage, onRetry: (id) => void retryAnswer(id),
     onContinue: continueFrom, onGreetingFork: switchGreeting, onBranchChange: (id) => void switchBranch(id),
-    branching: offline || branching || busy || retrying
-  }), [onInspect, retryAnswer, continueFrom, switchGreeting, switchBranch, offline, branching, busy, retrying]);
+    branching: branching || busy || retrying
+  }), [onInspect, retryAnswer, continueFrom, switchGreeting, switchBranch, branching, busy, retrying]);
   const branchesByOrdinal = useMemo(() => {
     const result = new Map<number | null, typeof branchGroups>();
     for (const group of branchGroups) {
@@ -294,7 +292,6 @@ export function ChatView({
                     onChange={(id) => void switchBranch(id)}
                   />
                 </div>
-                {loadError && messages !== null ? <ErrorState message={loadError} onRetry={() => conversationId && readMessages(conversationId)} /> : null}
                 {!conversationId && !pendingSubmission ? (
                   <NewConversationWelcome
                     agentId={previewAgentId}
@@ -321,11 +318,14 @@ export function ChatView({
                     />
                   )} />
                 )}
-                {pendingSubmission ? <article className="msg pending-message" data-role="user" data-submission-id={pendingSubmission.id} aria-busy={pendingSubmission.status !== "unknown"}>
-                  {pendingSubmission.text ? <div className="msg-bubble">{pendingSubmission.text}</div> : null}
-                  {pendingSubmission.attachments?.length ? <AssetGallery assets={pendingSubmission.attachments} /> : pendingSubmission.assetIds.length ? <span className="muted">{t("AttachmentEditor.add_attachment")} · {pendingSubmission.assetIds.length}</span> : null}
-                  <div className="pending-message-status" role="status">{t(pendingSubmission.status === "unknown" ? "Composer.submission_unknown" : pendingSubmission.status === "preparing" ? "Composer.preparing_message" : "MessageQueueList.sending")}</div>
-                </article> : null}
+                {pendingSubmission ? <MessageItem conversationId={conversationId ?? "new"} callbacks={streamCallbacks}
+                  message={{ id: pendingSubmission.id, ordinal: (messages?.length ?? 0) + 1, role: "user", text: pendingSubmission.text,
+                    attachments: pendingSubmission.attachments ?? [], generations: [], activeGenerationId: null, generatedModel: null,
+                    greeting: null, createdAt: pendingSubmission.createdAt ?? 0 }}
+                  submission={{ value: pendingSubmission, actions: {
+                    retry: value => submissionActions.current?.retry(value), edit: value => submissionActions.current?.edit(value),
+                    cancel: value => submissionActions.current?.cancel(value)
+                  } }} /> : null}
               </div>
             </div>
             {scroller.detached ? (
@@ -342,6 +342,8 @@ export function ChatView({
       </div>
       <Composer
         key={conversationId ?? "new"}
+        conversationId={conversationId}
+        submissionActions={submissionActions}
         actionsHost={actionsHost}
         mobile={mobile}
         conversation={conversation}

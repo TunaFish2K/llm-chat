@@ -1,4 +1,5 @@
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
+import { registerCommandReceipts } from "./command-receipts";
 import { Readable } from "node:stream";
 import { FileUploads, registerFileUploadRoutes, UploadError } from "./file-uploads";
 import { createReadStream } from "node:fs";
@@ -232,6 +233,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (identity.refreshCookie) setSessionCookie(request, reply, token!);
     request.authIdentity = identity;
   });
+
+  registerCommandReceipts(app, store);
 
   app.addHook("onSend", async (request, reply, payload) => {
     const immutableAsset = (request.method === "GET" || request.method === "HEAD")
