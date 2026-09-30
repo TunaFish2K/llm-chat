@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { endpoints } from "../lib/api";
 import { appStore, refreshConversations, toast, toastError, updateConversationImmediately } from "../lib/app-state";
-import { listConversationFamilies, resolveConversationRoot } from "../lib/conversation-tree";
+import { conversationEntryTarget, listConversationFamilies, resolveConversationRoot } from "../lib/conversation-tree";
 import { formatTime } from "../lib/format";
 import { linkClick, navigate, routes, type Route } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -35,6 +35,7 @@ export function WorkspaceSidebar({
   route,
   compact,
   onClose,
+  onNavigate,
   onToggleCompact,
   pwa,
   onInstall
@@ -42,11 +43,16 @@ export function WorkspaceSidebar({
   route: Route;
   compact: boolean;
   onClose?: () => void;
+  onNavigate?: (path: string) => void;
   onToggleCompact?: () => void;
   pwa: PwaState;
   onInstall: () => void;
 }) {
   useLocale();
+  const open = (path: string) => {
+    if (onNavigate) onNavigate(path);
+    else { navigate(path); onClose?.(); }
+  };
   const offline = useStore(offlineStore, (state) => state.offline);
   const cachedIds = useStore(offlineStore, (state) => state.cachedIds);
   const conversations = useStore(appStore, (state) => state.conversations);
@@ -63,7 +69,7 @@ export function WorkspaceSidebar({
   const visible = useMemo(() => families
     .map((family) => ({
       ...family.root,
-      activeBranchId: family.root.activeBranchId ?? family.root.id,
+      activeBranchId: conversationEntryTarget(family.root, conversations),
       updatedAt: family.latestUpdatedAt
     })), [families]);
   const groups = useMemo(() => groupConversations(visible), [visible]);
@@ -102,9 +108,7 @@ export function WorkspaceSidebar({
   };
 
   return (
-    <aside onClick={(event) => {
-      if (event.target instanceof Element && event.target.closest('a[href]') && event.defaultPrevented) onClose?.();
-    }} className="workspace-sidebar" data-compact={compact || undefined} aria-label={t("WorkspaceSidebar.main_navigation_and_conversations")}>
+    <aside className="workspace-sidebar" data-compact={compact || undefined} aria-label={t("WorkspaceSidebar.main_navigation_and_conversations")}>
       <header className="sidebar-brand">
         {compact ? (
           <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label={t("WorkspaceSidebar.expand_conversation_sidebar")} title={t("WorkspaceSidebar.expand_conversation_sidebar")}>
@@ -113,7 +117,7 @@ export function WorkspaceSidebar({
           </button>
         ) : (
           <>
-            <a href="/" onClick={linkClick("/")} aria-label={t("WorkspaceSidebar.chat_home")}>
+            <a href="/" onClick={linkClick("/", open)} aria-label={t("WorkspaceSidebar.chat_home")}>
               <img src="/icons/icon-192-v2.png" width={28} height={28} alt="" />
               <span>Chat</span>
             </a>
@@ -131,15 +135,15 @@ export function WorkspaceSidebar({
         <>
           <nav className="sidebar-rail-primary" aria-label={t("WorkspaceSidebar.main_actions")}>
             <button className="sidebar-rail-button" aria-label={t("WorkspaceSidebar.search_conversations")} title={t("WorkspaceSidebar.search_conversations")} onClick={() => setSearchOpen(true)}><Search size={18} /></button>
-            <button className="sidebar-rail-button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label={t("WorkspaceSidebar.new_conversation")} title={t("WorkspaceSidebar.new_conversation")}>
+            <button className="sidebar-rail-button primary" onClick={() => open(routes.chat())} aria-label={t("WorkspaceSidebar.new_conversation")} title={t("WorkspaceSidebar.new_conversation")}>
               <SquarePen size={18} />
             </button>
-            <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label={t("WorkspaceSidebar.chat")} compact />
-            <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={18} />} label="Agent" compact />
+            <SidebarLink onNavigate={open} active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label={t("WorkspaceSidebar.chat")} compact />
+            <SidebarLink onNavigate={open} active={route.name === "agents"} href={routes.agents()} icon={<Bot size={18} />} label="Agent" compact />
           </nav>
           <div className="sidebar-rail-spacer" />
           <div className="sidebar-rail-utilities">
-            <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label={t("WorkspaceSidebar.settings")} compact />
+            <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label={t("WorkspaceSidebar.settings")} compact />
             {pwa.installAvailable ? (
               <button className="sidebar-rail-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={18} /></button>
             ) : null}
@@ -148,7 +152,7 @@ export function WorkspaceSidebar({
       ) : null}
         <div className="sidebar-expanded" hidden={compact} inert={compact || undefined} aria-hidden={compact || undefined}>
           <div className="sidebar-primary-actions">
-            <button className="button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label={t("WorkspaceSidebar.new_conversation")} title={t("WorkspaceSidebar.new_conversation")}>
+            <button className="button primary" onClick={() => open(routes.chat())} aria-label={t("WorkspaceSidebar.new_conversation")} title={t("WorkspaceSidebar.new_conversation")}>
               <Plus size={17} /> {!compact ? <span>{t("WorkspaceSidebar.new_conversation")}</span> : null}
             </button>
           </div>
@@ -158,7 +162,7 @@ export function WorkspaceSidebar({
                     <div className="conversation-row" data-active={conversation.id === activeId || undefined} key={conversation.id} role="listitem">
                       <a
                         href={routes.chat(conversation.activeBranchId ?? conversation.id)}
-                        onClick={linkClick(routes.chat(conversation.activeBranchId ?? conversation.id))}
+                        onClick={linkClick(routes.chat(conversation.activeBranchId ?? conversation.id), open)}
                       >
                         <span>{conversation.title || t("WorkspaceSidebar.untitled_conversation")}</span>
                         <small>{offline && !cachedIds.includes(conversation.activeBranchId ?? conversation.id) ? t("WorkspaceSidebar.not_downloaded") : formatTime(conversation.updatedAt)}</small>
@@ -177,9 +181,9 @@ export function WorkspaceSidebar({
           )}
 
           <nav className="sidebar-navigation" aria-label={t("WorkspaceSidebar.feature_navigation")}>
-            <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label={t("WorkspaceSidebar.chat")} compact={compact} />
-            <SidebarLink active={route.name === "agents"} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={compact} />
-            <SidebarLink active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label={t("WorkspaceSidebar.settings")} compact={compact} />
+            <SidebarLink onNavigate={open} active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label={t("WorkspaceSidebar.chat")} compact={compact} />
+            <SidebarLink onNavigate={open} active={route.name === "agents"} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={compact} />
+            <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label={t("WorkspaceSidebar.settings")} compact={compact} />
           </nav>
 
           {pwa.installAvailable ? <footer className="sidebar-status">
@@ -188,7 +192,7 @@ export function WorkspaceSidebar({
             ) : null}
           </footer> : null}
         </div>
-      <Presence>{searchOpen ? <ConversationSearch onClose={() => setSearchOpen(false)} /> : null}</Presence>
+      <Presence>{searchOpen ? <ConversationSearch onClose={() => setSearchOpen(false)} onNavigate={open} /> : null}</Presence>
       <Presence>{renaming ? (
         <Modal
           title={t("WorkspaceSidebar.rename_conversation")}
@@ -205,10 +209,10 @@ export function WorkspaceSidebar({
   );
 }
 
-function SidebarLink({ active, href, icon, label, compact }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean }) {
+function SidebarLink({ active, href, icon, label, compact, onNavigate }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean; onNavigate: (path: string) => void }) {
   useLocale();
   return (
-    <a className={active ? "active" : ""} href={href} onClick={linkClick(href)} aria-current={active ? "page" : undefined} title={compact ? label : undefined}>
+    <a className={active ? "active" : ""} href={href} onClick={linkClick(href, onNavigate)} aria-current={active ? "page" : undefined} title={compact ? label : undefined}>
       {icon}<span className={compact ? "sr-only" : undefined}>{label}</span>
     </a>
   );

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { makeConversation, makeMessage } from "../../test/fixtures";
 import {
   conversationBranchGroups,
+  conversationEntryTarget,
   greetingBranchContext,
   listConversationFamilies,
   resolveConversationRoot
@@ -16,6 +17,20 @@ const origin = (
 ) => ({ conversationId, messageId, messageOrdinal: 1, mode, greetingIndex, sourceGreetingIndex });
 
 describe("conversation tree", () => {
+  it("only follows an existing active branch in the same family", () => {
+    const root = makeConversation({ id: "root", activeBranchId: "child" });
+    const child = makeConversation({ id: "child", forkedFrom: origin(root.id, "m", "edit") });
+    const other = makeConversation({ id: "other" });
+    expect(conversationEntryTarget(root, [root, child, other])).toBe(child.id);
+    for (const activeBranchId of ["missing", other.id]) {
+      const stale = { ...root, activeBranchId };
+      expect(conversationEntryTarget(stale, [stale, child, other])).toBe(root.id);
+    }
+    const old = makeConversation({ id: "old", activeBranchId: "new", forkedFrom: origin("missing-parent", "m", "edit") });
+    const next = makeConversation({ id: "new", activeBranchId: "old", forkedFrom: origin("missing-parent", "m", "edit") });
+    expect(conversationEntryTarget(old, [old, next])).toBe(old.id);
+    expect(conversationEntryTarget(next, [old, next])).toBe(next.id);
+  });
   it("indexes a long chain once and rebuilds for a new list version", () => {
     const items = Array.from({ length: 2_000 }, (_, index) => makeConversation({ id: `node-${index}`, updatedAt: index,
       forkedFrom: index ? origin(`node-${index - 1}`, `message-${index}`, "edit") : null }));

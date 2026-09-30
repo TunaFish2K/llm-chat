@@ -387,8 +387,11 @@ export function loadMessages(conversationId: string): Promise<MessageDto[]> {
     try { raw = await endpoints.messages(conversationId); }
     catch (error) { await cached; throw error; }
     networkDone = true;
-    let messages = normalizeMessages(raw);
+    if (initial && raw.length > 12 && currentConversationId() === conversationId && document.visibilityState === "visible") {
+      await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+    }
     if (session !== messageSession || conversationDeleted(conversationId)) return [];
+    let messages = normalizeMessages(raw);
     const current = appStore.get().messages[conversationId];
     messages = messages.map(message => {
       const selection = generationSelections.get(`${conversationId}:${message.id}`);
@@ -417,8 +420,9 @@ export function loadMessages(conversationId: string): Promise<MessageDto[]> {
       const ids = new Set(messages.map(message => message.id));
       for (const message of current) if (!ids.has(message.id) && !beforeById.has(message.id)) messages.push(message);
       messages.sort((a, b) => a.ordinal - b.ordinal);
+      if (messages.length === current.length && messages.every((message, index) => message === current[index])) messages = current;
     }
-    appStore.set((state) => ({ messages: retainedMessages({ ...state.messages, [conversationId]: messages }) }));
+    if (messages !== current) appStore.set((state) => ({ messages: retainedMessages({ ...state.messages, [conversationId]: messages }) }));
     persistOfflineMessages(conversationId, messages, true);
     for (const message of messages) {
       for (const generation of message.generations) {

@@ -11,7 +11,7 @@ import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { Modal } from "../lib/ui";
 
-export function ConversationSearch({ onClose }: { onClose: () => void }) {
+export function ConversationSearch({ onClose, onNavigate = navigate }: { onClose: () => void; onNavigate?: (path: string) => void }) {
   useLocale();
   const offline = useStore(offlineStore, (state) => state.offline);
   const [query, setQuery] = useState("");
@@ -43,7 +43,7 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
   const open = async (id: string) => {
     if (loading || !resultsCurrent) return;
     if (conversationDeleted(id)) return;
-    browseOfflineBranch(id); onClose(); navigate(routes.chat(id));
+    browseOfflineBranch(id); onClose(); onNavigate(routes.chat(id));
     window.dispatchEvent(new Event("llm-chat:reveal-conversation"));
     try {
       if (isOffline()) return;

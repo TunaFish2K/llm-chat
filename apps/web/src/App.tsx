@@ -4,13 +4,14 @@ import { useErrorState } from "./lib/error-display";
 import { t, useLocale, localized } from "./lib/i18n";
 import { initOfflineHistory, isOffline } from "./lib/offline-history";
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { ArrowLeft } from "lucide-react";
 import { dismissBackLayer, parentRoute, requestMobileBack, useMobileBackGesture } from "./lib/mobile-navigation";
 import { endpoints } from "./lib/api";
 import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents, stopAppEvents, toast } from "./lib/app-state";
 import type { InspectionTarget } from "./lib/inspection";
 import { applyUpdate, getPwaState, initPwa, promptInstall, subscribePwa } from "./lib/pwa";
-import { navigate, replaceRoute, routes, useRoute, type Route } from "./lib/router";
+import { navigate, navigateAfterPaint, replaceRoute, routes, useRoute, type Route } from "./lib/router";
 import { useStore } from "./lib/store";
 import { useChatTypography } from "./lib/chat-typography";
 import { useTheme } from "./lib/theme";
@@ -65,6 +66,9 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspection, setInspection] = useState<InspectionTarget | null>(null);
   const openNav = useCallback(() => setNavDrawer(true), []);
+  const navigateFromDrawer = useCallback((path: string) => {
+    navigateAfterPaint(path, () => flushSync(() => setNavDrawer(false)));
+  }, []);
   const toggleSidebar = useCallback(() => mobile ? setNavDrawer(true) : setSidebarCollapsed(value => !value), [mobile]);
   const toggleInspector = useCallback(() => setInspectorOpen(value => !value), []);
   const inspect = useCallback((target: InspectionTarget) => { setInspection(target); setInspectorOpen(true); }, []);
@@ -217,6 +221,7 @@ export function App() {
           <WorkspaceSidebar
             route={route}
             onClose={() => setNavDrawer(false)}
+            onNavigate={navigateFromDrawer}
             compact={false}
             pwa={pwa}
             onInstall={() => void promptInstall()}

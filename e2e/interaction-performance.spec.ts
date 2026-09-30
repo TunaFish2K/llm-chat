@@ -37,7 +37,7 @@ for (const size of [50, 500, 2_000]) {
       await expect(page.getByLabel("输入消息", { exact: true })).toBeEditable({ timeout: process.env.MOTION_BASELINE ? 90_000 : 10_000 });
       await expect(page.locator(".msg").last()).toContainText("历史内容");
       await page.evaluate(() => {
-        const metrics = { frames: [] as number[], longTasks: [] as { at: number; duration: number }[], clicks: [] as number[], windows: [] as { start: number; end: number }[], recording: false, started: 0, previous: 0 };
+        const metrics = { frames: [] as number[], longTasks: [] as { at: number; duration: number }[], clicks: [] as number[], navigation: [] as number[], windows: [] as { start: number; end: number }[], recording: false, started: 0, previous: 0 };
         (window as any).__interactionMetrics = metrics;
         new PerformanceObserver(list => { for (const entry of list.getEntries()) metrics.longTasks.push({ at: entry.startTime, duration: entry.duration }); }).observe({ type: "longtask", buffered: false });
         const frame = (at: number) => {
@@ -51,6 +51,20 @@ for (const size of [50, 500, 2_000]) {
           const at = performance.now();
           requestAnimationFrame(() => requestAnimationFrame(() => metrics.clicks.push(performance.now() - at)));
         }, { passive: true });
+        document.addEventListener("click", event => {
+          const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.conversation-row a[href]') : null;
+          if (!metrics.recording || !link) return;
+          const target = new URL(link.href).pathname.split('/')[2];
+          const at = performance.now();
+          const check = () => {
+            const workspace = document.querySelector<HTMLElement>('.chat-workspace');
+            const input = workspace?.querySelector<HTMLTextAreaElement>('textarea');
+            if (workspace?.dataset.conversationId === target && input && !input.disabled && !input.readOnly) {
+              requestAnimationFrame(() => metrics.navigation.push(performance.now() - at));
+            } else if (performance.now() - at < 5_000) requestAnimationFrame(check);
+          };
+          requestAnimationFrame(check);
+        }, { capture: true });
       });
       await cdp.send("Profiler.enable"); await cdp.send("Profiler.start");
       await cdp.send("Tracing.start", { categories: "devtools.timeline,disabled-by-default-devtools.timeline.frame,cc", transferMode: "ReturnAsStream" });
@@ -66,8 +80,9 @@ for (const size of [50, 500, 2_000]) {
         }
         if (settle) await page.waitForTimeout(settle);
       };
-      for (let repeat = 0; repeat < 30; repeat++) {
-        await page.evaluate(() => { const metrics = (window as any).__interactionMetrics; metrics.recording = true; metrics.started = performance.now(); });
+      // Capture diagnostics during two warm-up rounds; profiler overhead is not latency.
+      for (let repeat = 0; repeat < 32; repeat++) {
+        await page.evaluate(recording => { const metrics = (window as any).__interactionMetrics; metrics.recording = recording; metrics.started = performance.now(); }, repeat >= 2);
         if (isMobile) {
           await press('.conversation-header .shell-control');
           await expect(page.locator(".drawer-panel")).toHaveCSS("transform", "none");
@@ -86,7 +101,27 @@ for (const size of [50, 500, 2_000]) {
           await press('.sidebar-collapse-button');
           await press('.sidebar-brand-button');
         }
-        await page.evaluate(() => { const metrics = (window as any).__interactionMetrics; metrics.windows.push({ start: metrics.started, end: performance.now() }); metrics.recording = false; metrics.previous = 0; });
+        if (repeat < 17) {
+          if (isMobile) await press('.conversation-header .shell-control');
+          await page.locator('.conversation-scroll').evaluate(element => { element.scrollTop = 0; });
+          const shortLink = `.conversation-row a[href="/c/${short.id}"]`;
+          await expect(page.locator(shortLink)).toBeVisible();
+          await press(shortLink, 0);
+          await expect(page).toHaveURL(`${APP_URL}/c/${short.id}`);
+          if (isMobile) {
+            await expect(page.locator('.mobile-drawer')).toHaveCount(0);
+            await press('.conversation-header .shell-control');
+          }
+          await page.locator('.conversation-scroll').evaluate(element => { element.scrollTop = element.scrollHeight; });
+          const longLink = `.conversation-row a[href="/c/${started.conversation.id}"]`;
+          await expect(page.locator(longLink)).toBeVisible();
+          await press(longLink, 0);
+          await expect(page).toHaveURL(`${APP_URL}/c/${started.conversation.id}`);
+          await expect(page.locator('.msg').last()).toContainText("历史内容");
+          expect(await page.locator('.msg').count()).toBeLessThan(24);
+          if (isMobile) await expect(page.locator('.mobile-drawer')).toHaveCount(0);
+        }
+        await page.evaluate(() => { const metrics = (window as any).__interactionMetrics; if (metrics.recording) metrics.windows.push({ start: metrics.started, end: performance.now() }); metrics.recording = false; metrics.previous = 0; });
         if (repeat === 1) {
           const ended = new Promise<string>(resolve => cdp.once("Tracing.tracingComplete", event => resolve(event.stream!)));
           await cdp.send("Tracing.end"); const handle = await ended; tracing = false;
@@ -108,17 +143,21 @@ for (const size of [50, 500, 2_000]) {
       await page.screenshot({ path: testInfo.outputPath("chat.png") });
       await testInfo.attach("chat.png", { path: testInfo.outputPath("chat.png"), contentType: "image/png" });
       await expect(page.getByLabel("输入消息", { exact: true })).toBeEditable();
-      const metrics = await page.evaluate(() => (window as any).__interactionMetrics) as { frames: number[]; clicks: number[]; windows: Array<{ start: number; end: number }>; longTasks: Array<{ at: number; duration: number }> };
+      const metrics = await page.evaluate(() => (window as any).__interactionMetrics) as { frames: number[]; clicks: number[]; navigation: number[]; windows: Array<{ start: number; end: number }>; longTasks: Array<{ at: number; duration: number }> };
       const p95 = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length * .95)] ?? 0;
       const animationTasks = metrics.longTasks.filter(task => metrics.windows.some(window => task.at >= window.start && task.at < window.end));
       const summary = { baseline: Boolean(process.env.MOTION_BASELINE), size, messageCount: 1_000, mobile: isMobile, cpuThrottle: 4, repetitions: 30,
         frameP95: p95(metrics.frames), slowFrameRatio: metrics.frames.filter(frame => frame > 33).length / metrics.frames.length,
-        clickPaintUpperBoundP95: p95(metrics.clicks), animationTasks, browser: await cdp.send("Browser.getVersion"),
+        clickPaintUpperBoundP95: p95(metrics.clicks), navigationPaintP95: p95(metrics.navigation), navigationSamples: metrics.navigation, animationTasks, browser: await cdp.send("Browser.getVersion"),
         note: "Desktop simulation; click metric bounds two animation frames, compositor trace attached. Real device thermal and battery measurements are separate." };
       await testInfo.attach("performance.json", { body: JSON.stringify(summary, null, 2), contentType: "application/json" });
       await writeFile(testInfo.outputPath("performance.json"), JSON.stringify(summary, null, 2));
       expect(metrics.frames.length).toBeGreaterThan(30);
       if (!process.env.MOTION_BASELINE) expect(summary.clickPaintUpperBoundP95).toBeLessThan(100);
+      if (!process.env.MOTION_BASELINE) {
+        expect(metrics.navigation.length).toBe(30);
+        expect(summary.navigationPaintP95).toBeLessThan(100);
+      }
       expect(JSON.parse(await readFile(testInfo.outputPath("compositor-trace.json"), "utf8")).traceEvents.length).toBeGreaterThan(0);
       if (!process.env.MOTION_BASELINE) {
         const delayed = new Promise<void>(resolve => { releaseMessages = resolve; });

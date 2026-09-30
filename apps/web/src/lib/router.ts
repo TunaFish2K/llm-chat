@@ -1,5 +1,21 @@
 import { useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 
+export interface NavigationOwner { session: string; revision: number; path: string }
+const navigationSession = crypto.randomUUID();
+let navigationRevision = 0;
+window.addEventListener("popstate", () => { navigationRevision++; });
+export function captureNavigation(): NavigationOwner {
+  return { session: navigationSession, revision: navigationRevision, path: location.pathname };
+}
+export function ownsNavigation(owner: NavigationOwner | undefined): boolean {
+  return Boolean(owner && owner.session === navigationSession && owner.revision === navigationRevision && owner.path === location.pathname);
+}
+export function navigateIfCurrent(path: string, owner: NavigationOwner): boolean {
+  if (!ownsNavigation(owner)) return false;
+  navigate(path);
+  return true;
+}
+
 export type Route =
   | { name: "chat"; conversationId: string | null; view: "chat" | "trajectory" | "tasks"; taskId: string | null }
   | { name: "agents"; agentId: string | null }
@@ -60,10 +76,26 @@ export function useRoute(): Route {
 }
 
 export function navigate(path: string): void {
-  if (window.location.pathname === path) return;
   if (!window.dispatchEvent(new CustomEvent("llm-chat:before-navigate", { cancelable: true, detail: { path } }))) return;
+  navigationRevision++;
+  if (window.location.pathname === path) return;
   window.history.pushState(null, "", path);
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+/** Paint urgent feedback before mounting the destination; newer intent cancels this request. */
+export function navigateAfterPaint(path: string, feedback: () => void): void {
+  if (!window.dispatchEvent(new CustomEvent("llm-chat:before-navigate", { cancelable: true, detail: { path } }))) return;
+  navigationRevision++;
+  const owner = captureNavigation();
+  feedback();
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      if (!ownsNavigation(owner) || location.pathname === path) return;
+      window.history.pushState(null, "", path);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    }, 0);
+  });
 }
 
 export function replaceRoute(path: string): void {
@@ -76,12 +108,12 @@ export function replaceRoute(path: string): void {
  * Click handler for internal links: keeps real hrefs (open-in-new-tab and
  * modified clicks keep working) while routing same-tab navigations in-app.
  */
-export function linkClick(path: string): (event: ReactMouseEvent<HTMLAnchorElement>) => void {
+export function linkClick(path: string, open: (path: string) => void = navigate): (event: ReactMouseEvent<HTMLAnchorElement>) => void {
   return (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
       return;
     }
     event.preventDefault();
-    navigate(path);
+    open(path);
   };
 }

@@ -31,7 +31,7 @@ import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposer
 import { ApiRequestError, endpoints } from "../../lib/api";
 import { acceptSubmission, appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration, updateConversationImmediately } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
-import { navigate, routes } from "../../lib/router";
+import { captureNavigation, navigateIfCurrent, ownsNavigation, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
 import { Button } from "../ui";
 import { DirectoryPicker } from "../DirectoryPicker";
@@ -134,6 +134,8 @@ export const Composer = memo(function Composer({
     attachmentSeed, conversation ? `conversation:${conversation.id}` : newDraftScope, conversation?.id);
   const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
   const liveInput = useRef({ text, attachments });
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   liveInput.current = { text, attachments };
   const wasGenerating = useRef(false);
   const currentDraft = useRef("");
@@ -314,6 +316,10 @@ export const Composer = memo(function Composer({
     if (!attempt || attempt.id !== receipt.clientSubmissionId || sendingRef.current || appStore.get().auth !== "ready" || appStore.get().sourceId !== receipt.sourceId) return;
     saveSubmission(id, null); setFailedSubmission(null); setSendError("");
     acceptSubmission(receipt);
+    if (!ownsNavigation(attempt.navigation)) {
+      void Promise.all([loadMessages(receipt.conversation.id), refreshConversations()]).catch(toastError);
+      return;
+    }
     const live = liveInput.current;
     const remainingText = live.text === attempt.originalText ? "" : live.text;
     const remainingAssets = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
@@ -324,7 +330,7 @@ export const Composer = memo(function Composer({
         overrides: {}, workspace: attempt.input.workspacePath, greetingIndex: 0 };
       writeComposerDraft(receipt.conversation.id, draft);
       writeComposerDraft(null, { ...draft, text: "", attachments: [] });
-      if (location.pathname === (attempt.route ?? "/")) navigate(routes.chat(receipt.conversation.id));
+      navigateIfCurrent(routes.chat(receipt.conversation.id), attempt.navigation!);
     }
     void Promise.all([loadMessages(receipt.conversation.id), refreshConversations(), ...(receipt.kind === "queue" ? [reloadQueue()] : [])]).catch(toastError);
   };
@@ -342,7 +348,11 @@ export const Composer = memo(function Composer({
       }).catch(() => {});
     };
     const previous = readSubmission(id);
-    if (previous) { previous.status = "unknown"; saveSubmission(id, previous); reconcile(); }
+    if (previous) {
+      const owner = captureNavigation();
+      if (!previous.navigation || previous.navigation.session !== owner.session) previous.navigation = owner;
+      previous.status = "unknown"; saveSubmission(id, previous); reconcile();
+    }
     const unsubscribe = submissionStore.subscribe(() => {
       const attempt = readSubmission(id);
       const receipt = attempt && submissionStore.get().accepted[attempt.id];
@@ -365,6 +375,7 @@ export const Composer = memo(function Composer({
     }
     const id = conversation?.id ?? null;
     const submittedRoute = location.pathname;
+    const navigation = captureNavigation();
     const sourceAtSend = appStore.get().sourceId;
     const validSession = () => appStore.get().auth === "ready" && appStore.get().sourceId === sourceAtSend;
     const syncAfterSend = (reads: Promise<unknown>[]) => {
@@ -381,20 +392,23 @@ export const Composer = memo(function Composer({
     };
     // Persist before attempting I/O. This is a manual retry receipt, not an outbox.
     sendingRef.current = true; setSending(true); setSendError("");
-    attempt.route = submittedRoute; attempt.status = "preparing"; saveSubmission(id, attempt);
+    attempt.route = submittedRoute; attempt.navigation = navigation; attempt.status = "preparing"; saveSubmission(id, attempt);
     onBeforeSend();
     const deadline = AbortSignal.timeout(30_000);
     let accepted = false;
     const clearAccepted = () => {
       accepted = true;
-      saveSubmission(id, null); setFailedSubmission(null);
+      const ownsInput = mounted.current && ownsNavigation(navigation) && readSubmission(id)?.id === attempt.id;
+      if (readSubmission(id)?.id === attempt.id) saveSubmission(id, null);
       const live = liveInput.current;
       const remainingText = live.text === attempt.originalText ? "" : live.text;
       const remainingAssets = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
-      setText(remainingText); setAttachments(remainingAssets);
-      if (id) scheduleServerDraft(id, remainingText);
+      if (ownsInput) {
+        setFailedSubmission(null); setText(remainingText); setAttachments(remainingAssets);
+        if (id) scheduleServerDraft(id, remainingText);
+      }
       offlineStore.set({ offline: false });
-      return { remainingText, remainingAssets };
+      return { remainingText, remainingAssets, ownsInput };
     };
     try {
       if (!attempt.prepared && conversation && roleplayAgent && roleplayState && quickReplies.some(reply => reply.mode === "script" && reply.autoTriggers.includes("before_send"))) {
@@ -402,22 +416,25 @@ export const Composer = memo(function Composer({
         onRoleplayStateChange(automated.state);
         attempt.text = (automated.sendText ?? automated.draft ?? attempt.text).trim();
       }
-      attempt.prepared = true; attempt.status = "submitting"; saveSubmission(id, attempt);
+      attempt.prepared = true; attempt.status = "submitting";
+      if (readSubmission(id)?.id === attempt.id) saveSubmission(id, attempt);
       if (!attempt.text && !attempt.assetIds.length) throw new Error(t("Composer.the_before_send_script_cleared_the_message"));
       if (attempt.kind === "start") {
         const result = await waitForSubmission(attempt.id, () => endpoints.startConversation({ ...attempt.input, text: attempt.text, assetIds: attempt.assetIds, clientSubmissionId: attempt.id }, deadline));
         if (!validSession()) return;
         if (result.acceptance) acceptSubmission(result.acceptance);
-        const { remainingText, remainingAssets } = clearAccepted();
+        const { remainingText, remainingAssets, ownsInput } = clearAccepted();
         // Preserve text typed during submission when navigation mounts the new composer.
         const nextDraft = { uploadScopeId: uploadScope, text: remainingText, attachments: remainingAssets, agentId: attempt.input.agentId,
           overrides: {}, workspace: attempt.input.workspacePath, greetingIndex: 0 };
-        writeComposerDraft(result.conversation.id, nextDraft);
-        writeComposerDraft(null, { ...nextDraft, text: "", attachments: [] });
-        appStore.set(state => ({ settings: state.settings ? { ...state.settings, lastAgentId: attempt.input.agentId } : null,
+        if (ownsInput) {
+          writeComposerDraft(result.conversation.id, nextDraft);
+          writeComposerDraft(null, { ...nextDraft, text: "", attachments: [] });
+        }
+        appStore.set(state => ({ settings: ownsInput && state.settings ? { ...state.settings, lastAgentId: attempt.input.agentId } : state.settings,
           conversations: state.conversations.some(item => item.id === result.conversation.id) ? state.conversations : [result.conversation, ...state.conversations] }));
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
-        if (location.pathname === submittedRoute) navigate(routes.chat(result.conversation.id));
+        if (ownsInput) navigateIfCurrent(routes.chat(result.conversation.id), navigation);
         if (effectiveAgent?.roleplayEnabled) void endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "", clientSubmissionId: attempt.id }).catch(() => {});
         syncAfterSend([refreshConversations(), loadMessages(result.conversation.id)]);
       } else {
@@ -430,7 +447,8 @@ export const Composer = memo(function Composer({
             trackGeneration(id!, result.assistantMessageId, result.generationId);
           } catch (error) {
             if (accepted || !(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
-            attempt.kind = "queue"; saveSubmission(id, attempt);
+            attempt.kind = "queue";
+            if (readSubmission(id)?.id === attempt.id) saveSubmission(id, attempt);
           }
         }
         if (attempt.kind === "queue") {
@@ -445,11 +463,11 @@ export const Composer = memo(function Composer({
     } catch (error) {
       if (!validSession()) return;
       if (accepted) toast("error", localized("Composer.sync_failed_after_send"));
-      else {
+      else if (readSubmission(id)?.id === attempt.id) {
         attempt.status = "unknown"; saveSubmission(id, attempt);
-        setFailedSubmission(attempt);
+        if (mounted.current && ownsNavigation(navigation)) setFailedSubmission(attempt);
         // Send errors must remain visible even when the network indicator says offline.
-        setSendError(error instanceof Error ? error.message : String(error));
+        if (mounted.current && ownsNavigation(navigation)) setSendError(error instanceof Error ? error.message : String(error));
         void endpoints.submission(attempt.id, id, attempt.kind).then(receipt => { if (validSession()) { acceptSubmission(receipt); recovery.current(receipt); } }).catch(() => {});
       }
     } finally { sendingRef.current = false; setSending(false); }

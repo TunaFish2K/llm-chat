@@ -1,6 +1,7 @@
 /** Manual retries keep an immutable request, including across a page reload. */
 import type { SubmissionAcceptedDto } from "@llm-chat/contracts";
 import { createStore } from "./store";
+import type { NavigationOwner } from "./router";
 
 export interface Submission {
   id: string;
@@ -14,6 +15,7 @@ export interface Submission {
   prepared: boolean;
   status?: "preparing" | "submitting" | "unknown";
   route?: string;
+  navigation?: NavigationOwner;
 }
 export const submissionStore = createStore<{ pending: Record<string, Submission>; accepted: Record<string, SubmissionAcceptedDto> }>({ pending: {}, accepted: {} });
 const memory = new Map<string, Submission>();

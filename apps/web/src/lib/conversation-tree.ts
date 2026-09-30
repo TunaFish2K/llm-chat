@@ -83,6 +83,12 @@ export function listConversationFamilies(conversations: readonly ConversationDto
   return index.families = [...families.values()].sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
 }
 
+export function conversationEntryTarget(conversation: ConversationDto, conversations: readonly ConversationDto[]): string {
+  const root = resolveConversationRoot(conversation, conversations);
+  const candidate = indexFor(conversations).byId.get(root.activeBranchId ?? root.id);
+  return candidate && resolveConversationRoot(candidate, conversations).id === root.id ? candidate.id : conversation.id;
+}
+
 export function conversationBranchGroups(
   conversation: ConversationDto,
   conversations: readonly ConversationDto[]

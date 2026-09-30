@@ -4,6 +4,28 @@ import { FakeEventSource } from "../../test/setup";
 import { appStore, loadMessages, refreshTaskCounts, restartGenerationTracking, startAppEvents, trackGeneration } from "./app-state";
 
 describe("message compatibility", () => {
+  it("yields cached history refresh until a paint and preserves unchanged message references", async () => {
+    history.replaceState(null, "", "/c/cached-history");
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.push(callback); return frames.length; });
+    const messages = Array.from({ length: 13 }, (_, index) => makeMessage({ id: `cached-${index}`, ordinal: index + 1, role: "user", text: `Cached ${index}` }));
+    appStore.set({ messages: { "cached-history": messages } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(messages), {
+      headers: { "content-type": "application/json" }
+    })));
+    const changed = vi.fn();
+    const unsubscribe = appStore.subscribe(changed);
+    try {
+      const read = loadMessages("cached-history");
+      await vi.waitFor(() => expect(frames).toHaveLength(1));
+      expect(appStore.get().messages["cached-history"]).toBe(messages);
+      frames[0]!(0);
+      expect(await read).toBe(messages);
+      expect(changed).not.toHaveBeenCalled();
+    } finally { unsubscribe(); }
+  });
+
   it("normalizes attachment and generation arrays omitted by an older server", async () => {
     history.replaceState(null, "", "/c/conv-legacy");
     const { attachments: _attachments, generations: _generations, ...legacyMessage } = makeMessage({

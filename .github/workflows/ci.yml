@@ -97,6 +97,8 @@ jobs:
         with:
           name: production-build
           path: apps
+      - name: Install read-only sandbox runtime
+        run: bash scripts/install-ci-bubblewrap.sh
       - name: Start version-matched browser runtime
         timeout-minutes: 4
         run: |
