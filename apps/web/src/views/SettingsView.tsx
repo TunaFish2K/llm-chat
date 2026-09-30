@@ -27,6 +27,7 @@ import { AccentPicker } from "../components/AccentPicker";
 import {
   appStore,
   acceptSettings,
+  updateSettingsImmediately,
   refreshSettings,
   toast,
   toastError
@@ -103,7 +104,7 @@ export function SettingsView({ section }: { section: string }) {
         <ConnectionsView embedded />
       ) : (
         <div className="panel-scroll">
-          <div className="panel-inner">
+          <div className="panel-inner tab-content" key={active}>
             {active === "general" ? <GeneralSection /> : null}
             {active === "appearance" ? <AppearanceSection /> : null}
             {active === "interaction" ? <InteractionSection /> : null}
@@ -260,24 +261,11 @@ function GeneralSection() {
   const settings = useStore(appStore, (s) => s.settings);
   const agents = useStore(appStore, (s) => s.agents);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
-  const patchSequence = useRef(Promise.resolve());
-  const patchVersion = useRef(0);
 
   if (!settings) return <LoadingState />;
 
   const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
-    const revision = ++patchVersion.current;
-    const current = appStore.get().settings ?? settings;
-    appStore.set({ settings: { ...current, ...value } });
-    patchSequence.current = patchSequence.current.then(async () => {
-      await endpoints.updateSettings(value);
-      if (revision !== patchVersion.current) return;
-      const saved = await endpoints.settings();
-      if (revision === patchVersion.current) {
-        acceptSettings(saved);
-        toast("success", localized("SettingsView.settings_saved"));
-      }
-    }).catch((error) => { toastError(error); if (revision === patchVersion.current) void refreshSettings().catch(toastError); });
+    void updateSettingsImmediately(value).then(() => toast("success", localized("SettingsView.settings_saved"))).catch(toastError);
   };
 
   return (
@@ -681,7 +669,7 @@ function SkillsSection() {
                 .then(async () => {
                   setInstallPath("");
                   toast("success", localized("SettingsView.skill_installed"));
-                  await load();
+                  void load();
                 })
                 .catch(toastError)
                 .finally(() => setBusy(false));
@@ -699,7 +687,7 @@ function SkillsSection() {
                     "success",
                     t("SettingsView.discovered_updated_unloaded_errors", { value1: (summary.discovered), value2: (summary.updated), value3: (summary.unloaded), value4: (summary.errors.length) })
                   );
-                  await load();
+                  void load();
                 })
                 .catch(toastError)
                 .finally(() => setBusy(false));
@@ -744,7 +732,7 @@ function SkillsSection() {
                     .reloadSkill(skill.id)
                     .then(async () => {
                       toast("success", localized("SettingsView.reloaded"));
-                      await load();
+                      void load();
                     })
                     .catch(toastError)
                     .finally(() => setBusy(false));
@@ -848,7 +836,7 @@ function PluginsSection() {
                 .then(async () => {
                   setInstallPath("");
                   toast("success", localized("SettingsView.plugin_installed"));
-                  await load();
+                  void load();
                 })
                 .catch(toastError)
                 .finally(() => setBusy(false));
@@ -955,7 +943,7 @@ function PluginConfigModal({
     setError(null);
     try {
       await endpoints.configurePlugin(plugin.id, config, secrets);
-      await onSaved();
+      void onSaved().catch(toastError);
       toast("success", localized("SettingsView.plugin_configuration_saved"));
       onClose();
     } catch (cause) {
@@ -1136,7 +1124,7 @@ function McpEditor({
       } else {
         await endpoints.createMcpServer({ name: name.trim(), url: url.trim(), enabled, headers: headerRecord });
       }
-      await onSaved();
+      void onSaved().catch(toastError);
       toast("success", localized("SettingsView.mcp_server_saved"));
       onClose();
     } catch (cause) {

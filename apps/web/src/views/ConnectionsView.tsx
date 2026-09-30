@@ -80,7 +80,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     setBusy(true);
     try {
       const result = await endpoints.discoverModels(connection.id);
-      await refreshConnectionsAndModels();
+      void refreshConnectionsAndModels().catch(toastError);
       const details = [
         t("ConnectionsView.found", { value1: (result.discovered) }),
         t("ConnectionsView.added", { value1: (result.created.length) }),
@@ -350,11 +350,12 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         };
         saved = await endpoints.createConnection(input);
       }
-      await refreshConnectionsAndModels();
+      onClose();
+      void refreshConnectionsAndModels().catch(toastError);
       if (providerId !== "custom" && providerId !== "stability") {
         try {
           const result = await endpoints.discoverModels(saved.id);
-          await refreshConnectionsAndModels();
+          void refreshConnectionsAndModels().catch(toastError);
           toast("success", localized("ConnectionsView.connection_saved_found_models_and_added", { value1: (result.discovered), value2: (result.created.length) }));
         } catch (cause) {
           toast("error", localized("ConnectionsView.connection_saved_but_model_discovery_failed", { value1: (cause instanceof Error ? cause.message : t("detail.request_failed")) }));
@@ -362,7 +363,6 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
       } else {
         toast("success", localized("ConnectionsView.connection_saved"));
       }
-      onClose();
     } catch (cause) {
       setError(cause instanceof Error ? cause : t("SettingsView.could_not_save"));
     } finally {
@@ -603,7 +603,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         await endpoints.updateModel(model.id, changes);
       }
       else await endpoints.createModel(input);
-      await refreshConnectionsAndModels();
+      void refreshConnectionsAndModels().catch(toastError);
       toast("success", localized("ConnectionsView.model_saved"));
       onClose();
     } catch (cause) {
@@ -619,7 +619,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
     setError(null);
     try {
       await endpoints.restoreModelCatalog(model.id);
-      await refreshConnectionsAndModels();
+      void refreshConnectionsAndModels().catch(toastError);
       toast("success", localized("ConnectionsView.restored_catalog_management_and_refreshed_model_settings"));
       onClose();
     } catch (cause) {

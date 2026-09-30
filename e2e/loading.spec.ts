@@ -32,11 +32,18 @@ test("启动请求未返回时先展示缓存，后台刷新不覆盖正在输�
     const input = page.getByLabel("输入消息", { exact: true });
     await expect(input).toBeEditable();
     expect(finished).toBe(false);
+    await expect(page.locator(".boot-refresh-notice, .offline-banner")).toHaveCount(0);
+    const positions = async () => ({ header: (await page.locator(".conversation-header").boundingBox())!.y, input: (await input.boundingBox())!.y });
+    const before = await positions();
     await testInfo.attach("cached-first-screen.json", { body: JSON.stringify({ milliseconds: Date.now() - started, bootstrapPending: true }), contentType: "application/json" });
     await input.fill("刷新期间编辑的草稿");
+    const response = page.waitForResponse(response => response.url().includes("/api/bootstrap") && response.ok());
     release();
-    await expect(page.locator(".boot-refresh-notice")).toHaveCount(0);
+    await response;
+    await expect.poll(() => finished).toBe(true);
+    await expect(page.locator(".boot-refresh-notice, .offline-banner")).toHaveCount(0);
     await expect(input).toHaveValue("刷新期间编辑的草稿");
+    await expect.poll(positions).toEqual(before);
     await expect(page).toHaveURL(`${APP_URL}/c/${id}`);
   } finally { release(); await page.goto("about:blank"); await provider.close(); }
 });
@@ -55,6 +62,7 @@ test("离线标记不拦截发送，失败保留草稿且只在手动重试时�
       return route.continue();
     });
     await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+    await expect(page.locator(".boot-refresh-notice, .offline-banner")).toHaveCount(0);
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator(".composer-send-error")).toBeVisible();
     await expect(input).toHaveValue("手动重试的消息");
@@ -69,7 +77,7 @@ test("离线标记不拦截发送，失败保留草稿且只在手动重试时�
   } finally { await page.goto("about:blank"); await provider.close(); }
 });
 
-test("响应丢失后刷新页面再重试不会重复创建消息", async ({ page, request }) => {
+test("响应丢失后通知或只读核对确认提交，刷新不会重复发送", async ({ page, request }) => {
   const { provider, id } = await chat(request);
   const bodies: Array<{ clientSubmissionId: string }> = [];
   try {
@@ -85,13 +93,12 @@ test("响应丢失后刷新页面再重试不会重复创建消息", async ({ pa
     await page.goto(`${APP_URL}/c/${id}`);
     await page.getByLabel("输入消息", { exact: true }).fill("只应创建一次");
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.locator(".composer-send-error")).toBeVisible();
+    await expect(page.locator('.msg[data-role="user"]').last()).toContainText("只应创建一次");
+    await expect(page.getByLabel("输入消息", { exact: true })).toHaveValue("");
     await page.reload();
-    await expect(page.locator(".composer-send-error")).toBeVisible();
-    expect(bodies).toHaveLength(1);
-    await page.locator(".composer-send-error").getByRole("button", { name: "重试", exact: true }).click();
+    await expect(page.locator('.msg[data-role="user"]').last()).toContainText("只应创建一次");
     await expect(page.locator(".composer-send-error")).toHaveCount(0);
-    expect(bodies[1]).toEqual(bodies[0]);
+    expect(bodies).toHaveLength(1);
     const messages = await api(request, APP_URL, "GET", `/api/conversations/${id}/messages`);
     expect(messages.filter((message: { role: string; text: string }) => message.role === "user" && message.text === "只应创建一次")).toHaveLength(1);
   } finally { await page.goto("about:blank"); await provider.close(); }

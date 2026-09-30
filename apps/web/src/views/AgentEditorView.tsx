@@ -103,7 +103,7 @@ function AgentEditorContent({ agentId }: { agentId: string }) {
       });
       setAgent(updated); agentResource.setData(updated);
       setDirty(false);
-      await refreshAgents();
+      void refreshAgents().catch(toastError);
       toast("success", localized("AgentEditorView.agent_saved"));
     } catch (cause) {
       toastError(cause);
@@ -158,7 +158,7 @@ function AgentEditorContent({ agentId }: { agentId: string }) {
         ))}
       </div>
       <div className="panel-scroll">
-        <div className="panel-inner">
+        <div className="panel-inner tab-content" key={tab}>
           {tab === "card" ? <CardTab agent={agent} mutate={mutate} /> : null}
           {tab === "roleplay" ? (
             <RoleplayTab
@@ -448,7 +448,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
       const dataBase64 = await fileToBase64(file);
       const updated = await endpoints.setAgentAvatar(agent.id, file.name, dataBase64);
       onChanged(updated);
-      await refreshAgents();
+      void refreshAgents().catch(toastError);
       toast("success", localized("AgentEditorView.avatar_updated"));
     } catch (error) {
       toastError(error);
@@ -511,7 +511,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
               .then(async () => {
                 const fresh = await endpoints.agent(agent.id);
                 onChanged(fresh);
-                await refreshAgents();
+                void refreshAgents().catch(toastError);
               })
               .catch(toastError)
               .finally(() => setBusy(false));

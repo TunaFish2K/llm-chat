@@ -11,6 +11,7 @@ import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
 import { LocalContainerEngine } from "./container-engine";
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
+import { ImageService } from "./images";
 
 const dirs: string[] = [];
 const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
@@ -24,6 +25,51 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it.each(["start", "send"])("publishes failed generation state if attachment preparation fails after accepting %s", async kind => {
+    const app = await testApp(); seedStoreModel(app.store);
+    const run = vi.spyOn(app.runner, "start").mockImplementation(() => {});
+    vi.spyOn(ImageService.prototype, "materializeMessageAttachments").mockRejectedValueOnce(new Error("Disk unavailable"));
+    const conversation = app.store.createConversation({ systemPrompt: "" });
+    const clientSubmissionId = randomUUID();
+    const url = kind === "start" ? "/api/conversations/start" : `/api/conversations/${conversation.id}/messages`;
+    const response = await app.inject({ method: "POST", url, payload: { agentId: app.store.getSettings().defaultAgentId, text: "accepted", clientSubmissionId } });
+    expect(response.statusCode).toBe(500);
+    const receipt = (await app.inject({ method: "GET", url: `/api/submissions/${clientSubmissionId}` })).json();
+    expect(receipt).toMatchObject({ clientSubmissionId, kind });
+    const generationId = kind === "start" ? receipt.result.generation.generationId : receipt.result.generationId;
+    expect(app.store.getGeneration(generationId)).toMatchObject({ status: "failed", error: { code: "attachment_materialization_failed" } });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("returns correlated acceptance and read-only receipts for start, send and queue", async () => {
+    const app = await testApp(); seedStoreModel(app.store);
+    vi.spyOn(app.runner, "start").mockImplementation(() => {});
+    const agentId = app.store.getSettings().defaultAgentId!;
+    const startId = randomUUID();
+    const started = await app.inject({ method: "POST", url: "/api/conversations/start", payload: { agentId, text: "once", clientSubmissionId: startId } });
+    expect(started.statusCode, started.body).toBe(202);
+    const result = started.json();
+    expect(result.acceptance).toMatchObject({ clientSubmissionId: startId, kind: "start", conversation: { id: result.conversation.id } });
+    expect(result.acceptance.messages.some((message: { text: string }) => message.text === "once")).toBe(true);
+    const before = app.store.listMessages(result.conversation.id).length;
+    for (let i = 0; i < 3; i++) expect((await app.inject({ method: "GET", url: `/api/submissions/${startId}` })).json()).toMatchObject({ kind: "start", clientSubmissionId: startId });
+    expect(app.store.listMessages(result.conversation.id)).toHaveLength(before);
+    expect((await app.inject({ method: "GET", url: `/api/submissions/${startId}`, headers: { cookie: "" } })).statusCode).toBe(401);
+    const conversation = app.store.createConversation({ agentId });
+    const sendId = randomUUID();
+    const sent = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/messages`, payload: { text: "message", clientSubmissionId: sendId } });
+    expect(sent.statusCode, sent.body).toBe(202);
+    expect(sent.json().acceptance).toMatchObject({ kind: "send", clientSubmissionId: sendId, messages: [{ role: "user", text: "message" }, { role: "assistant" }] });
+    const queueId = randomUUID();
+    const queued = await app.inject({ method: "POST", url: `/api/conversations/${conversation.id}/queued-messages`, payload: { text: "queued", clientSubmissionId: queueId } });
+    expect(queued.statusCode, queued.body).toBe(202);
+    expect((await app.inject({ method: "GET", url: `/api/submissions/${queueId}` })).json()).toMatchObject({ kind: "queue", messages: [], result: { text: "queued" } });
+    expect((await app.inject({ method: "GET", url: `/api/submissions/${randomUUID()}` })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/api/submissions/invalid" })).statusCode).toBe(400);
+    app.store.deleteConversation(result.conversation.id);
+    expect((await app.inject({ method: "GET", url: `/api/submissions/${startId}` })).statusCode).toBe(404);
+  });
+
   it("serves authenticated prompt defaults and applies them only when omitted", async () => {
     const app = await testApp();
     const id = app.store.getSettings().defaultAgentId!;

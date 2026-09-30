@@ -4,13 +4,6 @@ import { clearOfflineHistory, offlineStore, setOfflineEnabled, syncOfflineHistor
 import { useStore } from "../lib/store";
 import { formatTime } from "../lib/format";
 
-export function OfflineBanner() {
-  useLocale();
-  const state = useStore(offlineStore, (value) => value);
-  if (!state.offline) return null;
-  return <div className="offline-banner" role="status">{t("OfflineHistorySettings.offline_reading", { value1: (state.lastSync ? t("detail.last_synced", { value1: (formatTime(state.lastSync)) }) : t("detail.only_records_saved_on_this_device_are_shown")) })}<button className="btn small" disabled={state.syncing} onClick={() => void syncOfflineHistory()}>{t("OfflineHistorySettings.reconnect")}</button>
-  </div>;
-}
 export function OfflineHistorySettings() {
   useLocale();
   const state = useStore(offlineStore, (value) => value);

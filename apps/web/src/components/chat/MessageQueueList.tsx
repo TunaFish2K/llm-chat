@@ -3,7 +3,7 @@ import { t, useLocale } from "../../lib/i18n";
 import { RefreshScheduler } from "../../lib/refresh-scheduler";
 import { conversationDeleted } from "../../lib/conversation-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Trash2, X } from "lucide-react";
+import { LoaderCircle, Trash2, X } from "lucide-react";
 import type { QueuedMessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { refreshMessages, toastError } from "../../lib/app-state";
@@ -52,17 +52,27 @@ export function MessageQueueList({ conversationId, items, reload, paused = false
   conversationId: string | undefined; items: QueuedMessageDto[]; reload: () => Promise<void>; paused?: boolean;
 }) {
   useLocale();
+  const [pending, setPending] = useState<string | null>(null);
   if (!conversationId || !items.length) return null;
   const remove = async (id?: string) => {
-    try { await endpoints.deleteQueuedMessage(conversationId, id); await reload(); } catch (error) { toastError(error); }
+    if (pending) return;
+    setPending(id ?? "all");
+    try { await endpoints.deleteQueuedMessage(conversationId, id); void reload().catch(toastError); }
+    catch (error) { toastError(error); } finally { setPending(null); }
   };
-  return <section className="message-queue" aria-label={t("MessageQueueList.queued_messages")}>
-    {paused ? <div className="row"><span>{t("MessageQueueList.queue_paused")}</span><button className="btn small" onClick={() => void endpoints.resumeQueue(conversationId).then(reload).catch(toastError)}>{t("MessageQueueList.resume_sending")}</button></div> : null}
-    <header><span>{t("MessageQueueList.queued", { value1: (items.length) })}</span><button type="button" className="icon-button" aria-label={t("MessageQueueList.clear_queued_messages")} onClick={() => void remove()}><Trash2 size={15} /></button></header>
+  const resume = async () => {
+    if (pending) return;
+    setPending("resume");
+    try { await endpoints.resumeQueue(conversationId); void reload().catch(toastError); }
+    catch (error) { toastError(error); } finally { setPending(null); }
+  };
+  return <section className="message-queue" aria-label={t("MessageQueueList.queued_messages")} aria-busy={Boolean(pending)}>
+    {paused ? <div className="row"><span>{t("MessageQueueList.queue_paused")}</span><button className="btn small" disabled={Boolean(pending)} onClick={() => void resume()}>{pending === "resume" ? <LoaderCircle size={15} className="spin" /> : null}{t("MessageQueueList.resume_sending")}</button></div> : null}
+    <header><span>{t("MessageQueueList.queued", { value1: (items.length) })}</span><button type="button" className="icon-button" disabled={Boolean(pending)} aria-label={t("MessageQueueList.clear_queued_messages")} onClick={() => void remove()}>{pending === "all" ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}</button></header>
     <ol>{items.map((item) => <li key={item.id}>
       <div><p>{item.mode === "steer" ? <span className="tag accent">{t("MessageQueueList.steer_next_request")}</span> : null}{item.text || t("MessageQueueList.message_with_attachments")}</p>{item.attachments.length ? <small>{t("MessageQueueList.attachments", { count: Number((item.attachments.length)), value1: (item.attachments.length) })}</small> : null}
         {item.status === "dispatching" ? <small>{t("MessageQueueList.sending")}</small> : item.error ? <small role="alert">{displayError({ message: item.error, ...(item.errorI18n ? { i18n: item.errorI18n } : {}) })}</small> : null}</div>
-      <button type="button" className="icon-button" disabled={item.status === "dispatching"} aria-label={t("MessageQueueList.delete_queued_message", { value1: (item.text || t("MessageQueueList.message_with_attachments")) })} onClick={() => void remove(item.id)}><X size={15} /></button>
+      <button type="button" className="icon-button" disabled={Boolean(pending) || item.status === "dispatching"} aria-label={t("MessageQueueList.delete_queued_message", { value1: (item.text || t("MessageQueueList.message_with_attachments")) })} onClick={() => void remove(item.id)}>{pending === item.id ? <LoaderCircle size={15} className="spin" /> : <X size={15} />}</button>
     </li>)}</ol>
   </section>;
 }

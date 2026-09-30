@@ -1563,6 +1563,8 @@
   "error.submission_conflict": "Submission content changed. Send it as a new message.",
   "http_client.request_timeout": "The request timed out before receipt was confirmed. Your content is saved; you can retry.",
   "Composer.send_failed": "Send failed",
+  "Composer.preparing_message": "Preparing",
+  "Composer.submission_unknown": "Awaiting confirmation",
   "Composer.sync_failed_after_send": "Message accepted, but refreshing content failed.",
   "App.refreshing_cached": "Updating saved content…"
 }

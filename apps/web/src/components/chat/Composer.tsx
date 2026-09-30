@@ -1,4 +1,4 @@
-import { readSubmission, saveSubmission, type Submission } from "../../lib/submission";
+import { readSubmission, saveSubmission, submissionStore, waitForSubmission, type Submission } from "../../lib/submission";
 import { PopoverLayer, Presence } from "../../lib/motion";
 import { effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
 import { useErrorState } from "../../lib/error-display";
@@ -25,10 +25,11 @@ import type {
   ConversationExecutionOverrides,
   ConversationRoleplayState,
   AgentDto,
+  SubmissionAcceptedDto,
 } from "@llm-chat/contracts";
 import { recoveredDraftIds, swapRecoveredDraft, readComposerDraft, writeComposerDraft, scheduleServerDraft, flushServerDraft, serializeModelSelection } from "../../lib/composer-drafts";
 import { ApiRequestError, endpoints } from "../../lib/api";
-import { appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration } from "../../lib/app-state";
+import { acceptSubmission, appStore, isGenerationActive, loadMessages, refreshAgents, refreshConversations, restartGenerationTracking, toast, toastError, trackGeneration, updateConversationImmediately } from "../../lib/app-state";
 import type { InspectionTarget } from "../../lib/inspection";
 import { navigate, routes } from "../../lib/router";
 import { useStore } from "../../lib/store";
@@ -226,11 +227,11 @@ export const Composer = memo(function Composer({
     try {
       await serializeModelSelection(effectiveAgentId, async () => {
         if (conversation) {
-          await endpoints.updateConversation(conversation.id, explicitSelection && typeof next.modelId === "string"
+          await updateConversationImmediately(conversation.id, explicitSelection && typeof next.modelId === "string"
             ? { modelId: next.modelId } : { executionOverrides: next });
-          await refreshConversations();
+          void refreshConversations().catch(toastError);
         } else if (remember) await endpoints.selectAgentModel(effectiveAgentId, next.modelId!);
-        if (remember) await refreshAgents();
+        if (remember) void refreshAgents().catch(toastError);
       });
       if (message) toast("success", message);
     } catch (error) {
@@ -266,9 +267,9 @@ export const Composer = memo(function Composer({
       return;
     }
     try {
-      await endpoints.updateConversation(conversation.id, { agentId });
-      await refreshConversations();
       setPendingAgent(null);
+      await updateConversationImmediately(conversation.id, { agentId });
+      void refreshConversations().catch(toastError);
     } catch (error) {
       toastError(error);
     }
@@ -288,13 +289,59 @@ export const Composer = memo(function Composer({
       return;
     }
     try {
-      await endpoints.updateConversation(conversation.id, { workspacePath: path });
-      await refreshConversations();
+      await updateConversationImmediately(conversation.id, { workspacePath: path });
+      void refreshConversations().catch(toastError);
       toast("success", path ? t("Composer.working_directory_updated") : t("Composer.working_directory_cleared"));
     } catch (error) {
       toastError(error);
     }
   };
+
+  const recovery = useRef<(receipt: SubmissionAcceptedDto) => void>(() => {});
+  recovery.current = receipt => {
+    const id = conversation?.id ?? null;
+    const attempt = readSubmission(id);
+    if (!attempt || attempt.id !== receipt.clientSubmissionId || sendingRef.current || appStore.get().auth !== "ready" || appStore.get().sourceId !== receipt.sourceId) return;
+    saveSubmission(id, null); setFailedSubmission(null); setSendError("");
+    acceptSubmission(receipt);
+    const live = liveInput.current;
+    const remainingText = live.text === attempt.originalText ? "" : live.text;
+    const remainingAssets = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
+    setText(remainingText); setAttachments(remainingAssets);
+    if (id) scheduleServerDraft(id, remainingText);
+    if (receipt.kind === "start") {
+      const draft = { uploadScopeId: uploadScope, text: remainingText, attachments: remainingAssets, agentId: attempt.input.agentId,
+        overrides: {}, workspace: attempt.input.workspacePath, greetingIndex: 0 };
+      writeComposerDraft(receipt.conversation.id, draft);
+      writeComposerDraft(null, { ...draft, text: "", attachments: [] });
+      if (location.pathname === (attempt.route ?? "/")) navigate(routes.chat(receipt.conversation.id));
+    }
+    void Promise.all([loadMessages(receipt.conversation.id), refreshConversations(), ...(receipt.kind === "queue" ? [reloadQueue()] : [])]).catch(toastError);
+  };
+  useEffect(() => {
+    const id = conversation?.id ?? null;
+    let alive = true;
+    const reconcile = () => {
+      const attempt = readSubmission(id);
+      if (!attempt) return;
+      const known = submissionStore.get().accepted[attempt.id];
+      if (known) { recovery.current(known); return; }
+      void endpoints.submission(attempt.id, id, attempt.kind).then(receipt => {
+        if (!alive || appStore.get().auth !== "ready" || appStore.get().sourceId !== receipt.sourceId || readSubmission(id)?.id !== receipt.clientSubmissionId) return;
+        acceptSubmission(receipt); recovery.current(receipt);
+      }).catch(() => {});
+    };
+    const previous = readSubmission(id);
+    if (previous) { previous.status = "unknown"; saveSubmission(id, previous); reconcile(); }
+    const unsubscribe = submissionStore.subscribe(() => {
+      const attempt = readSubmission(id);
+      const receipt = attempt && submissionStore.get().accepted[attempt.id];
+      if (receipt) recovery.current(receipt);
+    });
+    window.addEventListener("llm-chat:queue-reconnect", reconcile);
+    window.addEventListener("llm-chat:offline-reconnected", reconcile);
+    return () => { alive = false; unsubscribe(); window.removeEventListener("llm-chat:queue-reconnect", reconcile); window.removeEventListener("llm-chat:offline-reconnected", reconcile); };
+  }, [conversation?.id]);
 
   const sendMessage = async (overrideText?: string, steer = false, retry?: Submission) => {
     const originalText = overrideText ?? text;
@@ -308,6 +355,8 @@ export const Composer = memo(function Composer({
     }
     const id = conversation?.id ?? null;
     const submittedRoute = location.pathname;
+    const sourceAtSend = appStore.get().sourceId;
+    const validSession = () => appStore.get().auth === "ready" && appStore.get().sourceId === sourceAtSend;
     const syncAfterSend = (reads: Promise<unknown>[]) => {
       void Promise.all(reads).catch(() => toast("error", localized("Composer.sync_failed_after_send")));
     };
@@ -317,12 +366,12 @@ export const Composer = memo(function Composer({
       && (id !== null || JSON.stringify(previous.input) === JSON.stringify({ agentId: effectiveAgent?.id, greetingIndex, executionOverrides: newOverrides, workspacePath: newWorkspace }));
     const attempt: Submission = retry ?? (reusable ? previous : null) ?? {
       id: crypto.randomUUID(), kind: !conversation ? "start" : active || (!queuePaused && queuedMessages.some(item => item.status !== "failed")) ? "queue" : "send",
-      originalText, text: originalText.trim(), assetIds: attachments.map(asset => asset.id), mode: steer ? "steer" : "queue",
+      originalText, text: originalText.trim(), assetIds: attachments.map(asset => asset.id), attachments: [...attachments], mode: steer ? "steer" : "queue",
       input: { agentId: effectiveAgent!.id, greetingIndex, executionOverrides: newOverrides, workspacePath: newWorkspace }, prepared: false
     };
     // Persist before attempting I/O. This is a manual retry receipt, not an outbox.
-    saveSubmission(id, attempt);
     sendingRef.current = true; setSending(true); setSendError("");
+    attempt.route = submittedRoute; attempt.status = "preparing"; saveSubmission(id, attempt);
     onBeforeSend();
     const deadline = AbortSignal.timeout(30_000);
     let accepted = false;
@@ -343,10 +392,12 @@ export const Composer = memo(function Composer({
         onRoleplayStateChange(automated.state);
         attempt.text = (automated.sendText ?? automated.draft ?? attempt.text).trim();
       }
-      attempt.prepared = true; saveSubmission(id, attempt);
+      attempt.prepared = true; attempt.status = "submitting"; saveSubmission(id, attempt);
       if (!attempt.text && !attempt.assetIds.length) throw new Error(t("Composer.the_before_send_script_cleared_the_message"));
       if (attempt.kind === "start") {
-        const result = await endpoints.startConversation({ ...attempt.input, text: attempt.text, assetIds: attempt.assetIds, clientSubmissionId: attempt.id }, deadline);
+        const result = await waitForSubmission(attempt.id, () => endpoints.startConversation({ ...attempt.input, text: attempt.text, assetIds: attempt.assetIds, clientSubmissionId: attempt.id }, deadline));
+        if (!validSession()) return;
+        if (result.acceptance) acceptSubmission(result.acceptance);
         const { remainingText, remainingAssets } = clearAccepted();
         // Preserve text typed during submission when navigation mounts the new composer.
         const nextDraft = { uploadScopeId: uploadScope, text: remainingText, attachments: remainingAssets, agentId: attempt.input.agentId,
@@ -362,7 +413,9 @@ export const Composer = memo(function Composer({
       } else {
         if (attempt.kind === "send") {
           try {
-            const result = await endpoints.sendMessage(id!, attempt.text, attempt.assetIds, attempt.id, deadline);
+            const result = await waitForSubmission(attempt.id, () => endpoints.sendMessage(id!, attempt.text, attempt.assetIds, attempt.id, deadline));
+            if (!validSession()) return;
+            if (result.acceptance) acceptSubmission(result.acceptance);
             clearAccepted();
             trackGeneration(id!, result.assistantMessageId, result.generationId);
           } catch (error) {
@@ -371,18 +424,23 @@ export const Composer = memo(function Composer({
           }
         }
         if (attempt.kind === "queue") {
-          await endpoints.enqueueMessage(id!, attempt.text, attempt.assetIds, attempt.mode, attempt.id, deadline);
+          const result = await waitForSubmission(attempt.id, () => endpoints.enqueueMessage(id!, attempt.text, attempt.assetIds, attempt.mode, attempt.id, deadline));
+          if (!validSession()) return;
+          if (result.acceptance) acceptSubmission(result.acceptance);
           clearAccepted();
           syncAfterSend([reloadQueue()]);
         }
         syncAfterSend([loadMessages(id!), refreshConversations()]);
       }
     } catch (error) {
+      if (!validSession()) return;
       if (accepted) toast("error", localized("Composer.sync_failed_after_send"));
       else {
+        attempt.status = "unknown"; saveSubmission(id, attempt);
         setFailedSubmission(attempt);
         // Send errors must remain visible even when the network indicator says offline.
         setSendError(error instanceof Error ? error.message : String(error));
+        void endpoints.submission(attempt.id, id, attempt.kind).then(receipt => { if (validSession()) { acceptSubmission(receipt); recovery.current(receipt); } }).catch(() => {});
       }
     } finally { sendingRef.current = false; setSending(false); }
   };
@@ -521,7 +579,7 @@ export const Composer = memo(function Composer({
 
                   <ReasoningPicker value={selectedReasoning} inherited={inheritedReasoning} model={effectiveModel} disabled={controlsDisabled} onChange={chooseReasoning} />
 
-                  <Popover.Root modal={false} open={settingsOpen} onOpenChange={(open) => { setSettingsOpen(open); if (!open) setTypographyOpen(false); }}>
+                  <Popover.Root modal={false} open={settingsOpen} onOpenChange={(open) => { if (open) setTypographyOpen(false); setSettingsOpen(open); }}>
                     {typographyOpen ? <Popover.Anchor virtualRef={inputAreaRef} /> : null}
                     <Popover.Trigger asChild><button type="button" className="chip composer-settings-trigger"
                       aria-label={t("Composer.more_settings")} title={t("Composer.more_settings")}>
@@ -529,10 +587,11 @@ export const Composer = memo(function Composer({
                       {Object.keys(overrides).length ? <b>{Object.keys(overrides).length}</b> : null}
                     </button></Popover.Trigger>
                     <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover" side="top" align="start" sideOffset={10}
+                      inert={!settingsOpen ? true : undefined} aria-hidden={!settingsOpen || undefined}
                       onInteractOutside={(event) => { if (typographyOpen) event.preventDefault(); }}><PopoverLayer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
                       {typographyOpen ? <>
                         <div className="chat-typography-heading"><button type="button" onClick={() => setTypographyOpen(false)}>{t("Composer.back")}</button><strong>{t("SettingsView.chat_typography")}</strong>
-                          <button type="button" aria-label={t("Composer.close_typography_settings")} onClick={() => { setSettingsOpen(false); setTypographyOpen(false); }}><X size={18} /></button></div>
+                          <button type="button" aria-label={t("Composer.close_typography_settings")} onClick={() => setSettingsOpen(false)}><X size={18} /></button></div>
                         <ChatTypographySettings />
                       </> : <>
                       <button type="button" onClick={() => setTypographyOpen(true)}><span><strong>{t("SettingsView.chat_typography")}</strong><small>{t("Composer.font_size_letter_spacing_and_line_height")}</small></span></button>
@@ -582,7 +641,7 @@ export const Composer = memo(function Composer({
                       </button>
                     </Popover.Trigger>
                     <Popover.Portal>
-                      <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10}><PopoverLayer open={moreOpen} onClose={() => setMoreOpen(false)} />
+                      <Popover.Content className="composer-more-popover" side="bottom" align="end" sideOffset={10} inert={!moreOpen ? true : undefined} aria-hidden={!moreOpen || undefined}><PopoverLayer open={moreOpen} onClose={() => setMoreOpen(false)} />
                         {roleplayAvailable ? (
                           <button type="button" aria-label={t("RoleplayConversationDialog.roleplay_conversation_settings")} onClick={() => { setMoreOpen(false); onOpenRoleplay(); }} disabled={controlsDisabled}>
                             <Drama size={16} aria-hidden="true" />
@@ -662,7 +721,7 @@ function ApprovalCard({
     setError("");
     try {
       const result = await endpoints.resolveToolCall(conversationId, item.call.id, approved, approved ? undefined : reason.trim() || undefined);
-      await loadMessages(conversationId);
+      void loadMessages(conversationId).catch(toastError);
       if (result.resumed) restartGenerationTracking(conversationId, item.messageId, result.generationId);
       setDenying(false);
       setReason("");

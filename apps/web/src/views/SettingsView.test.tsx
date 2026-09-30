@@ -340,7 +340,7 @@ describe("SettingsView", () => {
       secretHeaders: {}
     }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建连接" })).not.toBeInTheDocument());
-    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    expect(screen.getByText("OpenAI", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "手动添加模型" })).toBeEnabled();
   });
 

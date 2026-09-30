@@ -14,11 +14,18 @@ function snapshot(id: string): OfflineConversationDto {
 it("migrates legacy records one at a time and stores lightweight size/image metadata", async () => {
   const records = Array.from({ length: 60 }, (_, index) => snapshot(String(index).padStart(3, "0")));
   await offlineWrite("probe", (tx) => { for (const record of records) tx.objectStore("conversations").put(record); });
-  const all = vi.spyOn(IDBObjectStore.prototype, "getAll").mockImplementation(() => { throw new Error("Do not load full history"); });
+  const getAll = IDBObjectStore.prototype.getAll;
+  const all = vi.spyOn(IDBObjectStore.prototype, "getAll").mockImplementation(function (this: IDBObjectStore, ...args) {
+    if (this.name === "conversations") throw new Error("Do not load full history");
+    return getAll.apply(this, args);
+  });
   const entries = await offlineConversationIndex();
   expect(entries).toHaveLength(60);
   expect(entries.every((entry) => !Reflect.has(entry, "messages") && entry.bytes > 20_000)).toBe(true);
   expect(await offlineRead("meta", "conversation:000")).toMatchObject({ id: "000", bytes: entries[0]!.bytes });
+  const cursor = vi.spyOn(IDBObjectStore.prototype, "openCursor");
+  expect(await offlineConversationIndex()).toHaveLength(60);
+  expect(cursor).not.toHaveBeenCalled(); cursor.mockRestore();
   const record = { ...records[0]!, revision: 2, messages: [] };
   await offlineWrite("probe", (tx) => { putOfflineConversation(tx, record); deleteOfflineConversation(tx, "001"); });
   expect(await offlineRead("meta", "conversation:001")).toBeUndefined();

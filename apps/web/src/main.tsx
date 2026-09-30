@@ -3,6 +3,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles/index.css";
+import { installPressFeedback } from "./lib/press-feedback";
+
+installPressFeedback();
 
 const container = document.getElementById("root");
 if (!container) throw new Error(t("main.missing_root_mount_point"));

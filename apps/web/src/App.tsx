@@ -3,8 +3,7 @@ import { GlobalFileUploads } from "./components/FileUploads";
 import { useErrorState } from "./lib/error-display";
 import { t, useLocale, localized } from "./lib/i18n";
 import { initOfflineHistory, isOffline } from "./lib/offline-history";
-import { OfflineBanner } from "./components/OfflineHistorySettings";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { dismissBackLayer, parentRoute, requestMobileBack, useMobileBackGesture } from "./lib/mobile-navigation";
 import { endpoints } from "./lib/api";
@@ -53,7 +52,6 @@ export function App() {
   useLocale();
   const sourceId = useStore(appStore, state => state.sourceId);
   const auth = useStore(appStore, (state) => state.auth);
-  const bootRefreshing = useStore(appStore, state => state.bootRefreshing);
   const bootError = useStore(appStore, (state) => state.bootError);
   const settings = useStore(appStore, (state) => state.settings);
   const conversations = useStore(appStore, (state) => state.conversations);
@@ -66,6 +64,10 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspection, setInspection] = useState<InspectionTarget | null>(null);
+  const openNav = useCallback(() => setNavDrawer(true), []);
+  const toggleSidebar = useCallback(() => mobile ? setNavDrawer(true) : setSidebarCollapsed(value => !value), [mobile]);
+  const toggleInspector = useCallback(() => setInspectorOpen(value => !value), []);
+  const inspect = useCallback((target: InspectionTarget) => { setInspection(target); setInspectorOpen(true); }, []);
   const back = () => {
     if (dismissBackLayer()) return;
     const parent = parentRoute(route);
@@ -175,12 +177,10 @@ export function App() {
       ) : null}
 
       <main className="workspace-main">
-        <OfflineBanner />
-        {bootError ? <div className="boot-refresh-notice" role="alert">{bootError}<button className="btn small" onClick={() => void bootstrap(route.name === "chat" ? route.conversationId ?? undefined : undefined, true)}>{t("NotificationSettings.retry")}</button></div> : bootRefreshing ? <div className="boot-refresh-notice" role="status">{t("App.refreshing_cached")}</div> : null}
         {route.name !== "chat" ? (
           <MobileAppBar
             title={routeTitle(route, conversations, agents)}
-            onOpenNav={() => setNavDrawer(true)}
+            onOpenNav={openNav}
             onBack={parentRoute(route) ? requestMobileBack : undefined}
             onOpenInspector={null}
           />
@@ -190,13 +190,10 @@ export function App() {
             route={route}
             mobile={mobile}
             sidebarCollapsed={sidebarCollapsed}
-            onToggleSidebar={() => (mobile ? setNavDrawer(true) : setSidebarCollapsed((value) => !value))}
+            onToggleSidebar={toggleSidebar}
             inspectorOpen={showInspector}
-            onToggleInspector={() => setInspectorOpen((value) => !value)}
-            onInspect={(target) => {
-              setInspection(target);
-              setInspectorOpen(true);
-            }}
+            onToggleInspector={toggleInspector}
+            onInspect={inspect}
           />
         </Suspense>
       </main>
@@ -242,7 +239,7 @@ export function App() {
   );
 }
 
-function RouteView({
+const RouteView = memo(function RouteView({
   route,
   mobile,
   sidebarCollapsed,
@@ -298,7 +295,7 @@ function RouteView({
       }
     />
   );
-}
+});
 
 /** Old `/tasks/:id` links still resolve: look the task up, then rewrite the URL. */
 function LegacyTaskRedirect({ taskId }: { taskId: string | null }) {

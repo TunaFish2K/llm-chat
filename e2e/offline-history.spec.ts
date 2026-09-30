@@ -26,11 +26,11 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     const mutations: string[] = [];
     cold.on("request", (req) => { if (req.url().includes("/api/") && !["GET", "HEAD"].includes(req.method())) mutations.push(req.url()); });
     await cold.goto(`${APP_URL}/c/${first.conversation.id}`);
-    await expect(cold.locator(".offline-banner")).toContainText("离线查阅");
     expect(await cold.evaluate(async () => {
       try { await fetch("/api/health", { cache: "no-store" }); return true; } catch { return false; }
     })).toBe(false);
     await expect(cold.locator('.msg[data-role="assistant"]').last()).toContainText("离线测试正文");
+    await expect(cold.locator(".offline-banner, .boot-refresh-notice")).toHaveCount(0);
     await expect.poll(() => cold.getByAltText("离线图片").last().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
     await cold.getByRole("button", { name: "上一版本", exact: true }).click();
     await expect(cold.getByLabel("生成版本切换")).toContainText("1 / 2");
@@ -49,7 +49,10 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     await expect(cold.locator('.msg[data-role="user"]')).toContainText("未打开的离线记录乙");
     expect(mutations).toEqual([]);
     await context.setOffline(false);
-    await expect(cold.locator(".offline-banner")).toHaveCount(0);
+    await expect.poll(() => cold.evaluate(async () => {
+      try { return (await fetch("/api/health", { cache: "no-store" })).ok; } catch { return false; }
+    })).toBe(true);
+    await expect(cold.locator(".offline-banner, .boot-refresh-notice")).toHaveCount(0);
     await api(request, APP_URL, "DELETE", `/api/conversations/${first.conversation.id}`);
     await page.getByRole("button", { name: "立即同步", exact: true }).click();
     await expect.poll(() => page.evaluate(async (id) => {

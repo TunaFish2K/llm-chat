@@ -5,7 +5,7 @@ import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { isOffline, offlineStore } from "../lib/offline-history";
 import { useEffect, useRef, useState } from "react";
 import { endpoints } from "../lib/api";
-import { appStore, browseOfflineBranch, refreshConversations, toastError } from "../lib/app-state";
+import { appStore, browseOfflineBranch, refreshConversations, selectBranchImmediately, toastError } from "../lib/app-state";
 import { resolveConversationRoot } from "../lib/conversation-tree";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
@@ -43,12 +43,13 @@ export function ConversationSearch({ onClose }: { onClose: () => void }) {
   const open = async (id: string) => {
     if (loading || !resultsCurrent) return;
     if (conversationDeleted(id)) return;
+    browseOfflineBranch(id); onClose(); navigate(routes.chat(id));
+    window.dispatchEvent(new Event("llm-chat:reveal-conversation"));
     try {
-      if (isOffline()) { browseOfflineBranch(id); onClose(); navigate(routes.chat(id)); return; }
+      if (isOffline()) return;
       const conversation = conversations.find((item) => item.id === id);
-      if (conversation) await endpoints.selectConversationBranch(resolveConversationRoot(conversation, conversations).id, id);
-      await refreshConversations(); onClose(); if (!conversationDeleted(id)) navigate(routes.chat(id));
-      window.dispatchEvent(new Event("llm-chat:reveal-conversation"));
+      if (conversation) await selectBranchImmediately(resolveConversationRoot(conversation, conversations).id, id);
+      void refreshConversations().catch(toastError);
     } catch (cause) { toastError(cause); }
   };
   return <Modal title={t("WorkspaceSidebar.search_conversations")} onClose={onClose} wide>

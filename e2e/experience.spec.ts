@@ -98,6 +98,7 @@ test("搜索标题和正文并高亮，通过菜单管理会话", async ({ page,
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     if (test.info().project.name === "mobile-chromium") {
+      await expect(page.locator(".modal-backdrop")).toHaveCount(0);
       await expect(page.locator(".drawer-panel")).toHaveCount(1);
       await page.keyboard.press("Escape");
       await expect(page.locator(".drawer-panel")).toHaveCount(0);

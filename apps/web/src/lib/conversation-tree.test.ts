@@ -16,6 +16,27 @@ const origin = (
 ) => ({ conversationId, messageId, messageOrdinal: 1, mode, greetingIndex, sourceGreetingIndex });
 
 describe("conversation tree", () => {
+  it("indexes a long chain once and rebuilds for a new list version", () => {
+    const items = Array.from({ length: 2_000 }, (_, index) => makeConversation({ id: `node-${index}`, updatedAt: index,
+      forkedFrom: index ? origin(`node-${index - 1}`, `message-${index}`, "edit") : null }));
+    const families = listConversationFamilies(items);
+    expect(families).toEqual([{ root: items[0], latestUpdatedAt: 1_999, size: 2_000 }]);
+    expect(listConversationFamilies(items)).toBe(families);
+    expect(resolveConversationRoot(items.at(-1)!, items)).toBe(items[0]);
+    const updated = items.map(item => item.id === "node-0" ? { ...item, title: "Renamed" } : item);
+    expect(listConversationFamilies(updated)[0]?.root.title).toBe("Renamed");
+    expect(listConversationFamilies(updated)).not.toBe(families);
+  });
+
+  it("terminates cycles and missing parents without losing family members", () => {
+    const first = makeConversation({ id: "first", forkedFrom: origin("second", "m", "edit") });
+    const second = makeConversation({ id: "second", forkedFrom: origin("first", "m", "edit") });
+    const orphan = makeConversation({ id: "orphan", forkedFrom: origin("missing", "m", "edit") });
+    const items = [first, second, orphan];
+    expect(listConversationFamilies(items).map(item => item.size).sort()).toEqual([1, 2]);
+    expect(resolveConversationRoot(orphan, items)).toBe(orphan);
+  });
+
   it("resolves roots and aggregates family recency", () => {
     const root = makeConversation({ id: "root", updatedAt: 1 });
     const child = makeConversation({ id: "child", updatedAt: 9, forkedFrom: origin("root", "message", "edit") });

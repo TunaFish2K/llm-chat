@@ -19,23 +19,56 @@ export interface GreetingBranchContext {
   routesByGreetingIndex: ReadonlyMap<number, string>;
 }
 
+interface ConversationIndex {
+  byId: Map<string, ConversationDto>;
+  children: Map<string, ConversationDto[]>;
+  roots: Map<string, ConversationDto>;
+  families?: ConversationFamily[];
+}
+const indexes = new WeakMap<readonly ConversationDto[], ConversationIndex>();
+function indexFor(conversations: readonly ConversationDto[]): ConversationIndex {
+  const cached = indexes.get(conversations);
+  if (cached) return cached;
+  const index: ConversationIndex = { byId: new Map(), children: new Map(), roots: new Map() };
+  for (const item of conversations) {
+    index.byId.set(item.id, item);
+    if (item.forkedFrom) {
+      const children = index.children.get(item.forkedFrom.conversationId) ?? [];
+      children.push(item);
+      index.children.set(item.forkedFrom.conversationId, children);
+    }
+  }
+  for (const children of index.children.values()) children.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  indexes.set(conversations, index);
+  return index;
+}
+
 export function resolveConversationRoot(
   conversation: ConversationDto,
   conversations: readonly ConversationDto[]
 ): ConversationDto {
-  const byId = new Map(conversations.map((item) => [item.id, item]));
+  const { byId, roots } = indexFor(conversations);
+  const cached = roots.get(conversation.id);
+  if (cached) return cached;
   const seen = new Set<string>();
+  const path: ConversationDto[] = [];
   let current = conversation;
-  while (current.forkedFrom && !seen.has(current.id)) {
+  while (current.forkedFrom && !seen.has(current.id) && !roots.has(current.id)) {
     seen.add(current.id);
+    path.push(current);
     const parent = byId.get(current.forkedFrom.conversationId);
     if (!parent) break;
     current = parent;
   }
-  return current;
+  const root = roots.get(current.id) ?? current;
+  roots.set(conversation.id, root);
+  for (const item of path) roots.set(item.id, root);
+  return root;
 }
 
 export function listConversationFamilies(conversations: readonly ConversationDto[]): ConversationFamily[] {
+  const index = indexFor(conversations);
+  if (index.families) return index.families;
   const families = new Map<string, ConversationFamily>();
   for (const conversation of conversations) {
     const root = resolveConversationRoot(conversation, conversations);
@@ -47,14 +80,14 @@ export function listConversationFamilies(conversations: readonly ConversationDto
       families.set(root.id, { root, latestUpdatedAt: conversation.updatedAt, size: 1 });
     }
   }
-  return [...families.values()].sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
+  return index.families = [...families.values()].sort((a, b) => b.latestUpdatedAt - a.latestUpdatedAt);
 }
 
 export function conversationBranchGroups(
   conversation: ConversationDto,
   conversations: readonly ConversationDto[]
 ): ConversationBranchGroup[] {
-  const byId = new Map(conversations.map((item) => [item.id, item]));
+  const { byId, children: childrenByParent } = indexFor(conversations);
   const groups = new Map<string, ConversationBranchGroup>();
 
   const addGroup = (
@@ -62,11 +95,7 @@ export function conversationBranchGroups(
     messageId: string | null,
     messageOrdinal: number | null
   ) => {
-    const children = conversations
-      .filter((item) => item.forkedFrom?.conversationId === parent.id
-        && item.forkedFrom.messageId === messageId
-        && item.forkedFrom.mode !== "greeting")
-      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    const children = (childrenByParent.get(parent.id) ?? []).filter(item => item.forkedFrom?.messageId === messageId && item.forkedFrom.mode !== "greeting");
     if (!children.length) return;
     const conversationIds = [parent.id, ...children.map((item) => item.id)];
     const activeIndex = conversationIds.indexOf(conversation.id);
@@ -85,7 +114,7 @@ export function conversationBranchGroups(
   }
 
   const childForkPoints = new Map<string, { messageId: string | null; messageOrdinal: number | null }>();
-  for (const child of conversations) {
+  for (const child of childrenByParent.get(conversation.id) ?? []) {
     if (child.forkedFrom?.conversationId !== conversation.id || child.forkedFrom.mode === "greeting") continue;
     const key = child.forkedFrom.messageId ?? "root";
     childForkPoints.set(key, {
@@ -104,7 +133,7 @@ export function greetingBranchContext(
   conversations: readonly ConversationDto[]
 ): GreetingBranchContext | null {
   if (!message.greeting) return null;
-  const byId = new Map(conversations.map((item) => [item.id, item]));
+  const { byId, children: childrenByParent } = indexFor(conversations);
   let source = conversation;
   let firstChild: ConversationDto | null = null;
   const seen = new Set<string>();
@@ -123,11 +152,9 @@ export function greetingBranchContext(
   const queue = [source.id];
   const visited = new Set(queue);
   const descendants: ConversationDto[] = [];
-  while (queue.length) {
-    const parentId = queue.shift()!;
-    const children = conversations
-      .filter((item) => item.forkedFrom?.conversationId === parentId && item.forkedFrom.mode === "greeting")
-      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const parentId = queue[cursor]!;
+    const children = (childrenByParent.get(parentId) ?? []).filter(item => item.forkedFrom?.mode === "greeting");
     for (const child of children) {
       if (visited.has(child.id)) continue;
       visited.add(child.id);

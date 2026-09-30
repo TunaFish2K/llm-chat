@@ -1547,6 +1547,8 @@
   "error.submission_conflict": "提交内容已变化，请重新发送",
   "http_client.request_timeout": "请求超时，尚未确认是否接收。内容已保留，可重试。",
   "Composer.send_failed": "发送失败",
+  "Composer.preparing_message": "正在准备",
+  "Composer.submission_unknown": "等待确认",
   "Composer.sync_failed_after_send": "消息已提交，内容同步失败。",
   "App.refreshing_cached": "正在更新本机保存的内容…"
 }

@@ -1,4 +1,4 @@
-import { clearSubmissions, saveSubmission, setSubmissionSource } from "./submission";
+import { clearSubmissions, recordSubmissionAcceptance, saveSubmission, setSubmissionSource, submissionStore } from "./submission";
 import { clearResources, invalidateResources } from "./resource";
 import { uploadManager } from "./file-upload-manager";
 import { errorDisplayMessage } from "./error-display";
@@ -10,6 +10,8 @@ import { observeNotificationEvent, startNotificationSession, stopNotificationSes
 import { conversationDeleted, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
 import { preserveDeletedDraft, removeComposerDraft } from "./composer-drafts";
 import { replaceRoute } from "./router";
+import { dequal } from "dequal";
+import { clearMutationQueues, serializeMutation } from "./mutation-queue";
 import { resolveConversationRoot } from "./conversation-tree";
 import { clearOfflineHistory, isOffline, offlineStore, persistOfflineMessages, offlineRequest, markOffline } from "./offline-history";
 import type {
@@ -108,7 +110,7 @@ export async function bootstrap(conversationId?: string, background = false): Pr
       if (currentSource && data.sourceId && currentSource !== data.sourceId) {
         clearResources(); clearSubmissions();
         if (data.sourceId) setSubmissionSource(data.sourceId);
-        session = ++messageSession; messageReads.clear(); stopAppEvents();
+        session = ++messageSession; messageReads.clear(); messageVisits.clear(); conversationWrites.clear(); branchSelections.clear(); generationSelections.clear(); settingsWrites = undefined; clearMutationQueues(); stopAppEvents();
         appStore.set({ messages: {}, conversations: [] });
         knownIds.clear();
       }
@@ -127,14 +129,14 @@ export async function bootstrap(conversationId?: string, background = false): Pr
       delete data.messages;
       if (currentId === conversationId) replaceRoute("/");
     }
-    initializeDisplayPreferences(data.settings);
     let messages = data.messages ? normalizeMessages(data.messages) : undefined;
     if (!cached && conversationId && appStore.get().messages[conversationId] !== initialState.messages[conversationId]
       && appStore.get().messages[conversationId] !== cachedMessages) messages = undefined;
     if (cached) cachedMessages = messages;
-    appStore.set(state => ({ auth: "ready", sourceId: data.sourceId ?? null, settings: data.settings, agents: data.agents,
-      connections: data.connections, models: data.models, conversations: data.conversations,
+    appStore.set(state => ({ auth: "ready", sourceId: data.sourceId ?? null, agents: data.agents,
+      connections: data.connections, models: data.models, conversations: data.conversations.map(item => overlayBranch(overlayConversation(item), data.conversations)),
       ...(conversationId && messages ? { messages: retainedMessages({ ...state.messages, [conversationId]: messages }) } : {}) }));
+    acceptSettings(data.settings);
     if (!cached && conversationId && messages) for (const message of messages) {
       for (const generation of message.generations) if (generating(generation.status)) trackGeneration(conversationId, message.id, generation.id);
     }
@@ -169,6 +171,77 @@ export function browseOfflineBranch(id: string): void {
 }
 
 let conversationsReadSequence = 0;
+const branchSelections = new Map<string, { base: string; operations: Array<{ id: string }> }>();
+function overlayBranch(item: ConversationDto, conversations: ConversationDto[]): ConversationDto {
+  const write = branchSelections.get(resolveConversationRoot(item, conversations).id);
+  return write ? { ...item, activeBranchId: write.operations.at(-1)?.id ?? write.base } : item;
+}
+export async function selectBranchImmediately(rootId: string, id: string): Promise<void> {
+  if (isOffline()) { browseOfflineBranch(id); return; }
+  const root = appStore.get().conversations.find(item => item.id === rootId);
+  if (!root) return;
+  let entry = branchSelections.get(rootId);
+  if (!entry) { entry = { base: root.activeBranchId ?? rootId, operations: [] }; branchSelections.set(rootId, entry); }
+  const operation = { id }; entry.operations.push(operation);
+  browseOfflineBranch(id);
+  const session = messageSession;
+  const write = entry;
+  conversationsReadSequence++;
+  try {
+    await serializeMutation(`branch:${rootId}`, () => endpoints.selectConversationBranch(rootId, id));
+    if (session === messageSession) write.base = id;
+  } finally {
+    write.operations = write.operations.filter(item => item !== operation);
+    if (session === messageSession && branchSelections.get(rootId) === write) {
+      conversationsReadSequence++;
+      browseOfflineBranch(write.operations.at(-1)?.id ?? write.base);
+      if (!write.operations.length) branchSelections.delete(rootId);
+    }
+  }
+}
+type ConversationPatch = import("@llm-chat/contracts").PatchConversationInput;
+interface ConversationWrite { patch: ConversationPatch }
+const conversationWrites = new Map<string, { base: ConversationDto; operations: ConversationWrite[]; tail: Promise<unknown> }>();
+function applyConversationPatch(item: ConversationDto, patch: ConversationPatch): ConversationDto {
+  const next = { ...item, ...patch } as ConversationDto;
+  if (patch.agentId !== undefined && patch.agentId !== item.agentId) { next.executionOverrides = {}; next.modelId = null; }
+  if (patch.modelId !== undefined) next.executionOverrides = { ...next.executionOverrides, modelId: patch.modelId };
+  if (patch.executionOverrides || patch.agentId !== undefined) {
+    const agent = appStore.get().agents.find(value => value.id === next.agentId);
+    next.modelId = Object.hasOwn(next.executionOverrides, "modelId") ? next.executionOverrides.modelId ?? null : agent?.execution.modelId ?? null;
+  }
+  return next;
+}
+function overlayConversation(item: ConversationDto): ConversationDto {
+  const write = conversationWrites.get(item.id);
+  return write ? write.operations.reduce((value, operation) => applyConversationPatch(value, operation.patch), write.base) : item;
+}
+export function updateConversationImmediately(id: string, patch: ConversationPatch): Promise<ConversationDto> {
+  const current = appStore.get().conversations.find(item => item.id === id);
+  if (!current || conversationDeleted(id)) return Promise.reject(new Error("Conversation not found"));
+  let write = conversationWrites.get(id);
+  if (!write) { write = { base: current, operations: [], tail: Promise.resolve() }; conversationWrites.set(id, write); }
+  const operation = { patch };
+  conversationsReadSequence++;
+  write.operations.push(operation);
+  appStore.set(state => ({ conversations: state.conversations.map(overlayConversation) }));
+  const session = messageSession;
+  const entry = write;
+  const request = entry.tail.catch(() => {}).then(async () => {
+    if (session !== messageSession || conversationDeleted(id)) throw new Error("Conversation unavailable");
+    const result = await endpoints.updateConversation(id, patch);
+    if (session === messageSession && !conversationDeleted(id)) entry.base = result;
+    return result;
+  }).finally(() => {
+    entry.operations = entry.operations.filter(item => item !== operation);
+    if (session !== messageSession || conversationWrites.get(id) !== entry) return;
+    conversationsReadSequence++;
+    appStore.set(state => ({ conversations: state.conversations.map(item => item.id === id ? entry.operations.reduce((value, pending) => applyConversationPatch(value, pending.patch), entry.base) : item) }));
+    if (!entry.operations.length) conversationWrites.delete(id);
+  });
+  entry.tail = request;
+  return request;
+}
 export function reconcileConversations(
   conversations: ConversationDto[],
   currentId: string | null = location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null,
@@ -190,7 +263,7 @@ export async function refreshConversations(): Promise<void> {
   if (session !== messageSession || sequence !== conversationsReadSequence) return;
   if (!isOffline() && revision === deletionRevision()) reconcileConversations(conversations, currentId === currentConversationId() ? currentId : null, knownIds);
   appStore.set(state => ({ conversations: [
-    ...conversations,
+    ...conversations.map(item => overlayBranch(overlayConversation(item), conversations)),
     ...state.conversations.filter(item => !knownIds.includes(item.id) && !conversations.some(next => next.id === item.id))
   ].filter(item => !conversationDeleted(item.id)) }));
 }
@@ -210,10 +283,36 @@ export async function refreshConnectionsAndModels(): Promise<void> {
 }
 
 let settingsReadSequence = 0;
+type SettingsPatch = Parameters<typeof endpoints.updateSettings>[0];
+let settingsWrites: { base: AppSettings; operations: SettingsPatch[]; tail: Promise<unknown> } | undefined;
 
 export function acceptSettings(settings: AppSettings): void {
+  if (settingsWrites) settings = settingsWrites.operations.reduce<AppSettings>((value, patch) => ({ ...value, ...Object.fromEntries(Object.entries(patch).filter(([, field]) => field !== undefined)) }), settingsWrites.base);
   initializeDisplayPreferences(settings);
   appStore.set({ settings });
+}
+
+export function updateSettingsImmediately(patch: SettingsPatch): Promise<AppSettings> {
+  const current = appStore.get().settings;
+  if (!current) return Promise.reject(new Error("Settings unavailable"));
+  const entry = settingsWrites ??= { base: current, operations: [], tail: Promise.resolve() };
+  entry.operations.push(patch); settingsReadSequence++;
+  acceptSettings(current);
+  const session = messageSession;
+  const request = entry.tail.catch(() => {}).then(async () => {
+    if (session !== messageSession) throw new Error("Session changed");
+    const result = await endpoints.updateSettings(patch);
+    if (session === messageSession) entry.base = result;
+    return result;
+  }).finally(() => {
+    entry.operations = entry.operations.filter(value => value !== patch);
+    if (session !== messageSession || settingsWrites !== entry) return;
+    settingsReadSequence++;
+    if (!entry.operations.length) settingsWrites = undefined;
+    acceptSettings(entry.base);
+  });
+  entry.tail = request;
+  return request;
 }
 
 export async function refreshSettings(): Promise<void> {
@@ -224,17 +323,46 @@ export async function refreshSettings(): Promise<void> {
 }
 
 const messageReads = new Map<string, Promise<MessageDto[]>>();
+const generationSelections = new Map<string, { base: string | null; operations: Array<{ id: string }> }>();
+export async function selectGenerationImmediately(conversationId: string, messageId: string, id: string): Promise<void> {
+  const message = appStore.get().messages[conversationId]?.find(item => item.id === messageId);
+  if (!message) return;
+  const key = `${conversationId}:${messageId}`;
+  let entry = generationSelections.get(key);
+  if (!entry) { entry = { base: message.activeGenerationId, operations: [] }; generationSelections.set(key, entry); }
+  const operation = { id }; entry.operations.push(operation);
+  const apply = () => appStore.set(state => ({ messages: { ...state.messages, [conversationId]: (state.messages[conversationId] ?? []).map(item => item.id === messageId ? { ...item, activeGenerationId: entry!.operations.at(-1)?.id ?? entry!.base, generatedModel: null } : item) } }));
+  apply();
+  if (isOffline()) { generationSelections.delete(key); return; }
+  const session = messageSession, write = entry;
+  try {
+    await serializeMutation(`message:${key}`, () => endpoints.selectGeneration(conversationId, messageId, id));
+    if (session === messageSession) write.base = id;
+  } finally {
+    write.operations = write.operations.filter(item => item !== operation);
+    if (session === messageSession && generationSelections.get(key) === write) {
+      apply();
+      if (!write.operations.length) { generationSelections.delete(key); refreshMessages(conversationId); }
+    }
+  }
+}
 let messageSession = 0;
 let eventsSession = 0;
 const eventRefreshes = new RefreshScheduler(toastError);
 const currentConversationId = () => location.pathname.match(/^\/c\/([^/]+)/)?.[1] ?? null;
 const generating = (status: string) => status === "queued" || status === "running";
+const messageVisits = new Map<string, number>();
 
 function retainedMessages(messages: AppState["messages"]): AppState["messages"] {
   const current = currentConversationId();
+  const now = Date.now();
+  if (current) { messageVisits.delete(current); messageVisits.set(current, now); }
   const active = new Set([...generationOwners.values()].map((owner) => owner.conversationId));
+  const recent = new Set([...messageVisits].reverse().filter(([id, touched]) => id !== current && !active.has(id) && now - touched < 600_000)
+    .sort((a, b) => b[1] - a[1]).slice(0, 3).map(([id]) => id));
+  for (const [id, touched] of messageVisits) if (conversationDeleted(id) || now - touched >= 600_000) messageVisits.delete(id);
   return Object.fromEntries(Object.entries(messages).filter(([id, list]) => !conversationDeleted(id)
-    && (id === current || active.has(id) || list.some((message) => message.generations.some((generation) => generating(generation.status))))));
+    && (id === current || active.has(id) || recent.has(id) || list.some((message) => message.generations.some((generation) => isGenerationActive(generation.status))))));
 }
 export function releaseInactiveMessages(): void {
   const messages = appStore.get().messages;
@@ -247,6 +375,7 @@ export function loadMessages(conversationId: string): Promise<MessageDto[]> {
   const existing = messageReads.get(conversationId);
   if (existing) return existing;
   const session = messageSession;
+  const initial = appStore.get().messages[conversationId];
   const read = (async () => {
     let networkDone = false;
     const cached = offlineRequest(`/api/conversations/${conversationId}/messages`).then(data => {
@@ -258,8 +387,37 @@ export function loadMessages(conversationId: string): Promise<MessageDto[]> {
     try { raw = await endpoints.messages(conversationId); }
     catch (error) { await cached; throw error; }
     networkDone = true;
-    const messages = normalizeMessages(raw);
+    let messages = normalizeMessages(raw);
     if (session !== messageSession || conversationDeleted(conversationId)) return [];
+    const current = appStore.get().messages[conversationId];
+    messages = messages.map(message => {
+      const selection = generationSelections.get(`${conversationId}:${message.id}`);
+      return selection ? { ...message, activeGenerationId: selection.operations.at(-1)?.id ?? selection.base, generatedModel: null } : message;
+    });
+    if (current) {
+      const liveById = new Map(current.map(message => [message.id, message]));
+      const beforeById = new Map(initial?.map(message => [message.id, message]));
+      messages = messages.map(message => {
+        const live = liveById.get(message.id), before = beforeById.get(message.id);
+        if (!live) return message;
+        if (live !== before) {
+          const beforeGenerations = new Map(before?.generations.map(generation => [generation.id, generation]));
+          const liveGenerations = new Map(live.generations.map(generation => [generation.id, generation]));
+          message = { ...message,
+            ...(before?.activeGenerationId !== live.activeGenerationId ? { activeGenerationId: live.activeGenerationId, generatedModel: live.generatedModel } : {}),
+            generations: message.generations.map(generation => {
+              const next = liveGenerations.get(generation.id);
+              return next && next !== beforeGenerations.get(next.id) && (isGenerationActive(generation.status) || !isGenerationActive(next.status)) ? next : generation;
+            }) };
+          const fetchedIds = new Set(message.generations.map(generation => generation.id));
+          for (const generation of live.generations) if (!fetchedIds.has(generation.id) && !beforeGenerations.has(generation.id)) message.generations.push(generation);
+        }
+        return dequal(live, message) ? live : message;
+      });
+      const ids = new Set(messages.map(message => message.id));
+      for (const message of current) if (!ids.has(message.id) && !beforeById.has(message.id)) messages.push(message);
+      messages.sort((a, b) => a.ordinal - b.ordinal);
+    }
     appStore.set((state) => ({ messages: retainedMessages({ ...state.messages, [conversationId]: messages }) }));
     persistOfflineMessages(conversationId, messages, true);
     for (const message of messages) {
@@ -318,6 +476,23 @@ export function upsertMessage(conversationId: string, message: MessageDto): void
     const next = index >= 0 ? list.map((item, i) => (i === index ? normalized : item)) : [...list, normalized];
     return { messages: retainedMessages({ ...state.messages, [conversationId]: next }) };
   });
+}
+
+export function acceptSubmission(value: import("@llm-chat/contracts").SubmissionAcceptedDto): void {
+  const state = appStore.get();
+  if (state.auth !== "ready" || state.sourceId && state.sourceId !== value.sourceId || conversationDeleted(value.conversation.id) || submissionStore.get().accepted[value.clientSubmissionId]) return;
+  // Retain a newly accepted conversation before the route has changed to it.
+  if (value.kind !== "queue") {
+    const generation = value.kind === "start" ? value.result.generation : value.result;
+    const existing = findMessage(value.conversation.id, generation.assistantMessageId)?.generations.find(item => item.id === generation.generationId);
+    if (!existing || isGenerationActive(existing.status)) trackGeneration(value.conversation.id, generation.assistantMessageId, generation.generationId);
+  }
+  appStore.set(state => ({ conversations: state.conversations.some(item => item.id === value.conversation.id) ? state.conversations : [value.conversation, ...state.conversations] }));
+  for (const message of value.messages) {
+    // Replay must not replace a generation that has already received deltas.
+    if (!appStore.get().messages[value.conversation.id]?.some(item => item.id === message.id)) upsertMessage(value.conversation.id, message);
+  }
+  recordSubmissionAcceptance(value);
 }
 
 export function isGenerationActive(status: string): boolean {
@@ -492,7 +667,9 @@ export function startAppEvents(): void {
   appEventsSubscription = subscribeAppEvents(
     (event) => {
       observeNotificationEvent(event);
-      if (event.type === "generation-snapshot") {
+      if (event.type === "submission-accepted") {
+        acceptSubmission(event.submission);
+      } else if (event.type === "generation-snapshot") {
         const ids = new Set(event.active.filter((state) => generating(state.status)).map((state) => state.generationId));
         const previous = new Map(generationOwners);
         // Going offline releases stream owners but keeps active message data.
@@ -585,7 +762,7 @@ export function initAuthGate(): () => void {
     clearResources(); clearSubmissions();
     currentSource = undefined;
     uploadManager.reset();
-    messageSession++; messageReads.clear();
+    messageSession++; messageReads.clear(); messageVisits.clear(); conversationWrites.clear(); branchSelections.clear(); generationSelections.clear(); settingsWrites = undefined; clearMutationQueues();
     stopNotificationSession();
     stopAppEvents();
     void clearOfflineHistory({ logout: true, broadcast: !(event instanceof CustomEvent && event.detail?.remote) }).catch(() => {});

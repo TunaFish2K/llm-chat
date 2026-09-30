@@ -1239,6 +1239,13 @@ export class Store {
 
   private transactionDepth = 0;
 
+  submissionReceipt(id: string, scope?: string): { scope: string; value: unknown } | null {
+    const row = scope
+      ? this.sqlite.prepare("SELECT scope, response_json FROM client_submissions WHERE scope = ? AND id = ?").get(scope, id) as Row | undefined
+      : this.sqlite.prepare("SELECT scope, response_json FROM client_submissions WHERE id = ? AND (scope = 'start' OR scope LIKE 'messages:%' OR scope LIKE 'queue:%') LIMIT 1").get(id) as Row | undefined;
+    return row ? { scope: String(row.scope), value: JSON.parse(String(row.response_json)) } : null;
+  }
+
   submissionResult<T>(id: string | undefined, scope: string, input: unknown): { value: T } | null {
     if (!id) return null;
     const row = this.sqlite.prepare("SELECT fingerprint, response_json FROM client_submissions WHERE scope = ? AND id = ?").get(scope, id) as Row | undefined;
@@ -3055,8 +3062,10 @@ export class Store {
     this.sqlite.prepare("UPDATE conversations SET queue_paused = 0 WHERE id = ?").run(conversationId);
   }
 
-  listMessages(conversationId: string, includeInactive = false): MessageDto[] {
-    const messages = this.sqlite.prepare("SELECT * FROM messages WHERE conversation_id = ? AND (? OR history_active = 1) ORDER BY ordinal").all(conversationId, Number(includeInactive)) as Row[];
+  listMessages(conversationId: string, includeInactive = false, messageIds?: string[]): MessageDto[] {
+    if (messageIds && !messageIds.length) return [];
+    const selection = messageIds ? ` AND id IN (${messageIds.map(() => "?").join(",")})` : "";
+    const messages = this.sqlite.prepare(`SELECT * FROM messages WHERE conversation_id = ? AND (? OR history_active = 1)${selection} ORDER BY ordinal`).all(conversationId, Number(includeInactive), ...(messageIds ?? [])) as Row[];
     return messages.map((message) => {
       const assistant = message.role === "assistant";
       const activeGenerationId = textOrNull(message.active_generation_id);

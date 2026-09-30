@@ -10,18 +10,21 @@ beforeEach(() => {
 afterEach(() => { stopAppEvents(); vi.useRealTimers(); history.replaceState(null, "", "/"); });
 const respond = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
 
-it("retains only the viewed and generating chats, including after late responses", async () => {
+it("retains the viewed chat and three recent chats, then expires inactive history", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => respond([makeMessage({ role: "user", text: "x".repeat(100_000), generations: [] })])));
   for (let i = 0; i < 60; i++) {
     history.replaceState(null, "", `/c/chat-${i}`);
     await loadMessages(`chat-${i}`);
-    expect(Object.keys(appStore.get().messages)).toEqual([`chat-${i}`]);
+    expect(Object.keys(appStore.get().messages)).toEqual(Array.from({ length: Math.min(i + 1, 4) }, (_, n) => `chat-${Math.max(0, i - 3) + n}`));
   }
   let finish!: (value: Response) => void;
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { finish = resolve; })));
   const read = loadMessages("chat-59");
   history.replaceState(null, "", "/settings"); releaseInactiveMessages();
   finish(respond([makeMessage({ generations: [] })])); await read;
+  expect(Object.keys(appStore.get().messages)).toHaveLength(3);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 600_001);
+  releaseInactiveMessages();
   expect(appStore.get().messages).toEqual({});
 });
 

@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import type { ConversationDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
-import { appStore, refreshConversations, toastError } from "../../lib/app-state";
+import { appStore, refreshConversations, toastError, updateConversationImmediately } from "../../lib/app-state";
 import { resolveConversationRoot } from "../../lib/conversation-tree";
 import { useStore } from "../../lib/store";
 
@@ -57,9 +57,9 @@ export function ConversationHeader({
   const saveTitle = async () => {
     if (!displayedConversation || !title.trim()) return;
     try {
-      await endpoints.updateConversation(displayedConversation.id, { title: title.trim() });
-      await refreshConversations();
       setEditing(false);
+      await updateConversationImmediately(displayedConversation.id, { title: title.trim() });
+      void refreshConversations().catch(toastError);
     } catch (error) {
       toastError(error);
     }

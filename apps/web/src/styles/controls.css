@@ -31,7 +31,7 @@
 
 .btn:active:not(:disabled),
 .button:active:not(:disabled) {
-  transform: translateY(1px);
+  filter: brightness(.96);
 }
 
 .btn:disabled,
@@ -566,7 +566,6 @@
   justify-content: center;
   padding: var(--space-4);
   background: rgb(0 0 0 / 55%);
-  backdrop-filter: blur(3px);
 
 }
 

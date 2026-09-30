@@ -1143,6 +1143,17 @@ export interface ConversationStartedDto {
   generation: GenerationCreatedDto;
 }
 
+export type SubmissionAcceptedDto = {
+  clientSubmissionId: string;
+  sourceId: string;
+  conversation: ConversationDto;
+  messages: MessageDto[];
+} & (
+  | { kind: "start"; result: ConversationStartedDto }
+  | { kind: "send"; result: GenerationCreatedDto }
+  | { kind: "queue"; result: QueuedMessageDto }
+);
+
 export interface ConversationForkDto {
   conversation: ConversationDto;
   generation: GenerationCreatedDto | null;
@@ -1373,6 +1384,7 @@ export interface GenerationNotificationState {
 }
 
 export type AppEvent =
+  | { id: number; type: "submission-accepted"; submission: SubmissionAcceptedDto }
   | { id: number; type: "container-resource"; job: ContainerResourceJob }
   | { id: number; type: "resync" }
   | { id: number; type: "generation-state"; generation: GenerationNotificationState }

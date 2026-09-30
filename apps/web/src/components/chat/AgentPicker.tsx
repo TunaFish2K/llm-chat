@@ -39,9 +39,10 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
       </button>
     </Popover.Trigger>
     <Popover.Portal><Popover.Content className="picker-popover agent-popover" aria-label={t("AgentPicker.agent_selection")} side="top" align="start" sideOffset={10}
+      inert={!open ? true : undefined} aria-hidden={!open || undefined}
       onOpenAutoFocus={(event) => {
         event.preventDefault();
-        if (!window.matchMedia("(hover: none) and (pointer: coarse)").matches) search.current?.focus();
+        if (!window.matchMedia("(hover: none) and (pointer: coarse)").matches) search.current?.focus({ preventScroll: true });
       }}><PopoverLayer open={open} onClose={() => setOpen(false)} />
       <header><div><strong>Agent</strong><span>{t("AgentPicker.choose_a_conversation_assistant")}</span></div>
         <button type="button" className="icon-button" aria-label={t("AgentPicker.close_agent_picker")} onClick={() => { setOpen(false); }}><X size={15} /></button>

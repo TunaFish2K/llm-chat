@@ -1,4 +1,4 @@
-import { animate, drawerSpring, m, motionTiming, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
+import { animate, drawerSpring, m, motionTiming, Presence, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 /**
@@ -14,6 +14,7 @@ import type { Toast } from "../../lib/app-state";
 import { resolveConversationRoot } from "../../lib/conversation-tree";
 import type { Route } from "../../lib/router";
 import { Button, ErrorState, IconButton, LoadingState } from "../ui";
+import { AnimatedFrame } from "./AnimatedFrame";
 
 /* Geometry ---------------------------------------------------------------- */
 
@@ -94,16 +95,7 @@ export function AppFrame({
   children: ReactNode;
 }) {
   useLocale();
-  return (
-    <div
-      className="app-frame"
-      style={{ gridTemplateColumns: `${left}px minmax(0, 1fr) ${right}px` }}
-      data-sidebar-collapsed={sidebarCollapsed || undefined}
-      data-inspector-open={inspectorOpen || undefined}
-    >
-      {children}
-    </div>
-  );
+  return <AnimatedFrame left={left} right={right} sidebarCollapsed={sidebarCollapsed} inspectorOpen={inspectorOpen}>{children}</AnimatedFrame>;
 }
 
 /**
@@ -212,6 +204,12 @@ export function MobileDrawer({
 }) {
   useLocale();
   const [present, safeToRemove] = usePresence();
+  const [contentReady, setContentReady] = useState(false);
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const frame = requestAnimationFrame(() => { timer = setTimeout(() => setContentReady(true), 0); });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+  }, []);
   const reduced = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; at: number; offset: number; dragging: boolean } | null>(null);
@@ -295,7 +293,7 @@ export function MobileDrawer({
         }
       }}>
       <m.button type="button" className="drawer-scrim" style={{ opacity }} onClick={close} aria-label={closeLabel} />
-      <m.div ref={panelRef} className="drawer-panel" style={{ x }} inert={!present ? true : undefined}
+      <m.div ref={panelRef} className="drawer-panel" style={{ x }} inert={!present ? true : undefined} aria-hidden={!present || undefined}
         onPointerDown={(event) => {
           if (!present || closing.current || (event.pointerType === "mouse" && event.button !== 0)) return;
           suppressClick.current = false;
@@ -336,7 +334,7 @@ export function MobileDrawer({
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
         }}
         onPointerCancel={cancel} onLostPointerCapture={event => { if (event.target === event.currentTarget) cancel(); }}
-      >{children}</m.div>
+      >{contentReady ? children : null}</m.div>
     </div>
   );
 }
@@ -366,15 +364,20 @@ export function ToastStack({
           <Button variant="primary" size="sm" onClick={onApplyUpdate} disabled={updating}>{t("SettingsView.update_and_refresh")}</Button>
         </div>
       ) : null}
-      {toasts.map((item) => (
-        <div
+      <Presence>{toasts.map((item) => (
+        <m.div
           key={item.id}
           className={`toast ${item.kind}`}
           role={item.kind === "error" ? "alert" : "status"}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 4 }}
+          transition={{ duration: motionTiming.exit }}
+          style={{ animation: "none" }}
         >
           {displayError({ message: item.text, ...(item.i18n ? { i18n: item.i18n } : {}) })}
-        </div>
-      ))}
+        </m.div>
+      ))}</Presence>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { PopoverLayer, Presence } from "../lib/motion";
 import { t, useLocale, localized } from "../lib/i18n";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { offlineStore } from "../lib/offline-history";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import type { ConversationDto } from "@llm-chat/contracts";
 import {
   Bot,
@@ -20,7 +20,7 @@ import {
   X
 } from "lucide-react";
 import { endpoints } from "../lib/api";
-import { appStore, refreshConversations, toast, toastError } from "../lib/app-state";
+import { appStore, refreshConversations, toast, toastError, updateConversationImmediately } from "../lib/app-state";
 import { listConversationFamilies, resolveConversationRoot } from "../lib/conversation-tree";
 import { formatTime } from "../lib/format";
 import { linkClick, navigate, routes, type Route } from "../lib/router";
@@ -28,6 +28,7 @@ import { useStore } from "../lib/store";
 import { ConfirmModal, Modal } from "../lib/ui";
 import { Popover } from "radix-ui";
 import { ConversationSearch } from "../components/ConversationSearch";
+import { ConversationList } from "../components/ConversationList";
 import type { PwaState } from "../lib/pwa";
 
 export function WorkspaceSidebar({
@@ -50,7 +51,6 @@ export function WorkspaceSidebar({
   const cachedIds = useStore(offlineStore, (state) => state.cachedIds);
   const conversations = useStore(appStore, (state) => state.conversations);
   const [searchOpen, setSearchOpen] = useState(false);
-  const sidebar = useRef<HTMLElement>(null);
   const [renaming, setRenaming] = useState<ConversationDto | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleting, setDeleting] = useState<ConversationDto | null>(null);
@@ -68,21 +68,17 @@ export function WorkspaceSidebar({
     })), [families]);
   const groups = useMemo(() => groupConversations(visible), [visible]);
 
-  useEffect(() => {
-    const reveal = () => sidebar.current?.querySelector('[data-active="true"]')?.scrollIntoView?.({ block: "nearest" });
-    reveal(); window.addEventListener("llm-chat:reveal-conversation", reveal);
-    return () => window.removeEventListener("llm-chat:reveal-conversation", reveal);
-  }, [activeId, compact]);
-
   const rename = async () => {
     if (!renaming || !renameValue.trim()) return;
+    const target = renaming;
     setBusy(true);
+    setRenaming(null);
     try {
-      await endpoints.updateConversation(renaming.id, { title: renameValue.trim() });
-      await refreshConversations();
-      setRenaming(null);
+      await updateConversationImmediately(target.id, { title: renameValue.trim() });
+      void refreshConversations().catch(toastError);
       toast("success", localized("WorkspaceSidebar.conversation_renamed"));
     } catch (error) {
+      setRenaming(current => current ?? target);
       toastError(error);
     } finally {
       setBusy(false);
@@ -94,7 +90,7 @@ export function WorkspaceSidebar({
     setBusy(true);
     try {
       await endpoints.deleteConversation(deleting.id).catch((error: unknown) => { if (!conversationDeleted(deleting.id)) throw error; });
-      await refreshConversations();
+      void refreshConversations().catch(toastError);
       if (deleting.id === activeId) navigate(routes.chat());
       setDeleting(null);
       toast("success", localized("WorkspaceSidebar.conversation_deleted"));
@@ -106,7 +102,7 @@ export function WorkspaceSidebar({
   };
 
   return (
-    <aside ref={sidebar} onClick={(event) => {
+    <aside onClick={(event) => {
       if (event.target instanceof Element && event.target.closest('a[href]') && event.defaultPrevented) onClose?.();
     }} className="workspace-sidebar" data-compact={compact || undefined} aria-label={t("WorkspaceSidebar.main_navigation_and_conversations")}>
       <header className="sidebar-brand">
@@ -149,8 +145,8 @@ export function WorkspaceSidebar({
             ) : null}
           </div>
         </>
-      ) : (
-        <>
+      ) : null}
+        <div className="sidebar-expanded" hidden={compact} inert={compact || undefined} aria-hidden={compact || undefined}>
           <div className="sidebar-primary-actions">
             <button className="button primary" onClick={() => { navigate(routes.chat()); onClose?.(); }} aria-label={t("WorkspaceSidebar.new_conversation")} title={t("WorkspaceSidebar.new_conversation")}>
               <Plus size={17} /> {!compact ? <span>{t("WorkspaceSidebar.new_conversation")}</span> : null}
@@ -158,27 +154,7 @@ export function WorkspaceSidebar({
           </div>
 
 
-          <div className="conversation-scroll">
-            {compact ? (
-              <nav className="compact-conversations" aria-label={t("WorkspaceSidebar.recent_conversations")}>
-                {visible.slice(0, 8).map((conversation) => (
-                  <a
-                    key={conversation.id}
-                    href={routes.chat(conversation.activeBranchId ?? conversation.id)}
-                    onClick={linkClick(routes.chat(conversation.activeBranchId ?? conversation.id))}
-                    className={conversation.id === activeId ? "active" : ""}
-                    title={conversation.title}
-                    aria-label={conversation.title}
-                  >
-                    <MessageSquare size={17} />
-                  </a>
-                ))}
-              </nav>
-            ) : groups.length ? groups.map((group) => (
-              <section className="conversation-group" key={group.label}>
-                <h2>{group.label}</h2>
-                <div role="list" aria-label={t("WorkspaceSidebar.conversations", { count: Number((group.label)), value1: (group.label) })}>
-                  {group.items.map((conversation) => (
+          {groups.length ? <ConversationList groups={groups} activeId={activeId} renderRow={conversation => (
                     <div className="conversation-row" data-active={conversation.id === activeId || undefined} key={conversation.id} role="listitem">
                       <a
                         href={routes.chat(conversation.activeBranchId ?? conversation.id)}
@@ -189,20 +165,16 @@ export function WorkspaceSidebar({
                       </a>
                       <div className="conversation-actions">
                         <ConversationPopover>{(open, close) => <><Popover.Trigger asChild><button className="icon-button" aria-label={t("WorkspaceSidebar.conversation_actions", { value1: (conversation.title) })}><MoreHorizontal size={16} /></button></Popover.Trigger>
-                          <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4}><PopoverLayer open={open} onClose={close} />
+                          <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4} inert={!open ? true : undefined} aria-hidden={!open || undefined}><PopoverLayer open={open} onClose={close} />
                             <Popover.Close asChild><button disabled={offline} aria-label={t("WorkspaceSidebar.rename", { value1: (conversation.title) })} onClick={() => { setRenaming(conversation); setRenameValue(conversation.title); }}><Pencil size={14} />{t("WorkspaceSidebar.edit_title")}</button></Popover.Close>
                             <Popover.Close asChild><button disabled={offline} className="danger-quiet" aria-label={t("WorkspaceSidebar.delete", { value1: (conversation.title) })} onClick={() => setDeleting(conversation)}><Trash2 size={14} />{t("WorkspaceSidebar.delete_conversation")}</button></Popover.Close>
                           </Popover.Content></Popover.Portal>
                         </>}</ConversationPopover>
                       </div>
                     </div>
-                  ))}
-                </div>
-              </section>
-            )) : (
+          )} /> : (
               <p className="sidebar-empty">{conversations.length ? t("WorkspaceSidebar.no_matching_conversations") : t("WorkspaceSidebar.no_conversations_yet")}</p>
-            )}
-          </div>
+          )}
 
           <nav className="sidebar-navigation" aria-label={t("WorkspaceSidebar.feature_navigation")}>
             <SidebarLink active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label={t("WorkspaceSidebar.chat")} compact={compact} />
@@ -215,8 +187,7 @@ export function WorkspaceSidebar({
               <button className="icon-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={15} /></button>
             ) : null}
           </footer> : null}
-        </>
-      )}
+        </div>
       <Presence>{searchOpen ? <ConversationSearch onClose={() => setSearchOpen(false)} /> : null}</Presence>
       <Presence>{renaming ? (
         <Modal
@@ -250,15 +221,16 @@ function groupConversations(conversations: ConversationDto[]): Array<{ label: st
   yesterday.setDate(yesterday.getDate() - 1);
   const week = new Date(today);
   week.setDate(week.getDate() - 7);
+  const labels = [t("WorkspaceSidebar.today"), t("WorkspaceSidebar.yesterday"), t("WorkspaceSidebar.last_7_days"), t("WorkspaceSidebar.earlier")] as const;
   const groups = new Map<string, ConversationDto[]>();
   for (const conversation of conversations) {
     const date = new Date(conversation.updatedAt);
-    const label = date >= today ? t("WorkspaceSidebar.today") : date >= yesterday ? t("WorkspaceSidebar.yesterday") : date >= week ? t("WorkspaceSidebar.last_7_days") : t("WorkspaceSidebar.earlier");
+    const label = date >= today ? labels[0] : date >= yesterday ? labels[1] : date >= week ? labels[2] : labels[3];
     const list = groups.get(label) ?? [];
     list.push(conversation);
     groups.set(label, list);
   }
-  return [t("WorkspaceSidebar.today"), t("WorkspaceSidebar.yesterday"), t("WorkspaceSidebar.last_7_days"), t("WorkspaceSidebar.earlier")].flatMap((label) => {
+  return labels.flatMap((label) => {
     const items = groups.get(label);
     return items?.length ? [{ label, items }] : [];
   });
