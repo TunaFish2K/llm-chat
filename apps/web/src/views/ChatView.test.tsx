@@ -969,7 +969,7 @@ describe("ChatView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<ChatView conversationId="conv-1" />);
 
-    await user.click(screen.getByRole("button", { name: "会话操作" }));
+    await user.click(await screen.findByRole("button", { name: "会话操作" }));
     await user.click(await screen.findByRole("button", { name: "立即压缩上下文" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1/context/compact",

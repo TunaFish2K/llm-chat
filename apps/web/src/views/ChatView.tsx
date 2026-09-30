@@ -96,6 +96,7 @@ export function ChatView({
   const transcript = useMemo(() => projectTranscript(messages ?? EMPTY_MESSAGES), [messages, projectTranscript]);
   const [compacting, setCompacting] = useState(false);
   const [actionsHost, setActionsHost] = useState<HTMLDivElement | null>(null);
+  const actionsNode = useRef<HTMLDivElement>(null);
   const [newGreetingIndex, setNewGreetingIndex] = useState(() => readComposerDraft(conversationId ?? null)?.greetingIndex ?? 0);
   const [previewAgentId, setPreviewAgentId] = useState<string | null>(() => readComposerDraft(conversationId ?? null)?.agentId ?? null);
   const [roleplayOpen, setRoleplayOpen] = useState(false);
@@ -111,6 +112,15 @@ export function ChatView({
     () => conversation ? conversationBranchGroups(conversation, conversations) : [],
     [conversation, conversations]
   );
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Attaching the header tools triggers another render; let the chat paint first.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => { timer = setTimeout(() => setActionsHost(actionsNode.current), 0); });
+    });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+  }, []);
 
   const retryAnswer = useCallback(async (assistantMessageId: string) => {
     if (!conversationId || busy || branching || retryPending.current) return;
@@ -273,7 +283,7 @@ export function ChatView({
         onToggleInspector={onToggleInspector}
         onViewChange={onViewChange}
         runningTasks={runningTasks}
-        actionsRef={setActionsHost}
+        actionsRef={actionsNode}
       />
 
       <div className="chat-scroll-shell">

@@ -30,6 +30,24 @@ describe("router", () => {
       expect(location.pathname).toBe("/c/new");
     } finally { vi.useRealTimers(); }
   });
+  it("prioritizes navigation after feedback and rejects a queued obsolete destination", () => {
+    const frames: FrameRequestCallback[] = [];
+    const tasks: Array<() => void> = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.push(callback); return frames.length; });
+    const postTask = vi.fn((callback: () => void) => { tasks.push(callback); return Promise.resolve(); });
+    vi.stubGlobal("scheduler", { postTask });
+    window.history.replaceState(null, "", "/");
+    const feedback = vi.fn();
+    navigateAfterPaint("/c/old", feedback);
+    expect(feedback).toHaveBeenCalledOnce();
+    expect(postTask).not.toHaveBeenCalled();
+    frames.shift()!(0);
+    navigateAfterPaint("/c/new", feedback);
+    frames.shift()!(16);
+    expect(postTask).toHaveBeenCalledWith(expect.any(Function), { priority: "user-blocking" });
+    for (const task of tasks) task();
+    expect(location.pathname).toBe("/c/new");
+  });
   it("maps real paths to routes", () => {
     expect(routes.chat()).toBe("/");
     expect(routes.chat("abc")).toBe("/c/abc");

@@ -90,11 +90,14 @@ export function navigateAfterPaint(path: string, feedback: () => void): void {
   const owner = captureNavigation();
   feedback();
   requestAnimationFrame(() => {
-    setTimeout(() => {
+    const commit = () => {
       if (!ownsNavigation(owner) || location.pathname === path) return;
       window.history.pushState(null, "", path);
       window.dispatchEvent(new PopStateEvent("popstate"));
-    }, 0);
+    };
+    const scheduler = (window as Window & { scheduler?: { postTask: (callback: () => void, options: { priority: "user-blocking" }) => Promise<void> } }).scheduler;
+    if (scheduler) void scheduler.postTask(commit, { priority: "user-blocking" }).catch(() => setTimeout(commit, 0));
+    else setTimeout(commit, 0);
   });
 }
 
