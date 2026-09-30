@@ -141,6 +141,16 @@ export const Composer = memo(function Composer({
 
   const effectiveAgentId = conversation?.agentId ?? newAgentId ?? fallbackAgent?.id ?? "";
   const effectiveAgent = agents.find((agent) => agent.id === effectiveAgentId);
+  useEffect(() => {
+    if (conversation || text || attachments.length || explicitNewModel.current) return;
+    setNewOverrides((current) => {
+      const inherited = { ...current };
+      delete inherited.modelId;
+      const next = initialOverrides(effectiveAgentId, inherited);
+      return next.modelId === current.modelId && Object.hasOwn(next, "modelId") === Object.hasOwn(current, "modelId")
+        ? current : next;
+    });
+  }, [conversation?.id, effectiveAgentId, agents, models, connections, text, attachments.length]);
   useLayoutEffect(() => {
     const savedOverrides = { ...(conversation?.executionOverrides ?? newOverrides) };
     if (!text && !attachments.length && !explicitNewModel.current) delete savedOverrides.modelId;

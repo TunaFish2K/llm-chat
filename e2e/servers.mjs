@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const appPort = requiredEnv("E2E_APP_PORT");
@@ -50,6 +50,10 @@ function requiredEnv(name) {
 }
 
 async function runBuild() {
+  if (process.env.E2E_USE_PREBUILT === "1") {
+    for (const entry of ["apps/web/dist/index.html", "apps/server/dist/index.js"]) accessSync(entry);
+    return;
+  }
   const build = spawn("pnpm", ["build"], {
     cwd: process.cwd(),
     env: process.env,
