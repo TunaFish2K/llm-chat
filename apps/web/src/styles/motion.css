@@ -1,4 +1,17 @@
 /* Animation owners: Motion for overlays, CSS for Radix presence and messages. */
+:root {
+  -webkit-tap-highlight-color: transparent;
+}
+button { touch-action: manipulation; }
+:is(button, a[href], summary, [role="button"], [role="tab"], [role="menuitem"], [role="option"])[data-pressed] {
+  box-shadow: inset 0 0 0 100vmax color-mix(in srgb, currentColor 9%, transparent);
+  transition: box-shadow 120ms var(--ease);
+}
+[data-pressed="true"] { transition-duration: 0ms !important; }
+.btn.icon[data-pressed="true"] > svg { transform: scale(.94); }
+.btn.icon > svg { transition: transform 120ms var(--ease); }
+.tab-content, .inspector-body, .pending-message, .message-queue li { animation: surface-enter 180ms var(--ease); }
+@keyframes surface-enter { from { opacity: 0; transform: translateY(3px); } }
 .msg[data-enter] { animation: message-enter 120ms var(--ease); }
 @keyframes message-enter { from { opacity: 0; transform: translateY(4px); } }
 
@@ -18,4 +31,5 @@
 @media (prefers-reduced-motion: reduce) {
   .msg[data-enter], [data-state="open"], [data-state="closed"] { animation: none !important; }
   .process-disclosure > summary .chev { transition: none; }
+  .tab-content, .inspector-body, .pending-message, .message-queue li { animation: none; }
 }

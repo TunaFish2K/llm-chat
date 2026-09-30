@@ -3,7 +3,7 @@ import { displayStore } from "../../lib/local-display";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 import { useStickToBottom } from "./useStickToBottom";
-import { isOffline, offlineStore } from "../../lib/offline-history";
+import { offlineStore } from "../../lib/offline-history";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 import { memo, useState, type ReactNode } from "react";
 import {
@@ -24,7 +24,7 @@ import {
 import { CancelGenerationButton } from "./CancelGenerationButton";
 import type { GenerationDto, ImageGenerationJobDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
-import { appStore, isGenerationActive, loadMessages, toastError } from "../../lib/app-state";
+import { appStore, isGenerationActive, loadMessages, selectGenerationImmediately, toastError } from "../../lib/app-state";
 import type { ConversationBranchGroup } from "../../lib/conversation-tree";
 import { formatCachedTokens, formatTime, formatTokens } from "../../lib/format";
 import type { InspectionTarget } from "../../lib/inspection";
@@ -139,7 +139,14 @@ export const MessageItem = memo(function MessageItem({
 
 function ImageGenerationStatus({ conversationId, job }: { conversationId: string; job: ImageGenerationJobDto }) {
   useLocale();
+  const [pending, setPending] = useState(false);
   const offline = useStore(offlineStore, (state) => state.offline);
+  const change = async (run: () => Promise<unknown>) => {
+    if (pending) return;
+    setPending(true);
+    try { await run(); void loadMessages(conversationId).catch(toastError); }
+    catch (error) { toastError(error); } finally { setPending(false); }
+  };
   const label = job.status === "queued"
     ? t("MessageStream.image_task_queued")
     : job.status === "running"
@@ -154,24 +161,24 @@ function ImageGenerationStatus({ conversationId, job }: { conversationId: string
   const active = job.status === "queued" || job.status === "running" || job.status === "waiting-provider";
   const retryable = job.status === "failed" || job.status === "cancelled";
   return (
-    <div className={job.status === "failed" ? "refusal-block" : "image-job-status"} role={job.status === "failed" ? "alert" : "status"}>
+    <div className={job.status === "failed" ? "refusal-block" : "image-job-status"} role={job.status === "failed" ? "alert" : "status"} aria-busy={pending}>
       <span>{label}</span>
       {active ? (
         <MessageAction
           label={t("MessageStream.stop_image_generation")}
           danger
-          disabled={offline}
-          onClick={() => void endpoints.cancelImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+          disabled={offline || pending}
+          onClick={() => void change(() => endpoints.cancelImageGeneration(conversationId, job.id))}
         >
-          <Square size={14} fill="currentColor" />
+          {pending ? <LoaderCircle size={14} className="spin" /> : <Square size={14} fill="currentColor" />}
         </MessageAction>
       ) : retryable ? (
         <MessageAction
           label={t("MessageStream.retry_image_generation")}
-          disabled={offline}
-          onClick={() => void endpoints.retryImageGeneration(conversationId, job.id).then(() => loadMessages(conversationId)).catch(toastError)}
+          disabled={offline || pending}
+          onClick={() => void change(() => endpoints.retryImageGeneration(conversationId, job.id))}
         >
-          <RotateCcw size={14} />
+          {pending ? <LoaderCircle size={14} className="spin" /> : <RotateCcw size={14} />}
         </MessageAction>
       ) : null}
     </div>
@@ -206,13 +213,8 @@ function GenerationTimeline({
   const versionIndex = message.generations.findIndex((item) => item.id === generation.id);
 
   const selectVersion = async (id: string) => {
-    if (isOffline()) {
-      appStore.set((state) => ({ messages: { ...state.messages, [conversationId]: (state.messages[conversationId] ?? []).map((item) => item.id === message.id ? { ...item, activeGenerationId: id, generatedModel: null } : item) } }));
-      return;
-    }
     try {
-      await endpoints.selectGeneration(conversationId, message.id, id);
-      await loadMessages(conversationId);
+      await selectGenerationImmediately(conversationId, message.id, id);
     } catch (error) {
       toastError(error);
     }

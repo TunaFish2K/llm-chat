@@ -630,6 +630,46 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get("/api/conversations", async () => store.listConversations());
+  const submissionAcceptance = (id: string | undefined, scope?: string): import("@llm-chat/contracts").SubmissionAcceptedDto | undefined => {
+    if (!id) return;
+    const receipt = store.submissionReceipt(id, scope);
+    if (!receipt) return;
+    const kind = receipt.scope === "start" ? "start" : receipt.scope.startsWith("messages:") ? "send" : "queue";
+    const result = receipt.value as import("@llm-chat/contracts").ConversationStartedDto & import("@llm-chat/contracts").GenerationCreatedDto & import("@llm-chat/contracts").QueuedMessageDto;
+    const conversationId = kind === "start" ? result.conversation.id : receipt.scope.slice(receipt.scope.indexOf(":") + 1);
+    const conversation = store.getConversation(conversationId);
+    if (!conversation) return;
+    const generation = kind === "start" ? result.generation : kind === "send" ? result : null;
+    const messages = generation ? store.listMessages(conversationId, false, [generation.userMessageId, generation.assistantMessageId].filter((value): value is string => Boolean(value))) : [];
+    return { clientSubmissionId: id, sourceId: offlineSourceId(store), conversation, messages, kind, result } as import("@llm-chat/contracts").SubmissionAcceptedDto;
+  };
+  const publishAcceptance = (id: string | undefined, scope: string) => {
+    const acceptance = submissionAcceptance(id, scope);
+    if (acceptance) eventHub.emit({ type: "submission-accepted", submission: acceptance });
+    return acceptance;
+  };
+  const startAcceptedGeneration = async (conversationId: string, generation: import("@llm-chat/contracts").GenerationCreatedDto) => {
+    if (store.getGeneration(generation.generationId)?.status !== "queued") return;
+    try {
+      if (generation.userMessageId) await imageService.materializeMessageAttachments(conversationId, generation.userMessageId);
+    } catch (error) {
+      if (store.getGeneration(generation.generationId)?.status === "queued") {
+        const i18n = errorI18n(error);
+        store.finishGeneration(generation.generationId, "failed", { code: "attachment_materialization_failed", message: error instanceof Error ? error.message : String(error), ...(i18n ? { i18n } : {}) });
+        publishGenerationState(store, eventHub, generation.generationId);
+        queue.kick(conversationId);
+      }
+      throw error;
+    }
+    runner.start(generation.generationId);
+  };
+  app.get<{ Params: { id: string } }>("/api/submissions/:id", async (request, reply) => {
+    const id = z.string().uuid().parse(request.params.id);
+    const query = z.object({ kind: z.enum(["start", "send", "queue"]).optional(), conversationId: z.string().uuid().optional() }).parse(request.query);
+    const scope = query.kind === "start" ? "start" : query.kind && query.conversationId ? `${query.kind === "send" ? "messages" : "queue"}:${query.conversationId}` : undefined;
+    const acceptance = submissionAcceptance(id, scope);
+    return acceptance ?? reply.code(404).send({ error: { code: "submission_not_found", message: "Submission has not been accepted" } });
+  });
   app.post("/api/conversations", async (request, reply) => {
     const value = conversationInputSchema.parse(request.body ?? {});
     const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
@@ -643,11 +683,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (previous) {
       const result = previous.value;
       if (!store.getConversation(result.conversation.id)) throw new StoreError("conversation_not_found", "Conversation not found");
-      if (store.getGeneration(result.generation.generationId)?.status === "queued") {
-        if (result.generation.userMessageId) await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
-        runner.start(result.generation.generationId);
-      }
-      return reply.code(202).send(result);
+      const acceptance = publishAcceptance(value.clientSubmissionId, "start");
+      await startAcceptedGeneration(result.conversation.id, result.generation);
+      return reply.code(202).send({ ...result, acceptance });
     }
     value.executionOverrides = store.newConversationOverrides(value.agentId, value.executionOverrides);
     const imageAssetIds = attachmentIds(value).filter((id) => store.getFileAsset(id)?.kind === "image");
@@ -660,11 +698,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     const workspacePath = value.workspacePath ? await userOperation("workspace_invalid", () => canonicalWorkspace(value.workspacePath!)) : null;
     const result = store.acceptSubmission(value.clientSubmissionId, "start", submissionInput, () => store.startConversation({ ...value, workspacePath }));
-    if (result.generation.userMessageId) {
-      await imageService.materializeMessageAttachments(result.conversation.id, result.generation.userMessageId);
-    }
-    runner.start(result.generation.generationId);
-    return reply.code(202).send(result);
+    const acceptance = publishAcceptance(value.clientSubmissionId, "start");
+    await startAcceptedGeneration(result.conversation.id, result.generation);
+    return reply.code(202).send({ ...result, acceptance });
   });
   app.get<{ Params: { id: string } }>("/api/conversations/:id", async (request) => {
     const conversation = store.getConversation(request.params.id);
@@ -858,11 +894,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     return store.createMessageGeneration(request.params.id, value.text, ids);
     });
-    if (result.userMessageId) {
-      await imageService.materializeMessageAttachments(request.params.id, result.userMessageId);
-    }
-    if (store.getGeneration(result.generationId)?.status === "queued") runner.start(result.generationId);
-    return reply.code(202).send(result);
+    const acceptance = publishAcceptance(value.clientSubmissionId, `messages:${request.params.id}`);
+    await startAcceptedGeneration(request.params.id, result);
+    return reply.code(202).send({ ...result, acceptance });
   });
 
   app.get<{ Params: { id: string } }>("/api/conversations/:id/queued-messages", async (request) => store.listQueuedMessages(request.params.id));
@@ -872,9 +906,10 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const { mode } = z.object({ mode: z.enum(["queue", "steer"]).default("queue") }).parse(request.body);
     if (!store.getConversation(request.params.id)) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
     const item = store.acceptSubmission(value.clientSubmissionId, `queue:${request.params.id}`, { ...value, mode }, () => store.enqueueMessage(request.params.id, value.text, attachmentIds(value), mode));
+    const acceptance = publishAcceptance(value.clientSubmissionId, `queue:${request.params.id}`);
     queue.changed(request.params.id);
     queue.kick(request.params.id);
-    return reply.code(202).send(item);
+    return reply.code(202).send({ ...item, acceptance });
   });
   app.delete<{ Params: { id: string; itemId: string } }>("/api/conversations/:id/queued-messages/:itemId", async (request, reply) => {
     store.deleteQueuedMessages(request.params.id, request.params.itemId);

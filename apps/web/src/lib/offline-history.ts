@@ -1,6 +1,7 @@
 import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { t, localizedError } from "./i18n";
 import { historyImageUrls } from "./offline-assets";
+import { prepareOfflineIndex } from "./offline-index";
 export { historyImageUrls } from "./offline-assets";
 import { conversationDeleted, deletedConversationIds, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
 import { draftImageUrls } from "./composer-draft-storage";
@@ -144,8 +145,9 @@ export function syncOfflineHistory(): Promise<void> {
             try {
               const snapshot = await fetchJson<OfflineConversationDto>(`/api/offline/conversations/${conversation.id}`, signal);
               if (snapshot.sourceId !== manifest.sourceId) throw localizedError("offline_history.the_data_source_changed_sync_again");
-              if (!await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversation.id)) putOfflineConversation(tx, snapshot); })) return;
-              index = { id: conversation.id, sourceId: snapshot.sourceId, revision: snapshot.revision, bytes: 0, images: historyImageUrls(snapshot.messages) };
+              index = await prepareOfflineIndex(snapshot);
+              signal.throwIfAborted();
+              if (!await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversation.id)) putOfflineConversation(tx, snapshot, index); })) return;
             } catch (error) {
               if (signal.aborted) throw error;
               if (conversationDeleted(conversation.id)) continue;
@@ -267,7 +269,12 @@ async function flushOfflineMessages(): Promise<void> {
       const old = await offlineRead<OfflineConversationDto>("conversations", conversationId);
       if (epoch !== persistenceEpoch) return;
       if (!old) { if (run) syncAgain = true; else void syncOfflineHistory(); }
-      if (old) await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversationId)) putOfflineConversation(tx, { ...old, messages: content, revision: -1 }); });
+      if (old) {
+        const snapshot = { ...old, messages: content, revision: -1 };
+        const index = await prepareOfflineIndex(snapshot);
+        if (epoch !== persistenceEpoch) return;
+        await offlineWrite(control.epoch, (tx) => { if (!conversationDeleted(conversationId)) putOfflineConversation(tx, snapshot, index); });
+      }
     }
   })().catch(failure).finally(() => {
     persistence = undefined;

@@ -14,7 +14,7 @@ export function CancelGenerationButton({ conversationId, generationId, className
       const result = await endpoints.cancelGeneration(conversationId, generationId);
       if (result.ok === false && result.status !== "stopping" && isGenerationActive(result.status)) throw new Error(t("CancelGenerationButton.cancellation_did_not_take_effect_try_again"));
       if (result.status !== "stopping") {
-        await loadMessages(conversationId);
+        void loadMessages(conversationId).catch(toastError);
         setStopping(false);
       }
     }

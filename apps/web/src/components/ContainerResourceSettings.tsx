@@ -6,6 +6,7 @@ import { t, useLocale } from "../lib/i18n";
 import { toastError } from "../lib/app-state";
 import { Field, LoadingState } from "../lib/ui";
 import { Button } from "./ui";
+import { LoaderCircle } from "lucide-react";
 
 export const resourceName = (resource: Pick<ContainerResourceItem, "id" | "definition">) => resource.id.startsWith("builtin:")
   ? t(({ "builtin:alpine": "container_resources.alpine", "builtin:runtime": "container_resources.runtime", "builtin:tools": "container_resources.tools" } as const)[resource.id as "builtin:alpine" | "builtin:runtime" | "builtin:tools"]) : resource.definition.name;
@@ -14,6 +15,7 @@ const bytes = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MiB`;
 export function ContainerResourceSettings() {
   useLocale();
   const { data: catalog, setData: setCatalog, error, reload: refresh } = useResource("containerResources", endpoints.containerResources);
+  const [busy, setBusy] = useState(false);
   useEffect(() => {
     void refresh();
     const resource = (raw: Event) => {
@@ -31,30 +33,38 @@ export function ContainerResourceSettings() {
       clearInterval(timer);
     };
   }, [refresh]);
-  const action = async (run: () => Promise<unknown>) => { try { await run(); await refresh(); } catch (error) { toastError(error); } };
+  const action = async (run: () => Promise<unknown>, rollback?: () => void) => {
+    if (busy) return;
+    setBusy(true);
+    try { await run(); void refresh(); } catch (error) { rollback?.(); toastError(error); } finally { setBusy(false); }
+  };
   if (!catalog) return error ? <p role="alert">{error}<Button onClick={() => void refresh()}>{t("environment.refresh")}</Button></p> : <LoadingState />;
-  return <section className="container-resources settings-panels">
+  return <section className="container-resources settings-panels" aria-busy={busy}>
     <div>
-      <h3>{t("container_resources.title")}</h3>
+      <h3>{t("container_resources.title")}{busy ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}</h3>
       <p className="hint">{t("container_resources.description")}</p>
       {error ? <p role="alert">{error}<Button onClick={() => void refresh()}>{t("environment.refresh")}</Button></p> : null}
       <Field label={t("container_resources.node")}>
-        <select className="select" aria-label={t("container_resources.node")} value={catalog.node}
-          onChange={event => void action(() => endpoints.setContainerResourceNode(event.target.value as ContainerResourceNode))}>
+        <select className="select" aria-label={t("container_resources.node")} value={catalog.node} disabled={busy}
+          onChange={event => {
+            const node = event.target.value as ContainerResourceNode, previous = catalog.node;
+            setCatalog(current => current ? { ...current, node } : current);
+            void action(() => endpoints.setContainerResourceNode(node), () => setCatalog(current => current?.node === node ? { ...current, node: previous } : current));
+          }}>
           {(["official", "tuna", "ustc"] as const).map(node => <option key={node} value={node}>{t(`container_resources.${node}`)}</option>)}
         </select>
       </Field>
       <p className="muted">{catalog.platform} · {t("container_resources.cache")}: {bytes(catalog.cacheBytes)}</p>
       <div className="row">
-        <Button onClick={() => void action(() => endpoints.downloadContainerResources(["builtin:tools"]))}>{t("container_resources.download_default")}</Button>
-        <Button disabled={catalog.jobs.some(job => job.state === "running")} onClick={() => void action(() => endpoints.clearContainerResourceCache())}>{t("container_resources.clear_cache")}</Button>
+        <Button disabled={busy} onClick={() => void action(() => endpoints.downloadContainerResources(["builtin:tools"]))}>{t("container_resources.download_default")}</Button>
+        <Button disabled={busy || catalog.jobs.some(job => job.state === "running")} onClick={() => void action(() => endpoints.clearContainerResourceCache())}>{t("container_resources.clear_cache")}</Button>
       </div>
     </div>
     {catalog.jobs.length > 0 ? <div className="settings-panels">{catalog.jobs.slice(0, 10).map(job => <div className="card" key={job.id}>
       <p>{t(`container_resources.${job.kind}`)} · {t(`container_resources.${job.state}`)}</p>
       <p className="hint">{job.message}</p>
       {job.state === "running" ? <><progress max={job.totalBytes || 1} value={job.completedBytes} aria-label={t("container_resources.progress")} />
-        <Button onClick={() => void action(() => endpoints.cancelContainerResourceJob(job.id))}>{t("container_resources.cancel")}</Button></> : null}
+        <Button disabled={busy} onClick={() => void action(() => endpoints.cancelContainerResourceJob(job.id))}>{t("container_resources.cancel")}</Button></> : null}
       {job.error ? <p role="status">{job.error}</p> : null}
     </div>)}</div> : null}
     <div className="settings-panels">{catalog.resources.map(resource => <div className="card" key={resource.id}>
@@ -62,7 +72,7 @@ export function ContainerResourceSettings() {
       <p className="muted">{resource.definition.version} · {bytes(resource.files.reduce((sum, file) => sum + file.size, 0))}</p>
       {resource.definition.description && resource.source !== "builtin" ? <p>{resource.definition.description}</p> : null}
       <div className="row">
-        <Button disabled={!resource.available} onClick={() => void action(() => endpoints.downloadContainerResources([resource.id]))}>{t("container_resources.download")}</Button>
+        <Button disabled={busy || !resource.available} onClick={() => void action(() => endpoints.downloadContainerResources([resource.id]))}>{t("container_resources.download")}</Button>
       </div>
       {!resource.available ? <p>{resource.availabilityError ?? t("environment.unavailable")}</p> : <details>
         <summary>{t("container_resources.files")} · {resource.files.filter(file => file.cached).length}/{resource.files.length}</summary>

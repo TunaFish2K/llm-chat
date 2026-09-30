@@ -44,7 +44,7 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false }: {
       <Popover.Trigger asChild><button type="button" className="chip composer-attachment-button" disabled={disabled} aria-label={t("AttachmentEditor.add_attachment")} title={t("AttachmentEditor.add_attachment")}>
         {uploading ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
       </button></Popover.Trigger>
-      <Popover.Portal><Popover.Content className="composer-more-popover attachment-menu" side="top" align="start" sideOffset={8}>
+      <Popover.Portal><Popover.Content className="composer-more-popover attachment-menu" side="top" align="start" sideOffset={8} inert={!open ? true : undefined} aria-hidden={!open || undefined}>
         <button type="button" onClick={() => { fileInput.current?.click(); setOpen(false); }}><FilePlus2 size={17} />{t("AttachmentEditor.upload_files")}</button>
         <button type="button" onClick={() => { imageInput.current?.click(); setOpen(false); }}><ImagePlus size={17} />{t("AttachmentEditor.upload_images")}</button>
       </Popover.Content></Popover.Portal>

@@ -1,4 +1,6 @@
 import { useMessageEntrance } from "../components/chat/useMessageEntrance";
+import { useHistoryWindow } from "../components/chat/useHistoryWindow";
+import { submissionStore } from "../lib/submission";
 import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
@@ -14,6 +16,7 @@ import {
   isGenerationActive,
   loadMessages,
   refreshConversations,
+  selectBranchImmediately,
   toast,
   toastError,
   trackGeneration
@@ -22,7 +25,7 @@ import type { InspectionTarget } from "../lib/inspection";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui";
-import { AgentAvatar } from "../components/chat/atoms";
+import { AgentAvatar, AssetGallery } from "../components/chat/atoms";
 import { Composer } from "../components/chat/Composer";
 import { ConversationHeader, type ConversationView } from "../components/chat/ConversationHeader";
 import { BranchSwitchers, MessageItem, VersionSwitcher, type StreamCallbacks } from "../components/chat/MessageStream";
@@ -80,6 +83,7 @@ export function ChatView({
   );
   const conversations = useStore(appStore, (state) => state.conversations);
   const messages = useStore(appStore, (state) => (conversationId ? state.messages[conversationId] ?? null : null));
+  const pendingSubmission = useStore(submissionStore, state => state.pending[conversationId ?? "new"]);
   const runningTasks = useStore(appStore, (state) =>
     conversationId ? state.runningTasksByConversation[conversationId] ?? 0 : 0
   );
@@ -98,6 +102,7 @@ export function ChatView({
   const [roleplayOpen, setRoleplayOpen] = useState(false);
   const [roleplaySession, setRoleplaySession] = useState<{ agent: AgentDto; state: ConversationRoleplayState } | null>(null);
   const scroller = useStickToBottom([messages], view === "chat");
+  const historyStart = useHistoryWindow(transcript.messages.length, scroller.ref, scroller.detached);
   const enteringMessages = useMessageEntrance(conversationId, messages, !scroller.detached);
 
   const busy = Boolean(
@@ -116,7 +121,7 @@ export function ChatView({
     try {
       const result = await endpoints.retryGeneration(conversationId, assistantMessageId);
       trackGeneration(conversationId, result.assistantMessageId, result.generationId);
-      await loadMessages(conversationId);
+      void loadMessages(conversationId).catch(toastError);
     } catch (error) {
       toastError(error);
     } finally {
@@ -178,8 +183,8 @@ export function ChatView({
     setBranching(true);
     try {
       const result = await endpoints.forkConversation(source.id, input);
-      await refreshConversations();
-      await loadMessages(result.conversation.id);
+      appStore.set(state => ({ conversations: [result.conversation, ...state.conversations.filter(item => item.id !== result.conversation.id)] }));
+      void Promise.all([refreshConversations(), loadMessages(result.conversation.id)]).catch(toastError);
       if (result.generation) {
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
       }
@@ -199,11 +204,11 @@ export function ChatView({
 
   const switchBranch = useCallback(async (branchId: string) => {
     if (!conversation) return;
-    if (isOffline()) { browseOfflineBranch(branchId); navigate(routes.chat(branchId)); return; }
+    browseOfflineBranch(branchId); navigate(routes.chat(branchId));
+    if (isOffline()) return;
     try {
-      await endpoints.selectConversationBranch(conversation.id, branchId);
-      await refreshConversations();
-      navigate(routes.chat(branchId));
+      await selectBranchImmediately(resolveConversationRoot(conversation, appStore.get().conversations).id, branchId);
+      void refreshConversations().catch(toastError);
     } catch (error) {
       toastError(error);
     }
@@ -298,20 +303,20 @@ export function ChatView({
                   />
                 </div>
                 {loadError && messages !== null ? <ErrorState message={loadError} onRetry={() => conversationId && readMessages(conversationId)} /> : null}
-                {!conversationId ? (
+                {!conversationId && !pendingSubmission ? (
                   <NewConversationWelcome
                     agentId={previewAgentId}
                     greetingIndex={newGreetingIndex}
                     onGreetingIndexChange={setNewGreetingIndex}
                   />
-                ) : loadError && messages === null ? (
+                ) : !conversationId ? null : loadError && messages === null ? (
                   <ErrorState message={loadError} onRetry={() => readMessages(conversationId)} />
                 ) : messages === null ? (
                   <LoadingState label={t("ChatView.loading_messages")} />
                 ) : messages.length === 0 ? (
                   <EmptyState title={t("ChatView.this_conversation_has_no_messages_yet")} hint={t("ChatView.send_your_first_message_below")} />
                 ) : (
-                  transcript.messages.map((message) => (
+                  transcript.messages.slice(historyStart).map((message) => (
                     <MessageItem
                       key={message.id}
                       enter={enteringMessages.has(message.id)}
@@ -324,6 +329,11 @@ export function ChatView({
                     />
                   ))
                 )}
+                {pendingSubmission ? <article className="msg pending-message" data-role="user" data-submission-id={pendingSubmission.id} aria-busy={pendingSubmission.status !== "unknown"}>
+                  {pendingSubmission.text ? <div className="msg-bubble">{pendingSubmission.text}</div> : null}
+                  {pendingSubmission.attachments?.length ? <AssetGallery assets={pendingSubmission.attachments} /> : pendingSubmission.assetIds.length ? <span className="muted">{t("AttachmentEditor.add_attachment")} · {pendingSubmission.assetIds.length}</span> : null}
+                  <div className="pending-message-status" role="status">{t(pendingSubmission.status === "unknown" ? "Composer.submission_unknown" : pendingSubmission.status === "preparing" ? "Composer.preparing_message" : "MessageQueueList.sending")}</div>
+                </article> : null}
               </div>
             </div>
             {scroller.detached ? (

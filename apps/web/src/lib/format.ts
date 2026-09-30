@@ -1,7 +1,14 @@
 import { t, getLocale } from "./i18n";
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
 export function formatTime(timestamp: number | null | undefined): string {
   if (!timestamp) return "—";
-  return new Intl.DateTimeFormat(getLocale(), { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" }).format(timestamp);
+  const locale = getLocale();
+  let formatter = timeFormatters.get(locale);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, { year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+    timeFormatters.set(locale, formatter);
+  }
+  return formatter.format(timestamp);
 }
 
 export function formatTokens(value: number | undefined): string {

@@ -1,5 +1,5 @@
 import type { OfflineConversationDto, OfflineManifestDto } from "@llm-chat/contracts";
-import { historyImageUrls } from "./offline-assets";
+import { computeOfflineIndex, prepareOfflineIndex } from "./offline-index";
 
 export const OFFLINE_IMAGES_PREFIX = "llm-chat-history-images-";
 export interface OfflineControl { epoch: string; enabled: boolean; authorized: boolean; sourceId: string | null }
@@ -45,13 +45,9 @@ export async function* iterateOfflineConversations(): AsyncGenerator<OfflineConv
 export interface OfflineConversationIndex {
   id: string; sourceId: string; revision: number; bytes: number; images: string[];
 }
-function conversationIndex(snapshot: OfflineConversationDto): OfflineConversationIndex {
-  return { id: snapshot.conversation.id, sourceId: snapshot.sourceId, revision: snapshot.revision,
-    bytes: new Blob([JSON.stringify(snapshot)]).size, images: historyImageUrls(snapshot.messages) };
-}
-export function putOfflineConversation(tx: IDBTransaction, snapshot: OfflineConversationDto): void {
+export function putOfflineConversation(tx: IDBTransaction, snapshot: OfflineConversationDto, index = computeOfflineIndex(snapshot)): void {
   tx.objectStore("conversations").put(snapshot);
-  tx.objectStore("meta").put(conversationIndex(snapshot), `conversation:${snapshot.conversation.id}`);
+  tx.objectStore("meta").put(index, `conversation:${snapshot.conversation.id}`);
 }
 export function deleteOfflineConversation(tx: IDBTransaction, id: string): void {
   tx.objectStore("conversations").delete(id);
@@ -60,13 +56,23 @@ export function deleteOfflineConversation(tx: IDBTransaction, id: string): void 
 
 /** Old records gain metadata lazily; only one full snapshot is held at a time. */
 export async function offlineConversationIndex(signal?: AbortSignal): Promise<OfflineConversationIndex[]> {
+  const db = await openOfflineDb();
+  const indexed = await new Promise<{ items: OfflineConversationIndex[]; count: number }>((resolve, reject) => {
+    const tx = db.transaction(["meta", "conversations"]);
+    const items = tx.objectStore("meta").getAll(IDBKeyRange.bound("conversation:", "conversation;", false, true));
+    const count = tx.objectStore("conversations").count();
+    tx.oncomplete = () => resolve({ items: items.result as OfflineConversationIndex[], count: count.result });
+    tx.onerror = () => reject(tx.error);
+  });
+  signal?.throwIfAborted();
+  if (indexed.items.length === indexed.count) return indexed.items;
   const control = await offlineRead<OfflineControl>("meta", "control");
   const result: OfflineConversationIndex[] = [];
   for await (const snapshot of iterateOfflineConversations()) {
     signal?.throwIfAborted();
     let index = await offlineRead<OfflineConversationIndex>("meta", `conversation:${snapshot.conversation.id}`);
-    if (!index || index.sourceId !== snapshot.sourceId || index.revision !== snapshot.revision || index.revision === -1) {
-      index = conversationIndex(snapshot);
+    if (!index || index.sourceId !== snapshot.sourceId || index.revision !== snapshot.revision) {
+      index = await prepareOfflineIndex(snapshot);
       if (control) await offlineWrite(control.epoch, (tx) => {
         // Do not let a migration racing a newer write overwrite its metadata.
         const current = tx.objectStore("conversations").get(index!.id);

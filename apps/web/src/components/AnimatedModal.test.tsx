@@ -15,13 +15,14 @@ it("keeps the exiting dialog as a back layer and blocks duplicate actions", asyn
   }
   render(<Nested />);
   act(() => { dismissBackLayer(); });
-  const exiting = screen.getByRole("dialog", { name: "Inner" });
+  const exiting = document.querySelector('[role="dialog"][aria-label="Inner"]')!;
   expect(exiting).toHaveAttribute("inert");
-  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(exiting).toHaveAttribute("aria-hidden", "true");
+  fireEvent.click(exiting.querySelector('.modal-footer button')!);
   act(() => { dismissBackLayer(); });
   expect(save).not.toHaveBeenCalled();
   expect(outerClose).not.toHaveBeenCalled();
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Inner" })).toBeNull());
+  await waitFor(() => expect(document.querySelector('[role="dialog"][aria-label="Inner"]')).toBeNull());
   await act(async () => {});
   act(() => { dismissBackLayer(); });
   expect(outerClose).toHaveBeenCalledOnce();
@@ -32,7 +33,7 @@ it("restores interaction and focus when an exit is interrupted", () => {
   const modal = <Modal title="Reopen" onClose={close}>Content</Modal>;
   const view = render(<><button>Outside</button><Presence>{modal}</Presence></>);
   view.rerender(<><button>Outside</button><Presence>{null}</Presence></>);
-  expect(screen.getByRole("dialog")).toHaveAttribute("inert");
+  expect(document.querySelector('[role="dialog"]')).toHaveAttribute("inert");
   // Browsers move focus away when the focused subtree becomes inert.
   screen.getByRole("button", { name: "Outside" }).focus();
   view.rerender(<><button>Outside</button><Presence>{modal}</Presence></>);

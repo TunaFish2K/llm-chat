@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useSyncExternalStore, type SetStateActi
 import { displayError } from "./error-display";
 
 interface Snapshot<T> { data: T | null; error: string | null; refreshing: boolean }
-interface Entry<T> { snapshot: Snapshot<T>; listeners: Set<() => void>; touched: number; pending?: Promise<void>; revision: number }
+interface Entry<T> { snapshot: Snapshot<T>; listeners: Set<() => void>; touched: number; pending?: Promise<void>; revision: number; dirty?: boolean }
 const entries = new Map<string, Entry<unknown>>();
 let epoch = 0;
 function entryFor<T>(key: string): Entry<T> {
@@ -33,6 +33,7 @@ export function invalidateResources(matches: (key: string) => boolean) {
     if (!matches(key)) continue;
     entry.revision++;
     delete entry.pending;
+    delete entry.dirty;
     publish(entry, { data: null, error: null, refreshing: false });
     if (!entry.listeners.size) entries.delete(key);
   }
@@ -44,7 +45,7 @@ export function useResource<T>(key: string | null, read: () => Promise<T>) {
   const snapshot = useSyncExternalStore(subscribe, () => entry.snapshot);
   const reload = useCallback((): Promise<void> => {
     if (key === null) return Promise.resolve();
-    if (entry.pending) return entry.pending;
+    if (entry.pending) { entry.dirty = true; return entry.pending; }
     const session = epoch, revision = ++entry.revision, action = reader.current;
     publish(entry, { refreshing: true, error: null });
     const pending = Promise.resolve().then(() => action()).then(data => {
@@ -55,6 +56,7 @@ export function useResource<T>(key: string | null, read: () => Promise<T>) {
       if (entry.pending !== pending) return;
       delete entry.pending;
       publish(entry, { refreshing: false });
+      if (entry.dirty && session === epoch) { entry.dirty = false; return reload(); }
     });
     entry.pending = pending;
     return pending;
@@ -63,6 +65,6 @@ export function useResource<T>(key: string | null, read: () => Promise<T>) {
     entry.revision++;
     publish(entry, { data: typeof next === "function" ? (next as (old: T | null) => T | null)(entry.snapshot.data) : next });
   }, [entry]);
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { if (!entry.pending) void reload(); }, [entry, reload]);
   return { ...snapshot, loading: snapshot.data === null && !snapshot.error, reload, setData };
 }

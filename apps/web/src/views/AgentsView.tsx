@@ -74,7 +74,7 @@ export function AgentsView() {
     setBusy(true);
     try {
       const agent = await endpoints.createAgent(defaultAgentInput(newName.trim()));
-      await refreshAgents();
+      void refreshAgents().catch(toastError);
       setCreating(false);
       setNewName("");
       navigate(routes.agents(agent.id));
@@ -90,7 +90,7 @@ export function AgentsView() {
     try {
       const dataBase64 = await fileToBase64(file);
       const agent = await endpoints.importAgent(file.name, dataBase64);
-      await refreshAgents();
+      void refreshAgents().catch(toastError);
       toast("success", localized("AgentsView.imported", { value1: (agent.name) }));
       navigate(routes.agents(agent.id));
     } catch (error) {
@@ -105,7 +105,7 @@ export function AgentsView() {
     setBusy(true);
     try {
       await endpoints.deleteAgent(deleting);
-      await refreshAgents();
+      void refreshAgents().catch(toastError);
       setDeleting(null);
       toast("success", localized("AgentsView.agent_deleted"));
     } catch (error) {

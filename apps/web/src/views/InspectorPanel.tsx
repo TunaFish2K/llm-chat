@@ -52,7 +52,7 @@ export function InspectorPanel({
         </div>
         <button className="icon-button" onClick={onClose} aria-label={t("App.close_inspector")} title={t("App.close_inspector")}><X size={17} /></button>
       </header>
-      <div className="inspector-scroll">
+      <div className="inspector-scroll inspector-body" key={JSON.stringify(target)}>
         {taskError ? <ErrorState message={taskError} onRetry={() => void reloadTask()} /> : null}
         {contextError ? <ErrorState message={contextError} onRetry={() => void reloadContext()} /> : null}
         {!conversation ? <EmptyState title={t("InspectorPanel.select_a_conversation_to_view_details")} /> : null}

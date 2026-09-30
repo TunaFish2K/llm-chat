@@ -159,6 +159,7 @@ export interface McpTestResult {
 }
 
 export const endpoints = {
+  submission: (id: string, conversationId: string | null = null, kind: "start" | "send" | "queue" = "start") => api.get<import("@llm-chat/contracts").SubmissionAcceptedDto>(`/api/submissions/${encodeURIComponent(id)}?kind=${kind}${conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : ""}`, { networkOnly: true }),
   containerResources: () => request<ContainerResourceCatalog>("GET", "/api/container-resources"),
   setContainerResourceNode: (node: ContainerResourceNode) => request("PUT", "/api/container-resources/settings", { node }),
   downloadContainerResources: (ids: string[]) => request<ContainerResourceJob>("POST", "/api/container-resources/download", { ids }),

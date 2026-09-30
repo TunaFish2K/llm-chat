@@ -47,13 +47,13 @@ function ModalContent({ title, onClose, children, footer, wide, fullscreen }: Mo
       window.removeEventListener("keydown", onKey);
       const remaining = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
       const top = remaining[remaining.length - 1];
-      if (previous?.isConnected && !previous.closest('[inert]') && (!top || top === ref.current || top.contains(previous))) previous.focus();
+      if (previous?.isConnected && !previous.closest('[inert]') && (!top || top === ref.current || top.contains(previous))) previous.focus({ preventScroll: true });
     };
   }, []);
 
   useEffect(() => {
     if (present && !ref.current?.contains(document.activeElement)) {
-      (ref.current?.querySelector<HTMLElement>(FOCUSABLE) ?? ref.current)?.focus();
+      (ref.current?.querySelector<HTMLElement>(FOCUSABLE) ?? ref.current)?.focus({ preventScroll: true });
     }
   }, [present]);
 
@@ -63,7 +63,7 @@ function ModalContent({ title, onClose, children, footer, wide, fullscreen }: Mo
     onClickCapture={event => { if (!present) { event.preventDefault(); event.stopPropagation(); } }}
     onMouseDown={event => { if (event.target === event.currentTarget) closeRef.current(); }}>
     <m.div className={`modal${wide ? " wide" : ""}${fullscreen ? " fullscreen" : ""}`}
-      ref={ref} role="dialog" aria-modal="true" aria-label={title} aria-labelledby={headingId} tabIndex={-1} inert={!present ? true : undefined}
+      ref={ref} role="dialog" aria-modal="true" aria-hidden={!present || undefined} aria-label={title} aria-labelledby={headingId} tabIndex={-1} inert={!present ? true : undefined}
       initial={{ y: reduced ? 0 : 4 }} animate={{ y: 0, transition: { duration: reduced ? 0 : motionTiming.enter } }}
       exit={{ y: reduced ? 0 : 4, transition: { duration: reduced ? 0 : motionTiming.exit } }}>
       <div className="modal-header"><h3 id={headingId}>{title}</h3>

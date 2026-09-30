@@ -64,6 +64,7 @@ export function ReasoningPicker(props: ReasoningControlProps) {
       <Lightbulb size={18} />
     </button></Popover.Trigger>
     <Popover.Portal><Popover.Content className="reasoning-popover" side="top" sideOffset={10} collisionPadding={12}
+      inert={!open ? true : undefined} aria-hidden={!open || undefined}
       onOpenAutoFocus={event => {
         if (window.matchMedia("(pointer: coarse)").matches) event.preventDefault();
       }}
