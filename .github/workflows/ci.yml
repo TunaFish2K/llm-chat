@@ -111,6 +111,7 @@ jobs:
           docker logs playwright
           exit 1
       - name: Test ${{ matrix.project }}
+        shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
         run: pnpm test:e2e --project=${{ matrix.project }} 2>&1 | tee "$RUNNER_TEMP/browser.log"
