@@ -20,7 +20,7 @@ async function picker(initialPath: string | null = "/workspace") {
   const onSelect = vi.fn();
   const onClose = vi.fn();
   const view = render(<DirectoryPicker initialPath={initialPath} onSelect={onSelect} onClose={onClose} />);
-  await waitFor(() => expect(screen.queryByText("读取目录…")).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole("listbox") ?? screen.queryByRole("alert")).toBeInTheDocument());
   return { ...view, onSelect, onClose, user: userEvent.setup(), input: screen.getByRole("textbox", { name: "目录路径" }) };
 }
 
