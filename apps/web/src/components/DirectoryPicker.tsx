@@ -32,11 +32,14 @@ export function DirectoryPicker({
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const requestId = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
   const pathId = useId();
   const errorId = useId();
   const hintId = useId();
 
   const load = useCallback(async (path?: string) => {
+    requestController.current?.abort();
+    const controller = new AbortController(); requestController.current = controller;
     const id = ++requestId.current;
     setPathInput(path ?? "");
     setError(null);
@@ -47,7 +50,7 @@ export function DirectoryPicker({
     }
     setLoading(true);
     try {
-      const result = await endpoints.listDirectories(path);
+      const result = await endpoints.listDirectories(path, controller.signal);
       if (id !== requestId.current) return;
       setListing(result);
       setPathInput(result.path);
@@ -66,7 +69,7 @@ export function DirectoryPicker({
 
   useEffect(() => {
     void load(initialPath ?? undefined);
-    return () => { ++requestId.current; };
+    return () => { ++requestId.current; requestController.current?.abort(); };
   }, [initialPath, load]);
 
   const close = () => {

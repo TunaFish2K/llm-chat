@@ -1,3 +1,4 @@
+import { useResource } from "../lib/resource";
 import { t, useLocale } from "../lib/i18n";
 import { useEffect, useMemo, useState } from "react";
 import type { BackgroundTaskDto, ConversationDto, GenerationDto, MessageDto } from "@llm-chat/contracts";
@@ -6,7 +7,7 @@ import { endpoints } from "../lib/api";
 import { appStore, loadMessages, toastError } from "../lib/app-state";
 import type { InspectionTarget } from "../lib/inspection";
 import { useStore } from "../lib/store";
-import { EmptyState, StatusTag } from "../lib/ui";
+import { EmptyState, ErrorState, StatusTag } from "../lib/ui";
 import { formatTime, formatTokens } from "../lib/format";
 
 const EMPTY_MESSAGES: MessageDto[] = [];
@@ -24,13 +25,13 @@ export function TrajectoryView({
 }) {
   useLocale();
   const messages = useStore(appStore, (state) => state.messages[conversation.id] ?? EMPTY_MESSAGES);
-  const [tasks, setTasks] = useState<BackgroundTaskDto[]>([]);
+  const { data: taskData, error: taskError, reload: reloadTasks } = useResource(`tasks:${conversation.id}`, () => endpoints.backgroundTasks(conversation.id));
+  const tasks = taskData ?? [];
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void loadMessages(conversation.id).catch(toastError);
-    void endpoints.backgroundTasks(conversation.id).then(setTasks).catch(toastError);
   }, [conversation.id]);
 
   const turns = useMemo(() => projectTurns(messages, tasks), [messages, tasks]);
@@ -47,6 +48,7 @@ export function TrajectoryView({
 
   return (
     <div className="trajectory-view">
+      {taskError ? <ErrorState message={taskError} onRetry={() => void reloadTasks()} /> : null}
       <div className="trajectory-toolbar" role="toolbar" aria-label={t("TrajectoryView.activity_toolbar")}>
         <label className="search-field compact">
           <Search size={15} aria-hidden="true" />

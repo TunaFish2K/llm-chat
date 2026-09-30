@@ -1,3 +1,4 @@
+import { useResource } from "../lib/resource";
 import { Presence } from "../lib/motion";
 import { uploadManager } from "../lib/file-upload-manager";
 import { ContainerResourceSettings } from "../components/ContainerResourceSettings";
@@ -448,30 +449,17 @@ function getCATEGORY_LABELS(): Record<string, string> { return {
 
 function ToolsSection() {
   useLocale();
-  const [settings, setSettings] = useState<ToolSettingsDto | null>(null);
-  const [catalog, setCatalog] = useState<ToolCatalogItemDto[]>([]);
-  const [error, setError] = useErrorState(null);
+  const { data: settings, setData: setSettings, error, reload: loadSettings } = useResource("toolSettings", endpoints.toolSettings);
+  const { data: catalogData, error: catalogError, reload: loadCatalog } = useResource("toolCatalog", () => endpoints.toolCatalog());
+  const catalog = catalogData ?? [];
   const [detail, setDetail] = useState<
     { kind: "tool"; tool: ToolCatalogItemDto } | { kind: "text"; title: string; text: string } | null
   >(null);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const [toolSettings, items] = await Promise.all([endpoints.toolSettings(), endpoints.toolCatalog()]);
-      setSettings(toolSettings);
-      setCatalog(items);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const load = useCallback(async () => { await Promise.all([loadSettings(), loadCatalog()]); }, [loadSettings, loadCatalog]);
   useResourceEvents(["tools", "plugins", "skills", "mcp"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !settings) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!settings) return <LoadingState />;
 
   const toggleTool = (name: string, enabled: boolean) => {
@@ -487,6 +475,7 @@ function ToolsSection() {
 
   return (
     <div className="settings-panels">
+      {error || catalogError ? <ErrorState message={error || catalogError!} onRetry={() => void load()} /> : null}
       <div className="card">
         <h3>{t("SettingsView.tool_environment")}</h3>
         <div className="environment-value">
@@ -655,31 +644,22 @@ function TextDetailModal({ title, text, onClose }: { title: string; text: string
 
 function SkillsSection() {
   useLocale();
-  const [skills, setSkills] = useState<SkillDto[] | null>(null);
-  const [error, setError] = useErrorState(null);
+  const { data: skills, setData: setSkills, error, reload: load } = useResource("skills", endpoints.skills);
   const [installPath, setInstallPath] = useState("");
   const [inspecting, setInspecting] = useState<SkillDto | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setSkills(await endpoints.skills());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
-    }
-  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
   useResourceEvents(["skills"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !skills) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!skills) return <LoadingState />;
 
   return (
     <div className="settings-panels">
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       <div className="card">
         <h3>{t("SettingsView.install_and_discover")}</h3>
         <div className="row">
@@ -830,32 +810,23 @@ function SkillStateTag({ state }: { state: SkillDto["state"] }) {
 
 function PluginsSection() {
   useLocale();
-  const [plugins, setPlugins] = useState<PluginDto[] | null>(null);
-  const [error, setError] = useErrorState(null);
+  const { data: plugins, setData: setPlugins, error, reload: load } = useResource("plugins", endpoints.plugins);
   const [installPath, setInstallPath] = useState("");
   const [configuring, setConfiguring] = useState<PluginDto | null>(null);
   const [removing, setRemoving] = useState<PluginDto | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setPlugins(await endpoints.plugins());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
-    }
-  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
   useResourceEvents(["plugins"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !plugins) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!plugins) return <LoadingState />;
 
   return (
     <div className="settings-panels">
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       <div className="card">
         <h3>{t("SettingsView.install_plugin")}</h3>
         <div className="row">
@@ -1050,31 +1021,22 @@ function PluginConfigModal({
 
 function McpSection() {
   useLocale();
-  const [servers, setServers] = useState<McpServerDto[] | null>(null);
-  const [error, setError] = useErrorState(null);
+  const { data: servers, setData: setServers, error, reload: load } = useResource("mcpServers", endpoints.mcpServers);
   const [editing, setEditing] = useState<McpServerDto | "new" | null>(null);
   const [removing, setRemoving] = useState<McpServerDto | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setServers(await endpoints.mcpServers());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
-    }
-  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
   useResourceEvents(["mcp"], load);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !servers) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!servers) return <LoadingState />;
 
   return (
     <div className="settings-panels">
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       <div className="card">
         <h3 className="section-heading-actions">{t("SettingsView.mcp_servers")}<button className="btn small primary" onClick={() => setEditing("new")}>{t("SettingsView.add_server")}</button>
         </h3>
@@ -1259,27 +1221,18 @@ function McpEditor({
 
 function MemoriesSection() {
   useLocale();
-  const [memories, setMemories] = useState<MemoryItem[] | null>(null);
-  const [error, setError] = useErrorState(null);
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setMemories(await endpoints.memories());
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("SettingsView.could_not_load"));
-    }
-  }, []);
+  const { data: memories, setData: setMemories, error, reload: load } = useResource("memories", endpoints.memories);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  if (error) return <ErrorState message={error} onRetry={() => void load()} />;
+  if (error && !memories) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!memories) return <LoadingState />;
 
   return (
     <div className="card">
+      {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       <h3>{t("SettingsView.long_term_memory")}</h3>
       <p className="small muted">{t("SettingsView.the_model_writes_memories_using_the_memory_tool_this_view")}</p>
       {memories.length === 0 ? (

@@ -1,3 +1,4 @@
+import { readSubmission, saveSubmission, type Submission } from "../../lib/submission";
 import { PopoverLayer, Presence } from "../../lib/motion";
 import { effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
 import { useErrorState } from "../../lib/error-display";
@@ -122,12 +123,17 @@ export const Composer = memo(function Composer({
   const inputAreaRef = useRef<HTMLDivElement>(null);
   const [pendingAgent, setPendingAgent] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const [failedSubmission, setFailedSubmission] = useState<Submission | null>(() => readSubmission(conversation?.id ?? null));
+  const [sendError, setSendError] = useState("");
   const [savingOverrides, setSavingOverrides] = useState(false);
   const [attachmentSeed, setAttachmentSeed] = useState(initialDraft?.attachments ?? []);
   const [newDraftScope, setNewDraftScope] = useState(() => initialDraft?.uploadScopeId ?? `draft:${crypto.randomUUID()}`);
   const { attachments, setAttachments, uploading, uploadFiles, uploadScope, attachmentCount } = useAttachments(
     attachmentSeed, conversation ? `conversation:${conversation.id}` : newDraftScope, conversation?.id);
   const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
+  const liveInput = useRef({ text, attachments });
+  liveInput.current = { text, attachments };
   const wasGenerating = useRef(false);
   const currentDraft = useRef("");
   const isNew = !conversation;
@@ -290,93 +296,95 @@ export const Composer = memo(function Composer({
     }
   };
 
-  const sendMessage = async (overrideText?: string, steer = false) => {
-    let content = (overrideText ?? text).trim();
-    if ((!content && !attachments.length) || sending || uploading || savingOverrides) return;
-    if (!effectiveAgent) {
-      toast("error", localized("Composer.select_an_agent_first"));
+  const sendMessage = async (overrideText?: string, steer = false, retry?: Submission) => {
+    const originalText = overrideText ?? text;
+    if (sendingRef.current || savingOverrides || (!retry && ((!originalText.trim() && !attachments.length) || uploading))) return;
+    if (!retry && (!effectiveAgent || !modelAvailable)) {
+      toast("error", localized(!effectiveAgent ? "Composer.select_an_agent_first" : "Composer.select_an_available_model_first"));
       return;
     }
-    if (!modelAvailable) {
-      toast("error", localized("Composer.select_an_available_model_first"));
-      return;
+    if (!retry && attachments.some(asset => asset.kind === "image") && !imageConfigured) {
+      toast("error", localized("Composer.this_model_does_not_support_images_configure_a_fallback_vision")); return;
     }
-    if (attachments.some((asset) => asset.kind === "image") && !imageConfigured) {
-      toast("error", localized("Composer.this_model_does_not_support_images_configure_a_fallback_vision"));
-      return;
-    }
-    setSending(true);
+    const id = conversation?.id ?? null;
+    const submittedRoute = location.pathname;
+    const syncAfterSend = (reads: Promise<unknown>[]) => {
+      void Promise.all(reads).catch(() => toast("error", localized("Composer.sync_failed_after_send")));
+    };
+    const previous = readSubmission(id);
+    const reusable = previous && previous.originalText === originalText && JSON.stringify(previous.assetIds) === JSON.stringify(attachments.map(asset => asset.id))
+      && previous.mode === (steer ? "steer" : "queue") && previous.input.agentId === effectiveAgent?.id
+      && (id !== null || JSON.stringify(previous.input) === JSON.stringify({ agentId: effectiveAgent?.id, greetingIndex, executionOverrides: newOverrides, workspacePath: newWorkspace }));
+    const attempt: Submission = retry ?? (reusable ? previous : null) ?? {
+      id: crypto.randomUUID(), kind: !conversation ? "start" : active || (!queuePaused && queuedMessages.some(item => item.status !== "failed")) ? "queue" : "send",
+      originalText, text: originalText.trim(), assetIds: attachments.map(asset => asset.id), mode: steer ? "steer" : "queue",
+      input: { agentId: effectiveAgent!.id, greetingIndex, executionOverrides: newOverrides, workspacePath: newWorkspace }, prepared: false
+    };
+    // Persist before attempting I/O. This is a manual retry receipt, not an outbox.
+    saveSubmission(id, attempt);
+    sendingRef.current = true; setSending(true); setSendError("");
     onBeforeSend();
+    const deadline = AbortSignal.timeout(30_000);
+    let accepted = false;
+    const clearAccepted = () => {
+      accepted = true;
+      saveSubmission(id, null); setFailedSubmission(null);
+      const live = liveInput.current;
+      const remainingText = live.text === attempt.originalText ? "" : live.text;
+      const remainingAssets = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
+      setText(remainingText); setAttachments(remainingAssets);
+      if (id) scheduleServerDraft(id, remainingText);
+      offlineStore.set({ offline: false });
+      return { remainingText, remainingAssets };
+    };
     try {
-      if (conversation) await flushServerDraft(conversation.id);
-      if (conversation && roleplayAgent && roleplayState && quickReplies.some((reply) =>
-        reply.mode === "script" && reply.autoTriggers.includes("before_send")
-      )) {
-        const automated = await endpoints.executeRoleplayScript(conversation.id, { trigger: "before_send", draft: content });
+      if (!attempt.prepared && conversation && roleplayAgent && roleplayState && quickReplies.some(reply => reply.mode === "script" && reply.autoTriggers.includes("before_send"))) {
+        const automated = await endpoints.executeRoleplayScript(conversation.id, { trigger: "before_send", draft: attempt.originalText.trim(), clientSubmissionId: attempt.id }, deadline);
         onRoleplayStateChange(automated.state);
-        content = (automated.sendText ?? automated.draft ?? content).trim();
+        attempt.text = (automated.sendText ?? automated.draft ?? attempt.text).trim();
       }
-      if (!content && !attachments.length) {
-        toast("error", localized("Composer.the_before_send_script_cleared_the_message"));
-        return;
-      }
-      if (!conversation) {
-        const result = await endpoints.startConversation({
-          text: content,
-          ...(attachments.length ? { assetIds: attachments.map((asset) => asset.id) } : {}),
-          agentId: effectiveAgent.id,
-          greetingIndex,
-          executionOverrides: newOverrides,
-          workspacePath: newWorkspace
-        });
-        setText("");
-        setAttachments([]);
-        explicitNewModel.current = false;
-        setNewOverrides({});
-        setNewAgentId(null);
-        onGreetingIndexChange(0);
-        // Navigation can unmount this composer before its draft effect runs.
-        writeComposerDraft(null, {
-          uploadScopeId: uploadScope, text: "", attachments: [], agentId: effectiveAgent.id,
-          overrides: {}, workspace: newWorkspace, greetingIndex: 0
-        });
-        appStore.set((state) => ({
-          settings: state.settings ? { ...state.settings, lastAgentId: effectiveAgent.id } : null,
-          conversations: state.conversations.some((item) => item.id === result.conversation.id)
-            ? state.conversations : [result.conversation, ...state.conversations]
-        }));
-        // The send is committed. Follow it even if a subsequent read fails.
+      attempt.prepared = true; saveSubmission(id, attempt);
+      if (!attempt.text && !attempt.assetIds.length) throw new Error(t("Composer.the_before_send_script_cleared_the_message"));
+      if (attempt.kind === "start") {
+        const result = await endpoints.startConversation({ ...attempt.input, text: attempt.text, assetIds: attempt.assetIds, clientSubmissionId: attempt.id }, deadline);
+        const { remainingText, remainingAssets } = clearAccepted();
+        // Preserve text typed during submission when navigation mounts the new composer.
+        const nextDraft = { uploadScopeId: uploadScope, text: remainingText, attachments: remainingAssets, agentId: attempt.input.agentId,
+          overrides: {}, workspace: attempt.input.workspacePath, greetingIndex: 0 };
+        writeComposerDraft(result.conversation.id, nextDraft);
+        writeComposerDraft(null, { ...nextDraft, text: "", attachments: [] });
+        appStore.set(state => ({ settings: state.settings ? { ...state.settings, lastAgentId: attempt.input.agentId } : null,
+          conversations: state.conversations.some(item => item.id === result.conversation.id) ? state.conversations : [result.conversation, ...state.conversations] }));
         trackGeneration(result.conversation.id, result.generation.assistantMessageId, result.generation.generationId);
-        navigate(routes.chat(result.conversation.id));
-        if (effectiveAgent.roleplayEnabled) {
-          await endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "" })
-            .catch(() => undefined);
-        }
-        await Promise.all([refreshConversations(), loadMessages(result.conversation.id)]);
-      } else if (active || (!queuePaused && queuedMessages.some((item) => item.status !== "failed"))) {
-        await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
-        setText(""); setAttachments([]); persistDraft("");
-        await reloadQueue();
+        if (location.pathname === submittedRoute) navigate(routes.chat(result.conversation.id));
+        if (effectiveAgent?.roleplayEnabled) void endpoints.executeRoleplayScript(result.conversation.id, { trigger: "new_chat", draft: "", clientSubmissionId: attempt.id }).catch(() => {});
+        syncAfterSend([refreshConversations(), loadMessages(result.conversation.id)]);
       } else {
-        const result = await endpoints.sendMessage(conversation.id, content, attachments.map((asset) => asset.id)).catch(async (error) => {
-          if (!(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
-          // Another device may have started a turn since this client's last snapshot.
-          await endpoints.enqueueMessage(conversation.id, content, attachments.map((asset) => asset.id), steer ? "steer" : "queue");
-          return null;
-        });
-        setText("");
-        setAttachments([]);
-        persistDraft("");
-        if (!result) await reloadQueue();
-        if (result) trackGeneration(conversation.id, result.assistantMessageId, result.generationId);
-        await loadMessages(conversation.id);
-        await refreshConversations();
+        if (attempt.kind === "send") {
+          try {
+            const result = await endpoints.sendMessage(id!, attempt.text, attempt.assetIds, attempt.id, deadline);
+            clearAccepted();
+            trackGeneration(id!, result.assistantMessageId, result.generationId);
+          } catch (error) {
+            if (accepted || !(error instanceof ApiRequestError) || error.code !== "conversation_busy") throw error;
+            attempt.kind = "queue"; saveSubmission(id, attempt);
+          }
+        }
+        if (attempt.kind === "queue") {
+          await endpoints.enqueueMessage(id!, attempt.text, attempt.assetIds, attempt.mode, attempt.id, deadline);
+          clearAccepted();
+          syncAfterSend([reloadQueue()]);
+        }
+        syncAfterSend([loadMessages(id!), refreshConversations()]);
       }
     } catch (error) {
-      toastError(error);
-    } finally {
-      setSending(false);
-    }
+      if (accepted) toast("error", localized("Composer.sync_failed_after_send"));
+      else {
+        setFailedSubmission(attempt);
+        // Send errors must remain visible even when the network indicator says offline.
+        setSendError(error instanceof Error ? error.message : String(error));
+      }
+    } finally { sendingRef.current = false; setSending(false); }
   };
 
   const useQuickReply = async (reply: (typeof quickReplies)[number]) => {
@@ -411,8 +419,7 @@ export const Composer = memo(function Composer({
   };
 
   const controlsDisabled = offline || generating || sending || savingOverrides;
-  const sendDisabled = offline ||
-    sending || savingOverrides ||
+  const sendDisabled = sending || savingOverrides ||
     uploading ||
     (!text.trim() && !attachments.length) ||
     !effectiveAgent ||
@@ -422,6 +429,10 @@ export const Composer = memo(function Composer({
   return (
     <div className="composer">
       <div className="composer-inner">
+        {failedSubmission && !sending ? <div className="composer-send-error" role="alert">
+          <span>{sendError || t("Composer.send_failed")}</span>
+          <button type="button" className="btn small" onClick={() => void sendMessage(undefined, false, failedSubmission)}>{t("NotificationSettings.retry")}</button>
+        </div> : null}
         {isNew && recoveredDraftIds().length > 0 && <button type="button" className="btn small" onClick={() => {
           const draft = swapRecoveredDraft();
           if (!draft) return;
@@ -461,7 +472,6 @@ export const Composer = memo(function Composer({
                 }
                 value={text}
                 rows={2}
-                disabled={sending}
                 onChange={(event) => {
                   setText(event.target.value);
                   persistDraft(event.target.value);

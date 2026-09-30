@@ -32,12 +32,30 @@ function emitAuthRequired(): void {
 
 export interface HttpResult<T> { data: T; status: number }
 
-export async function httpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
+/** A deadline covers both response headers and the response body. */
+export function withRequestSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new ApiRequestError(0, signal.reason?.name === "TimeoutError" ? "request_timeout" : "request_cancelled",
+      t(signal.reason?.name === "TimeoutError" ? "http_client.request_timeout" : "http_client.network_request_failed")));
+    if (signal.aborted) { void operation.catch(() => {}); abort(); return; }
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+  });
+}
+export function httpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
+  const deadline = AbortSignal.any([signal, AbortSignal.timeout(method === "GET" ? 15_000 : 30_000)]);
+  return withRequestSignal(performHttpRequest<T>(method, path, body, deadline), deadline).catch(error => {
+    if (error instanceof ApiRequestError) throw error;
+    throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));
+  });
+}
+
+async function performHttpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
   let response: Response;
   try {
     response = await fetch(path, {
       method,
-      signal: method === "GET" ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : signal,
+      signal,
       credentials: "same-origin",
       headers: {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),

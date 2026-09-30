@@ -1,6 +1,7 @@
+import { useResource } from "../lib/resource";
 import { t, useLocale } from "../lib/i18n";
 import { ToolCallContent } from "../components/chat/ToolPresentation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { BackgroundTaskEventDto, ContextSummaryDto, ConversationDto, MessageDto } from "@llm-chat/contracts";
 import { Bot, ExternalLink, Gauge, GitFork, Minimize2, Settings2, TerminalSquare, Wrench, X } from "lucide-react";
 import { endpoints, type TaskDetailDto } from "../lib/api";
@@ -9,7 +10,7 @@ import { formatCachedTokens, formatTime, formatTokens } from "../lib/format";
 import type { InspectionTarget } from "../lib/inspection";
 import { navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
-import { EmptyState, StatusTag } from "../lib/ui";
+import { EmptyState, ErrorState, StatusTag } from "../lib/ui";
 
 const EMPTY_MESSAGES: MessageDto[] = [];
 
@@ -26,32 +27,14 @@ export function InspectorPanel({
   const agents = useStore(appStore, (state) => state.agents);
   const models = useStore(appStore, (state) => state.models);
   const messages = useStore(appStore, (state) => conversation ? state.messages[conversation.id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES);
-  const [task, setTask] = useState<TaskDetailDto | null>(null);
-  const [contextSummary, setContextSummary] = useState<ContextSummaryDto | null>(null);
-
+  const taskId = target?.kind === "task" ? target.taskId : null;
+  const { data: task, error: taskError, reload: reloadTask } = useResource(taskId ? `task:${taskId}` : null, () => endpoints.backgroundTask(taskId!));
+  const { data: contextSummary, error: contextError, reload: reloadContext } = useResource(conversation ? `context:${conversation.id}` : null, () => endpoints.contextSummary(conversation!.id));
   useEffect(() => {
-    setTask(null);
-    if (target?.kind === "task") void endpoints.backgroundTask(target.taskId).then(setTask).catch(toastError);
-  }, [target]);
-
-  useEffect(() => {
-    let active = true;
-    const load = () => {
-      if (!conversation) {
-        setContextSummary(null);
-        return;
-      }
-      void endpoints.contextSummary(conversation.id).then((summary) => {
-        if (active) setContextSummary(summary);
-      }).catch(toastError);
-    };
-    load();
+    const load = () => { void reloadContext(); };
     window.addEventListener("llm-chat:context-summary", load);
-    return () => {
-      active = false;
-      window.removeEventListener("llm-chat:context-summary", load);
-    };
-  }, [conversation?.id]);
+    return () => window.removeEventListener("llm-chat:context-summary", load);
+  }, [reloadContext]);
 
   const generation = target && target.kind !== "task"
     ? messages.find((message) => message.id === target.messageId)?.generations.find((item) => item.id === target.generationId)
@@ -70,6 +53,8 @@ export function InspectorPanel({
         <button className="icon-button" onClick={onClose} aria-label={t("App.close_inspector")} title={t("App.close_inspector")}><X size={17} /></button>
       </header>
       <div className="inspector-scroll">
+        {taskError ? <ErrorState message={taskError} onRetry={() => void reloadTask()} /> : null}
+        {contextError ? <ErrorState message={contextError} onRetry={() => void reloadContext()} /> : null}
         {!conversation ? <EmptyState title={t("InspectorPanel.select_a_conversation_to_view_details")} /> : null}
         {conversation && !target ? (
           <>
@@ -140,7 +125,7 @@ export function InspectorPanel({
             {tool.artifacts.length ? <JsonSection title={t("InspectorPanel.image_artifacts")} value={tool.artifacts} /> : null}
           </>
         ) : null}
-        {target?.kind === "task" && !task ? <div className="loading-box">{t("InspectorPanel.loading_task")}</div> : null}
+        {target?.kind === "task" && !task && !taskError ? <div className="loading-box">{t("InspectorPanel.loading_task")}</div> : null}
         {task ? (
           <>
             <InspectorSection title={t("TrajectoryView.background_tasks")} icon={<TerminalSquare size={15} />}>

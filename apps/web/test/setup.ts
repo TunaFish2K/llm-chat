@@ -1,3 +1,5 @@
+import { clearResources } from "../src/lib/resource";
+import { clearSubmissions } from "../src/lib/submission";
 import { uploadManager } from "../src/lib/file-upload-manager";
 import { displayStore, DISPLAY_DEFAULTS } from "../src/lib/local-display";
 import { setLocalePreference } from "../src/lib/i18n";
@@ -84,6 +86,8 @@ beforeEach(() => { setLocalePreference("zh-CN"); });
 afterEach(() => {
   offlineStore.set({ offline: false });
   cleanup();
+  clearResources();
+  clearSubmissions();
   uploadManager.reset();
   uploadManager.setSource("local");
   displayStore.set({ values: { ...DISPLAY_DEFAULTS }, initialized: false, saved: true });

@@ -1,3 +1,4 @@
+import { useResource } from "../lib/resource";
 import { Presence } from "../lib/motion";
 import { useErrorState, displayError } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
@@ -15,20 +16,8 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
   useLocale();
   const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
   const runningTasks = useStore(appStore, (s) => s.runningTasksByConversation[conversationId] ?? 0);
-  const [tasks, setTasks] = useState<BackgroundTaskDto[] | null>(null);
-  const [error, setError] = useErrorState(null);
+  const { data: tasks, error, reload: load } = useResource(`tasks:${conversationId}`, () => endpoints.backgroundTasks(conversationId));
   const [stopping, setStopping] = useState<BackgroundTaskDto | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setTasks(await endpoints.backgroundTasks(conversationId));
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("TasksView.could_not_load_background_tasks"));
-    }
-  }, [conversationId]);
-
-  useEffect(() => setTasks(null), [conversationId]);
 
   useEffect(() => {
     void load();
@@ -47,10 +36,9 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
       </div>
       <div className="panel-scroll">
         <div className="panel-inner">
-          {error ? (
-            <ErrorState message={error} onRetry={() => void load()} />
-          ) : tasks === null ? (
-            <LoadingState label={t("TasksView.loading_background_tasks")} />
+          {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
+          {tasks === null ? (
+            error ? null : <LoadingState label={t("TasksView.loading_background_tasks")} />
           ) : tasks.length === 0 ? (
             <EmptyState title={t("TasksView.no_background_tasks")} hint={t("TasksView.background_commands_started_by_the_model_appear_here")} />
           ) : (
@@ -93,7 +81,7 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
               </tbody>
             </table>
           )}
-          {taskId ? <TaskDetail conversationId={conversationId} taskId={taskId} /> : null}
+          {taskId ? <TaskDetail key={taskId} conversationId={conversationId} taskId={taskId} /> : null}
         </div>
       </div>
       <Presence>{stopping ? (
@@ -163,32 +151,28 @@ function StopTaskModal({
 function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId: string }) {
   useLocale();
   const eventsConnected = useStore(appStore, (s) => s.eventsConnectionState === "connected");
-  const [detail, setDetail] = useState<{ task: BackgroundTaskDto; events: BackgroundTaskEventDto[] } | null>(null);
+  const { data: detail, error: detailError, reload: loadDetail } = useResource(`task:${taskId}`, () => endpoints.backgroundTask(taskId));
   const [error, setError] = useErrorState(null);
   const [output, setOutput] = useState("");
   const [screen, setScreen] = useState<string | null>(null);
   const cursor = useRef(0);
+  const mounted = useRef(true);
+  const outputPending = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [columns, setColumns] = useState("120");
   const [rows, setRows] = useState("30");
   const terminalRef = useRef<HTMLPreElement>(null);
 
-  const loadDetail = useCallback(async () => {
-    try {
-      const next = await endpoints.backgroundTask(taskId);
-      if (next.task.conversationId !== conversationId) {
-        replaceRoute(routes.conversationTasks(next.task.conversationId, next.task.id));
-        return;
-      }
-      setDetail(next);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : t("App.could_not_load_the_task"));
-    }
-  }, [conversationId, taskId]);
+  useEffect(() => {
+    if (detail && detail.task.conversationId !== conversationId) replaceRoute(routes.conversationTasks(detail.task.conversationId, detail.task.id));
+  }, [detail, conversationId]);
 
   const loadOutput = useCallback(async () => {
+    if (outputPending.current) return;
+    outputPending.current = true;
     try {
       const chunk = await endpoints.backgroundTaskOutput(taskId, cursor.current);
+      if (!mounted.current) return;
       if (chunk.gap) {
         setOutput((current) => t("TasksView.n_gap_in_log_continuing_from_the_latest_position_n", { value1: (current) }));
       }
@@ -198,14 +182,10 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause : t("TasksView.could_not_read_the_log"));
-    }
+    } finally { outputPending.current = false; }
   }, [taskId]);
 
   useEffect(() => {
-    setDetail(null);
-    setOutput("");
-    setScreen(null);
-    cursor.current = 0;
     void loadDetail();
     void loadOutput();
     const timer = setInterval(() => {
@@ -220,14 +200,15 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
     if (el) el.scrollTop = el.scrollHeight;
   }, [output, screen]);
 
-  if (error && !detail) return <ErrorState message={error} onRetry={() => void loadDetail()} />;
-  if (!detail) return <LoadingState label={t("TasksView.loading_task")} />;
+  if ((error || detailError) && !detail) return <ErrorState message={error || detailError!} onRetry={() => void loadDetail()} />;
+  if (!detail || detail.task.conversationId !== conversationId) return <LoadingState label={t("TasksView.loading_task")} />;
 
   const task = detail.task;
   const running = ["queued", "starting", "running"].includes(task.status);
 
   return (
     <div className="card" aria-label={t("TasksView.task_details")}>
+      {error || detailError ? <ErrorState message={error || detailError!} onRetry={() => { void loadDetail(); void loadOutput(); }} /> : null}
       <div className="task-detail-heading">
         <h3>
           <span className="mono">{task.command}</span>

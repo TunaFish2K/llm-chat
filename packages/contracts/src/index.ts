@@ -623,6 +623,7 @@ export const roleplayPresetImportSchema = z.object({
 export type RoleplayPresetImport = z.infer<typeof roleplayPresetImportSchema>;
 
 export const roleplayScriptExecutionSchema = z.object({
+  clientSubmissionId: z.string().uuid().optional(),
   script: z.string().max(500_000).optional(),
   quickReplyId: roleplayIdSchema.optional(),
   trigger: z.enum(["new_chat", "before_send", "after_reply", "lore_activated"]).optional(),
@@ -1052,6 +1053,7 @@ const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
 const fileAssetIdsSchema = z.array(z.string().uuid()).max(8);
 
 export const sendMessageSchema = z.object({
+  clientSubmissionId: z.string().uuid().optional(),
   text: messageTextSchema,
   assetIds: fileAssetIdsSchema.optional(),
   imageAssetIds: imageAssetIdsSchema

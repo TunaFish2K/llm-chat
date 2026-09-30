@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import type { ContainerResourceCatalog, ContainerResourceItem, ContainerResourceJob, ContainerResourceNode } from "@llm-chat/contracts";
+import { useResource } from "../lib/resource";
+import { useEffect, useState } from "react";
+import type { ContainerResourceItem, ContainerResourceJob, ContainerResourceNode } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
 import { t, useLocale } from "../lib/i18n";
 import { toastError } from "../lib/app-state";
@@ -12,12 +13,7 @@ const bytes = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MiB`;
 
 export function ContainerResourceSettings() {
   useLocale();
-  const [catalog, setCatalog] = useState<ContainerResourceCatalog | null>(null);
-  const [error, setError] = useState("");
-  const refresh = useCallback(async () => {
-    try { setCatalog(await endpoints.containerResources()); setError(""); }
-    catch (error) { setError(error instanceof Error ? error.message : String(error)); }
-  }, []);
+  const { data: catalog, setData: setCatalog, error, reload: refresh } = useResource("containerResources", endpoints.containerResources);
   useEffect(() => {
     void refresh();
     const resource = (raw: Event) => {
@@ -41,7 +37,7 @@ export function ContainerResourceSettings() {
     <div>
       <h3>{t("container_resources.title")}</h3>
       <p className="hint">{t("container_resources.description")}</p>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? <p role="alert">{error}<Button onClick={() => void refresh()}>{t("environment.refresh")}</Button></p> : null}
       <Field label={t("container_resources.node")}>
         <select className="select" aria-label={t("container_resources.node")} value={catalog.node}
           onChange={event => void action(() => endpoints.setContainerResourceNode(event.target.value as ContainerResourceNode))}>

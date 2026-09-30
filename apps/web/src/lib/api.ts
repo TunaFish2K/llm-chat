@@ -53,6 +53,9 @@ export { ApiRequestError, onAuthRequired } from "./http-client";
 interface RequestContext {
   conversationId?: string;
   deletesConversation?: boolean;
+  networkOnly?: boolean;
+  allowOffline?: boolean;
+  signal?: AbortSignal;
 }
 
 async function request<T>(method: string, path: string, body?: unknown, context: RequestContext = {}): Promise<T> {
@@ -62,7 +65,7 @@ async function request<T>(method: string, path: string, body?: unknown, context:
   const controller = new AbortController();
   const untrack = conversationId ? trackConversationRequest(conversationId, controller) : () => {};
   try {
-    const result = await performRequest<T>(method, path, body, controller.signal);
+    const result = await performRequest<T>(method, path, body, context.signal ? AbortSignal.any([controller.signal, context.signal]) : controller.signal, context);
     if (deleting && conversationId && result.status === 204) markConversationsDeleted([conversationId], true);
     if (!deleting && conversationId && conversationDeleted(conversationId)) throw new DeletedConversationError();
     return result.data;
@@ -77,12 +80,12 @@ async function request<T>(method: string, path: string, body?: unknown, context:
   }
 }
 
-async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal): Promise<HttpResult<T>> {
-  if (method !== "GET" && method !== "HEAD" && (isOffline() || navigator.onLine === false) && path !== "/api/auth/login" && path !== "/api/auth/logout") {
+async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, context: RequestContext = {}): Promise<HttpResult<T>> {
+  if (!context.allowOffline && method !== "GET" && method !== "HEAD" && (isOffline() || navigator.onLine === false) && path !== "/api/auth/login" && path !== "/api/auth/logout") {
     throw new ApiRequestError(0, "offline_readonly", t("api.you_are_offline_this_action_requires_a_connection"));
   }
   const offline = async (): Promise<HttpResult<T>> => ({ data: await offlineRequest(path) as T, status: 200 });
-  if (method === "GET" && (isOffline() || navigator.onLine === false)) {
+  if (!context.networkOnly && method === "GET" && (isOffline() || navigator.onLine === false)) {
     markOffline();
     try { return await offline(); }
     catch (error) {
@@ -93,7 +96,7 @@ async function performRequest<T>(method: string, path: string, body: unknown, si
     return await httpRequest<T>(method, path, body, signal);
   } catch (error) {
     if (signal.aborted) throw error;
-    if (method === "GET" && error instanceof ApiRequestError) {
+    if (!context.networkOnly && method === "GET" && error instanceof ApiRequestError) {
       if ([502, 503, 504].includes(error.status)) { markOffline(); return offline(); }
       if (error.status === 0) {
         markOffline();
@@ -169,16 +172,16 @@ export const endpoints = {
   queueState: (id: string) => api.get<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue`, { conversationId: id }),
   resumeQueue: (id: string) => api.post<{ ok: true }>(`/api/conversations/${id}/queue/resume`, {}, { conversationId: id }),
   queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`, { conversationId: id }),
-  enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue") => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode }, { conversationId: id }),
-  searchConversations: (query: string) => api.get<Array<{ conversationId: string; title: string; snippet: string; updatedAt: number }>>(`/api/conversations/search?query=${encodeURIComponent(query)}`),
+  enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue", clientSubmissionId?: string, signal?: AbortSignal) => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode, clientSubmissionId }, { conversationId: id, allowOffline: true, ...(signal ? { signal } : {}) }),
+  searchConversations: (query: string, signal?: AbortSignal) => api.get<Array<{ conversationId: string; title: string; snippet: string; updatedAt: number }>>(`/api/conversations/search?query=${encodeURIComponent(query)}`, signal ? { signal } : {}),
   deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`, { conversationId: id }),
   login: (password: string) => api.post<{ ok: true }>("/api/auth/login", { password }),
   logout: () => api.post<undefined>("/api/auth/logout"),
   changePassword: (password: string) =>
     api.put<{ ok: true; sessionsRevoked: number }>("/api/auth/password", { password }),
 
-  bootstrap: (conversationId?: string) =>
-    api.get<BootstrapDto>(`/api/bootstrap${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`),
+  bootstrap: (conversationId?: string, networkOnly = false) =>
+    api.get<BootstrapDto>(`/api/bootstrap${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`, { networkOnly }),
   settings: () => api.get<AppSettings>("/api/settings"),
   updateSettings: (patch: Omit<AppSettingsUpdate, "theme" | "uiPreferences">) => api.patch<AppSettings>("/api/settings", patch),
 
@@ -268,13 +271,14 @@ export const endpoints = {
     api.post<ConversationDto>("/api/conversations", input),
   startConversation: (input: {
     text: string;
+    clientSubmissionId?: string;
     assetIds?: string[];
     imageAssetIds?: string[];
     agentId: string;
     greetingIndex?: number;
     executionOverrides?: ConversationExecutionOverrides;
     workspacePath?: string | null;
-  }) => api.post<ConversationStartedDto>("/api/conversations/start", input),
+  }, signal?: AbortSignal) => api.post<ConversationStartedDto>("/api/conversations/start", input, { allowOffline: true, ...(signal ? { signal } : {}) }),
   conversation: (id: string) => api.get<ConversationDto>(`/api/conversations/${id}`, { conversationId: id }),
   updateConversation: (id: string, patch: Record<string, unknown>) =>
     api.patch<ConversationDto>(`/api/conversations/${id}`, patch, { conversationId: id }),
@@ -284,8 +288,8 @@ export const endpoints = {
     api.get<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, { conversationId: id }),
   updateConversationRoleplayState: (id: string, patch: ConversationRoleplayStatePatch) =>
     api.patch<ConversationRoleplayState>(`/api/conversations/${id}/roleplay-state`, patch, { conversationId: id }),
-  executeRoleplayScript: (id: string, input: { script?: string; quickReplyId?: string; trigger?: "new_chat" | "before_send" | "after_reply" | "lore_activated"; draft?: string }) =>
-    api.post<RoleplayScriptExecutionDto>(`/api/conversations/${id}/roleplay-scripts/execute`, input, { conversationId: id }),
+  executeRoleplayScript: (id: string, input: { clientSubmissionId?: string; script?: string; quickReplyId?: string; trigger?: "new_chat" | "before_send" | "after_reply" | "lore_activated"; draft?: string }, signal?: AbortSignal) =>
+    api.post<RoleplayScriptExecutionDto>(`/api/conversations/${id}/roleplay-scripts/execute`, input, { conversationId: id, allowOffline: true, ...(signal ? { signal } : {}) }),
   roleplayScriptAudit: (id: string) =>
     api.get<Array<Record<string, unknown>>>(`/api/conversations/${id}/roleplay-scripts/audit`, { conversationId: id }),
   deleteConversation: (id: string) => api.delete<undefined>(`/api/conversations/${id}`, { conversationId: id, deletesConversation: true }),
@@ -303,11 +307,11 @@ export const endpoints = {
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
   uploadFile,
-  sendMessage: (conversationId: string, text: string, assetIds: string[] = []) =>
+  sendMessage: (conversationId: string, text: string, assetIds: string[] = [], clientSubmissionId?: string, signal?: AbortSignal) =>
     api.post<GenerationCreatedDto>(`/api/conversations/${conversationId}/messages`, {
-      text,
+      text, clientSubmissionId,
       ...(assetIds.length ? { assetIds } : {})
-    }, { conversationId }),
+    }, { conversationId, allowOffline: true, ...(signal ? { signal } : {}) }),
   retryGeneration: (conversationId: string, messageId: string) => api.post<GenerationCreatedDto>(`/api/messages/${messageId}/generations`, {}, { conversationId }),
   selectGeneration: (conversationId: string, messageId: string, generationId: string) =>
     api.patch<{ ok: true }>(`/api/messages/${messageId}/active-generation`, { generationId }, { conversationId }),
@@ -335,8 +339,8 @@ export const endpoints = {
   resizeBackgroundTask: (id: string, columns: number, rows: number) =>
     api.post<{ ok: true }>(`/api/background-tasks/${id}/resize`, { columns, rows }),
 
-  listDirectories: (path?: string) =>
-    api.get<DirectoryListingDto>(`/api/filesystem/directories${path !== undefined ? `?path=${encodeURIComponent(path)}` : ""}`),
+  listDirectories: (path?: string, signal?: AbortSignal) =>
+    api.get<DirectoryListingDto>(`/api/filesystem/directories${path !== undefined ? `?path=${encodeURIComponent(path)}` : ""}`, signal ? { signal } : {}),
   createDirectory: (path: string) => api.post<{ path: string }>("/api/filesystem/directories", { path }),
   validatePath: (path: string) => api.post<{ path: string }>("/api/filesystem/validate", { path })
 };
