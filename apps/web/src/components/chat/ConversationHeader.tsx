@@ -1,6 +1,6 @@
 import { t, useLocale } from "../../lib/i18n";
 import { requestMobileBack } from "../../lib/mobile-navigation";
-import { useEffect, useState, type RefCallback } from "react";
+import { useEffect, useState, type Ref } from "react";
 import {
   ArrowLeft,
   ListTree,
@@ -41,7 +41,7 @@ export function ConversationHeader({
   onToggleSidebar: () => void;
   onToggleInspector: () => void;
   onViewChange: (view: ConversationView) => void;
-  actionsRef?: RefCallback<HTMLDivElement>;
+  actionsRef?: Ref<HTMLDivElement>;
 }) {
   useLocale();
   const conversations = useStore(appStore, (state) => state.conversations);
@@ -147,7 +147,7 @@ export function ConversationHeader({
       >
         {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
       </button>
-      <div className="conversation-action-slot" ref={actionsRef} />
+      <div className="conversation-action-slot" data-reserved={conversation ? true : undefined} ref={actionsRef} />
     </header>
   );
 }

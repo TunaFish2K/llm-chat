@@ -1563,7 +1563,8 @@
 .composer-settings-trigger > b { position: absolute; right: 0; top: 0; font-size: var(--text-xs); }
 .composer-settings-popover small { white-space: normal; overflow-wrap: anywhere; }
 .conversation-action-slot { display: flex; flex: 0 0 auto; }
-.conversation-action-slot:empty { display: none; }
+.conversation-action-slot[data-reserved] { width: 32px; min-height: 32px; }
+.conversation-action-slot:empty:not([data-reserved]) { display: none; }
 .reasoning-popover { z-index: 75; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-1); box-shadow: var(--shadow-3); width: 280px; max-width: calc(100vw - 24px); max-height: min(480px, 65dvh); overflow-y: auto; }
 /* Equal rows keep every native label aligned with its discrete slider stop. */
 .reasoning-steps { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; flex: 0 0 auto; }

@@ -31,7 +31,9 @@ let initialized = false;
 let registration: ServiceWorkerRegistration | undefined;
 let registrationError: Error | null = null;
 let lastUpdateCheck = 0;
-let operation: Promise<void> | null = null;
+type Operation = "check" | "apply" | "force";
+const operations = new Map<Operation, Promise<void>>();
+let operationTail = Promise.resolve();
 let finishActivation: (() => void) | null = null;
 let watchingUpdates = false;
 const UPDATE_TIMEOUT = 30_000;
@@ -90,15 +92,18 @@ async function waitForInstallation(worker: ServiceWorker): Promise<void> {
   } finally { cleanup(); }
 }
 
-function runOperation(action: () => Promise<void>): Promise<void> {
-  if (operation) return operation;
-  operation = Promise.resolve().then(action).catch(failure).finally(() => { operation = null; });
-  return operation;
+function runOperation(kind: Operation, action: () => Promise<void>): Promise<void> {
+  const pending = operations.get(kind);
+  if (pending) return pending;
+  const next = operationTail.then(action).catch(failure).finally(() => { operations.delete(kind); });
+  operations.set(kind, next);
+  operationTail = next;
+  return next;
 }
 
 /** Manual checks bypass the automatic foreground-check throttle. */
 export function checkForUpdates(): Promise<void> {
-  return runOperation(async () => {
+  return runOperation("check", async () => {
     if (!state.supported) throw localizedError("pwa.this_browser_does_not_support_app_updates_refresh_the_page");
     emit({ updateStatus: "checking", updateError: null });
     const current = await getRegistration();
@@ -229,7 +234,7 @@ function reloadUpdatedPage(): void {
 }
 
 export function applyUpdate(): Promise<void> {
-  return runOperation(async () => {
+  return runOperation("apply", async () => {
     if (!state.updateAvailable) return;
     emit({ updateStatus: "applying", updateError: null });
     const current = await getRegistration();
@@ -251,7 +256,7 @@ async function publishedBuild(): Promise<string> {
 
 /** Repair the current release even when the service worker has not changed. */
 export function forceUpdate(): Promise<void> {
-  return runOperation(async () => {
+  return runOperation("force", async () => {
     if (!state.supported) throw localizedError("pwa.this_browser_does_not_support_app_updates_refresh_the_page");
     emit({ updateStatus: "checking", updateError: null });
     const build = await publishedBuild();

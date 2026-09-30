@@ -214,6 +214,22 @@ function prepareRepair() {
   });
 }
 
+it("queues force update behind a pending check instead of losing the manual action", async () => {
+  const pwa = await boot(); prepareRepair();
+  let resolve!: () => void;
+  current.update.mockReturnValueOnce(new Promise<void>(done => { resolve = done; }));
+  const checking = pwa.checkForUpdates();
+  await vi.advanceTimersByTimeAsync(0);
+  const forcing = pwa.forceUpdate();
+  expect(forcing).not.toBe(checking);
+  expect(pwa.forceUpdate()).toBe(forcing);
+  expect(container.register).not.toHaveBeenCalled();
+  resolve();
+  await Promise.all([checking, forcing]);
+  expect(container.register).toHaveBeenCalledOnce();
+  expect(reload).toHaveBeenCalledOnce();
+});
+
 it("repairs the same version without a waiting update and refreshes only after success", async () => {
   const pwa = await boot(); prepareRepair();
   const first = pwa.forceUpdate();

@@ -257,11 +257,12 @@ test.describe("应用外壳", () => {
     expect(apiCache.keys.filter(path => path.startsWith("/api/"))).toEqual([]);
   });
 
-  test("PWA 无离线记录时保留应用壳、显示错误并允许联网重试", async ({ page, context }) => {
+  test("PWA 完整历史关闭时从配置缓存离线启动，外观控件可直接使用", async ({ page, context }) => {
     test.skip(test.info().project.name !== "chromium", "Chromium 负责可靠的离线网络模拟");
     await page.addInitScript(() => localStorage.setItem("llm-chat.offline-enabled", "false"));
     await page.goto(APP_URL);
     expect(await waitForServiceWorkerControl(page)).toBe(true);
+    await expect.poll(() => page.evaluate(() => Boolean(localStorage.getItem("llm-chat.startup.v1")))).toBe(true);
 
     await context.setOffline(true);
     try {
@@ -275,13 +276,16 @@ test.describe("应用外壳", () => {
       })).toBe(false);
       await page.goto(`${APP_URL}/settings/appearance`, { waitUntil: "domcontentloaded" });
       await expect(page.locator("#root")).not.toBeEmpty();
-      await expect(page.getByRole("alert")).toContainText(/本机尚未保存离线记录|网络请求失败/);
-      await expect(page.getByRole("button", { name: "重试", exact: true })).toBeEnabled();
+      await expect(page.locator(".boot-screen, .offline-banner, .boot-refresh-notice")).toHaveCount(0);
+      const theme = page.getByLabel("主题", { exact: true });
+      await expect(theme).toBeEnabled();
+      await theme.selectOption("dark");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     } finally {
       await context.setOffline(false);
     }
-    await page.getByRole("button", { name: "重试", exact: true }).click();
-    await expect(page.getByLabel("主题", { exact: true })).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByLabel("主题", { exact: true })).toHaveValue("dark");
   });
 });
 

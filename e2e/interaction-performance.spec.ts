@@ -37,7 +37,7 @@ for (const size of [50, 500, 2_000]) {
       await expect(page.getByLabel("输入消息", { exact: true })).toBeEditable({ timeout: process.env.MOTION_BASELINE ? 90_000 : 10_000 });
       await expect(page.locator(".msg").last()).toContainText("历史内容");
       await page.evaluate(() => {
-        const metrics = { frames: [] as number[], longTasks: [] as { at: number; duration: number }[], clicks: [] as number[], navigation: [] as number[], windows: [] as { start: number; end: number }[], recording: false, started: 0, previous: 0 };
+        const metrics = { frames: [] as number[], longTasks: [] as { at: number; duration: number }[], clicks: [] as number[], navigation: [] as number[], navigationSteps: [] as { route: number; ready: number; paint: number }[], windows: [] as { start: number; end: number }[], recording: false, started: 0, previous: 0 };
         (window as any).__interactionMetrics = metrics;
         new PerformanceObserver(list => { for (const entry of list.getEntries()) metrics.longTasks.push({ at: entry.startTime, duration: entry.duration }); }).observe({ type: "longtask", buffered: false });
         const frame = (at: number) => {
@@ -56,12 +56,22 @@ for (const size of [50, 500, 2_000]) {
           if (!metrics.recording || !link) return;
           const target = new URL(link.href).pathname.split('/')[2];
           const at = performance.now();
+          let routeAt = at;
+          const changed = () => { if (location.pathname.split('/')[2] === target) routeAt = performance.now(); };
+          window.addEventListener("popstate", changed);
           const check = () => {
             const workspace = document.querySelector<HTMLElement>('.chat-workspace');
             const input = workspace?.querySelector<HTMLTextAreaElement>('textarea');
             if (workspace?.dataset.conversationId === target && input && !input.disabled && !input.readOnly) {
-              requestAnimationFrame(() => metrics.navigation.push(performance.now() - at));
+              const readyAt = performance.now();
+              window.removeEventListener("popstate", changed);
+              requestAnimationFrame(() => {
+                const paint = performance.now() - at;
+                metrics.navigation.push(paint);
+                metrics.navigationSteps.push({ route: routeAt - at, ready: readyAt - at, paint });
+              });
             } else if (performance.now() - at < 5_000) requestAnimationFrame(check);
+            else window.removeEventListener("popstate", changed);
           };
           requestAnimationFrame(check);
         }, { capture: true });
@@ -146,12 +156,12 @@ for (const size of [50, 500, 2_000]) {
       await page.screenshot({ path: testInfo.outputPath("chat.png") });
       await testInfo.attach("chat.png", { path: testInfo.outputPath("chat.png"), contentType: "image/png" });
       await expect(page.getByLabel("输入消息", { exact: true })).toBeEditable();
-      const metrics = await page.evaluate(() => (window as any).__interactionMetrics) as { frames: number[]; clicks: number[]; navigation: number[]; windows: Array<{ start: number; end: number }>; longTasks: Array<{ at: number; duration: number }> };
+      const metrics = await page.evaluate(() => (window as any).__interactionMetrics) as { frames: number[]; clicks: number[]; navigation: number[]; navigationSteps: Array<{ route: number; ready: number; paint: number }>; windows: Array<{ start: number; end: number }>; longTasks: Array<{ at: number; duration: number }> };
       const p95 = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length * .95)] ?? 0;
       const animationTasks = metrics.longTasks.filter(task => metrics.windows.some(window => task.at >= window.start && task.at < window.end));
       const summary = { baseline: Boolean(process.env.MOTION_BASELINE), size, messageCount: 1_000, mobile: isMobile, cpuThrottle: 4, repetitions: 30,
         frameP95: p95(metrics.frames), slowFrameRatio: metrics.frames.filter(frame => frame > 33).length / metrics.frames.length,
-        clickPaintUpperBoundP95: p95(metrics.clicks), navigationPaintP95: p95(metrics.navigation), navigationSamples: metrics.navigation, animationTasks, browser: await cdp.send("Browser.getVersion"),
+        clickPaintUpperBoundP95: p95(metrics.clicks), navigationPaintP95: p95(metrics.navigation), navigationSamples: metrics.navigation, navigationSteps: metrics.navigationSteps, animationTasks, browser: await cdp.send("Browser.getVersion"),
         note: "Desktop simulation; click metric bounds two animation frames, compositor trace attached. Real device thermal and battery measurements are separate." };
       await testInfo.attach("performance.json", { body: JSON.stringify(summary, null, 2), contentType: "application/json" });
       await writeFile(testInfo.outputPath("performance.json"), JSON.stringify(summary, null, 2));
