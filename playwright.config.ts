@@ -69,6 +69,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["line"]] : "list",
   use: {
+    ...(process.env.PLAYWRIGHT_WS_ENDPOINT ? { connectOptions: { wsEndpoint: process.env.PLAYWRIGHT_WS_ENDPOINT } } : {}),
     baseURL: appUrl,
     locale: "zh-CN",
     timezoneId: "Asia/Shanghai",

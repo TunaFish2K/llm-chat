@@ -12,7 +12,7 @@ async function controlled(page: Page) {
 }
 
 test("通用设置手动检查更新，离线失败后可以重试", async ({ page, context }) => {
-  await page.goto(`${APP_URL}/settings/general`);
+  await page.goto(`${APP_URL}/settings/general`, { waitUntil: "domcontentloaded" });
   await controlled(page);
   const card = page.getByLabel("应用更新", { exact: true });
   const check = card.getByRole("button", { name: "检查更新", exact: true });
@@ -60,7 +60,7 @@ test("下载新版后等待确认，再接管并刷新当前设置页面", async
   if (!address || typeof address === "string") throw new Error("No test port");
   const url = `http://127.0.0.1:${address.port}/settings/general`;
   try {
-    await page.goto(url);
+    await page.goto(url, { waitUntil: "domcontentloaded" });
     await controlled(page);
     const card = page.getByLabel("应用更新", { exact: true });
     const check = card.getByRole("button", { name: "检查更新", exact: true });
@@ -114,7 +114,7 @@ test("下载新版后等待确认，再接管并刷新当前设置页面", async
 
 
 test("强制更新修复同版本损坏和缺失的缓存，保留登录与本地数据", async ({ page, context }) => {
-  await page.goto(`${APP_URL}/settings/general`);
+  await page.goto(`${APP_URL}/settings/general`, { waitUntil: "domcontentloaded" });
   await controlled(page);
   const card = page.getByLabel("应用更新", { exact: true });
   const force = card.getByRole("button", { name: "强制更新", exact: true });

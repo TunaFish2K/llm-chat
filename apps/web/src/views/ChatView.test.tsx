@@ -251,6 +251,36 @@ describe("ChatView", () => {
     expect(screen.getByLabelText("待发送附件")).toHaveTextContent("draft.txt");
   });
 
+  it("updates a blank chat when cached model metadata is refreshed", () => {
+    seedStore([], { models: [] });
+    const agent = makeAgent({ modelId: null, lastSelectedModelId: null });
+    agent.execution.modelId = null;
+    appStore.set({ agents: [agent] });
+    vi.stubGlobal("fetch", messageFetch([]));
+    render(<ChatView conversationId={null} />);
+    const picker = screen.getByRole("button", { name: "选择模型" });
+    expect(picker).toHaveAttribute("title", "跟随 Agent");
+    act(() => appStore.set({ agents: [{ ...agent, lastSelectedModelId: "model-1" }], models: [makeModel()] }));
+    expect(picker).toHaveAttribute("title", makeModel().displayName);
+    act(() => appStore.set({ agents: [{ ...agent, lastSelectedModelId: "model-2" }], models: [makeModel({ id: "model-2", displayName: "Second" })] }));
+    expect(picker).toHaveAttribute("title", "Second");
+  });
+
+  it.each(["draft", "explicit"])("preserves a %s model selection when cached metadata is refreshed", (selection) => {
+    seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
+    const agent = makeAgent({ modelId: null, lastSelectedModelId: "model-1" });
+    agent.execution.modelId = null;
+    appStore.set({ agents: [agent] });
+    if (selection === "explicit") writeComposerDraft(null, {
+      text: "", attachments: [], agentId: agent.id, overrides: { modelId: null }, workspace: null, greetingIndex: 0
+    });
+    vi.stubGlobal("fetch", messageFetch([]));
+    render(<ChatView conversationId={null} />);
+    if (selection === "draft") fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "Keep my choice" } });
+    act(() => appStore.set({ agents: [{ ...agent, lastSelectedModelId: "model-2" }] }));
+    expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", selection === "draft" ? makeModel().displayName : "跟随 Agent");
+  });
+
   it("does not pin an untouched blank chat to an old remembered model", () => {
     seedStore([], { models: [makeModel(), makeModel({ id: "model-2", displayName: "Second" })] });
     const agent = makeAgent();

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Notify prv1 after a new tag's quality job succeeds and report its result."""
+"""Notify prv1 after a new tag's verification gate succeeds and report its result."""
 import json
 import os
 from pathlib import Path

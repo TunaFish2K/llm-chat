@@ -10,7 +10,7 @@ for (const labels of [
 ]) {
   test(`设置栏目分类、深链接和历史导航（${labels.locale}）`, async ({ page }) => {
     await page.addInitScript(locale => localStorage.setItem("llm-chat.locale.v1", locale), labels.locale);
-    await page.goto(`${APP_URL}/settings`);
+    await page.goto(`${APP_URL}/settings`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("tab", { name: labels.general, exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByLabel(labels.agent, { exact: true })).toBeVisible();
     await expect(page.getByLabel(labels.theme, { exact: true })).toHaveCount(0);
@@ -32,8 +32,8 @@ for (const labels of [
     await page.goForward();
     await expect(page.getByRole("tab", { name: labels.interaction, exact: true })).toHaveAttribute("aria-selected", "true");
     for (const section of ["appearance", "interaction"] as const) {
-      await page.goto(`${APP_URL}/settings/${section}`);
-      await page.reload();
+      await page.goto(`${APP_URL}/settings/${section}`, { waitUntil: "domcontentloaded" });
+      await page.reload({ waitUntil: "domcontentloaded" });
       await expect(page.getByRole("tab", { name: labels[section], exact: true })).toHaveAttribute("aria-selected", "true");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }

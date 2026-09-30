@@ -180,7 +180,9 @@ SHA-256，再发布到现有文件资产目录；下载也按流或 Range 读取
 
 ### prv1：新 tag 经 CI 验证后自动部署
 
-推送新 tag 会运行现有 CI。`quality` 全部通过后，`deploy` 任务调用
+推送新 tag 会运行 CI。它先检查同一提交 SHA 最新一次 `main` 分支 CI：成功时复用结果，
+没有记录时运行完整验证，失败或取消时阻止部署。正在验证的提交最多等待五分钟，超时后应等主分支
+验证完成再重跑 tag CI。`verified` 门禁通过后，`deploy` 任务调用
 `scripts/deployment/notify.py`，向 `https://prv1v4.2kb.fish:8443/hooks/llm-chat`
 发送签名请求，并等待服务器完成部署。所有 tag 名称均可使用；分支、PR、删除 tag 和强制修改
 已有 tag 不部署，不需要创建 GitHub Release。tag 必须包含这版 CI 工作流；历史版本不会自动获得新工作流。
@@ -364,7 +366,13 @@ pnpm --filter @llm-chat/server auth:reset \
 
 ## 验证和 CI
 
-CI 使用 Node.js 24、pnpm 11.7.0，并执行冻结安装。完整门禁顺序如下：
+CI 使用 Node.js 24、pnpm 11.7.0，并执行冻结安装。`quality` 运行类型、预算、覆盖率、审计和部署
+冒烟检查，只构建一次生产产物。四个浏览器项目随后在独立任务、独立数据库中并行运行，每个任务
+仍只有一个测试 worker。它们下载本次运行的产物，通过版本匹配的官方 Playwright 容器运行浏览器；
+应用和数据库运行在宿主机，不再安装浏览器系统依赖。质量与单个浏览器任务的超时均为 15 分钟。
+各浏览器任务无论成功、失败或取消，都尝试保存日志、失败截图和 trace。
+
+本地完整验证命令如下：
 
 ```bash
 pnpm install --frozen-lockfile
