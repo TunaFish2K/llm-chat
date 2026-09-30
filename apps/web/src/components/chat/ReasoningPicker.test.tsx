@@ -73,6 +73,16 @@ it("restores the vertical slider with native stops, keyboard selection and an op
   expect(screen.getByRole("button")).toHaveFocus();
 });
 
+it("keeps focus on the next control when closing the popover", async () => {
+  const user = userEvent.setup();
+  render(<><ReasoningPicker value={{ mode: "default" }} model={model()} onChange={() => {}} /><button>下一个控件</button></>);
+  await user.click(screen.getByRole("button", { name: "推理档位：默认" }));
+  const next = screen.getByRole("button", { name: "下一个控件" });
+  await user.click(next);
+  await vi.waitFor(() => expect(screen.queryByRole("slider")).not.toBeInTheDocument());
+  expect(next).toHaveFocus();
+});
+
 it("adapts unsupported values without saving and allows explicitly choosing default with Home", async () => {
   const user = userEvent.setup();
   const onChange = vi.fn();

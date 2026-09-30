@@ -25,7 +25,7 @@ export function VirtualMessageList({ messages, scroller, following, renderMessag
     scrollMargin: margin,
     overscan: 1,
     rangeExtractor: primed ? defaultRangeExtractor : () => [],
-    enabled: virtual,
+    enabled: virtual && primed,
     useFlushSync: false,
     useAnimationFrameWithResizeObserver: true
   });
@@ -41,15 +41,15 @@ export function VirtualMessageList({ messages, scroller, following, renderMessag
   }, [primed]);
   useLayoutEffect(() => {
     const node = container.current, scroll = scroller.current;
-    if (!virtual || !node || !scroll) return;
+    if (!virtual || !primed || !node || !scroll) return;
     const measure = () => setMargin(node.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop);
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(scroll);
     return () => observer.disconnect();
-  }, [virtual, scroller]);
+  }, [virtual, primed, scroller]);
   if (!virtual) return <>{messages.map(renderMessage)}</>;
-  return <div ref={container} className="message-virtual-list" data-message-count={messages.length} style={{ height: list.getTotalSize() }}>
+  return <div ref={container} className="message-virtual-list" data-message-count={messages.length} style={{ height: primed ? list.getTotalSize() : initialOffset + 600 }}>
     {list.getVirtualItems().map(item => <div
       key={item.key}
       ref={list.measureElement}

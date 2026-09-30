@@ -24,7 +24,10 @@ test("千条变高消息仅挂载视口，能阅读开头并返回最新消息",
   await expect(page.getByLabel("输入消息", { exact: true })).toBeEditable();
   expect(await page.locator('.msg').count()).toBeLessThan(24);
   await scroller.hover({ position: { x: 5, y: 5 } });
-  await page.mouse.wheel(0, -1_000_000);
+  await page.mouse.wheel(0, -100);
+  await expect(scroller).not.toHaveAttribute("data-following-bottom", "true");
+  // A scrollbar jump avoids browser-specific clamping of oversized wheel deltas.
+  await scroller.evaluate(element => { element.scrollTop = 0; });
   await expect(page.locator('.message-virtual-row[data-index="0"]')).toBeVisible();
   await expect(page.getByRole('button', { name: '回到最新消息' })).toBeVisible();
   await page.waitForTimeout(250);
