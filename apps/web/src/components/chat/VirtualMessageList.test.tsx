@@ -22,7 +22,7 @@ it.each([10, 12, 13])("windows %i messages after shell admission instead of moun
   await new Promise(resolve => setTimeout(resolve, 60));
   expect(rendered).not.toHaveBeenCalled();
   rerender(<View allowed />);
-  await waitFor(() => expect(rendered).toHaveBeenCalled(), { timeout: 5_000 });
+  await waitFor(() => expect(container.querySelectorAll("article").length).toBeGreaterThan(0), { timeout: 5_000 });
   expect(container.querySelectorAll("article").length).toBeLessThan(count);
   const mounted = container.querySelector("article");
   rerender(<View allowed={false} />);

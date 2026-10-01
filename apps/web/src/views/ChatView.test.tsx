@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
 import { navigate, useRoute } from "../lib/router";
@@ -50,6 +50,11 @@ function messageFetch(messages: MessageDto[]) {
     return Promise.resolve(json({ error: { code: "unexpected", message: `unexpected ${url}` } }, 500));
   });
 }
+
+// Concurrent coverage on the two-core CI host can delay React's deferred commits.
+// Browser interaction budgets are measured separately against the production build.
+beforeAll(() => configure({ asyncUtilTimeout: 5_000 }));
+afterAll(() => configure({ asyncUtilTimeout: 1_000 }));
 
 beforeEach(() => {
   // jsdom has no layout; give transcript feature tests a measured viewport.
