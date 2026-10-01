@@ -13,7 +13,7 @@ async function setup(page: Page, request: APIRequestContext, profile: HeavyProfi
   await page.addInitScript(() => localStorage.setItem("llm-chat.offline-enabled", "false"));
   await page.route(`**/api/conversations/${heavy.id}/messages`, route => route.fulfill({ json: messages }));
   await page.route("**/api/bootstrap*", async route => {
-    const response = await route.fetch();
+    const response = await route.fetch({ headers: { ...route.request().headers(), 'accept-encoding': 'identity' } });
     await route.fulfill({ response, json: { ...await response.json(), messages: [] } });
   });
   await page.goto(`${APP_URL}/c/${short.id}`);
