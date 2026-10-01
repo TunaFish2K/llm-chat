@@ -113,6 +113,11 @@ export function useStickToBottom(
     const resized = dimensions.current.height !== element.scrollHeight || dimensions.current.viewport !== element.clientHeight;
     const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
     const movedUp = previous !== null && element.scrollTop < previous;
+    // Streaming can grow the content before a queued return-to-bottom scroll
+    // event. Recognize the old bottom before overwriting its dimensions.
+    const returnedToBottom = !awaitingUpwardScroll.current && previous !== null && element.scrollTop > previous &&
+      dimensions.current.height > dimensions.current.viewport && dimensions.current.viewport === element.clientHeight &&
+      element.scrollTop >= dimensions.current.height - dimensions.current.viewport - 1;
     previousScrollTop.current = element.scrollTop;
     dimensions.current = { height: element.scrollHeight, viewport: element.clientHeight };
     // A resize can emit a bottom scroll before the compositor applies the wheel.
@@ -125,6 +130,10 @@ export function useStickToBottom(
       return;
     }
     smooth.current = false;
+    if (returnedToBottom && !following.current) {
+      following.current = true;
+      setDetached(false);
+    }
     // Compositor inertia can arrive even after scrollend. Settle an immediate
     // jump over two quiet frames; a new upward gesture still detaches at once.
     if (following.current && (resized || jumpFrames.current > 0 || (!atBottom && !movedUp))) {

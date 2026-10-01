@@ -214,6 +214,19 @@ it("resumes if content grows between reaching the bottom and delivery of the scr
   expect(state.element.scrollTop).toBe(1000);
 });
 
+it("resumes when the return-to-bottom scroll event arrives after a chunk but before the layout frame", () => {
+  const state = setup();
+  state.element.scrollTop = 200;
+  fireEvent.scroll(state.element);
+  expect(state.scroll.detached).toBe(true);
+  state.element.scrollTop = 600;
+  Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
+  fireEvent.scroll(state.element);
+  expect(state.scroll.detached).toBe(false);
+  act(() => vi.advanceTimersByTime(20));
+  expect(state.element.scrollTop).toBe(1000);
+});
+
 it("follows through a temporary content collapse whose scroll event arrives after layout", () => {
   const state = setup();
   Object.defineProperty(state.element, "scrollHeight", { value: 1400 });
