@@ -2,6 +2,7 @@ import { clearResources } from "../src/lib/resource";
 import { clearSubmissions } from "../src/lib/submission";
 import { uploadManager } from "../src/lib/file-upload-manager";
 import { displayStore, DISPLAY_DEFAULTS } from "../src/lib/local-display";
+import { animationStore, ANIMATION_DEFAULTS } from "../src/lib/animation-preferences";
 import { setLocalePreference } from "../src/lib/i18n";
 import { typographyStore, CHAT_TYPOGRAPHY_DEFAULTS } from "../src/lib/local-typography";
 import { setConversationSource } from "../src/lib/conversation-lifecycle";
@@ -99,6 +100,7 @@ afterEach(() => {
   uploadManager.reset();
   uploadManager.setSource("local");
   displayStore.set({ values: { ...DISPLAY_DEFAULTS }, initialized: false, saved: true });
+  animationStore.set({ values: { ...ANIMATION_DEFAULTS }, initialized: false, saved: true });
   typographyStore.set({ values: { ...CHAT_TYPOGRAPHY_DEFAULTS }, initialized: false, saved: true });
   setConversationSource(crypto.randomUUID());
   clearStartupCache();

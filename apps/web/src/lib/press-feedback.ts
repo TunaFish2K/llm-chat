@@ -1,5 +1,6 @@
 const CONTROL = 'button, a[href], summary, [role="button"], [role="tab"], [role="menuitem"], [role="option"]';
 import { noteInteraction } from "./background-task";
+import { animationMilliseconds } from "./animation-preferences";
 
 export function installPressFeedback(): () => void {
   let pressed: HTMLElement | null = null;
@@ -11,8 +12,9 @@ export function installPressFeedback(): () => void {
     pressed = null; pointer = null;
     if (!element) return;
     element.dataset.pressed = "releasing";
-    if (immediate) delete element.dataset.pressed;
-    else { releasing = element; timer = setTimeout(() => { delete element.dataset.pressed; releasing = null; }, 120); }
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : animationMilliseconds("feedback");
+    if (immediate || !duration) delete element.dataset.pressed;
+    else { releasing = element; timer = setTimeout(() => { delete element.dataset.pressed; releasing = null; }, duration); }
   };
   const down = (event: PointerEvent) => {
     noteInteraction();

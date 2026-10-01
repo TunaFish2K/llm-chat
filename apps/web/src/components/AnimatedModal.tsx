@@ -2,7 +2,8 @@ import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { t, useLocale } from "../lib/i18n";
 import { useBackLayer } from "../lib/mobile-navigation";
-import { MotionProvider, m, motionTiming, useIsPresent, useReducedMotion } from "../lib/motion";
+import { MotionProvider, m, useIsPresent, useReducedMotion } from "../lib/motion";
+import { useAnimationDuration } from "../lib/animation-preferences";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -16,6 +17,8 @@ function ModalContent({ title, onClose, children, footer, wide, fullscreen }: Mo
   useLocale();
   const present = useIsPresent();
   const reduced = useReducedMotion();
+  const enter = useAnimationDuration("modal") / 1_000;
+  const exit = useAnimationDuration("modal", "exit") / 1_000;
   const ref = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const closeRef = useRef(onClose);
@@ -58,14 +61,14 @@ function ModalContent({ title, onClose, children, footer, wide, fullscreen }: Mo
   }, [present]);
 
   return <m.div className="modal-backdrop" data-exiting={!present || undefined}
-    initial={{ opacity: reduced ? 1 : 0 }} animate={{ opacity: 1, transition: { duration: reduced ? 0 : motionTiming.enter } }}
-    exit={{ opacity: 0, transition: { duration: reduced ? 0 : motionTiming.exit } }}
+    initial={{ opacity: reduced || !enter ? 1 : 0 }} animate={{ opacity: 1, transition: { duration: reduced ? 0 : enter } }}
+    exit={{ opacity: 0, transition: { duration: reduced ? 0 : exit } }}
     onClickCapture={event => { if (!present) { event.preventDefault(); event.stopPropagation(); } }}
     onMouseDown={event => { if (event.target === event.currentTarget) closeRef.current(); }}>
     <m.div className={`modal${wide ? " wide" : ""}${fullscreen ? " fullscreen" : ""}`}
       ref={ref} role="dialog" aria-modal="true" aria-hidden={!present || undefined} aria-label={title} aria-labelledby={headingId} tabIndex={-1} inert={!present ? true : undefined}
-      initial={{ y: reduced ? 0 : 4 }} animate={{ y: 0, transition: { duration: reduced ? 0 : motionTiming.enter } }}
-      exit={{ y: reduced ? 0 : 4, transition: { duration: reduced ? 0 : motionTiming.exit } }}>
+      initial={{ y: reduced || !enter ? 0 : 4 }} animate={{ y: 0, transition: { duration: reduced ? 0 : enter } }}
+      exit={{ y: reduced || !exit ? 0 : 4, transition: { duration: reduced ? 0 : exit } }}>
       <div className="modal-header"><h3 id={headingId}>{title}</h3>
         <button type="button" className="btn ghost icon" onClick={() => closeRef.current()} aria-label={t("index.close_dialog")}><X size={18} aria-hidden="true" /></button>
       </div>

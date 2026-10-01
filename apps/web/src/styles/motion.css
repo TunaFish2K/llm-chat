@@ -4,29 +4,38 @@
 }
 button { touch-action: manipulation; }
 :is(button, a[href], summary, [role="button"], [role="tab"], [role="menuitem"], [role="option"])[data-pressed] {
-  box-shadow: inset 0 0 0 100vmax color-mix(in srgb, currentColor 9%, transparent);
-  transition: box-shadow 120ms var(--ease);
+  box-shadow: inset 0 0 0 100vmax var(--press-fill, color-mix(in srgb, currentColor 9%, transparent));
+  transition: box-shadow var(--motion-feedback-enter, 120ms) var(--ease);
 }
 [data-pressed="true"] { transition-duration: 0ms !important; }
+[data-pressed="releasing"] { --press-fill: transparent; }
 .btn.icon[data-pressed="true"] > svg { transform: scale(.94); }
-.btn.icon > svg { transition: transform 120ms var(--ease); }
-.tab-content, .inspector-body, .pending-message, .message-queue li { animation: surface-enter 180ms var(--ease); }
+.btn.icon > svg { transition: transform var(--motion-feedback-enter, 120ms) var(--ease); }
+.tab-content { animation: surface-enter var(--motion-page-enter, 180ms) var(--ease); }
+.inspector-body { animation: surface-enter var(--motion-inspector-enter, 200ms) var(--ease); }
+.pending-message, .message-queue li { animation: surface-enter calc(var(--motion-message-enter, 120ms) * 1.5) var(--ease); }
 @keyframes surface-enter { from { opacity: 0; transform: translateY(3px); } }
-.msg[data-enter] { animation: message-enter 120ms var(--ease); }
+.msg[data-enter] { animation: message-enter var(--motion-message-enter, 120ms) var(--ease); }
 @keyframes message-enter { from { opacity: 0; transform: translateY(4px); } }
 
 .disclosure-body { overflow: hidden; }
-.process-disclosure > summary .chev { transition: transform 180ms var(--ease); }
+.process-disclosure > summary .chev { transition: transform var(--motion-disclosure-enter, 180ms) var(--ease); }
 
 :is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state] {
   transform-origin: var(--radix-popover-content-transform-origin);
   --popover-offset: 4px;
 }
 :is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-side="bottom"] { --popover-offset: -4px; }
-:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state="open"] { animation: popover-in 180ms var(--ease); }
-:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state="closed"] { animation: popover-out 140ms var(--ease); pointer-events: none; }
+:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state="open"] { animation: popover-in var(--motion-popover-enter, 180ms) var(--ease); }
+:is(.picker-popover, .model-popover, .reasoning-popover, .composer-more-popover)[data-state="closed"] { animation: popover-out var(--motion-popover-exit, 140ms) var(--ease); pointer-events: none; }
 @keyframes popover-in { from { opacity: 0; transform: translateY(var(--popover-offset)); } }
 @keyframes popover-out { to { opacity: 0; transform: translateY(var(--popover-offset)); } }
+
+.animation-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px 24px; margin-block: 16px; }
+.animation-control { display: grid; gap: 2px; }
+.animation-control > span { display: flex; justify-content: space-between; gap: 12px; }
+.animation-control output { color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.animation-control input { width: 100%; height: 36px; margin: 0; accent-color: var(--accent); touch-action: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .msg[data-enter], [data-state="open"], [data-state="closed"] { animation: none !important; }

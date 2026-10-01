@@ -6,7 +6,7 @@ afterEach(() => { vi.unstubAllGlobals(); document.querySelectorAll('[aria-hidden
 
 it("freezes collapsing content, reverses cleanly, and never animates resize drags", async () => {
   const animations: Array<{ cancel: ReturnType<typeof vi.fn>; finished: Promise<void> }> = [];
-  const animate = vi.fn(() => { const animation = { cancel: vi.fn(), finished: new Promise<void>(() => {}) }; animations.push(animation); return animation; });
+  const animate = vi.fn((_frames: Keyframe[], _options: KeyframeAnimationOptions) => { const animation = { cancel: vi.fn(), finished: new Promise<void>(() => {}) }; animations.push(animation); return animation; });
   Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function(this: HTMLElement) {
     const frame = this.closest(".app-frame") as HTMLElement;
@@ -21,6 +21,7 @@ it("freezes collapsing content, reverses cleanly, and never animates resize drag
   expect(ghost.querySelector("iframe")).toBeNull();
   expect(document.querySelectorAll("#original-control")).toHaveLength(0);
   expect(animate).toHaveBeenCalledTimes(2);
+  expect(animate.mock.calls.every(call => call[1].duration === 140)).toBe(true);
   view.rerender(<AnimatedFrame left={276} right={0} sidebarCollapsed={false} inspectorOpen={false}>{content}</AnimatedFrame>);
   expect(ghost.isConnected).toBe(false); expect(animations[0]?.cancel).toHaveBeenCalled();
   animate.mockClear();
@@ -36,4 +37,19 @@ it("changes layout directly with reduced motion or without the animation API", (
   const view = render(<AnimatedFrame left={276} right={0} sidebarCollapsed={false} inspectorOpen={false}>{content}</AnimatedFrame>);
   view.rerender(<AnimatedFrame left={64} right={0} sidebarCollapsed inspectorOpen={false}>{content}</AnimatedFrame>);
   expect(document.querySelector('.workspace-sidebar[aria-hidden="true"]')).toBeNull();
+});
+
+it("uses the configured sidebar duration and skips layout animation when disabled", () => {
+  const animate = vi.fn(() => ({ cancel: vi.fn(), finished: new Promise<void>(() => {}) }));
+  Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 276, 900));
+  const content = <aside className="workspace-sidebar">content</aside>;
+  const view = render(<AnimatedFrame left={276} right={0} sidebarCollapsed={false} inspectorOpen={false} sidebarDuration={560}>{content}</AnimatedFrame>);
+  view.rerender(<AnimatedFrame left={64} right={0} sidebarCollapsed inspectorOpen={false} sidebarDuration={560}>{content}</AnimatedFrame>);
+  expect(animate).toHaveBeenCalledWith(expect.any(Array), expect.objectContaining({ duration: 560 }));
+  animate.mockClear();
+  view.rerender(<AnimatedFrame left={276} right={0} sidebarCollapsed={false} inspectorOpen={false} sidebarDuration={0}>{content}</AnimatedFrame>);
+  expect(animate).not.toHaveBeenCalled();
+  expect(document.querySelector('.workspace-sidebar[aria-hidden="true"]')).toBeNull();
+  view.unmount(); delete (HTMLElement.prototype as Partial<HTMLElement>).animate;
 });

@@ -549,7 +549,7 @@
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.err { background: var(--err); }
-.dot.run { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
+.dot.run { background: var(--accent); animation: pulse var(--motion-pulse, 1.4s) ease-in-out infinite; }
 
 @keyframes pulse {
   50% { opacity: 0.35; }
@@ -1258,7 +1258,7 @@
   background: var(--surface-1);
   box-shadow: var(--shadow-3);
   overflow: hidden;
-  animation: fade-rise var(--dur-med) var(--ease);
+  animation: fade-rise var(--motion-popover-enter, 180ms) var(--ease);
 }
 
 .picker-popover > header {

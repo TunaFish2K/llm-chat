@@ -1,4 +1,5 @@
-import { animate, drawerSpring, m, motionTiming, Presence, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
+import { animate, drawerEase, m, Presence, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
+import { useAnimationDuration } from "../../lib/animation-preferences";
 import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 /**
@@ -95,7 +96,10 @@ export function AppFrame({
   children: ReactNode;
 }) {
   useLocale();
-  return <AnimatedFrame left={left} right={right} sidebarCollapsed={sidebarCollapsed} inspectorOpen={inspectorOpen}>{children}</AnimatedFrame>;
+  const sidebarDuration = useAnimationDuration("sidebar");
+  const inspectorDuration = useAnimationDuration("inspector");
+  return <AnimatedFrame left={left} right={right} sidebarCollapsed={sidebarCollapsed} inspectorOpen={inspectorOpen}
+    sidebarDuration={sidebarDuration} inspectorDuration={inspectorDuration}>{children}</AnimatedFrame>;
 }
 
 /**
@@ -211,6 +215,8 @@ export function MobileDrawer({
     return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
   }, []);
   const reduced = useReducedMotion();
+  const enter = useAnimationDuration(side === "left" ? "sidebar" : "inspector");
+  const exit = useAnimationDuration(side === "left" ? "sidebar" : "inspector", "exit");
   const panelRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; at: number; offset: number; dragging: boolean } | null>(null);
   const closing = useRef(false);
@@ -251,20 +257,21 @@ export function MobileDrawer({
     animation.current?.stop();
     gesture.current = null;
     if (!initialized.current) {
-      x.set(reduced ? 0 : (side === "left" ? -1 : 1) * width.get());
+      x.set(reduced || !enter ? 0 : (side === "left" ? -1 : 1) * width.get());
       initialized.current = true;
     }
     if (present) closing.current = false;
     const target = present ? 0 : (side === "left" ? -1 : 1) * width.get();
-    if (reduced) {
+    const duration = present ? enter : exit;
+    if (reduced || !duration) {
       x.set(target);
       if (!present) safeToRemove?.();
     } else {
-      animation.current = animate(x, target, present ? drawerSpring : { duration: motionTiming.exit });
+      animation.current = animate(x, target, { duration: duration / 1_000, ease: drawerEase });
       if (!present) void animation.current.then(() => { if (active) safeToRemove?.(); });
     }
     return () => { active = false; animation.current?.stop(); };
-  }, [present, reduced, side, safeToRemove, width, x]);
+  }, [present, reduced, side, safeToRemove, width, x, enter, exit]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -281,8 +288,8 @@ export function MobileDrawer({
     if (!gesture.current) return;
     gesture.current = null;
     animation.current?.stop();
-    if (reduced) x.set(0);
-    else animation.current = animate(x, 0, drawerSpring);
+    if (reduced || !enter) x.set(0);
+    else animation.current = animate(x, 0, { duration: enter / 1_000, ease: drawerEase });
   };
 
   return (
@@ -329,8 +336,8 @@ export function MobileDrawer({
           const distance = Math.abs(x.get());
           gesture.current = null;
           if (start.dragging && closingDistance > 0 && (distance >= Math.max(56, width.get() * 0.22) || closingDistance / elapsed >= 0.55)) close();
-          else if (reduced) x.set(0);
-          else animation.current = animate(x, 0, drawerSpring);
+          else if (reduced || !enter) x.set(0);
+          else animation.current = animate(x, 0, { duration: enter / 1_000, ease: drawerEase });
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
         }}
         onPointerCancel={cancel} onLostPointerCapture={event => { if (event.target === event.currentTarget) cancel(); }}
@@ -355,6 +362,9 @@ export function ToastStack({
   updateError?: string | null;
 }) {
   useLocale();
+  const enter = useAnimationDuration("toast") / 1_000;
+  const exit = useAnimationDuration("toast", "exit") / 1_000;
+  const reduced = useReducedMotion();
   return (
     <div className="toast-stack" aria-live="polite">
       {updateAvailable ? (
@@ -369,10 +379,9 @@ export function ToastStack({
           key={item.id}
           className={`toast ${item.kind}`}
           role={item.kind === "error" ? "alert" : "status"}
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 4 }}
-          transition={{ duration: motionTiming.exit }}
+          initial={{ opacity: reduced || !enter ? 1 : 0, y: reduced || !enter ? 0 : 4 }}
+          animate={{ opacity: 1, y: 0, transition: { duration: reduced ? 0 : enter } }}
+          exit={{ opacity: 0, y: reduced || !exit ? 0 : 4, transition: { duration: reduced ? 0 : exit } }}
           style={{ animation: "none" }}
         >
           {displayError({ message: item.text, ...(item.i18n ? { i18n: item.i18n } : {}) })}

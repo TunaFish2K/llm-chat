@@ -4,8 +4,7 @@ import { AnimatePresence, LazyMotion, MotionConfig, domAnimation } from "motion/
 
 export { animate, m, useIsPresent, useMotionValue, usePresence, useReducedMotion, useTransform } from "motion/react";
 
-export const motionTiming = { enter: 0.18, exit: 0.14, message: 0.12 };
-export const drawerSpring = { type: "spring" as const, stiffness: 400, damping: 40, mass: 1 };
+export const drawerEase = [.2, .7, .2, 1] as const;
 
 export function MotionProvider({ children }: { children: ReactNode }) {
   return <LazyMotion features={domAnimation} strict><MotionConfig reducedMotion="user">{children}</MotionConfig></LazyMotion>;

@@ -1,4 +1,5 @@
-import { Presence, motionTiming } from "./lib/motion";
+import { Presence } from "./lib/motion";
+import { useAnimationDuration } from "./lib/animation-preferences";
 import { HistoryRendering } from "./lib/history-rendering";
 import { GlobalFileUploads } from "./components/FileUploads";
 import { useErrorState } from "./lib/error-display";
@@ -62,6 +63,7 @@ export function App() {
   const mobile = useMediaQuery("(max-width: 767px)");
   const [navDrawer, setNavDrawer] = useState(false);
   const [historyPause, setHistoryPause] = useState(0);
+  const drawerExitDuration = useAnimationDuration("sidebar", "exit");
   const historyTicket = useRef(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -75,9 +77,9 @@ export function App() {
   useEffect(() => {
     if (!historyPause) return;
     // A cancelled presence callback must never leave a destination waiting forever.
-    const timer = setTimeout(() => setHistoryPause(current => current === historyPause ? 0 : current), motionTiming.exit * 1_000 + 100);
+    const timer = setTimeout(() => setHistoryPause(current => current === historyPause ? 0 : current), drawerExitDuration + 100);
     return () => clearTimeout(timer);
-  }, [historyPause]);
+  }, [historyPause, drawerExitDuration]);
   const toggleSidebar = useCallback(() => mobile ? setNavDrawer(true) : setSidebarCollapsed(value => !value), [mobile]);
   const toggleInspector = useCallback(() => setInspectorOpen(value => !value), []);
   const inspect = useCallback((target: InspectionTarget) => { setInspection(target); setInspectorOpen(true); }, []);

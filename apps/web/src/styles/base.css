@@ -195,12 +195,14 @@ img {
   border: 2px solid var(--border-strong);
   border-top-color: var(--accent);
   border-radius: 50%;
-  animation: spin 700ms linear infinite;
+  animation: spin var(--motion-loading-enter, 700ms) linear infinite;
 }
 
 .spin {
-  animation: spin 900ms linear infinite;
+  animation: spin var(--motion-icon-spin, 900ms) linear infinite;
 }
+
+:root[data-loading-motion-disabled] :is(.spinner, .spin, .dot.run) { animation: none !important; }
 
 .icon-btn-label {
   display: inline-flex;
