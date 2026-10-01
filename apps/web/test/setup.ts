@@ -38,6 +38,10 @@ Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, writab
   observe() {} unobserve() {} disconnect() {}
 } });
 
+if (!HTMLElement.prototype.scrollTo) HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number, y?: number) {
+  this.scrollTop = typeof options === "number" ? y ?? 0 : options?.top ?? this.scrollTop;
+};
+
 // jsdom does not implement EventSource or matchMedia; provide stable stubs.
 class FakeEventSource {
   static instances: FakeEventSource[] = [];

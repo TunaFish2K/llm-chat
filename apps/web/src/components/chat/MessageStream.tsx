@@ -370,7 +370,7 @@ function ProcessGroup({ entries, busy, status, autoOpen, onInspect, imageJobs }:
   const incomplete = thinking || Boolean(activeTool);
   const label = !busy && incomplete && status !== "completed" ? (status === "failed" ? t("MessageStream.processing_failed") : t("MessageStream.processing_stopped")) : pending ? t("index.waiting_for_approval") : activeTool && busy ? t("MessageStream.calling", { value1: (activeTool.name) }) : active ? t("MessageStream.reasoning") : t("MessageStream.reasoning_process");
   return <div className="process-group">
-    <AnimatedDisclosure className="process-disclosure" open={open} onOpenChange={setManualOpen} summary={<>
+    <AnimatedDisclosure lazy className="process-disclosure" open={open} onOpenChange={setManualOpen} summary={<>
         {active ? <LoaderCircle size={13} className="spin" /> : <Gauge size={13} />}
         <span role={active ? "status" : undefined}>{label}</span>
         {tools.length ? <span className="process-count">{t("MessageStream.tool_calls", { count: Number((tools.length)), value1: (tools.length) })}</span> : null}
@@ -464,7 +464,7 @@ function ToolCallDisclosure({ call, onInspect, imageJobs }: { call: ToolCallDto;
   const inlineAssets = new Set(imageJobs?.flatMap((job) => job.outputAssets.map((asset) => asset.id)));
   const artifacts = call.artifacts.filter((asset) => !inlineAssets.has(asset.id));
   return (
-    <AnimatedDisclosure className="tool-call" state={call.approvalState} summary={<>
+    <AnimatedDisclosure lazy className="tool-call" state={call.approvalState} summary={<>
         <Wrench size={15} aria-hidden="true" />
         <code className="tool-call-name" title={call.name}>{call.name}</code>
         <ToolCallSummary call={call} />
