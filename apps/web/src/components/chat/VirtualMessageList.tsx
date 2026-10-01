@@ -31,7 +31,8 @@ export function VirtualMessageList({ messages, scroller, following, renderMessag
     useFlushSync: false,
     useAnimationFrameWithResizeObserver: true
   });
-  list.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => following || item.start < (instance.scrollOffset ?? 0);
+  // A visible long message can grow below the reader; only compensate rows fully above it.
+  list.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => following || item.end <= (instance.scrollOffset ?? 0);
   useEffect(() => {
     if (primed || !allowed) return;
     let timer: ReturnType<typeof setTimeout> | undefined;

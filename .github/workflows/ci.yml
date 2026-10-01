@@ -78,6 +78,7 @@ jobs:
       fail-fast: false
       matrix:
         project: [chromium, firefox, webkit, mobile-chromium]
+        shard: [1, 2]
     env:
       E2E_USE_PREBUILT: '1'
       PLAYWRIGHT_WS_ENDPOINT: ws://127.0.0.1:38191/
@@ -112,11 +113,11 @@ jobs:
           done
           docker logs playwright
           exit 1
-      - name: Test ${{ matrix.project }}
+      - name: Test ${{ matrix.project }} shard ${{ matrix.shard }}/2
         shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
-        run: pnpm test:e2e --project=${{ matrix.project }} 2>&1 | tee "$RUNNER_TEMP/browser.log"
+        run: pnpm test:e2e --project=${{ matrix.project }} --shard=${{ matrix.shard }}/2 2>&1 | tee "$RUNNER_TEMP/browser.log"
       - name: Save browser runtime logs
         if: always()
         run: docker logs playwright > "$RUNNER_TEMP/browser-runtime.log" 2>&1 || true
@@ -124,7 +125,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-${{ matrix.project }}
+          name: browser-${{ matrix.project }}-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/llm-chat-playwright-results-*/
             ${{ runner.temp }}/browser.log

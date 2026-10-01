@@ -20,7 +20,7 @@ test("图片任务按调用顺序显示，折叠和刷新后不堆积到末尾",
     const results = page.locator(".image-tool-result");
     for (let load = 0; load < 2; load++) {
       await expect(results).toHaveCount(3);
-      await expect(page.locator(".chat-thread > .msg")).toHaveCount(2);
+      await expect(page.locator(".chat-thread .msg")).toHaveCount(2);
       await expect(results.nth(0)).toContainText("Upstream request failed (1)");
       await expect(results.nth(1)).toContainText("Upstream request failed (2)");
       await expect(results.nth(2).getByRole("img", { name: "beach.png" })).toBeVisible();
