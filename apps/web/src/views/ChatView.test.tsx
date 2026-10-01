@@ -52,6 +52,12 @@ function messageFetch(messages: MessageDto[]) {
 }
 
 beforeEach(() => {
+  // jsdom has no layout; give transcript feature tests a measured viewport.
+  vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("chat-scroll") ? 5_000 : this.classList.contains("message-virtual-row") ? 200 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(600);
+  vi.spyOn(HTMLElement.prototype, "scrollTo").mockImplementation(() => {});
   window.history.pushState(null, "", "/c/conv-1");
   vi.spyOn(endpoints, "queueState").mockResolvedValue({ items: [], paused: false });
   vi.spyOn(endpoints, "agents").mockImplementation(async () => appStore.get().agents);
@@ -421,7 +427,7 @@ describe("ChatView", () => {
 
     render(<ChatView conversationId="conv-1" />);
 
-    expect(screen.getByText("旧消息仍可显示")).toBeInTheDocument();
+    expect(await screen.findByText("旧消息仍可显示")).toBeInTheDocument();
     await waitFor(() => expect(appStore.get().messages["conv-1"]?.[0]?.attachments).toEqual([]));
   });
 
@@ -484,7 +490,7 @@ describe("ChatView", () => {
     expect(screen.getByText("↑ 12")).toBeInTheDocument();
     expect(screen.getByText("↓ 34")).toBeInTheDocument();
     expect(screen.getByText("推理过程")).toBeInTheDocument();
-    expect(screen.getByText("思考中…")).not.toBeVisible();
+    expect(screen.queryByText("思考中…")).not.toBeInTheDocument();
   });
 
   it("renders refusal blocks as alerts", async () => {
@@ -554,6 +560,9 @@ describe("ChatView", () => {
     vi.stubGlobal("fetch", messageFetch(messages));
     render(<ChatView conversationId="conv-1" />);
 
+    await screen.findByText("工具后的回答");
+    expect(screen.queryByText("workspace_shell")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("推理过程"));
     const tool = await screen.findByText("workspace_shell");
     const details = tool.closest("details")!;
     const answer = screen.getByText("工具后的回答").closest(".markdown")!;

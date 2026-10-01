@@ -12,8 +12,8 @@ export function MotionProvider({ children }: { children: ReactNode }) {
 }
 
 /** Keep presence at the conditional owner so the whole dialog survives its exit. */
-export function Presence({ children }: { children: ReactNode }) {
-  return <MotionProvider><AnimatePresence initial={false}>{children}</AnimatePresence></MotionProvider>;
+export function Presence({ children, onExitComplete }: { children: ReactNode; onExitComplete?: () => void }) {
+  return <MotionProvider><AnimatePresence initial={false} {...(onExitComplete ? { onExitComplete } : {})}>{children}</AnimatePresence></MotionProvider>;
 }
 
 /** Radix keeps this child mounted through its CSS exit animation. */

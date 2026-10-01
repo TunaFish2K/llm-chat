@@ -19,7 +19,7 @@ function reply(generation: ReturnType<typeof makeGeneration>) {
 }
 
 describe("reply processing disclosure", () => {
-  it("automatically collapses on prose while retaining a manual choice through streaming", () => {
+  it("automatically collapses on prose while retaining a manual choice through streaming", async () => {
     appStore.set({ settings: makeSettings() });
     const generation = makeGeneration({ status: "running", completedAt: null, blocks: [reasoning] });
     const { container, rerender } = render(reply(generation));
@@ -28,7 +28,7 @@ describe("reply processing disclosure", () => {
     expect(container.querySelector(".process-disclosure")).not.toHaveAttribute("open");
     fireEvent.click(screen.getByText("推理过程"));
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
-    const reasoningElement = screen.getByRole("region", { name: "推理内容" });
+    const reasoningElement = await screen.findByRole("region", { name: "推理内容" });
     rerender(reply({ ...generation, status: "completed", completedAt: 10, blocks: [{ ...reasoning, id: "persisted-reasoning", complete: true }, { ...answer, content: "The answer continues", complete: true }] }));
     expect(container.querySelector(".process-disclosure")).toHaveAttribute("open");
     expect(screen.getByText("Consider the question")).toBeVisible();
@@ -79,7 +79,7 @@ describe("inline image jobs", () => {
     }
   });
 
-  it("keeps images outside disclosures, deduplicates tool previews, and preserves manual choices as jobs arrive", () => {
+  it("keeps images outside disclosures, deduplicates tool previews, and preserves manual choices as jobs arrive", async () => {
     appStore.set({ settings: makeSettings() });
     const messages = imageRetryMessages();
     const message = messages[1]!;
@@ -92,6 +92,7 @@ describe("inline image jobs", () => {
     rerender(renderReply(true));
     expect(container.querySelectorAll(".process-disclosure")[2]).toBe(disclosure);
     expect(disclosure).toHaveAttribute("open");
+    await waitFor(() => expect(disclosure.querySelector(".tool-call > summary")).not.toBeNull());
     fireEvent.click(disclosure.querySelector(".tool-call > summary")!);
     expect(screen.getAllByRole("img", { name: "beach.png" })).toHaveLength(1);
     const image = screen.getByRole("img", { name: "beach.png" });

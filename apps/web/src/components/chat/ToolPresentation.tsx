@@ -1,8 +1,8 @@
 import { displayError } from "../../lib/error-display";
 import { localizedToolFormatters } from "@llm-chat/i18n/tool-presentation";
 import { t, useLocale, getLocale } from "../../lib/i18n";
-import { useState } from "react";
-import type { ToolCallDto } from "@llm-chat/contracts";
+import { useMemo, useState } from "react";
+import type { ToolCallDto, ToolPresentation } from "@llm-chat/contracts";
 import { Markdown } from "../../lib/markdown";
 import { CodeField, copyText } from "./atoms";
 import { prettyJson } from "./model";
@@ -33,10 +33,22 @@ export function ToolCallContent({ call }: { call: ToolCallDto }) {
 
 function RawToolField({ label, value }: { label: string; value: string }) {
   useLocale();
-  return <section><button type="button" className="link-button" onClick={() => void copyText(value)}>{t("ToolPresentation.copy_raw", { value1: (label) })}</button><CodeField label={label} value={prettyJson(value)} /></section>;
+  const formatted = useMemo(() => prettyJson(value), [value]);
+  return <section><button type="button" className="link-button" onClick={() => void copyText(value)}>{t("ToolPresentation.copy_raw", { value1: (label) })}</button><CodeField label={label} value={formatted} /></section>;
 }
 
+const presentationCache = new WeakMap<ToolCallDto, Map<string, ToolPresentation | undefined>>();
 function localizedPresentation(call: ToolCallDto) {
+  const locale = getLocale();
+  const cached = presentationCache.get(call);
+  if (cached?.has(locale)) return cached.get(locale);
+  const result = formatPresentation(call);
+  const values = cached ?? new Map<string, ToolPresentation | undefined>();
+  values.set(locale, result);
+  presentationCache.set(call, values);
+  return result;
+}
+function formatPresentation(call: ToolCallDto): ToolPresentation | undefined {
   const descriptor = call.presentation?.builtin;
   if (descriptor?.version !== 1 || descriptor.name !== call.name) return call.presentation;
   const formatter = localizedToolFormatters(descriptor.name, getLocale());

@@ -1,9 +1,26 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import * as formatters from "@llm-chat/i18n/tool-presentation";
+import { setLocalePreference } from "../../lib/i18n";
 import type { ToolCallDto } from "@llm-chat/contracts";
 import { ToolCallContent, ToolCallSummary } from "./ToolPresentation";
 
 const call: ToolCallDto = { id: "call", index: 0, stepIndex: 0, name: "echo", arguments: '{"value":"raw"}', output: "raw result", error: null, approvalState: "completed", requiresApproval: false, startedAt: 1, completedAt: 2, artifacts: [] };
+it("shares localized formatting between summary and detail and invalidates it for changed output or language", () => {
+  const formatArguments = vi.fn(() => ({ summary: "Arguments", detail: "Argument details" }));
+  const formatResult = vi.fn(() => ({ summary: "Result", detail: "Result details" }));
+  vi.spyOn(formatters, "localizedToolFormatters").mockReturnValue({ formatArguments, formatResult });
+  const builtin = { ...call, presentation: { builtin: { name: call.name, version: 1 as const } } };
+  const view = (value: ToolCallDto) => <><ToolCallSummary call={value} /><ToolCallContent call={value} /></>;
+  const { rerender } = render(view(builtin));
+  expect(formatResult).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "查看原始数据" }));
+  expect(formatResult).toHaveBeenCalledOnce();
+  act(() => setLocalePreference("en-US"));
+  expect(formatResult).toHaveBeenCalledTimes(2);
+  rerender(view({ ...builtin, output: "Changed result" }));
+  expect(formatResult).toHaveBeenCalledTimes(3);
+});
 it("keeps retired Codex tool history readable with saved presentation or raw output", () => {
   const historical = { ...call, name: "codex_send", output: "historical Codex result" };
   const { rerender } = render(<ToolCallContent call={{ ...historical, presentation: { result: { detail: "Saved historical result" } } }} />);

@@ -1,4 +1,5 @@
-import { Presence } from "./lib/motion";
+import { Presence, motionTiming } from "./lib/motion";
+import { HistoryRendering } from "./lib/history-rendering";
 import { GlobalFileUploads } from "./components/FileUploads";
 import { useErrorState } from "./lib/error-display";
 import { t, useLocale, localized } from "./lib/i18n";
@@ -60,13 +61,23 @@ export function App() {
   const initialConversation = useRef(route.name === "chat" ? route.conversationId ?? undefined : undefined);
   const mobile = useMediaQuery("(max-width: 767px)");
   const [navDrawer, setNavDrawer] = useState(false);
+  const [historyPause, setHistoryPause] = useState(0);
+  const historyTicket = useRef(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspection, setInspection] = useState<InspectionTarget | null>(null);
   const openNav = useCallback(() => setNavDrawer(true), []);
   const navigateFromDrawer = useCallback((path: string) => {
-    navigateAfterPaint(path, () => flushSync(() => setNavDrawer(false)));
+    const ticket = ++historyTicket.current;
+    navigateAfterPaint(path, () => flushSync(() => { setHistoryPause(ticket); setNavDrawer(false); }));
   }, []);
+  const finishDrawerExit = () => setHistoryPause(current => current === historyPause ? 0 : current);
+  useEffect(() => {
+    if (!historyPause) return;
+    // A cancelled presence callback must never leave a destination waiting forever.
+    const timer = setTimeout(() => setHistoryPause(current => current === historyPause ? 0 : current), motionTiming.exit * 1_000 + 100);
+    return () => clearTimeout(timer);
+  }, [historyPause]);
   const toggleSidebar = useCallback(() => mobile ? setNavDrawer(true) : setSidebarCollapsed(value => !value), [mobile]);
   const toggleInspector = useCallback(() => setInspectorOpen(value => !value), []);
   const inspect = useCallback((target: InspectionTarget) => { setInspection(target); setInspectorOpen(true); }, []);
@@ -185,7 +196,7 @@ export function App() {
           />
         ) : null}
         <Suspense fallback={<LoadingState label={t("App.loading_the_interface")} />}>
-          <RouteView
+          <HistoryRendering value={historyPause === 0}><RouteView
             route={route}
             mobile={mobile}
             sidebarCollapsed={sidebarCollapsed}
@@ -193,7 +204,7 @@ export function App() {
             inspectorOpen={showInspector}
             onToggleInspector={toggleInspector}
             onInspect={inspect}
-          />
+          /></HistoryRendering>
         </Suspense>
       </main>
 
@@ -211,7 +222,7 @@ export function App() {
         </>
       ) : null}
 
-      {mobile ? <Presence>{navDrawer ? (
+      {mobile ? <Presence onExitComplete={finishDrawerExit}>{navDrawer ? (
         <MobileDrawer side="left" closeLabel={t("App.close_navigation")} onClose={() => setNavDrawer(false)}>
           <WorkspaceSidebar
             route={route}

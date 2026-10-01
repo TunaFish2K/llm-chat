@@ -207,6 +207,7 @@
 }
 .chat-thread > .msg:not([data-enter]) { content-visibility: auto; contain-intrinsic-size: auto 120px; }
 .message-virtual-list { position: relative; flex: none; overflow-anchor: none; }
+.message-history-loading { position: absolute; bottom: 0; width: 100%; }
 .message-virtual-row { position: absolute; top: 0; left: 0; width: 100%; display: flow-root; padding-bottom: var(--space-5); }
 .message-request-state { display: inline-flex; vertical-align: middle; margin-inline-start: 8px; }
 .message-request-state.danger { color: var(--err); }
