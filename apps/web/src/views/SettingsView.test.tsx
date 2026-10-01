@@ -1,4 +1,5 @@
 import { DISPLAY_KEY, displayStore, saveDisplayPreferences } from "../lib/local-display";
+import { ANIMATION_DEFAULTS, ANIMATION_KEY, animationStore } from "../lib/animation-preferences";
 import { offlineStore } from "../lib/offline-history";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -16,6 +17,20 @@ function json(body: unknown, status = 200): Response {
 }
 
 describe("SettingsView", () => {
+  it("saves animation speeds locally while offline, independently of business settings", () => {
+    offlineStore.set({ offline: true });
+    const write = vi.spyOn(endpoints, "updateSettings");
+    render(<SettingsView section="animations" />);
+    expect(screen.getAllByRole("slider")).toHaveLength(10);
+    fireEvent.change(screen.getByRole("slider", { name: "侧栏" }), { target: { value: ".25" } });
+    expect(animationStore.get().values.sidebar).toBe(.25);
+    expect(screen.getByText("0.25× · 560 ms")).toBeInTheDocument();
+    expect(animationStore.get().values.modal).toBe(1);
+    expect(JSON.parse(localStorage.getItem(ANIMATION_KEY)!)).toMatchObject({ sidebar: .25 });
+    fireEvent.click(screen.getByRole("button", { name: "恢复默认" }));
+    expect(animationStore.get().values).toEqual(ANIMATION_DEFAULTS);
+    expect(write).not.toHaveBeenCalled();
+  });
   it("keeps general settings separate from appearance and interaction", () => {
     appStore.set({ settings: makeSettings(), agents: [makeAgent()], models: [] });
     render(<SettingsView section="general" />);
@@ -23,7 +38,7 @@ describe("SettingsView", () => {
     expect(screen.queryByLabelText("默认折叠侧边栏")).not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "字号" })).not.toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "开启会话通知" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("tab").slice(0, 4).map(tab => tab.textContent)).toEqual(["通用", "外观", "交互", "安全"]);
+    expect(screen.getAllByRole("tab").slice(0, 5).map(tab => tab.textContent)).toEqual(["通用", "外观", "动画", "交互", "安全"]);
     expect(screen.queryByLabelText("默认推理档位")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("默认模型")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("默认上下文策略")).not.toBeInTheDocument();

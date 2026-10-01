@@ -165,7 +165,7 @@
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
-  animation: fade-in var(--dur-fast) var(--ease);
+  animation: fade-in calc(var(--motion-page-enter, 180ms) * 2 / 3) var(--ease);
 }
 
 .conversation-overlay > :not(.sr-only) {
@@ -480,7 +480,7 @@
 
 .reasoning-block > summary .chev,
 .tool-call > summary .chev {
-  transition: transform var(--dur-fast) var(--ease);
+  transition: transform var(--motion-disclosure-enter, 180ms) var(--ease);
 }
 
 .reasoning-block[open] > summary .chev,

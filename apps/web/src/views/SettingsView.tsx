@@ -46,10 +46,12 @@ import { OverflowText } from "../components/OverflowText";
 import { ExpandableTextarea } from "../components/ExpandableTextarea";
 import { applyUpdate, checkForUpdates, forceUpdate, getPwaState, subscribePwa } from "../lib/pwa";
 import { ServiceSettingsPanel } from "../components/ServiceSettingsPanel";
+import { AnimationSettings } from "../components/AnimationSettings";
 
 function getSECTIONS(): Array<[string, string]> { return [
   ["general", t("SettingsView.general")],
   ["appearance", t("SettingsView.appearance")],
+  ["animations", t("AnimationSettings.title")],
   ["interaction", t("SettingsView.interaction")],
   ["security", t("SettingsView.security")],
   ["connections", t("SettingsView.connections_and_models")],
@@ -105,6 +107,7 @@ export function SettingsView({ section }: { section: string }) {
           <div className="panel-inner tab-content" key={active}>
             {active === "general" ? <GeneralSection /> : null}
             {active === "appearance" ? <AppearanceSection /> : null}
+            {active === "animations" ? <AnimationSettings /> : null}
             {active === "interaction" ? <InteractionSection /> : null}
             {active === "search" ? <ServiceSettingsPanel kind="search" /> : null}
             {active === "security" ? <SecuritySection /> : null}

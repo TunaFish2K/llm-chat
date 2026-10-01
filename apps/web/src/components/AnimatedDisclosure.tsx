@@ -1,5 +1,6 @@
 import { startTransition, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { animate, motionTiming, useReducedMotion } from "../lib/motion";
+import { animate, useReducedMotion } from "../lib/motion";
+import { useAnimationDuration } from "../lib/animation-preferences";
 import { useHistoryRendering } from "../lib/history-rendering";
 import { LoadingState } from "./ui";
 
@@ -14,6 +15,7 @@ export function AnimatedDisclosure({ className, state, summary, children, open: 
   const [mounted, setMounted] = useState(!lazy);
   const allowed = useHistoryRendering();
   const reduced = useReducedMotion();
+  const duration = useAnimationDuration("disclosure");
   const details = useRef<HTMLDetailsElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const manual = useRef(false);
@@ -32,7 +34,7 @@ export function AnimatedDisclosure({ className, state, summary, children, open: 
   useLayoutEffect(() => {
     const element = body.current, root = details.current;
     if (!element || !root) return;
-    const shouldAnimate = (manual.current || (open && mounted && revealAnimation.current)) && !reduced;
+    const shouldAnimate = (manual.current || (open && mounted && revealAnimation.current)) && !reduced && duration > 0;
     manual.current = false;
     if (mounted || !open) revealAnimation.current = false;
     if (!shouldAnimate) {
@@ -45,7 +47,7 @@ export function AnimatedDisclosure({ className, state, summary, children, open: 
     setVisible(true);
     const to = open ? element.scrollHeight : 0;
     let active = true;
-    const animation = animate(element, { height: [from, to] }, { duration: motionTiming.enter, ease: "easeOut" });
+    const animation = animate(element, { height: [from, to] }, { duration: duration / 1_000, ease: "easeOut" });
     void animation.then(() => {
       if (!active) return;
       element.style.height = "";
@@ -57,7 +59,7 @@ export function AnimatedDisclosure({ className, state, summary, children, open: 
       animation.stop();
       element.style.height = `${height}px`;
     };
-  }, [open, reduced, mounted]);
+  }, [open, reduced, mounted, duration]);
 
   return <details ref={details} className={className} data-state={state} data-expanded={open} open={visible}>
     <summary aria-expanded={open} aria-controls={id} onClick={event => {
