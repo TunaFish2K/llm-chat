@@ -1,7 +1,7 @@
 import { act, configure, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MessageDto } from "@llm-chat/contracts";
+import { agentRoleplayConfigSchema, characterCardV2Schema, conversationRoleplayStateSchema, type FileAssetDto, type MessageDto } from "@llm-chat/contracts";
 import { appStore } from "../lib/app-state";
 import { navigate, useRoute } from "../lib/router";
 import { readSubmission, recordSubmissionAcceptance } from "../lib/submission";
@@ -10,6 +10,7 @@ import { endpoints } from "../lib/api";
 import { ChatView } from "./ChatView";
 import { imageRetryMessages, makeImageJob } from "../../test/image-tool-fixtures";
 import { offlineStore } from "../lib/offline-history";
+import { uploadManager } from "../lib/file-upload-manager";
 import * as modelPicker from "../components/chat/ModelPicker";
 import * as formatting from "../lib/format";
 import {
@@ -25,6 +26,9 @@ import {
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
+
+const submissionAsset: FileAssetDto = { id: "asset", fileName: "draft.txt", mimeType: "text/plain", kind: "file", byteSize: 1,
+  sha256: "hash", url: "/api/files/asset", createdAt: 1 };
 
 function seedStore(messages: MessageDto[] = [], options: { draft?: string; models?: ReturnType<typeof makeModel>[]; conversation?: ReturnType<typeof makeConversation> } = {}) {
   appStore.set({
@@ -105,6 +109,7 @@ describe("ChatView", () => {
     const user = userEvent.setup(); render(<RoutedChat />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "first send" } });
     await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
     act(() => { navigate("/c/conv-1"); });
     act(() => { navigate("/"); });
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "second send" } });
@@ -248,6 +253,7 @@ describe("ChatView", () => {
     await user.click(screen.getByRole("button", { name: /^发送$/ }));
     expect(send).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "选择模型" })).toBeEnabled();
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
     finish();
     await waitFor(() => expect(send).toHaveBeenCalledOnce());
     expect(screen.getByRole("button", { name: "选择模型" })).toHaveAttribute("title", "Second");
@@ -266,6 +272,8 @@ describe("ChatView", () => {
     const input = screen.getByLabelText("输入消息");
     fireEvent.change(input, { target: { value: "first" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(input).toHaveValue("");
+    expect(readComposerDraft("conv-1")?.text).toBe("");
     await waitFor(() => expect(sending).toHaveBeenCalledTimes(1));
     expect(input).not.toBeDisabled();
     fireEvent.change(input, { target: { value: "next draft" } });
@@ -273,6 +281,140 @@ describe("ChatView", () => {
     expect(input).toHaveValue("next draft");
     expect(readComposerDraft("conv-1")?.text).toBe("next draft");
     await act(async () => finishDraft(makeConversation()));
+  });
+
+  it.each(["http", "event", "reconcile"] as const)("preserves identical new text and reattached assets after %s confirmation", async (confirmation) => {
+    seedStore(); appStore.set({ sourceId: "server" }); vi.stubGlobal("fetch", messageFetch([]));
+    writeComposerDraft("conv-1", { text: "same message", attachments: [submissionAsset], agentId: "agent-1", overrides: {}, workspace: null, greetingIndex: 0 });
+    let finish!: (value: Awaited<ReturnType<typeof endpoints.sendMessage>>) => void;
+    const send = vi.spyOn(endpoints, "sendMessage").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    if (confirmation === "reconcile") send.mockRejectedValue(new Error("response lost"));
+    vi.spyOn(endpoints, "submission").mockRejectedValue(new Error("not yet accepted"));
+    const view = render(<ChatView conversationId="conv-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    expect(screen.queryByLabelText("待发送附件")).not.toBeInTheDocument();
+    expect(readComposerDraft("conv-1")).toMatchObject({ text: "", attachments: [] });
+    const attempt = readSubmission("conv-1")!;
+    expect(attempt).toMatchObject({ originalText: "same message", assetIds: [submissionAsset.id], attachments: [submissionAsset] });
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    if (confirmation === "reconcile") {
+      await screen.findByRole("alert", { name: "response lost" });
+      view.unmount(); render(<ChatView conversationId="conv-1" />);
+      expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    }
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "same message" } });
+    act(() => uploadManager.setAttachments("conversation:conv-1", [submissionAsset]));
+    const result = { userMessageId: "user", assistantMessageId: "answer", generationId: "generation" };
+    await act(async () => {
+      if (confirmation === "http") finish(result);
+      else recordSubmissionAcceptance({ clientSubmissionId: attempt.id, sourceId: "server", kind: "send", conversation: makeConversation(), messages: [], result });
+    });
+    await waitFor(() => expect(readSubmission("conv-1")).toBeNull());
+    expect(screen.getByLabelText("输入消息")).toHaveValue("same message");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent(submissionAsset.fileName);
+    expect(readComposerDraft("conv-1")).toMatchObject({ text: "same message", attachments: [submissionAsset] });
+  });
+
+  it.each(["http", "event"] as const)("moves new text and reattached assets to the first conversation after %s confirmation", async (confirmation) => {
+    seedStore(); appStore.set({ sourceId: "server" }); window.history.replaceState(null, "", "/");
+    vi.stubGlobal("fetch", messageFetch([]));
+    vi.spyOn(endpoints, "conversations").mockImplementation(async () => appStore.get().conversations);
+    vi.spyOn(endpoints, "messages").mockResolvedValue([]);
+    writeComposerDraft(null, { uploadScopeId: "draft:test", text: "same message", attachments: [submissionAsset], agentId: "agent-1", overrides: {}, workspace: null, greetingIndex: 0 });
+    let finish!: (value: Awaited<ReturnType<typeof endpoints.startConversation>>) => void;
+    const start = vi.spyOn(endpoints, "startConversation").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    function RoutedChat() {
+      const route = useRoute();
+      const id = route.name === "chat" ? route.conversationId : null;
+      return <ChatView key={id ?? "new"} conversationId={id} />;
+    }
+    render(<RoutedChat />);
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    expect(screen.queryByLabelText("待发送附件")).not.toBeInTheDocument();
+    expect(readComposerDraft(null)).toMatchObject({ text: "", attachments: [] });
+    const attempt = readSubmission(null)!;
+    await waitFor(() => expect(start).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "same message" } });
+    act(() => uploadManager.setAttachments("draft:test", [submissionAsset]));
+    const conversation = makeConversation({ id: "first-accepted" });
+    const result = { conversation, generation: { userMessageId: "user", assistantMessageId: "answer", generationId: "generation" } };
+    await act(async () => {
+      if (confirmation === "http") finish(result);
+      else recordSubmissionAcceptance({ clientSubmissionId: attempt.id, sourceId: "server", kind: "start", conversation, messages: [], result });
+    });
+    await waitFor(() => expect(location.pathname).toBe("/c/first-accepted"));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("same message");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent(submissionAsset.fileName);
+    expect(readComposerDraft(conversation.id)).toMatchObject({ text: "same message", attachments: [submissionAsset] });
+    act(() => navigate("/"));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    expect(screen.queryByLabelText("待发送附件")).not.toBeInTheDocument();
+  });
+
+  it("restores failed text and attachments for editing while retry still sends the original request", async () => {
+    seedStore(); vi.stubGlobal("fetch", messageFetch([]));
+    writeComposerDraft("conv-1", { text: "original message", attachments: [submissionAsset], agentId: "agent-1", overrides: {}, workspace: null, greetingIndex: 0 });
+    const send = vi.spyOn(endpoints, "sendMessage").mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValue({ userMessageId: "user", assistantMessageId: "answer", generationId: "generation" });
+    render(<ChatView conversationId="conv-1" />);
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("alert", { name: "response lost" });
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    expect(screen.queryByLabelText("待发送附件")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "编辑并分叉" }));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("original message");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent(submissionAsset.fileName);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "edited draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(readSubmission("conv-1")).toBeNull());
+    expect(send.mock.calls[1]!.slice(0, 4)).toEqual(send.mock.calls[0]!.slice(0, 4));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("edited draft");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent(submissionAsset.fileName);
+  });
+
+  it.each([
+    { mode: "send", scriptDraft: "", remaining: "unrelated draft" },
+    { mode: "script", scriptDraft: "quick reply", remaining: "" },
+    { mode: "script", scriptDraft: "script draft", remaining: "script draft" }
+  ] as const)("keeps only unsent draft text for a $mode quick reply with '$scriptDraft'", async ({ mode, scriptDraft, remaining }) => {
+    seedStore(); vi.stubGlobal("fetch", messageFetch([]));
+    const agent = { ...makeAgent({ roleplayEnabled: true }),
+      card: characterCardV2Schema.parse({ spec: "chara_card_v2", spec_version: "2.0", data: { name: "测试助手" } }),
+      roleplay: agentRoleplayConfigSchema.parse({ enabled: true, quickReplySets: [{ id: "replies", name: "Replies", enabled: true,
+        replies: [{ id: "reply", label: "快捷发送", mode, content: "quick reply", pinned: true }] }] }) };
+    appStore.set({ agents: [agent] });
+    vi.spyOn(endpoints, "agent").mockResolvedValue(agent);
+    const state = conversationRoleplayStateSchema.parse({ enabledQuickReplySetIds: ["replies"] });
+    vi.spyOn(endpoints, "conversationRoleplayState").mockResolvedValue(state);
+    vi.spyOn(endpoints, "executeRoleplayScript").mockResolvedValue({ draft: scriptDraft, sendText: "quick reply", state, commands: 0, output: [] });
+    let finish!: (value: Awaited<ReturnType<typeof endpoints.sendMessage>>) => void;
+    const send = vi.spyOn(endpoints, "sendMessage").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<ChatView conversationId="conv-1" />);
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "unrelated draft" } });
+    fireEvent.click(await screen.findByRole("button", { name: "快捷发送" }));
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(screen.getByLabelText("输入消息")).toHaveValue(remaining);
+    expect(send.mock.calls[0]![1]).toBe("quick reply");
+    await act(async () => finish({ userMessageId: "user", assistantMessageId: "answer", generationId: "generation" }));
+    expect(screen.getByLabelText("输入消息")).toHaveValue(remaining);
+  });
+
+  it("keeps text and attachments when send validation fails", () => {
+    seedStore(); vi.stubGlobal("fetch", messageFetch([]));
+    const image = { ...submissionAsset, kind: "image" as const, mimeType: "image/png" };
+    writeComposerDraft("conv-1", { text: "needs vision", attachments: [image], agentId: "agent-1", overrides: {}, workspace: null, greetingIndex: 0 });
+    const send = vi.spyOn(endpoints, "sendMessage");
+    render(<ChatView conversationId="conv-1" />);
+    const input = screen.getByLabelText("输入消息");
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyUp(input, { key: "Enter" });
+    expect(input).toHaveValue("needs vision");
+    expect(screen.getByLabelText("待发送附件")).toHaveTextContent(image.fileName);
+    expect(readComposerDraft("conv-1")).toMatchObject({ text: "needs vision", attachments: [image] });
+    expect(readSubmission("conv-1")).toBeNull();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("reuses a failed submission after remount and does not retry without a click", async () => {
@@ -285,23 +427,31 @@ describe("ChatView", () => {
     const receipt = send.mock.calls[0]![3];
     first.unmount(); render(<ChatView conversationId="conv-1" />);
     expect(send).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "retry once" } });
+    send.mockResolvedValueOnce({ userMessageId: "user", assistantMessageId: "answer", generationId: "generation" });
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
-    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(readSubmission("conv-1")).toBeNull());
+    expect(send).toHaveBeenCalledTimes(2);
     expect(send.mock.calls[1]![3]).toBe(receipt);
+    expect(send.mock.calls[1]![1]).toBe("retry once");
     expect(screen.getByLabelText("输入消息")).toHaveValue("retry once");
   });
 
-  it("keeps an unsent draft when the first send fails", async () => {
+  it("keeps a failed first send in the message list after remount with an empty composer", async () => {
     seedStore(); vi.stubGlobal("fetch", messageFetch([]));
     vi.spyOn(endpoints, "startConversation").mockRejectedValue(new Error("发送失败测试"));
     const user = userEvent.setup();
     const first = render(<ChatView conversationId={null} />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "失败后保留" } });
     await user.click(screen.getByRole("button", { name: /^发送$/ }));
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
     await screen.findByRole("alert", { name: "发送失败测试" });
     first.unmount();
     render(<ChatView conversationId={null} />);
-    expect(screen.getByLabelText("输入消息")).toHaveValue("失败后保留");
+    expect(screen.getByLabelText("输入消息")).toHaveValue("");
+    expect(screen.getByText("失败后保留")).toBeVisible();
+    expect(screen.getByRole("button", { name: "重试" })).toBeEnabled();
   });
 
   it("stops retries immediately and cancels a generation confirmed after stopping a pending send", async () => {
@@ -661,8 +811,9 @@ describe("ChatView", () => {
     ));
   });
 
-  it.each(["button", "enter", "queue"] as const)("jumps immediately on %s submission and follows the rendered message", async (mode) => {
-    let messages = [makeMessage({ id: "history", generations: [makeGeneration({ status: mode === "queue" ? "running" : "completed" })] })];
+  it.each(["button", "enter", "queue", "steer"] as const)("jumps immediately on %s submission and follows the rendered message", async (mode) => {
+    const queued = mode === "queue" || mode === "steer";
+    let messages = [makeMessage({ id: "history", generations: [makeGeneration({ status: queued ? "running" : "completed" })] })];
     seedStore(messages);
     let finish!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { finish = resolve; });
@@ -691,17 +842,23 @@ describe("ChatView", () => {
     fireEvent.keyUp(input, { key: "Enter" });
     expect(scroll.scrollTop).toBe(200);
     fireEvent.change(input, { target: { value: "新的消息" } });
-    if (mode === "enter") {
+    if (mode === "steer") {
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(readSubmission("conv-1")?.mode).toBe("steer"));
+      fireEvent.keyUp(input, { key: "Enter" });
+    } else if (mode === "enter") {
       fireEvent.keyDown(input, { key: "Enter" });
       fireEvent.keyUp(input, { key: "Enter" });
     } else {
       fireEvent.click(screen.getByRole("button", { name: mode === "queue" ? "加入队列" : "发送" }));
     }
-    // Assert before any animation frame or network response can complete.
+    // Assert while the message request is still pending.
+    expect(input).toHaveValue("");
+    expect(readComposerDraft("conv-1")?.text).toBe("");
     expect(scroll.scrollTop).toBe(800);
     expect(screen.queryByRole("button", { name: "回到最新消息" })).not.toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      mode === "queue" ? "/api/conversations/conv-1/queued-messages" : "/api/conversations/conv-1/messages",
+      queued ? "/api/conversations/conv-1/queued-messages" : "/api/conversations/conv-1/messages",
       expect.objectContaining({ method: "POST" })
     ));
     await act(async () => {

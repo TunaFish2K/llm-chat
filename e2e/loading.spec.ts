@@ -96,7 +96,7 @@ test("启动请求未返回时先展示缓存，后台刷新不覆盖正在输�
   } finally { release(); await page.goto("about:blank"); await provider.close(); }
 });
 
-test("离线标记不拦截发送，失败保留草稿且只在手动重试时发送", async ({ page, request }) => {
+test("离线标记不拦截发送，失败保留消息且只在手动重试时发送", async ({ page, request }) => {
   const { provider, id } = await chat(request);
   const bodies: Array<{ clientSubmissionId: string }> = [];
   try {
@@ -115,7 +115,8 @@ test("离线标记不拦截发送，失败保留草稿且只在手动重试时�
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.locator(".pending-message").getByRole("alert")).toBeVisible();
     await expect(page.locator(".composer-send-error, .pending-message-status")).toHaveCount(0);
-    await expect(input).toHaveValue("手动重试的消息");
+    await expect(input).toHaveValue("");
+    await expect(page.locator(".pending-message")).toContainText("手动重试的消息");
     expect(bodies).toHaveLength(1);
     await input.fill("下一条正在编辑");
     await page.locator(".pending-message").getByRole("button", { name: "重试", exact: true }).click();
@@ -127,7 +128,7 @@ test("离线标记不拦截发送，失败保留草稿且只在手动重试时�
   } finally { await page.goto("about:blank"); await provider.close(); }
 });
 
-test("默认重试两次，待提交消息使用正常按钮并保留随后输入的草稿", async ({ page, request }) => {
+test("默认重试两次，待提交消息使用正常按钮并保留重新输入的相同文字", async ({ page, request }) => {
   const { provider, id } = await chat(request);
   const attempts: Array<{ body: unknown; requestId: string | undefined }> = [];
   let release!: () => void;
@@ -145,16 +146,17 @@ test("默认重试两次，待提交消息使用正常按钮并保留随后输�
     await input.fill("自动重试也只发一次");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const pending = page.locator(".pending-message");
+    await expect(input).toHaveValue("");
     await expect(pending.getByRole("button", { name: "复制消息", exact: true })).toBeEnabled();
     await expect(pending.getByRole("button", { name: "编辑并分叉", exact: true })).toBeEnabled();
     await expect(pending.getByRole("button", { name: "停止生成", exact: true })).toBeEnabled();
     await expect(page.locator(".composer-send-error, .pending-message-status, .offline-banner")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "选择模型", exact: true })).toBeEnabled();
-    await input.fill("自动重试期间的新草稿");
+    await input.fill("自动重试也只发一次");
     release();
     await expect(page.locator('.msg[data-role="user"]').last()).toContainText("自动重试也只发一次");
     await expect(pending).toHaveCount(0);
-    await expect(input).toHaveValue("自动重试期间的新草稿");
+    await expect(input).toHaveValue("自动重试也只发一次");
     expect(attempts).toHaveLength(3);
     expect(attempts.every(attempt => JSON.stringify(attempt) === JSON.stringify(attempts[0]))).toBe(true);
     const messages = await api(request, APP_URL, "GET", `/api/conversations/${id}/messages`);
@@ -180,6 +182,7 @@ test("重试次数在通用设置中保存，发送重试用尽后由消息原�
     await page.getByRole("button", { name: "发送", exact: true }).click();
     const pending = page.locator(".pending-message");
     await expect(pending.getByRole("alert")).toBeVisible();
+    await expect(page.getByLabel("输入消息", { exact: true })).toHaveValue("");
     expect(attempts).toBe(2);
     await pending.getByRole("button", { name: "编辑并分叉", exact: true }).click();
     await expect(page.getByLabel("输入消息", { exact: true })).toHaveValue("保留失败的请求");
