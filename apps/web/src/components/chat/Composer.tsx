@@ -157,13 +157,16 @@ export const Composer = memo(function Composer({
         ? current : next;
     });
   }, [conversation?.id, effectiveAgentId, agents, models, connections, text, attachments.length]);
-  useLayoutEffect(() => {
+  const persistLocalDraft = (draftText: string, draftAttachments: typeof attachments) => {
     const savedOverrides = { ...(conversation?.executionOverrides ?? newOverrides) };
-    if (!text && !attachments.length && !explicitNewModel.current) delete savedOverrides.modelId;
+    if (!draftText && !draftAttachments.length && !explicitNewModel.current) delete savedOverrides.modelId;
     writeComposerDraft(conversationId, {
-      uploadScopeId: uploadScope, text, attachments, agentId: effectiveAgentId || null, overrides: savedOverrides,
+      uploadScopeId: uploadScope, text: draftText, attachments: draftAttachments, agentId: effectiveAgentId || null, overrides: savedOverrides,
       workspace: conversation ? conversation.workspacePath : newWorkspace, greetingIndex
     });
+  };
+  useLayoutEffect(() => {
+    persistLocalDraft(text, attachments);
   }, [conversation?.id, text, attachments, effectiveAgentId, newOverrides, newWorkspace, greetingIndex, uploadScope]);
   useEffect(() => {
     if (conversation && initialDraft && initialDraft.text !== conversation.draft) {
@@ -331,16 +334,11 @@ export const Composer = memo(function Composer({
       void Promise.all([loadMessages(receipt.conversation.id), refreshConversations()]).catch(toastError);
       return;
     }
-    const live = liveInput.current;
-    const remainingText = live.text === attempt.originalText ? "" : live.text;
-    const remainingAssets = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
-    setText(remainingText); setAttachments(remainingAssets);
-    if (id) scheduleServerDraft(id, remainingText);
     if (receipt.kind === "start") {
-      const draft = { uploadScopeId: uploadScope, text: remainingText, attachments: remainingAssets, agentId: attempt.input.agentId,
+      const draft = { uploadScopeId: uploadScope, ...liveInput.current, agentId: attempt.input.agentId,
         overrides: {}, workspace: attempt.input.workspacePath, greetingIndex: 0 };
       writeComposerDraft(receipt.conversation.id, draft);
-      writeComposerDraft(null, { ...draft, text: "", attachments: [] });
+      writeComposerDraft(null, { ...draft, uploadScopeId: `draft:${crypto.randomUUID()}`, text: "", attachments: [] });
       navigateIfCurrent(routes.chat(receipt.conversation.id), attempt.navigation!);
     }
     void Promise.all([loadMessages(receipt.conversation.id), refreshConversations(), ...(receipt.kind === "queue" ? [reloadQueue()] : [])]).catch(toastError);
@@ -405,24 +403,27 @@ export const Composer = memo(function Composer({
     sendingRef.current = true; setSending(true);
     delete attempt.error; delete attempt.cancelRequested;
     attempt.route = submittedRoute; attempt.navigation = navigation; attempt.status = "preparing"; saveSubmission(id, attempt);
+    if (!retry) {
+      const live = liveInput.current;
+      const draftText = overrideText === undefined || live.text === originalText ? "" : live.text;
+      const draftAttachments = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
+      // Confirmation can arrive before React commits these state updates.
+      liveInput.current = { text: draftText, attachments: draftAttachments };
+      setText(draftText); setAttachments(draftAttachments);
+      persistLocalDraft(draftText, draftAttachments);
+      persistDraft(draftText);
+    }
     onBeforeSend();
     const controller = new AbortController(); submissionController.current = controller;
     inFlightSubmission.current = attempt;
     const deadline = AbortSignal.any([controller.signal, AbortSignal.timeout(requestBudget("POST"))]);
     let accepted = false;
-    const clearAccepted = () => {
+    const finishSubmission = () => {
       accepted = true;
       const ownsInput = mounted.current && ownsNavigation(navigation) && readSubmission(id)?.id === attempt.id;
       if (readSubmission(id)?.id === attempt.id) saveSubmission(id, null);
-      const live = liveInput.current;
-      const remainingText = live.text === attempt.originalText ? "" : live.text;
-      const remainingAssets = live.attachments.filter(asset => !attempt.assetIds.includes(asset.id));
-      if (ownsInput) {
-        setText(remainingText); setAttachments(remainingAssets);
-        if (id) scheduleServerDraft(id, remainingText);
-      }
       offlineStore.set({ offline: false });
-      return { remainingText, remainingAssets, ownsInput };
+      return ownsInput;
     };
     const execute = async () => {
       if (!attempt.prepared && conversation && roleplayAgent && roleplayState && quickReplies.some(reply => reply.mode === "script" && reply.autoTriggers.includes("before_send"))) {
@@ -437,13 +438,13 @@ export const Composer = memo(function Composer({
         const result = await waitForSubmission(attempt.id, signal => endpoints.startConversation({ ...attempt.input, text: attempt.text, assetIds: attempt.assetIds, clientSubmissionId: attempt.id }, AbortSignal.any([deadline, signal])));
         if (!validSession()) return;
         if (result.acceptance) acceptSubmission(result.acceptance);
-        const { remainingText, remainingAssets, ownsInput } = clearAccepted();
+        const ownsInput = finishSubmission();
         // Preserve text typed during submission when navigation mounts the new composer.
-        const nextDraft = { uploadScopeId: uploadScope, text: remainingText, attachments: remainingAssets, agentId: attempt.input.agentId,
+        const nextDraft = { uploadScopeId: uploadScope, ...liveInput.current, agentId: attempt.input.agentId,
           overrides: {}, workspace: attempt.input.workspacePath, greetingIndex: 0 };
         if (ownsInput) {
           writeComposerDraft(result.conversation.id, nextDraft);
-          writeComposerDraft(null, { ...nextDraft, text: "", attachments: [] });
+          writeComposerDraft(null, { ...nextDraft, uploadScopeId: `draft:${crypto.randomUUID()}`, text: "", attachments: [] });
         }
         appStore.set(state => ({ settings: ownsInput && state.settings ? { ...state.settings, lastAgentId: attempt.input.agentId } : state.settings,
           conversations: state.conversations.some(item => item.id === result.conversation.id) ? state.conversations : [result.conversation, ...state.conversations] }));
@@ -458,7 +459,7 @@ export const Composer = memo(function Composer({
             const result = await waitForSubmission(attempt.id, signal => endpoints.sendMessage(id!, attempt.text, attempt.assetIds, attempt.id, AbortSignal.any([deadline, signal])));
             if (!validSession()) return;
             if (result.acceptance) acceptSubmission(result.acceptance);
-            clearAccepted();
+            finishSubmission();
             trackGeneration(id!, result.assistantMessageId, result.generationId);
             if (attempt.cancelRequested) void endpoints.cancelGeneration(id!, result.generationId).catch(toastError);
           } catch (error) {
@@ -471,7 +472,7 @@ export const Composer = memo(function Composer({
           const result = await waitForSubmission(attempt.id, signal => endpoints.enqueueMessage(id!, attempt.text, attempt.assetIds, attempt.mode, attempt.id, AbortSignal.any([deadline, signal])));
           if (!validSession()) return;
           if (result.acceptance) acceptSubmission(result.acceptance);
-          clearAccepted();
+          finishSubmission();
           if (attempt.cancelRequested) void (result.generationId ? endpoints.cancelGeneration(id!, result.generationId) : endpoints.deleteQueuedMessage(id!, result.id)).catch(toastError);
           syncAfterSend([reloadQueue()]);
         }
@@ -502,7 +503,13 @@ export const Composer = memo(function Composer({
     if (!submissionActions) return;
     const actions: SubmissionActions = {
       retry: value => { void sendMessage(undefined, false, value); },
-      edit: value => { setText(value.originalText); persistDraft(value.originalText); },
+      edit: value => {
+        const draftAttachments = value.attachments ?? [];
+        liveInput.current = { text: value.originalText, attachments: draftAttachments };
+        setText(value.originalText); setAttachments(draftAttachments);
+        persistLocalDraft(value.originalText, draftAttachments);
+        persistDraft(value.originalText);
+      },
       cancel: value => {
         if (inFlightSubmission.current?.id === value.id) inFlightSubmission.current.cancelRequested = true;
         value.cancelRequested = true;
@@ -515,7 +522,6 @@ export const Composer = memo(function Composer({
   });
 
   const useQuickReply = async (reply: (typeof quickReplies)[number]) => {
-  useLocale();
     if (controlsDisabled) return;
     if (reply.mode === "insert") {
       const next = text ? `${text}${text.endsWith("\n") ? "" : "\n"}${reply.content}` : reply.content;
@@ -529,6 +535,7 @@ export const Composer = memo(function Composer({
     }
     try {
       const result = await endpoints.executeRoleplayScript(conversation.id, { quickReplyId: reply.id, draft: text });
+      liveInput.current = { ...liveInput.current, text: result.draft };
       setText(result.draft); persistDraft(result.draft); onRoleplayStateChange(result.state);
       for (const line of result.output.slice(-3)) toast("info", line);
       if (result.sendText) void sendMessage(result.sendText);
