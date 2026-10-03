@@ -14,8 +14,6 @@ export function NotificationSettings() {
     <Switch label={t("NotificationSettings.enable_conversation_notifications")} checked={state.enabled}
       disabled={!state.initialized || !state.supported || state.busy}
       onChange={(enabled) => void setNotificationsEnabled(enabled)} />
-    <p className="hint">{t("NotificationSettings.get_system_notifications_for_completed_replies_generation_errors_and_pending")}</p>
-    <p className="hint">{t("NotificationSettings.keep_the_page_open_notifications_may_not_arrive_after_you")}</p>
     <p role="status">{!state.initialized ? t("NotificationSettings.checking_notification_support") : !state.supported
       ? window.isSecureContext ? t("NotificationSettings.this_browser_does_not_support_conversation_notifications_on_iphone_or") : t("NotificationSettings.conversation_notifications_require_https_or_a_local_address")
       : state.busy ? t("NotificationSettings.updating_notification_settings")

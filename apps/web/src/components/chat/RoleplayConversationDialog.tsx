@@ -58,7 +58,6 @@ export function RoleplayConversationDialog({
       onClose={onClose}
       footer={<><Button onClick={onClose}>{t("WorkspaceSidebar.cancel")}</Button><Button variant="primary" disabled={busy} onClick={() => void save()}>{t("WorkspaceSidebar.save")}</Button></>}
     >
-      <p className="small muted">{t("RoleplayConversationDialog.these_overrides_apply_only_to_this_conversation_the_agent_defaults")}</p>
       <div className="grid-2 roleplay-conversation-grid">
         <Field label={t("RoleplayTab.prompt_presets")}><select className="select" aria-label={t("RoleplayTab.prompt_presets")} value={state.presetId ?? ""} onChange={(event) => patch({ presetId: event.target.value || null })}>{agent.roleplay.presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></Field>
         <Field label={t("RoleplayTab.user_personas")}><select className="select" aria-label={t("RoleplayTab.user_personas")} value={state.personaId ?? ""} onChange={(event) => patch({ personaId: event.target.value || null })}><option value="">{t("RoleplayConversationDialog.use_global_profile")}</option>{agent.roleplay.personas.map((persona) => <option key={persona.id} value={persona.id}>{persona.name}</option>)}</select></Field>

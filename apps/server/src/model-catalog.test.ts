@@ -78,13 +78,13 @@ describe("ModelCatalogService", () => {
   });
 });
 
- it("detects only exact provider/model SDK overrides and falls back to official Go endpoints", async () => {
+ it("detects exact SDK overrides, keeps official Go endpoints and infers custom relays by vendor", async () => {
   const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
     other: { models: { unknown: { provider: { npm: "@ai-sdk/anthropic" } } } },
-    "opencode-go": { models: {
-      "grok-4.6": { provider: { npm: "@ai-sdk/openai" } },
+    "opencode-go": { npm: "@ai-sdk/openai-compatible", models: {
+      "grok-4.6": {},
       "minimax-m3": { provider: { npm: "@ai-sdk/anthropic" } },
-      "glm-5.3": { provider: { npm: "@ai-sdk/openai-compatible" } },
+      "glm-5.3": {},
       "qwen3.8-max": {}
     } }
   }))) as unknown as typeof fetch;
@@ -92,17 +92,35 @@ describe("ModelCatalogService", () => {
   const ids = ["grok-4.6", "minimax-m3", "glm-5.3", "qwen3.8-max", "unknown"];
   const result = await new ModelCatalogService(fetchImpl).enrich(go, ids.map(id => ({ id, displayName: id })));
   expect(result.models.map(m => m.input.detectedProtocol)).toEqual(["openai-responses", "anthropic-messages", "openai-chat", "anthropic-messages", null]);
-  const custom = await new ModelCatalogService(fetchImpl).enrich(connection, [{ id: "grok-4.6", displayName: "Grok" }]);
-  expect(custom.models[0]?.input.detectedProtocol).toBeNull();
+  const customIds = ["claude-sonnet-4-5", "anthropic/claude-opus-4", "gpt-5.4", "o3-mini", "glm-5.3", "grok-4.6", "mystery"];
+  const custom = await new ModelCatalogService(fetchImpl).enrich(connection, customIds.map(id => ({ id, displayName: id })));
+  expect(custom.models.map(m => m.input.detectedProtocol)).toEqual([
+    "anthropic-messages", "anthropic-messages", "openai-responses", "openai-responses", "openai-chat", "openai-chat", "openai-chat"
+  ]);
   const offline = await new ModelCatalogService(async () => { throw new Error("offline"); }).enrich(go, [{ id: "grok-4.6", displayName: "Grok" }]);
   expect(offline.models[0]?.input.detectedProtocol).toBe("openai-responses");
+  const offlineCustom = await new ModelCatalogService(async () => { throw new Error("offline"); }).enrich(connection, [{ id: "claude-haiku-4-5", displayName: "Claude" }]);
+  expect(offlineCustom.models[0]?.input.detectedProtocol).toBe("anthropic-messages");
  });
 
-it("keeps exact native values including minimal and ignores fuzzy effort declarations", async () => {
+ it("reads the provider-level SDK for preset connections", async () => {
+  const service = new ModelCatalogService(async () => new Response(JSON.stringify({
+    openai: { npm: "@ai-sdk/openai", models: { "gpt-5.4": {} } },
+    deepseek: { npm: "@ai-sdk/openai-compatible", models: { "deepseek-chat": {} } }
+  })));
+  const openai = { ...connection, providerId: "openai" as const, protocol: "openai-chat" as const };
+  expect((await service.enrich(openai, [{ id: "gpt-5.4", displayName: "GPT" }])).models[0]?.input.detectedProtocol).toBe("openai-responses");
+  const deepseek = { ...connection, providerId: "deepseek" as const, protocol: "openai-chat" as const };
+  expect((await service.enrich(deepseek, [{ id: "deepseek-chat", displayName: "DeepSeek" }])).models[0]?.input.detectedProtocol).toBe("openai-chat");
+ });
+
+it("keeps native values including minimal and uses fuzzy matches when no exact entry exists", async () => {
  const service = new ModelCatalogService(async () => new Response(JSON.stringify({
-  "opencode-go": { models: { "grok-4.6": { reasoning_options: [{ type: "effort", values: ["minimal", "none", "default", "minimal", null, ""] }] } } }
+  "opencode-go": { models: { "grok-4.6": { reasoning_options: [{ type: "effort", values: ["minimal", "none", "default", "minimal", null, ""] }] } } },
+  anthropic: { models: { "claude-haiku-4-5": { reasoning_options: [{ type: "budget_tokens", min: 1024 }] } } }
  })));
  const go = { ...connection, providerId: "opencode-go" as const };
  expect((await service.enrich(go, [{ id: "grok-4.6", displayName: "Grok" }])).models[0]?.input.detectedReasoningEfforts).toEqual(["minimal", "none", "default"]);
- expect((await service.enrich(connection, [{ id: "grok-4.6", displayName: "Grok" }])).models[0]?.input.detectedReasoningEfforts).toBeNull();
+ expect((await service.enrich(connection, [{ id: "grok-4.6", displayName: "Grok" }])).models[0]?.input.detectedReasoningEfforts).toEqual(["minimal", "none", "default"]);
+ expect((await service.enrich(connection, [{ id: "claude-haiku-4-5", displayName: "Claude" }])).models[0]?.input.detectedReasoningEfforts).toBeNull();
 });

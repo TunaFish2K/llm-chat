@@ -27,6 +27,8 @@ interface CatalogEntry {
   modelId: string;
   modelKeys: string[];
   meta: JsonRecord;
+  /** Provider-level SDK package; a model-level `provider.npm` overrides it. */
+  npm?: string;
   completeness: number;
 }
 
@@ -85,7 +87,7 @@ export class ModelCatalogService {
     if (!entries) {
       return {
         models: discovered.map((model) => ({
-          input: this.discoveredDefaults(connection, model, null),
+          input: this.discoveredDefaults(connection, model, null, null),
           matched: false,
           catalogMetadata: null
         })),
@@ -95,8 +97,8 @@ export class ModelCatalogService {
     return {
       models: discovered.map((model) => {
         const exact = entries.find((entry) => connection.providerId !== "custom" && entry.providerId === connection.providerId && entry.modelId === model.id);
-        const fallback = this.discoveredDefaults(connection, model, exact);
         const entry = exact ?? bestMatch(connection, model.id, entries);
+        const fallback = this.discoveredDefaults(connection, model, exact, entry);
         return entry
           ? { input: applyCatalogEntry(fallback, model, entry, connection.providerId), matched: true, catalogMetadata: catalogMetadata(entry) }
           : { input: fallback, matched: false, catalogMetadata: null };
@@ -104,20 +106,18 @@ export class ModelCatalogService {
     };
   }
 
-  private discoveredDefaults(connection: ConnectionDto, model: DiscoveredModel, exact: CatalogEntry | null | undefined): CatalogModelInput {
-    const sdk = exact && isRecord(exact.meta.provider) ? exact.meta.provider.npm : undefined;
-    const protocols: Record<string, ProviderProtocol> = {
-      "@ai-sdk/openai": "openai-responses", "@ai-sdk/openai-compatible": "openai-chat", "@ai-sdk/anthropic": "anthropic-messages"
-    };
-    const declared = typeof sdk === "string" && Object.hasOwn(protocols, sdk) ? protocols[sdk] : null;
-    const detectedProtocol = declared && providerPreset(connection.providerId).protocols.includes(declared)
-      ? declared : knownModelProtocol(connection.providerId, model.id);
-    const hasEfforts = exact && Array.isArray(exact.meta.reasoning_options)
-      && exact.meta.reasoning_options.some(option => isRecord(option) && option.type === "effort");
+  private discoveredDefaults(
+    connection: ConnectionDto,
+    model: DiscoveredModel,
+    exact: CatalogEntry | null | undefined,
+    match: CatalogEntry | null | undefined
+  ): CatalogModelInput {
+    const detectedProtocol = detectModelProtocol(connection.providerId, model.id, exact);
+    const efforts = match ? reasoningEfforts(match.meta.reasoning_options) : [];
     return {
       ...fallbackModel(connection.id, detectedProtocol ?? connection.protocol, model.id, model.displayName),
       detectedProtocol,
-      detectedReasoningEfforts: hasEfforts ? reasoningEfforts(exact.meta.reasoning_options) : null
+      detectedReasoningEfforts: efforts.length ? efforts : null
     };
   }
 
@@ -151,11 +151,13 @@ export class ModelCatalogService {
         if (!isRecord(providerValue) || !isRecord(providerValue.models)) continue;
         for (const [modelId, value] of Object.entries(providerValue.models)) {
           if (!isRecord(value)) continue;
+          const npm = isRecord(value.provider) && typeof value.provider.npm === "string" ? value.provider.npm : providerValue.npm;
           entries.push({
             providerId,
             modelId,
             modelKeys: modelKeys(modelId),
             meta: value,
+            ...(typeof npm === "string" ? { npm } : {}),
             completeness: metadataCompleteness(value)
           });
         }
@@ -165,6 +167,34 @@ export class ModelCatalogService {
       return null;
     }
   }
+}
+
+const SDK_PROTOCOLS: Readonly<Record<string, ProviderProtocol>> = {
+  "@ai-sdk/openai": "openai-responses", "@ai-sdk/openai-compatible": "openai-chat", "@ai-sdk/anthropic": "anthropic-messages"
+};
+
+/**
+ * Order: OpenCode Go endpoint map, then the exact catalog entry's SDK for presets.
+ * Custom endpoints are usually relays, so the model's official vendor decides.
+ */
+function detectModelProtocol(
+  providerId: ConnectionDto["providerId"],
+  modelKey: string,
+  exact: CatalogEntry | null | undefined
+): ProviderProtocol | null {
+  const known = knownModelProtocol(providerId, modelKey);
+  if (known) return known;
+  if (providerId === "custom") return inferModelProtocol(modelKey);
+  const declared = exact?.npm && Object.hasOwn(SDK_PROTOCOLS, exact.npm) ? SDK_PROTOCOLS[exact.npm]! : null;
+  return declared && providerPreset(providerId).protocols.includes(declared) ? declared : null;
+}
+
+/** Protocol for a model served by a custom (relay) endpoint, inferred from its vendor. */
+export function inferModelProtocol(modelKey: string): ProviderProtocol {
+  const official = officialProvider(modelKeys(modelKey).at(-1) ?? "");
+  if (official === "openai") return "openai-responses";
+  if (official === "anthropic") return "anthropic-messages";
+  return "openai-chat";
 }
 
 function applyCatalogEntry(

@@ -130,7 +130,6 @@ function ImageGenerationSection() {
   return <div className="settings-panels">
     <ServiceSettingsPanel kind="image" />
     <div className="card">
-      <p className="hint">{t("SettingsView.generating_images_directly_in_responses_requires_image_output_support_the")}</p>
       <a className="btn" href={routes.settings("connections")} onClick={linkClick(routes.settings("connections"))}>{t("SettingsView.configure_connections_and_models")}</a>
     </div>
   </div>;
@@ -160,7 +159,6 @@ function AppUpdateCard() {
         {pwa.updateAvailable ? <button type="button" className="btn primary" disabled={busy} onClick={() => void applyUpdate()}>{t("SettingsView.update_and_refresh")}</button> : null}
       </div>
     </> : <>
-      <p className="hint">{t("SettingsView.this_browser_does_not_support_app_updates_refresh_to_get")}</p>
       <button type="button" className="btn" onClick={() => window.location.reload()}>{t("SettingsView.refresh_page")}</button>
     </>}
   </div>;
@@ -170,7 +168,6 @@ function DisplayPreferencesNotice() {
   useLocale();
   const displaySaved = useStore(displayStore, (state) => state.saved);
   return <>
-    <p className="hint">{t("SettingsView.display_preferences_are_local")}</p>
     {!displaySaved ? <p role="alert">{t("SettingsView.display_preferences_not_saved")}
       <button type="button" className="btn small" onClick={() => saveDisplayPreferences()}>{t("NotificationSettings.retry")}</button>
     </p> : null}
@@ -286,7 +283,7 @@ function GeneralSection() {
       <RequestSettings />
       <OfflineHistorySettings />
       <AppUpdateCard />
-      <div className="card"><h3>{t("SettingsView.quick_tour")}</h3><p className="hint">{t("SettingsView.tour_progress_is_saved_only_in_this_browser_and_does")}</p>
+      <div className="card"><h3>{t("SettingsView.quick_tour")}</h3>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
 
       <fieldset className="offline-settings-fields settings-panels">
@@ -298,7 +295,6 @@ function GeneralSection() {
             {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select>
         </Field>
-        <p className="hint">{t("SettingsView.configure_models_context_reasoning_and_system_prompts_in_agent_settings")}</p>
         <a className="btn" href={routes.agents(settings.defaultAgentId)}
           onClick={linkClick(routes.agents(settings.defaultAgentId))}>{t("SettingsView.edit_this_agent")}</a>
       </div>
@@ -708,7 +704,7 @@ function SkillsSection() {
         </div>
       </div>
       {skills.length === 0 ? (
-        <EmptyState title={t("SettingsView.no_skills")} hint={t("SettingsView.install_a_skill_directory_or_run_discovery_again")} />
+        <EmptyState title={t("SettingsView.no_skills")} />
       ) : (
         skills.map((skill) => (
           <div className="list-row" key={skill.id}>
@@ -857,7 +853,7 @@ function PluginsSection() {
         </div>
       </div>
       {plugins.length === 0 ? (
-        <EmptyState title={t("SettingsView.no_plugins")} hint={t("SettingsView.install_a_server_managed_plugin_directory")} />
+        <EmptyState title={t("SettingsView.no_plugins")} />
       ) : (
         plugins.map((plugin) => (
           <div className="list-row" key={plugin.id}>
@@ -1041,7 +1037,7 @@ function McpSection() {
         <h3 className="section-heading-actions">{t("SettingsView.mcp_servers")}<button className="btn small primary" onClick={() => setEditing("new")}>{t("SettingsView.add_server")}</button>
         </h3>
         {servers.length === 0 ? (
-          <EmptyState title={t("SettingsView.no_mcp_servers")} hint={t("SettingsView.add_a_remote_mcp_server_to_extend_the_tool_catalog")} />
+          <EmptyState title={t("SettingsView.no_mcp_servers")} />
         ) : (
           servers.map((server) => (
             <div className="list-row" key={server.id}>
@@ -1234,7 +1230,6 @@ function MemoriesSection() {
     <div className="card">
       {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
       <h3>{t("SettingsView.long_term_memory")}</h3>
-      <p className="small muted">{t("SettingsView.the_model_writes_memories_using_the_memory_tool_this_view")}</p>
       {memories.length === 0 ? (
         <EmptyState title={t("SettingsView.no_memories_yet")} />
       ) : (

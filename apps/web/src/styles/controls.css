@@ -1328,3 +1328,35 @@
 .choice-fieldset .checkbox-row { min-height: 32px; align-items: center; overflow-wrap: anywhere; cursor: pointer; }
 .choice-fieldset .checkbox-row input { flex: 0 0 auto; margin: 0; width: 15px; height: 15px; }
 .choice-fieldset .checkbox-row:has(input:disabled) { opacity: 0.55; cursor: default; }
+
+/* Connection cards collapse to their header; search forces matches open. */
+.connection-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.connection-toggle svg {
+  flex: none;
+  color: var(--text-faint);
+  transition: transform 120ms ease;
+}
+
+.connection-toggle[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.connection-card:not([data-open]) .management-card-header {
+  align-items: center;
+}
+
+.connection-search {
+  flex: 1 1 200px;
+}

@@ -837,6 +837,7 @@ test.describe("设置分区", () => {
       await expect(page.locator(".management-card-header .list-row-actions").first()).toBeVisible();
       await assertActionLayout(".management-card-header .list-row-actions", true);
       if (project === "mobile-chromium") {
+        await page.locator(".connection-toggle").first().click();
         const modelTable = page.locator(".connection-model-table").first();
         await expect(modelTable).toBeVisible();
         expect(await modelTable.evaluate((element) => element.getBoundingClientRect().right)).toBeLessThanOrEqual(390);

@@ -488,3 +488,9 @@ LLM_CHAT_TEST_CONTAINER_ENGINES=docker,podman pnpm exec vitest run apps/server/s
 ```sh
 LLM_CHAT_TEST_CONTAINER_ENGINES=docker pnpm exec playwright test e2e/container-environments.spec.ts --project=chromium --project=mobile-chromium
 ```
+
+## 模型识别回填（v48）
+
+SQLite v48 只回填模型的自动识别协议和推理档位，不改动手动设置、会话或生成记录。升级前照常备份；
+回滚到旧服务需要恢复升级前的数据库备份。升级后对预设连接执行一次“发现模型”，即可按提供商级 SDK
+重新识别协议。

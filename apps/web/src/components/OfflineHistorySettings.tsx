@@ -11,7 +11,6 @@ export function OfflineHistorySettings() {
   return <div className="card" aria-label={t("OfflineHistorySettings.offline_history")}>
     <h3>{t("OfflineHistorySettings.offline_history")}</h3>
     <label className="checkbox-row"><input type="checkbox" checked={state.enabled} onChange={(event) => act(setOfflineEnabled(event.target.checked))} />{t("OfflineHistorySettings.save_conversation_text_and_images_in_this_browser")}</label>
-    <p className="hint">{t("OfflineHistorySettings.syncs_all_conversations_while_the_app_is_open_and_online")}</p>
     <p role="status">{t("OfflineHistorySettings.conversations_mb", { value1: (state.syncing ? t("detail.syncing") : t("AgentEditorView.saved")), value2: (state.synced), value3: (state.total), value4: ((state.bytes / 1024 / 1024).toFixed(1)) })}</p>
     <p className="hint">{state.lastSync ? t("OfflineHistorySettings.last_full_sync", { value1: (formatTime(state.lastSync)) }) : t("OfflineHistorySettings.first_sync_not_completed")}{state.imagesMissing ? t("OfflineHistorySettings.images_not_downloaded", { value1: (state.imagesMissing) }) : ""}</p>
     {state.error ? <p role="alert">{displayError({ message: state.error, ...(state.errorI18n ? { i18n: state.errorI18n } : {}) })}</p> : null}

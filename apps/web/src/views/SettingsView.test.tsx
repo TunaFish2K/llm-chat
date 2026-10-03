@@ -77,7 +77,6 @@ describe("SettingsView", () => {
     expect(await screen.findByRole("heading", { name: "图片工具模型" })).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: /GPT Image 2/ })).toBeChecked();
     expect(screen.getByText("openai/gpt-image-2")).toBeInTheDocument();
-    expect(screen.getByText(/此处的开关不影响直接通过 Responses/)).toBeInTheDocument();
   });
 
   it.each([false, true])("saves every display control locally (offline: %s)", async (offline) => {

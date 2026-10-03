@@ -4,14 +4,19 @@
 Anthropic Messages。同一连接下的模型可以使用不同协议，共用连接地址、API Key 和秘密请求头。
 模型列表、选择器和编辑页显示实际使用的协议。
 
-自动选择顺序是：手动指定 → 目录识别 → OpenCode Go 官方模型映射 → 连接默认协议。
+自动选择顺序是：手动指定 → 自动识别 → 连接默认协议。自动识别依次使用 OpenCode Go 官方模型映射、
+目录识别（预设提供商）或厂商推断（自定义连接）。
 例如，OpenCode Go 的 `grok-4.6` 使用 `/responses`，`minimax-m3` 使用 `/messages`，
 `glm-5.3` 使用 `/chat/completions`。映射仅适用于确切的提供商和模型 ID，未知模型沿用连接默认值。
 官方端点来源：[OpenCode Go endpoints](https://opencode.ai/docs/go/#endpoints)。
 
-“发现模型”从 models.dev 的确切提供商和模型条目读取模型级 `provider.npm`：
-`@ai-sdk/openai` 对应 Responses，`@ai-sdk/openai-compatible` 对应 Chat Completions，
-`@ai-sdk/anthropic` 对应 Messages。跨提供商的相似名称只用于补充能力信息，不用于推断协议。
+“发现模型”从 models.dev 的确切提供商和模型条目读取 SDK 包名，模型级 `provider.npm` 优先，
+否则使用提供商级 `npm`：`@ai-sdk/openai` 对应 Responses，`@ai-sdk/openai-compatible` 对应
+Chat Completions，`@ai-sdk/anthropic` 对应 Messages。跨提供商的相似名称不用于预设连接的协议推断。
+
+自定义连接通常是中转服务，按模型 ID 的厂商推断：`gpt-*`、`o1`/`o3` 等 OpenAI 模型使用 Responses，
+`claude-*` 使用 Messages，其余模型使用 Chat Completions。`anthropic/claude-*` 这类带前缀的 ID
+取最后一段判断。目录不可用时同样生效；推断不对时手动指定协议。
 目录暂时不可用时保留已有识别结果。更换模型 ID、所属连接，或修改连接的提供商、地址后清除旧识别结果。
 
 只修改协议不会关闭模型参数的目录管理。重新发现或恢复目录管理不会覆盖手动协议；手动管理参数的模型
@@ -23,11 +28,14 @@ Anthropic Messages。同一连接下的模型可以使用不同协议，共用�
 API 的模型 `protocol` 字段可省略或设为 `null`。新模型省略时使用自动模式；更新时省略保留原值，
 传 `null` 清除手动覆盖。`detectedProtocol` 只读，由服务维护。旧客户端和离线记录缺少这些字段仍可读取。
 SQLite v42 增加两个可空列，部署和回滚步骤见[运维手册](DEPLOYMENT.md#模型协议升级v42)。
+SQLite v48 为自定义连接的模型按厂商回填识别协议，为 OpenCode Go 模型回填官方映射；预设连接的其他模型
+在下次“发现模型”时更新。
 
 ## 原生推理档位
 
 快捷推理菜单、Agent 设置和高级会话设置使用同一套档位规则。优先使用模型的手动列表，其次使用
-确切提供商与模型 ID 的目录声明。跨提供商的相似名称不用于确定原生档位。目录故障保留已有识别结果；
+目录声明：先找确切提供商与模型 ID，没有时使用最接近的同名条目（例如自定义中转下的 `gpt-5.4`
+采用 OpenAI 条目的档位）。只有 `budget_tokens` 或开关的条目不产生档位。目录故障保留已有识别结果；
 更换模型 ID、所属连接，或修改连接提供商、地址后清除旧识别结果。
 
 档位按声明顺序显示，保留 `minimal`、`none`、`default` 等原生字符串。模型没有声明档位时，只提供
@@ -76,4 +84,5 @@ Agent 执行配置、会话覆盖和生成设置增加可选 `reasoningSelection
 旧 `reasoningEffort: "none"` 仍表示省略参数；旧预算快照沿用原有换算。新选择保存在生成快照中，
 工具续轮和审批恢复不重新解释当前模型的档位。旧历史和离线记录仍可读取，不改写历史请求。
 SQLite v43 增加模型手动列表和自动识别列表两列，并从旧数据中确切匹配的目录记录回填识别列表。
+SQLite v48 用已保存的目录元数据回填仍为空的识别列表，包括相似名称匹配的模型。
 新建 Agent 使用默认，已有 Agent 和会话设置保留。

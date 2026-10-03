@@ -23,6 +23,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
       await expect(page.locator(".reasoning-popover").getByRole("slider")).toHaveAttribute("aria-valuetext", cn ? "默认" : "Default");
       await expect(page.locator(".reasoning-labels button")).toHaveCount(1);
       await page.goto("/settings/connections");
+      await page.getByRole("searchbox", { name: cn ? "搜索模型" : "Search models" }).fill("Universal model");
       await page.locator("tr").filter({ hasText: "Universal model" }).getByRole("button", { name: cn ? "编辑" : "Edit", exact: true }).click();
       let dialog = page.getByRole("dialog");
       await dialog.getByLabel(cn ? "推理档位来源" : "Reasoning levels source").selectOption("manual");

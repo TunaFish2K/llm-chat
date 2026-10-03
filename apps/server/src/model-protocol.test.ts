@@ -56,10 +56,10 @@ it("migrates v41 models without changing IDs, history or generation protocol sna
  store.close();
  const migrated = new Store(path);
  try {
-  expect(migrated.getModel(model.id)).toMatchObject({ protocol: null, detectedProtocol: null });
+  expect(migrated.getModel(model.id)).toMatchObject({ protocol: null, detectedProtocol: "openai-chat" });
   expect(migrated.getGenerationRecord(started.generation.generationId)?.protocol).toBe("openai-chat");
   expect(migrated.listMessages(started.conversation.id).some(m => m.text === "history")).toBe(true);
-  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 47 });
+  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 48 });
  } finally { migrated.close(); }
 });
 
@@ -75,4 +75,21 @@ it("refreshes native efforts independently of catalog management and preserves o
  store.updateModel(model.id, { reasoningEffortsOverride: null });
  store.updateConnection(connection.id, { baseUrl: "https://changed.test/v1" });
  expect(store.getModel(model.id)).toMatchObject({ reasoningEffortsOverride: null, detectedReasoningEfforts: null });
+});
+
+it("backfills custom relay protocols and fuzzy catalog reasoning levels in v48 without touching manual values", () => {
+ const store = createStore(); const { model } = seedModel(store);
+ const claude = store.createModel({ ...model, modelKey: "claude-sonnet-4-5", protocol: "openai-chat", reasoningEffortsOverride: ["high"] });
+ const metadata = { providerId: "openai", modelId: "gpt-5.4", inputModalities: ["text"], outputModalities: ["text"], reasoningEfforts: ["low", "high"], fetchedAt: 1 };
+ store.restoreCatalogModel(model.id, model, metadata);
+ const path = (store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file;
+ store.sqlite.exec("UPDATE models SET detected_protocol = NULL, detected_reasoning_efforts_json = NULL; PRAGMA user_version = 47");
+ store.close();
+ const migrated = new Store(path);
+ try {
+  expect(migrated.getModel(model.id)).toMatchObject({ detectedProtocol: "openai-chat", detectedReasoningEfforts: ["low", "high"] });
+  expect(migrated.getModel(claude.id)).toMatchObject({ protocol: "openai-chat", detectedProtocol: "anthropic-messages", reasoningEffortsOverride: ["high"] });
+ } finally {
+  migrated.close();
+ }
 });
