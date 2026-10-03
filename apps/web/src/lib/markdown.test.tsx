@@ -21,6 +21,11 @@ describe("Markdown component", () => {
     expect(document.querySelector('[data-streamdown="table-wrapper"]')).toContainElement(screen.getByRole("table"));
     expect(document.querySelector(".markdown pre code")).toHaveTextContent("console.log(1)");
     expect(screen.getByRole("button", { name: /复制代码|Copy code/i })).toBeInTheDocument();
+    const header = document.querySelector(".markdown-table-header")!;
+    expect(header.nextElementSibling).toContainElement(screen.getByRole("table"));
+    const actions = screen.getByRole("group", { name: "表格操作" });
+    expect(header).toContainElement(actions);
+    expect([...actions.querySelectorAll("button")].map((button) => button.getAttribute("aria-label"))).toEqual(["复制", "下载", "放大"]);
   });
 
   it("renders safe HTML while stripping executable elements and attributes", () => {
