@@ -42,7 +42,7 @@ describe("Store", () => {
     const conversation = store.createConversation({ systemPrompt: "" });
     const generation = store.createMessageGeneration(conversation.id, "preserve this message");
     store.finishGeneration(generation.generationId, "completed", {});
-    expect(store.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 48 });
+    expect(store.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 49 });
     if (version === 40) {
       store.sqlite.exec(`CREATE TABLE message_submissions (
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, input_hash TEXT NOT NULL,
@@ -62,7 +62,7 @@ describe("Store", () => {
     const reopened = new Store(path);
     try {
       expect(reopened.listMessages(conversation.id)).toEqual(messages);
-      expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 48 });
+      expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 49 });
       expect(reopened.sqlite.prepare("PRAGMA quick_check").get()).toMatchObject({ quick_check: "ok" });
       if (version === 40) expect(reopened.sqlite.prepare("SELECT * FROM message_submissions").all()).toEqual([
         expect.objectContaining({ id: "retained-receipt", input_hash: "original-hash", conversation_id: conversation.id, generation_id: generation.generationId })
@@ -144,7 +144,6 @@ describe("Store", () => {
     const store = createStore();
     const connection = store.createConnection({
       name: "测试连接",
-      protocol: "openai-chat",
       baseUrl: "https://example.test/v1",
       apiKey: "top-secret",
       secretHeaders: { "X-Secret": "header-secret" }
@@ -486,7 +485,7 @@ describe("Store", () => {
       greetingIndex: 0,
       sourceGreetingIndex: 0
     });
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(48);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(49);
     migrated.close();
   });
 
@@ -567,7 +566,7 @@ describe("Store", () => {
     sqlite.close();
 
     const store = new Store(path);
-    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(48);
+    expect((store.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(49);
     expect(store.getConversation("conversation")?.modelId).toBe("model");
     expect(store.getConnection("connection")?.providerId).toBe("custom");
     expect(store.getAgent(store.getSettings().defaultAgentId)?.execution.reasoningEffort).toBe("none");
@@ -597,7 +596,7 @@ describe("Store", () => {
 
     const migrated = new Store(path);
     expect(migrated.getConnection("legacy-connection")?.providerId).toBe("custom");
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(48);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(49);
     migrated.close();
   });
 
@@ -607,11 +606,11 @@ describe("Store", () => {
     const path = join(dir, "legacy.sqlite");
     const store = new Store(path);
     const anthropic = store.createConnection({
-      name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://anthropic.test/v1",
+      name: "Anthropic", providerId: "anthropic", baseUrl: "https://anthropic.test/v1",
       secretHeaders: {}
     });
     const openai = store.createConnection({
-      name: "OpenAI", protocol: "openai-chat", baseUrl: "https://openai.test/v1", secretHeaders: {}
+      name: "OpenAI", baseUrl: "https://openai.test/v1", secretHeaders: {}
     });
     const model = store.createModel({
       connectionId: anthropic.id, modelKey: "claude", displayName: "Claude", contextWindow: 4096,
@@ -645,7 +644,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(48);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(49);
     expect((migrated.sqlite.prepare("PRAGMA table_info(connections)").all() as Array<{ name: string }>)
       .map((column) => column.name)).toContain("balance_config_json");
     expect(migrated.getConnection(anthropic.id)?.balanceConfig).toBeUndefined();
@@ -681,7 +680,7 @@ describe("Store", () => {
     store.close();
 
     const migrated = new Store(path);
-    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(48);
+    expect((migrated.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(49);
     const rows = migrated.sqlite.prepare(
       "SELECT id, source_kind, compatibility, bundled FROM skill_installations ORDER BY id"
     ).all();
@@ -748,7 +747,7 @@ describe("Store", () => {
   it("defaults legacy manual Thinking without inventing levels or a token budget", () => {
     const store = createStore();
     const anthropicConnection = store.createConnection({
-      name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
+      name: "Anthropic", providerId: "anthropic", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
     });
     const model = store.createModel({
       connectionId: anthropicConnection.id,
@@ -773,7 +772,7 @@ describe("Store", () => {
   it("preserves token ceilings while defaulting manual Thinking models without native levels", () => {
     const store = createStore();
     const anthropicConnection = store.createConnection({
-      name: "Anthropic", protocol: "anthropic-messages", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
+      name: "Anthropic", providerId: "anthropic", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
     });
     // Model row ceiling is 4096, but the effective defaultSettings.common
     // only leaves 1024 — the value the provider actually receives.
@@ -809,7 +808,7 @@ describe("Store", () => {
   it("clamps effective common.maxOutputTokens to the model row ceiling on the server side", () => {
     const store = createStore();
     const openaiConnection = store.createConnection({
-      name: "OpenAI", protocol: "openai-chat", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
+      name: "OpenAI", baseUrl: "https://x.test/v1", apiKey: "k", secretHeaders: {}
     });
     const model = store.createModel({
       connectionId: openaiConnection.id,
@@ -832,12 +831,12 @@ describe("Store", () => {
   it("covers connection and model CRUD boundaries while keeping secrets out of DTOs", () => {
     const store = createStore();
     const first = store.createConnection({
-      name: "Zulu", providerId: "openai", protocol: "openai-chat", baseUrl: "https://old.test/v1",
+      name: "Zulu", providerId: "openai", baseUrl: "https://old.test/v1",
       apiKey: "old-key", secretHeaders: { Authorization: "secret", "X-Key": "value" },
       balanceConfig: { enabled: true, apiPath: "/account/balance", resultExpression: "data.amount" }
     });
     const second = store.createConnection({
-      name: "alpha", protocol: "anthropic-messages", baseUrl: "https://anthropic.test/v1",
+      name: "alpha", providerId: "anthropic", baseUrl: "https://anthropic.test/v1",
       secretHeaders: {}
     });
     expect(store.listConnections().map((item) => item.name)).toEqual(["alpha", "Zulu"]);
@@ -1095,7 +1094,7 @@ describe("Store", () => {
     recoverInterruptedWork(reopened.sqlite);
     expect(reopened.getGeneration(queued.generationId)?.status).toBe("interrupted");
     expect(reopened.getGeneration(queued.generationId)?.completedAt).not.toBeNull();
-    reopened.sqlite.exec("PRAGMA user_version = 49");
+    reopened.sqlite.exec("PRAGMA user_version = 50");
     reopened.close();
     expect(() => new Store(path)).toThrow("高于当前服务支持的版本");
   });
@@ -1116,7 +1115,7 @@ describe("Store", () => {
     store.close();
 
     const repaired = new Store(path);
-    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(48);
+    expect((repaired.sqlite.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(49);
     const calls = repaired.listToolCalls(failed.generationId);
     expect(calls).toEqual([
       expect.objectContaining({ id: "legacy-auto", approvalState: "failed", error: expect.stringContaining("Generation ended") }),

@@ -2,7 +2,7 @@ import type { GenerationSettings } from "@llm-chat/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AnthropicAdapter } from "./anthropic";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
-import { adapterFor } from "./index";
+import { adapterFor, listConnectionModels } from "./index";
 import { OpenAiChatAdapter } from "./openai-chat";
 import { OpenAiResponsesAdapter } from "./openai-responses";
 import { ProviderError, type GenerateRequest, type ProviderConnection, type ProviderEvent } from "./types";
@@ -114,6 +114,19 @@ describe("provider HTTP helpers", () => {
     ]);
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "no" }, { status: 403 })));
     await expect(listModelEndpoint(request("openai-chat").connection)).rejects.toMatchObject({ code: "provider_auth_error" });
+  });
+
+  it("retries custom model listing with Anthropic auth only after a Bearer rejection", async () => {
+    const custom = { ...request("openai-chat").connection, providerId: "custom" as const };
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => (init.headers as Record<string, string>)["x-api-key"]
+      ? Response.json({ data: [{ id: "claude" }] })
+      : Response.json({ error: "no" }, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(listConnectionModels(custom)).resolves.toEqual([{ id: "claude", displayName: "claude" }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(listConnectionModels({ ...custom, providerId: "openai" })).rejects.toMatchObject({ status: 401 });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ error: "down" }, { status: 500 })));
+    await expect(listConnectionModels(custom)).rejects.toMatchObject({ status: 500 });
   });
 
   it("ignores SSE comments and empty frames, defaults event names, and wraps read failures", async () => {

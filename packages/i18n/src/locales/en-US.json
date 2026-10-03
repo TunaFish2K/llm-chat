@@ -438,7 +438,6 @@
   "AgentsView.search_agent_names_or_descriptions": "Search Agent names or descriptions",
   "AgentsView.no_agents_yet": "No Agents yet",
   "AgentsView.create_an_agent_or_import_a_character_card_json_png": "Create an Agent or import a Character Card (JSON / PNG).",
-  "AgentsView.revision_v": "Revision v{{value1}}",
   "AgentsView.no_model_configured": "No model configured",
   "AgentsView.export_json": "Export JSON",
   "AgentsView.export_png": "Export PNG",

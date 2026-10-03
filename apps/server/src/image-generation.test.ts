@@ -45,7 +45,6 @@ describe("ImageGenerationManager", () => {
     const connection = store.createConnection({
       name: "OpenAI images",
       providerId: "openai",
-      protocol: "openai-chat",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "key",
       secretHeaders: {}

@@ -78,12 +78,15 @@ import {
   imageProviderProtocolSchema,
   providerPresetIdSchema,
   providerPreset,
+  connectionDefaultProtocol,
+  inferModelProtocol,
   knownModelProtocol,
+  protocolSchema,
   resolveModelProtocol,
   reasoningEffortSchema,
   nativeReasoningEffortsSchema
 } from "@llm-chat/contracts";
-import { fallbackModel, inferModelProtocol, type CatalogModelInput } from "./model-catalog";
+import { fallbackModel, type CatalogModelInput } from "./model-catalog";
 import {
   defaultRoleplayConfig,
   ensureRoleplayDefaults,
@@ -229,7 +232,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 48) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 49) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1215,6 +1218,25 @@ function migrate(sqlite: DatabaseSyncType): void {
       }
       sqlite.exec("PRAGMA user_version = 48;");
     }
+    if (current < 49) {
+      // Connections no longer choose a protocol. Pin the old connection fallback on models whose
+      // automatic protocol would otherwise change; the column stays for rollback.
+      const pin = sqlite.prepare("UPDATE models SET protocol = ? WHERE id = ?");
+      for (const row of sqlite.prepare(`SELECT m.id, m.model_key, m.detected_protocol, c.provider_id, c.protocol AS connection_protocol
+        FROM models m JOIN connections c ON c.id = m.connection_id WHERE m.protocol IS NULL`).all() as Row[]) {
+        const providerId = providerPresetIdSchema.safeParse(row.provider_id).data ?? "custom";
+        const model = {
+          modelKey: String(row.model_key),
+          detectedProtocol: protocolSchema.safeParse(row.detected_protocol).data ?? null
+        };
+        const automatic = resolveModelProtocol(model, { providerId });
+        const allowed = model.detectedProtocol && providerPreset(providerId).protocols.includes(model.detectedProtocol);
+        const previous = allowed ? model.detectedProtocol : knownModelProtocol(providerId, model.modelKey)
+          ?? protocolSchema.safeParse(row.connection_protocol).data ?? automatic;
+        if (previous !== automatic) pin.run(previous, String(row.id));
+      }
+      sqlite.exec("PRAGMA user_version = 49;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1398,7 +1420,7 @@ export class Store {
       if (model.source !== "discovered") continue;
       const connection = this.getConnection(model.connectionId);
       if (!connection) continue;
-      const fallback = fallbackModel(model.connectionId, connection.protocol, model.modelKey, model.displayName);
+      const fallback = fallbackModel(model.connectionId, resolveModelProtocol(model, connection), model.modelKey, model.displayName);
       const untouched = model.contextWindow === null && model.maxOutputTokens === fallback.maxOutputTokens &&
         JSON.stringify(model.capabilities) === JSON.stringify(fallback.capabilities) &&
         JSON.stringify(model.defaultSettings) === JSON.stringify(fallback.defaultSettings);
@@ -1871,7 +1893,7 @@ export class Store {
         id, name, provider_id, protocol, base_url, api_key, secret_headers_json, balance_config_json, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      id, input.name, input.providerId ?? "custom", input.protocol, input.baseUrl, input.apiKey ?? "", json(input.secretHeaders ?? {}),
+      id, input.name, input.providerId ?? "custom", connectionDefaultProtocol(input.providerId ?? "custom"), input.baseUrl, input.apiKey ?? "", json(input.secretHeaders ?? {}),
       json(input.balanceConfig ?? {}), now, now
     );
     return this.listConnections().find((item) => item.id === id)!;
@@ -1890,7 +1912,7 @@ export class Store {
     `).run(
       input.name ?? current.name,
       input.providerId ?? current.providerId,
-      input.protocol ?? current.protocol,
+      connectionDefaultProtocol(providerId),
       input.baseUrl ?? current.baseUrl,
       input.apiKey === undefined ? current.apiKey : input.apiKey,
       json(input.secretHeaders ?? current.secretHeaders),
@@ -3618,7 +3640,6 @@ function connectionDto(row: Row): ConnectionDto {
     id: String(row.id),
     name: String(row.name),
     providerId: providerId.success ? providerId.data : "custom",
-    protocol: row.protocol as ProviderProtocol,
     baseUrl: String(row.base_url),
     hasApiKey: Boolean(row.api_key),
     secretHeaderNames: Object.keys(secretHeaders),
@@ -3634,8 +3655,10 @@ function parseBalanceConfig(value: unknown): BalanceConfig | undefined {
 }
 
 function connectionRecord(row: Row): ConnectionRecord {
+  const dto = connectionDto(row);
   return {
-    ...connectionDto(row),
+    ...dto,
+    protocol: connectionDefaultProtocol(dto.providerId),
     apiKey: String(row.api_key),
     secretHeaders: parse(row.secret_headers_json, {})
   };

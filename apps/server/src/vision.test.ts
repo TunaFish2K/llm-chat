@@ -21,7 +21,7 @@ describe("VisionService", () => {
     const store = createStore();
     const { model: main } = seedModel(store);
     const connection = store.createConnection({
-      name: "Vision", protocol: "openai-chat", baseUrl: "https://vision.test/v1", apiKey: "key", secretHeaders: {}
+      name: "Vision", baseUrl: "https://vision.test/v1", apiKey: "key", secretHeaders: {}
     });
     const vision = store.createModel({
       connectionId: connection.id,
@@ -110,7 +110,7 @@ describe("VisionService", () => {
       capabilities: { ...seeded.model.capabilities, imageInput: true, maxImageInputs: 1 }
     })!;
     const connection = store.createConnection({
-      name: "Vision", protocol: "openai-chat", baseUrl: "https://vision.test/v1", apiKey: "key", secretHeaders: {}
+      name: "Vision", baseUrl: "https://vision.test/v1", apiKey: "key", secretHeaders: {}
     });
     const vision = store.createModel({
       connectionId: connection.id,

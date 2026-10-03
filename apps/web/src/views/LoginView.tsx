@@ -47,7 +47,7 @@ export function LoginView() {
           />
         </div>
         {error ? (
-          <p role="alert" className="small" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="small text-danger">
             {error}
           </p>
         ) : null}

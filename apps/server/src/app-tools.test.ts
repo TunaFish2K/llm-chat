@@ -73,7 +73,7 @@ describe("application management tools", () => {
   it("requires approval for persistent changes and never exposes or accepts connection secrets", async () => {
     const { store, tools } = await setup();
     const connection = store.createConnection({
-      name: "Private", protocol: "openai-chat", baseUrl: "https://example.test/v1",
+      name: "Private", baseUrl: "https://example.test/v1",
       apiKey: "api-secret", secretHeaders: { Authorization: "header-secret" }
     });
     const connections = tools.tools().find((tool) => tool.definition.name === "app_connections")!;

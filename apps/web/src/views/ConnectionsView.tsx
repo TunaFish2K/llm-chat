@@ -3,7 +3,7 @@ import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModelBrandIcon } from "../components/chat/ModelBrandIcon";
-import { Bot, ChevronRight, Plus, Search } from "lucide-react";
+import { Bot, ChevronRight, Pencil, Plug, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { literalSearchPattern } from "../components/Highlight";
 import type {
   ConnectionDto,
@@ -20,6 +20,7 @@ import { appStore, refreshConnectionsAndModels, toast, toastError } from "../lib
 import { formatTime, formatTokens } from "../lib/format";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, Field, Modal, Switch } from "../lib/ui";
+import { IconButton } from "../components/ui";
 
 interface BalanceState {
   loading: boolean;
@@ -162,16 +163,21 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                         <ChevronRight size={16} aria-hidden="true" />
                         <strong>{connection.name}</strong>
                       </button>
-                      <span className="tag">{providerPreset(connection.providerId).label}</span>
-                      <span className="tag">{connection.protocol}</span>
-                      <span className="small muted">{t("ConnectionsView.model_count", { value1: all.filter((model) => model.enabled).length, value2: all.length })}</span>
+                      {providerPreset(connection.providerId).label !== connection.name
+                        ? <span className="meta">{providerPreset(connection.providerId).label}</span> : null}
+                      <span className="meta">{t("ConnectionsView.model_count", { value1: all.filter((model) => model.enabled).length, value2: all.length })}</span>
                     </h3>
                     <div className="list-row-actions">
-                      <button className="btn small" onClick={() => { expand(connection.id); setNewModelConnection(connection.id); setEditingModel("new"); }}>{t("ConnectionsView.add_model_manually")}</button>
-                      <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>{t("ConnectionsView.test_connection")}</button>
-                      <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>{t("ConnectionsView.discover_models")}</button>
-                      <button className="btn small" onClick={() => setEditingConnection(connection)}>{t("SettingsView.edit")}</button>
-                      <button className="btn small danger" onClick={() => setDeletingConnection(connection)}>{t("WorkspaceSidebar.delete_2")}</button>
+                      <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>
+                        <RefreshCw size={13} aria-hidden="true" />{t("ConnectionsView.discover_models")}</button>
+                      <IconButton label={t("ConnectionsView.add_model_manually")} onClick={() => { expand(connection.id); setNewModelConnection(connection.id); setEditingModel("new"); }}>
+                        <Plus size={15} /></IconButton>
+                      <IconButton label={t("ConnectionsView.test_connection")} disabled={busy} onClick={() => void testConnection(connection)}>
+                        <Plug size={15} /></IconButton>
+                      <IconButton label={t("SettingsView.edit")} onClick={() => setEditingConnection(connection)}>
+                        <Pencil size={15} /></IconButton>
+                      <IconButton label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeletingConnection(connection)}>
+                        <Trash2 size={15} /></IconButton>
                     </div>
                   </header>
                   {open ? <>
@@ -186,7 +192,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                     <p className="small">{(<>{t("ConnectionsView.balance", { value1: "" })}{(balance?.loading ? (
                         t("detail.checking")
                       ) : balance?.error ? (
-                        <span style={{ color: "var(--danger)" }}>{balance.error}</span>
+                        <span className="text-danger">{balance.error}</span>
                       ) : balance?.value !== undefined ? (
                         <>
                           <strong>{balance.value}</strong>
@@ -218,7 +224,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                               <div className="list-row-title">
                                 <ModelBrandIcon model={model} connection={connection} />
                                 <span>{model.displayName}</span>
-                                {model.catalogManaged ? <span className="tag ok">{t("ConnectionsView.managed_automatically")}</span> : null}
+                                {model.catalogManaged ? <span className="meta">{t("ConnectionsView.managed_automatically")}</span> : null}
                               </div>
                               <div className="small muted mono">{model.modelKey} · {resolveModelProtocol(model, connection)}</div>
                             </td>
@@ -241,8 +247,10 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                               />
                             </td>
                             <td className="connection-model-actions" data-label={t("TasksView.actions")}>
-                              <button className="btn small" onClick={() => setEditingModel(model)}>{t("SettingsView.edit")}</button>{" "}
-                              <button className="btn small danger" onClick={() => setDeletingModel(model)}>{t("WorkspaceSidebar.delete_2")}</button>
+                              <span className="row-actions-quiet">
+                                <IconButton label={t("SettingsView.edit")} onClick={() => setEditingModel(model)}><Pencil size={15} /></IconButton>
+                                <IconButton label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeletingModel(model)}><Trash2 size={15} /></IconButton>
+                              </span>
                             </td>
                           </tr>
                         ))}
@@ -313,7 +321,6 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
   const initialProviderId = connection?.providerId ?? "custom";
   const [providerId, setProviderId] = useState<ProviderPresetId>(initialProviderId);
   const [name, setName] = useState(connection?.name ?? "");
-  const [protocol, setProtocol] = useState<ProviderProtocol>(connection?.protocol ?? providerPreset(initialProviderId).defaultProtocol);
   const [baseUrl, setBaseUrl] = useState(connection?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [headers, setHeaders] = useState<Array<{ name: string; value: string }>>([]);
@@ -322,7 +329,6 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
   const [balanceExpression, setBalanceExpression] = useState(connection?.balanceConfig?.resultExpression ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useErrorState(null);
-  const selectedProvider = providerPreset(providerId);
 
   const chooseProvider = (next: ProviderPresetId) => {
     const preset = providerPreset(next);
@@ -330,7 +336,6 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
     if (next !== "custom") {
       if (!name.trim() || providerId === "custom") setName(preset.label);
       setBaseUrl(preset.baseUrl);
-      setProtocol(preset.defaultProtocol);
     }
   };
 
@@ -355,7 +360,6 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         const patch: Partial<ConnectionInput> = {
           name: name.trim(),
           providerId,
-          protocol,
           baseUrl: baseUrl.trim(),
           ...(apiKey ? { apiKey } : {}),
           ...(headers.length > 0 ? { secretHeaders } : {}),
@@ -376,7 +380,6 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
         const input: ConnectionInput = {
           name: name.trim(),
           providerId,
-          protocol,
           baseUrl: baseUrl.trim(),
           ...(apiKey ? { apiKey } : {}),
           secretHeaders,
@@ -429,7 +432,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
       }
     >
       {error ? (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="text-danger">
           {error}
         </p>
       ) : null}
@@ -447,25 +450,9 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
           ))}
         </select>
       </Field>
-      <div className="grid-2">
-        <Field label={t("SettingsView.name")} htmlFor="conn-name">
-          <input id="conn-name" className="input" value={name} onChange={(event) => setName(event.target.value)} />
-        </Field>
-        <Field label={t("InspectorPanel.protocol")} htmlFor="conn-protocol">
-          <select
-            id="conn-protocol"
-            className="select"
-            value={protocol}
-            onChange={(event) => setProtocol(event.target.value as ProviderProtocol)}
-          >
-            {selectedProvider.protocols.map((item) => (
-              <option key={item} value={item}>
-                {item === "openai-responses" ? "OpenAI Responses" : item === "openai-chat" ? "OpenAI Chat Completions" : "Anthropic Messages"}
-              </option>
-            ))}
-          </select>
-        </Field>
-      </div>
+      <Field label={t("SettingsView.name")} htmlFor="conn-name">
+        <input id="conn-name" className="input" value={name} onChange={(event) => setName(event.target.value)} />
+      </Field>
       <Field label="Base URL" htmlFor="conn-base-url">
         <input
           id="conn-base-url"
@@ -691,7 +678,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
       }
     >
       {error ? (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="text-danger">
           {error}
         </p>
       ) : null}
@@ -902,3 +889,4 @@ function ModelCatalogDetails({ model }: { model: ModelDto }) {
     </details>
   );
 }
+

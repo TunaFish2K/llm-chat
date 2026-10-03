@@ -19,6 +19,8 @@ import type {
 } from "@llm-chat/contracts";
 
 export interface ConnectionRecord extends ConnectionDto {
+  /** Connection-level requests only (listing models); model requests use resolveModelProtocol. */
+  protocol: ProviderProtocol;
   apiKey: string;
   secretHeaders: Record<string, string>;
 }

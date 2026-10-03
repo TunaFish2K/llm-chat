@@ -135,7 +135,7 @@ function AgentEditorContent({ agentId }: { agentId: string }) {
       <div className="page-header mobile-redundant-title">
         <h2>
           {agent.name}
-          {agent.protected ? <span className="tag accent" style={{ marginLeft: 8 }}>{t("SettingsView.built_in")}</span> : null}
+          {agent.protected ? <span className="meta page-title-meta">{t("SettingsView.built_in")}</span> : null}
         </h2>
         <div className="actions">
           <button className="btn" onClick={() => navigate(routes.agents())}>{t("AgentEditorView.back_to_list")}</button>
@@ -426,7 +426,7 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           }}
         />
         {bookError ? (
-          <span className="hint" role="alert" style={{ color: "var(--danger)" }}>
+          <span className="hint text-danger" role="alert">
             {bookError}
           </span>
         ) : null}

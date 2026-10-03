@@ -68,7 +68,6 @@ export function makeConnection(patch: Partial<ConnectionDto> = {}): ConnectionDt
     id: "connection-1",
     name: "测试连接",
     providerId: "custom",
-    protocol: "openai-chat",
     baseUrl: "https://example.com/v1",
     hasApiKey: true,
     secretHeaderNames: [],

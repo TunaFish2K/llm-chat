@@ -6,13 +6,16 @@ import { cleanupStores, createStore, seedModel } from "./test-helpers";
 afterEach(cleanupStores);
 
 it("resolves manual, detected, exact Go mapping and connection defaults in order", () => {
- const go = { providerId: "opencode-go" as const, protocol: "openai-chat" as const };
+ const go = { providerId: "opencode-go" as const };
  expect(resolveModelProtocol({ modelKey: "grok-4.6" }, go)).toBe("openai-responses");
  expect(resolveModelProtocol({ modelKey: "grok-4.6", detectedProtocol: "anthropic-messages" }, go)).toBe("anthropic-messages");
  expect(resolveModelProtocol({ modelKey: "grok-4.6", protocol: "openai-chat", detectedProtocol: "anthropic-messages" }, go)).toBe("openai-chat");
  expect(resolveModelProtocol({ modelKey: "future-grok" }, go)).toBe("openai-chat");
  expect(resolveModelProtocol({ modelKey: "grok-4.6" }, { ...go, providerId: "custom" })).toBe("openai-chat");
- expect(resolveModelProtocol({ modelKey: "unknown", detectedProtocol: "anthropic-messages" }, { providerId: "openai", protocol: "openai-responses" })).toBe("openai-responses");
+ expect(resolveModelProtocol({ modelKey: "unknown", detectedProtocol: "anthropic-messages" }, { providerId: "openai" })).toBe("openai-responses");
+ expect(resolveModelProtocol({ modelKey: "claude-sonnet-4-5" }, { providerId: "custom" })).toBe("anthropic-messages");
+ expect(resolveModelProtocol({ modelKey: "gpt-5.4" }, { providerId: "custom" })).toBe("openai-responses");
+ expect(resolveModelProtocol({ modelKey: "deepseek-chat" }, { providerId: "deepseek" })).toBe("openai-chat");
 });
 
 it("refreshes detection independently of metadata management and preserves manual protocols", () => {
@@ -42,9 +45,9 @@ it("refreshes detection independently of metadata management and preserves manua
 it("rejects unsupported manual protocols for model and connection updates", () => {
  const store = createStore(); const { model, connection } = seedModel(store);
  store.updateModel(model.id, { protocol: "anthropic-messages" });
- expect(() => store.updateConnection(connection.id, { providerId: "openai", protocol: "openai-responses" })).toThrow();
+ expect(() => store.updateConnection(connection.id, { providerId: "openai" })).toThrow();
  store.updateModel(model.id, { protocol: null });
- store.updateConnection(connection.id, { providerId: "openai", protocol: "openai-responses" });
+ store.updateConnection(connection.id, { providerId: "openai" });
  expect(() => store.updateModel(model.id, { protocol: "anthropic-messages" })).toThrow();
 });
 
@@ -59,7 +62,7 @@ it("migrates v41 models without changing IDs, history or generation protocol sna
   expect(migrated.getModel(model.id)).toMatchObject({ protocol: null, detectedProtocol: "openai-chat" });
   expect(migrated.getGenerationRecord(started.generation.generationId)?.protocol).toBe("openai-chat");
   expect(migrated.listMessages(started.conversation.id).some(m => m.text === "history")).toBe(true);
-  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 48 });
+  expect(migrated.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 49 });
  } finally { migrated.close(); }
 });
 
@@ -89,6 +92,30 @@ it("backfills custom relay protocols and fuzzy catalog reasoning levels in v48 w
  try {
   expect(migrated.getModel(model.id)).toMatchObject({ detectedProtocol: "openai-chat", detectedReasoningEfforts: ["low", "high"] });
   expect(migrated.getModel(claude.id)).toMatchObject({ protocol: "openai-chat", detectedProtocol: "anthropic-messages", reasoningEffortsOverride: ["high"] });
+ } finally {
+  migrated.close();
+ }
+});
+
+it("pins the retired connection protocol in v49 only where automatic resolution would change", () => {
+ const store = createStore(); const { model, connection } = seedModel(store);
+ const claude = store.createModel({ ...model, modelKey: "claude-sonnet-4-5" });
+ const manual = store.createModel({ ...model, modelKey: "gpt-5.4", protocol: "openai-chat" });
+ const openai = store.createConnection({ name: "OpenAI", providerId: "openai", baseUrl: "https://api.openai.com/v1", secretHeaders: {} });
+ const chat = store.createModel({ ...model, connectionId: openai.id, modelKey: "gpt-5.4" });
+ const path = (store.sqlite.prepare("PRAGMA database_list").get() as { file: string }).file;
+ store.sqlite.exec(`UPDATE models SET detected_protocol = NULL;
+  UPDATE connections SET protocol = 'openai-chat';
+  PRAGMA user_version = 48`);
+ store.close();
+ const migrated = new Store(path);
+ try {
+  expect(migrated.getModel(model.id)?.protocol).toBeNull();
+  expect(migrated.getModel(claude.id)?.protocol).toBe("openai-chat");
+  expect(migrated.getModel(manual.id)?.protocol).toBe("openai-chat");
+  expect(migrated.getModel(chat.id)?.protocol).toBe("openai-chat");
+  expect(migrated.getConnection(connection.id)).toMatchObject({ protocol: "openai-chat" });
+  expect(migrated.listConnections()[0]).not.toHaveProperty("protocol");
  } finally {
   migrated.close();
  }

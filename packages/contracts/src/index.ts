@@ -125,14 +125,50 @@ export function knownModelProtocol(providerId: ProviderPresetId, modelKey: strin
   return providerId === "opencode-go" && Object.hasOwn(goModelProtocols, modelKey) ? goModelProtocols[modelKey]! : null;
 }
 
-/** Missing fields in older clients and offline manifests retain automatic selection. */
+const OFFICIAL_PROVIDERS: Readonly<Record<string, string>> = {
+  gpt: "openai", o1: "openai", o3: "openai", o4: "openai", o5: "openai", codex: "openai",
+  claude: "anthropic", deepseek: "deepseek", gemini: "google", glm: "zhipuai", kimi: "moonshotai",
+  moonshot: "moonshotai", minimax: "minimax", qwen: "alibaba", doubao: "volcengine", seed: "volcengine",
+  llama: "meta", mistral: "mistral", grok: "xai", command: "cohere"
+};
+
+/** Lowercase, dash-separated form used to compare model IDs across catalogs. */
+export function normalizeModelId(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** models.dev provider that publishes a model, inferred from its normalized ID prefix. */
+export function officialModelProvider(normalizedModelKey: string): string | undefined {
+  if (/^o[1-9]\d*(?:-|$)/.test(normalizedModelKey)) return "openai";
+  const brand = /^[a-z]+/.exec(normalizedModelKey)?.[0];
+  return brand ? OFFICIAL_PROVIDERS[brand] : undefined;
+}
+
+/** Protocol for a model served by a custom (relay) endpoint, inferred from its vendor. */
+export function inferModelProtocol(modelKey: string): ProviderProtocol {
+  const official = officialModelProvider(normalizeModelId(modelKey.split("/").at(-1) ?? modelKey));
+  if (official === "openai") return "openai-responses";
+  if (official === "anthropic") return "anthropic-messages";
+  return "openai-chat";
+}
+
+/** Protocol for connection-level requests such as listing models; model requests resolve their own. */
+export function connectionDefaultProtocol(providerId: ProviderPresetId): ProviderProtocol {
+  return providerId === "custom" ? "openai-chat" : providerPreset(providerId).defaultProtocol;
+}
+
+/**
+ * Manual choice, then detection, then the official OpenCode Go map. Custom relays fall back
+ * to the model vendor; presets fall back to their default protocol.
+ */
 export function resolveModelProtocol(
   model: { modelKey: string; protocol?: ProviderProtocol | null | undefined; detectedProtocol?: ProviderProtocol | null | undefined },
-  connection: Pick<ConnectionDto, "providerId" | "protocol">
+  connection: Pick<ConnectionDto, "providerId">
 ): ProviderProtocol {
   const allowed = providerPreset(connection.providerId).protocols;
   const detected = model.detectedProtocol && allowed.includes(model.detectedProtocol) ? model.detectedProtocol : null;
-  return model.protocol ?? detected ?? knownModelProtocol(connection.providerId, model.modelKey) ?? connection.protocol;
+  return model.protocol ?? detected ?? knownModelProtocol(connection.providerId, model.modelKey)
+    ?? (connection.providerId === "custom" ? inferModelProtocol(model.modelKey) : providerPreset(connection.providerId).defaultProtocol);
 }
 
 export const contextPolicySchema = z.enum(["auto", "trim", "summarize", "full"]);
@@ -276,37 +312,21 @@ export const httpHeaderValueSchema = z.string().regex(/^[\t\x20-\x7e\x80-\xff]*$
 const connectionInputObjectSchema = z.object({
   name: z.string().trim().min(1).max(80),
   providerId: providerPresetIdSchema.default("custom"),
-  protocol: protocolSchema,
   baseUrl: z.string().url(),
   apiKey: httpHeaderValueSchema.max(4096).optional(),
   secretHeaders: z.record(httpHeaderNameSchema, httpHeaderValueSchema.max(4096)).default({}),
   balanceConfig: balanceConfigSchema.optional()
 });
 
-function validateProviderProtocol(
-  value: { providerId?: ProviderPresetId | undefined; protocol?: ProviderProtocol | undefined },
-  context: z.RefinementCtx
-): void {
-  if (!value.providerId || !value.protocol) return;
-  const preset = providerPreset(value.providerId);
-  if (!preset.protocols.includes(value.protocol)) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["protocol"],
-      message: `${preset.label} 不支持 ${value.protocol} 协议`
-    });
-  }
-}
-
-export const connectionInputSchema = connectionInputObjectSchema.superRefine(validateProviderProtocol);
-export const connectionInputPatchSchema = connectionInputObjectSchema.partial().superRefine(validateProviderProtocol);
+// Connections no longer carry a protocol; zod strips the field sent by older clients.
+export const connectionInputSchema = connectionInputObjectSchema;
+export const connectionInputPatchSchema = connectionInputObjectSchema.partial();
 export type ConnectionInput = z.input<typeof connectionInputSchema>;
 
 export interface ConnectionDto {
   id: string;
   name: string;
   providerId: ProviderPresetId;
-  protocol: ProviderProtocol;
   baseUrl: string;
   hasApiKey: boolean;
   secretHeaderNames: string[];

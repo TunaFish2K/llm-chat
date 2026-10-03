@@ -1,10 +1,11 @@
 import { PopoverLayer } from "../../lib/motion";
 import { t, useLocale } from "../../lib/i18n";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Popover, Slider } from "radix-ui";
+import { Popover } from "radix-ui";
 import { Lightbulb } from "lucide-react";
 import { reasoningControl, reasoningFromKey, type ReasoningControlProps } from "../ReasoningControl";
 
+/** Vertical segmented column: segments fill from the bottom up to the chosen level. */
 function ReasoningSlider({ state, disabled, onChange }: {
   state: ReturnType<typeof reasoningControl>;
   disabled: ReasoningControlProps["disabled"];
@@ -15,7 +16,7 @@ function ReasoningSlider({ state, disabled, onChange }: {
     selectedLabel.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [state.key]);
   const options = state.options;
-  const selectedIndex = options.findIndex(option => option.key === state.key);
+  const selectedIndex = Math.max(0, options.findIndex(option => option.key === state.key));
   const [preview, setPreview] = useState<{ key: string; index: number } | null>(null);
   useEffect(() => setPreview(null), [state.key, disabled]);
   const index = !disabled && preview?.key === state.key ? preview.index : selectedIndex;
@@ -24,26 +25,53 @@ function ReasoningSlider({ state, disabled, onChange }: {
     if (!disabled && options[next]) onChange(reasoningFromKey(options[next].key));
   };
   const sliderDisabled = disabled || options.length < 2;
-  return <>
-    <div className="reasoning-steps" style={{ "--reasoning-count": options.length } as CSSProperties}>
-      <div className="reasoning-rail"><Slider.Root orientation="vertical" min={0} max={Math.max(1, options.length - 1)} step={1}
-        className="reasoning-slider" data-no-back-gesture
-        disabled={sliderDisabled} value={[Math.max(0, index)]}
-        onValueChange={([next]) => setPreview({ key: state.key, index: next! })} onValueCommit={([next]) => commit(next!)}
-        onPointerCancel={() => setPreview(null)}>
-        <Slider.Track className="reasoning-track"><Slider.Range className="reasoning-range" /></Slider.Track>
-        <Slider.Thumb className="reasoning-thumb" tabIndex={options.length > 1 ? 0 : undefined} aria-label={t("ConnectionsView.reasoning_levels")}
-          aria-disabled={sliderDisabled || undefined}
-          aria-valuetext={options[index]!.label} />
-      </Slider.Root></div>
-      <div className="reasoning-labels">{[...options].reverse().map(option => <button type="button" key={option.key}
-        ref={option.key === state.key ? selectedLabel : undefined} disabled={disabled} aria-pressed={option.key === options[index]?.key}
-        data-selected={option.key === options[index]?.key || undefined}
-        onClick={() => commit(options.indexOf(option))}>
-        {option.label}
-      </button>)}</div>
+  const last = options.length - 1;
+  const indexAt = (element: HTMLElement, clientY: number) => {
+    const rect = element.getBoundingClientRect();
+    const fromBottom = (rect.bottom - clientY) / Math.max(1, rect.height);
+    return Math.min(last, Math.max(0, Math.floor(fromBottom * options.length)));
+  };
+  const keys: Record<string, (current: number) => number> = {
+    ArrowUp: current => current + 1, ArrowRight: current => current + 1, PageUp: current => current + 1,
+    ArrowDown: current => current - 1, ArrowLeft: current => current - 1, PageDown: current => current - 1,
+    Home: () => 0, End: () => last
+  };
+  return <div className="reasoning-steps" style={{ "--reasoning-count": options.length } as CSSProperties}>
+    <div className="reasoning-slider" role="slider" data-no-back-gesture
+      tabIndex={options.length > 1 ? 0 : undefined}
+      aria-label={t("ConnectionsView.reasoning_levels")} aria-orientation="vertical"
+      aria-valuemin={0} aria-valuemax={Math.max(1, last)} aria-valuenow={index} aria-valuetext={options[index]!.label}
+      aria-disabled={sliderDisabled || undefined} data-disabled={sliderDisabled || undefined}
+      onKeyDown={event => {
+        const move = keys[event.key];
+        if (!move) return;
+        event.preventDefault();
+        if (!sliderDisabled) commit(Math.min(last, Math.max(0, move(selectedIndex))));
+      }}
+      onPointerDown={event => {
+        if (sliderDisabled || event.button !== 0) return;
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        event.currentTarget.focus({ preventScroll: true });
+        setPreview({ key: state.key, index: indexAt(event.currentTarget, event.clientY) });
+      }}
+      onPointerMove={event => {
+        if (preview?.key === state.key && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+          setPreview({ key: state.key, index: indexAt(event.currentTarget, event.clientY) });
+        }
+      }}
+      onPointerUp={event => { if (preview?.key === state.key) commit(indexAt(event.currentTarget, event.clientY)); }}
+      onPointerCancel={() => setPreview(null)}
+      onLostPointerCapture={() => setPreview(current => current && null)}>
+      {options.map((option, position) => <span key={option.key} className="reasoning-segment"
+        data-filled={position <= index || undefined} data-current={position === index || undefined} />).reverse()}
     </div>
-  </>;
+    <div className="reasoning-labels">{[...options].reverse().map(option => <button type="button" key={option.key}
+      ref={option.key === state.key ? selectedLabel : undefined} disabled={disabled} aria-pressed={option.key === options[index]?.key}
+      data-selected={option.key === options[index]?.key || undefined}
+      onClick={() => commit(options.indexOf(option))}>
+      {option.label}
+    </button>)}</div>
+  </div>;
 }
 
 export function ReasoningPicker(props: ReasoningControlProps) {

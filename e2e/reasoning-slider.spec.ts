@@ -4,7 +4,7 @@ import { agentInput, api, APP_URL } from "./helpers.mjs";
 for (const locale of ["zh-CN", "en-US"] as const) {
   test.describe(locale, () => {
     test.use({ locale, serviceWorkers: "block" });
-    test("vertical native slider previews a drag, commits on release and preserves focus and draft", async ({ page, request, context }) => {
+    test("segmented level column previews a drag, commits on release and preserves focus and draft", async ({ page, request, context }) => {
       const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Slider", protocol: "openai-chat", baseUrl: "https://example.invalid/v1", secretHeaders: {} });
       const model = await api(request, APP_URL, "POST", "/api/models", {
         connectionId: connection.id, modelKey: "native-slider", displayName: "Slider model", contextWindow: 128000, maxOutputTokens: 4096,
@@ -31,11 +31,14 @@ for (const locale of ["zh-CN", "en-US"] as const) {
             changes.push(req.postData() ?? "");
           }
         });
-        const rail = (await page.locator(".reasoning-slider").boundingBox())!;
-        const thumb = (await slider.boundingBox())!;
-        const x = thumb.x + thumb.width / 2;
-        const y = thumb.y + thumb.height / 2;
-        const targetY = rail.y + rail.height * 0.2;
+        // Segments render top (highest) to bottom; drag from the current level to "high".
+        const segments = popover.locator(".reasoning-segment");
+        const center = async (index: number) => {
+          const box = (await segments.nth(index).boundingBox())!;
+          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        };
+        const { x, y } = await center(4);
+        const targetY = (await center(1)).y;
         const touch = mobile ? await context.newCDPSession(page) : null;
         if (touch) {
           await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
@@ -55,10 +58,9 @@ for (const locale of ["zh-CN", "en-US"] as const) {
         await expect(popover).toBeVisible();
         await expect(slider).not.toHaveAttribute("aria-disabled");
         if (touch) {
-          const currentThumb = (await slider.boundingBox())!;
-          const touchX = currentThumb.x + currentThumb.width / 2;
-          await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: touchX, y: currentThumb.y + currentThumb.height / 2 }] });
-          await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: touchX, y: rail.y + rail.height * 0.4 }] });
+          const current = await center(1);
+          await touch.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [current] });
+          await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: current.x, y: (await center(2)).y }] });
           await expect(slider).toHaveAttribute("aria-valuetext", "medium");
           await touch.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
           await expect(slider).toHaveAttribute("aria-valuetext", "high");
@@ -105,7 +107,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
         await expect(slider).toHaveAttribute("aria-valuetext", longLevels[0]);
         await expect(nativeLabel).toBeInViewport();
         const labelBox = (await nativeLabel.boundingBox())!;
-        const newThumb = (await slider.boundingBox())!;
+        const newThumb = (await popover.locator(".reasoning-segment[data-current]").boundingBox())!;
         expect(Math.abs(labelBox.y + labelBox.height / 2 - newThumb.y - newThumb.height / 2)).toBeLessThanOrEqual(11);
         await page.screenshot({ path: test.info().outputPath(`reasoning-slider-${locale}.png`) });
       } finally {

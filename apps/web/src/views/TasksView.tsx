@@ -31,11 +31,11 @@ export function ConversationTasksView({ conversationId, taskId }: { conversation
         <span className="small muted">
           {tasks ? t("TasksView.tasks", { value1: (tasks.length), value2: (runningTasks ? t("detail.running", { value1: (runningTasks) }) : "") }) : t("TasksView.loading_tasks")}
         </span>
-        <button className="button secondary small" onClick={() => void load()}>
+        <button className="btn small ghost" onClick={() => void load()}>
           <RefreshCw size={14} />{t("TasksView.refresh")}</button>
       </div>
       <div className="panel-scroll">
-        <div className="panel-inner">
+        <div className="panel-inner wide">
           {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
           {tasks === null ? (
             error ? null : <LoadingState label={t("TasksView.loading_background_tasks")} />
@@ -222,7 +222,7 @@ function TaskDetail({ conversationId, taskId }: { conversationId: string; taskId
         ><X size={16} /></button>
       </div>
       <p className="small muted">{t("TasksView.working_directory")}<span className="mono">{task.workspacePath}</span>{t("TasksView.mode_log_cursor", { value1: (task.mode), value2: (task.outputCursor), value3: (" "), value4: (task.hardTimeoutMs ? t("detail.hard_timeout_s", { value1: (Math.round(task.hardTimeoutMs / 1000)) }) : t("detail.no_hard_timeout")) })}</p>
-      {task.error ? <p style={{ color: "var(--danger)" }}>{displayError({ message: task.error, ...(task.errorI18n ? { i18n: task.errorI18n } : {}) })}</p> : null}
+      {task.error ? <p className="text-danger">{displayError({ message: task.error, ...(task.errorI18n ? { i18n: task.errorI18n } : {}) })}</p> : null}
 
       {task.mode === "pty" && screen !== null ? (
         <>

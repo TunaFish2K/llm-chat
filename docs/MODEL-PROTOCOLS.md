@@ -1,13 +1,13 @@
 # 模型协议
 
 在“设置 → 连接”中编辑模型，可选择“自动识别”或手动指定 OpenAI Chat Completions、OpenAI Responses、
-Anthropic Messages。同一连接下的模型可以使用不同协议，共用连接地址、API Key 和秘密请求头。
-模型列表、选择器和编辑页显示实际使用的协议。
+Anthropic Messages。连接只保存提供商、地址、API Key 和秘密请求头，不再选择协议；同一连接下的模型
+各自使用自己的协议。模型列表、选择器和编辑页显示实际使用的协议。
 
-自动选择顺序是：手动指定 → 自动识别 → 连接默认协议。自动识别依次使用 OpenCode Go 官方模型映射、
-目录识别（预设提供商）或厂商推断（自定义连接）。
+自动选择顺序是：手动指定 → 目录识别 → OpenCode Go 官方模型映射 → 默认值。预设提供商的默认值是该
+预设的默认协议；自定义连接按模型厂商推断。
 例如，OpenCode Go 的 `grok-4.6` 使用 `/responses`，`minimax-m3` 使用 `/messages`，
-`glm-5.3` 使用 `/chat/completions`。映射仅适用于确切的提供商和模型 ID，未知模型沿用连接默认值。
+`glm-5.3` 使用 `/chat/completions`。映射仅适用于确切的提供商和模型 ID，未知模型使用预设默认协议。
 官方端点来源：[OpenCode Go endpoints](https://opencode.ai/docs/go/#endpoints)。
 
 “发现模型”从 models.dev 的确切提供商和模型条目读取 SDK 包名，模型级 `provider.npm` 优先，
@@ -28,6 +28,11 @@ Chat Completions，`@ai-sdk/anthropic` 对应 Messages。跨提供商的相似�
 API 的模型 `protocol` 字段可省略或设为 `null`。新模型省略时使用自动模式；更新时省略保留原值，
 传 `null` 清除手动覆盖。`detectedProtocol` 只读，由服务维护。旧客户端和离线记录缺少这些字段仍可读取。
 SQLite v42 增加两个可空列，部署和回滚步骤见[运维手册](DEPLOYMENT.md#模型协议升级v42)。
+
+连接 API 不再返回 `protocol`；旧客户端提交的连接 `protocol` 会被忽略。测试连接和发现模型使用预设默认
+协议的认证方式；自定义连接先用 Bearer，返回 401、403 或 404 时再用 Anthropic 的 `x-api-key` 重试一次。
+SQLite v49 移除连接协议的作用：未手动指定协议、且自动结果会与旧的连接协议回退不同的模型，会把旧结果
+写为手动协议，升级后请求不变。数据库保留 `connections.protocol` 列以便回滚。
 SQLite v48 为自定义连接的模型按厂商回填识别协议，为 OpenCode Go 模型回填官方映射；预设连接的其他模型
 在下次“发现模型”时更新。
 
