@@ -18,6 +18,7 @@
     "test:upload:large": "tsx scripts/test-large-upload.ts",
     "test:deploy": "node scripts/deployment-smoke.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:perf": "E2E_PERF=1 playwright test",
     "test:web:budget": "node scripts/test-web-budget.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",

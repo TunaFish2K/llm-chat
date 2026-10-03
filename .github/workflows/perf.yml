@@ -1,0 +1,107 @@
+name: Performance
+
+# Performance budgets are slow and machine-sensitive, so they run nightly or on demand
+# instead of gating every push and deployment.
+on:
+  schedule:
+    - cron: '17 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build production bundles
+        run: pnpm build
+      - name: Share the production build
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: |
+            apps/web/dist/
+            apps/server/dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  browsers:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, firefox, webkit, mobile-chromium]
+    env:
+      E2E_USE_PREBUILT: '1'
+      PLAYWRIGHT_WS_ENDPOINT: ws://127.0.0.1:38191/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Download this run's production build
+        uses: actions/download-artifact@v4
+        with:
+          name: production-build
+          path: apps
+      - name: Install read-only sandbox runtime
+        run: bash scripts/install-ci-bubblewrap.sh
+      - name: Start version-matched browser runtime
+        timeout-minutes: 4
+        run: |
+          docker run --detach --name playwright --network host --ipc host \
+            --volume "$GITHUB_WORKSPACE:/work:ro" --workdir /work \
+            mcr.microsoft.com/playwright:v1.62.1-noble \
+            node node_modules/@playwright/test/cli.js run-server --port 38191 --host 127.0.0.1
+          for _ in {1..60}; do
+            if curl --silent --output /dev/null http://127.0.0.1:38191/; then exit 0; fi
+            sleep 1
+          done
+          docker logs playwright
+          exit 1
+      - name: Test ${{ matrix.project }} performance
+        shell: bash
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: pnpm test:e2e:perf --project=${{ matrix.project }} 2>&1 | tee "$RUNNER_TEMP/browser.log"
+      - name: Save browser runtime logs
+        if: always()
+        run: docker logs playwright > "$RUNNER_TEMP/browser-runtime.log" 2>&1 || true
+      - name: Preserve browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-${{ matrix.project }}
+          path: |
+            ${{ runner.temp }}/llm-chat-playwright-results-*/
+            ${{ runner.temp }}/browser.log
+            ${{ runner.temp }}/browser-runtime.log
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Stop browser runtime
+        if: always()
+        run: docker rm --force playwright || true
