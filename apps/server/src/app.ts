@@ -48,7 +48,7 @@ import {
   type GenerationEvent,
   type ModelDto
 } from "@llm-chat/contracts";
-import { adapterFor, ProviderError } from "@llm-chat/providers";
+import { listConnectionModels, ProviderError } from "@llm-chat/providers";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { offlineManifest, offlineSourceId } from "./offline-history";
@@ -562,7 +562,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const connection = store.getConnection(request.params.id);
     if (!connection) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
     if (connection.providerId === "stability") return { ok: true, modelsFound: 0 };
-    const models = await adapterFor(connection.protocol).listModels(
+    const models = await listConnectionModels(
       connection,
       AbortSignal.timeout(15_000),
       providerRequestContextForConversation(connection.id, "models")
@@ -575,7 +575,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (connection.providerId === "stability") {
       return { discovered: 0, created: [], updated: [], skipped: 0, unmatched: 0, warnings: ["Stability 图片模型需要手动添加模型标识"] };
     }
-    const discovered = await adapterFor(connection.protocol).listModels(
+    const discovered = await listConnectionModels(
       connection,
       AbortSignal.timeout(15_000),
       providerRequestContextForConversation(connection.id, "models")

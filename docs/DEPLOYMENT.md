@@ -502,3 +502,8 @@ LLM_CHAT_TEST_CONTAINER_ENGINES=docker pnpm exec playwright test e2e/container-e
 SQLite v48 只回填模型的自动识别协议和推理档位，不改动手动设置、会话或生成记录。升级前照常备份；
 回滚到旧服务需要恢复升级前的数据库备份。升级后对预设连接执行一次“发现模型”，即可按提供商级 SDK
 重新识别协议。
+
+## 连接协议移除（v49）
+
+SQLite v49 把旧的连接协议回退写入受影响模型的手动协议，连接本身不再选择协议。`connections.protocol`
+列保留，回滚到旧服务时仍可读取；回滚前仍应恢复升级前备份，以免旧服务忽略新加的手动协议来源。

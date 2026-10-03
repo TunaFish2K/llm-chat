@@ -6,19 +6,13 @@ import type {
   ProviderProtocol,
 } from "@llm-chat/contracts";
 import type { DiscoveredModel } from "@llm-chat/providers";
-import { knownModelProtocol, providerPreset } from "@llm-chat/contracts";
+import { inferModelProtocol, knownModelProtocol, normalizeModelId, officialModelProvider, providerPreset, resolveModelProtocol } from "@llm-chat/contracts";
 
 const CATALOG_URL = "https://models.dev/api.json";
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
 
-const OFFICIAL_PROVIDERS: Readonly<Record<string, string>> = {
-  gpt: "openai", o1: "openai", o3: "openai", o4: "openai", o5: "openai", codex: "openai",
-  claude: "anthropic", deepseek: "deepseek", gemini: "google", glm: "zhipuai", kimi: "moonshotai",
-  moonshot: "moonshotai", minimax: "minimax", qwen: "alibaba", doubao: "volcengine", seed: "volcengine",
-  llama: "meta", mistral: "mistral", grok: "xai", command: "cohere"
-};
 
 type JsonRecord = Record<string, unknown>;
 
@@ -115,7 +109,7 @@ export class ModelCatalogService {
     const detectedProtocol = detectModelProtocol(connection.providerId, model.id, exact);
     const efforts = match ? reasoningEfforts(match.meta.reasoning_options) : [];
     return {
-      ...fallbackModel(connection.id, detectedProtocol ?? connection.protocol, model.id, model.displayName),
+      ...fallbackModel(connection.id, resolveModelProtocol({ modelKey: model.id, detectedProtocol }, connection), model.id, model.displayName),
       detectedProtocol,
       detectedReasoningEfforts: efforts.length ? efforts : null
     };
@@ -189,13 +183,6 @@ function detectModelProtocol(
   return declared && providerPreset(providerId).protocols.includes(declared) ? declared : null;
 }
 
-/** Protocol for a model served by a custom (relay) endpoint, inferred from its vendor. */
-export function inferModelProtocol(modelKey: string): ProviderProtocol {
-  const official = officialProvider(modelKeys(modelKey).at(-1) ?? "");
-  if (official === "openai") return "openai-responses";
-  if (official === "anthropic") return "anthropic-messages";
-  return "openai-chat";
-}
 
 function applyCatalogEntry(
   fallback: CatalogModelInput,
@@ -234,7 +221,7 @@ function applyCatalogEntry(
   const catalogName = typeof meta.name === "string" ? meta.name.trim() : "";
   return {
     ...fallback,
-    displayName: providerName && normalizeId(providerName) !== normalizeId(discovered.id)
+    displayName: providerName && normalizeModelId(providerName) !== normalizeModelId(discovered.id)
       ? providerName
       : catalogName || providerName || discovered.id,
     contextWindow: validLimits ? context : fallback.contextWindow,
@@ -281,7 +268,7 @@ function catalogMetadata(entry: CatalogEntry): ModelCatalogMetadata {
 function bestMatch(connection: ConnectionDto, modelId: string, entries: CatalogEntry[]): CatalogEntry | undefined {
   const targetKeys = modelKeys(modelId);
   const normalizedTarget = targetKeys[0] ?? "";
-  const official = officialProvider(normalizedTarget);
+  const official = officialModelProvider(normalizedTarget);
   const providerHints = providerKeys(connection);
   const candidates = entries.filter((entry) => entry.modelKeys.some((candidate) =>
     targetKeys.some((target) => target === candidate || target.startsWith(`${candidate}-`))
@@ -299,7 +286,7 @@ function bestMatch(connection: ConnectionDto, modelId: string, entries: CatalogE
 
 function matchScore(entry: CatalogEntry, target: string, hints: Set<string>, official?: string): number[] {
   const similarity = Math.max(...entry.modelKeys.map((key) => key === target ? 1 : key.length / Math.max(1, target.length)));
-  const providerKey = normalizeId(entry.providerId);
+  const providerKey = normalizeModelId(entry.providerId);
   const providerAffinity = hints.has(providerKey) ? 2 : official === entry.providerId ? 1 : 0;
   return [similarity, providerAffinity, entry.completeness];
 }
@@ -307,7 +294,7 @@ function matchScore(entry: CatalogEntry, target: string, hints: Set<string>, off
 function providerKeys(connection: ConnectionDto): Set<string> {
   const result = new Set<string>();
   for (const value of [connection.providerId, connection.name, safeHostname(connection.baseUrl)]) {
-    const normalized = normalizeId(value);
+    const normalized = normalizeModelId(value);
     if (normalized) result.add(normalized);
     for (const part of normalized.split("-")) if (part.length >= 3) result.add(part);
   }
@@ -318,19 +305,11 @@ function safeHostname(value: string): string {
   try { return new URL(value).hostname; } catch { return ""; }
 }
 
-function officialProvider(modelKey: string): string | undefined {
-  if (/^o[1-9]\d*(?:-|$)/.test(modelKey)) return "openai";
-  const brand = /^[a-z]+/.exec(modelKey)?.[0];
-  return brand ? OFFICIAL_PROVIDERS[brand] : undefined;
-}
 
 function modelKeys(...values: string[]): string[] {
-  return [...new Set(values.flatMap((value) => [value, value.split("/").at(-1) ?? ""]).map(normalizeId).filter(Boolean))];
+  return [...new Set(values.flatMap((value) => [value, value.split("/").at(-1) ?? ""]).map(normalizeModelId).filter(Boolean))];
 }
 
-function normalizeId(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
 
 function reasoningEfforts(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];

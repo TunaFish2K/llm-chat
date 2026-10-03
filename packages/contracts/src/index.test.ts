@@ -101,27 +101,25 @@ describe("contract schemas", () => {
     }).success).toBe(false);
   });
 
-  it("validates connections, URLs, headers, and strips unknown keys", () => {
+  it("validates connections, URLs, headers, and strips unknown keys including the retired protocol", () => {
     const parsed = connectionInputSchema.parse({
       name: "  Local  ", protocol: "openai-chat", baseUrl: "https://example.test/v1",
       secretHeaders: { "X-Key": "secret" }, ignored: true
     });
     expect(parsed).toEqual({
-      name: "Local", providerId: "custom", protocol: "openai-chat", baseUrl: "https://example.test/v1",
+      name: "Local", providerId: "custom", baseUrl: "https://example.test/v1",
       secretHeaders: { "X-Key": "secret" }
     });
     for (const input of [
-      { name: "", protocol: "openai-chat", baseUrl: "https://x.test" },
-      { name: "x", protocol: "bad", baseUrl: "https://x.test" },
-      { name: "x", protocol: "openai-chat", baseUrl: "not a url" },
-      { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", apiKey: "x".repeat(4097) },
-      { name: "x", protocol: "openai-chat", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } },
-      { name: "x", providerId: "anthropic", protocol: "openai-chat", baseUrl: "https://x.test" },
-      { name: "x", providerId: "openai", protocol: "anthropic-messages", baseUrl: "https://x.test" }
+      { name: "", baseUrl: "https://x.test" },
+      { name: "x", providerId: "bad", baseUrl: "https://x.test" },
+      { name: "x", baseUrl: "not a url" },
+      { name: "x", baseUrl: "https://x.test", apiKey: "x".repeat(4097) },
+      { name: "x", baseUrl: "https://x.test", secretHeaders: { x: "x".repeat(4097) } }
     ]) expect(connectionInputSchema.safeParse(input).success).toBe(false);
     expect(connectionInputSchema.parse({
       name: "OpenCode", providerId: "opencode-go", protocol: "anthropic-messages", baseUrl: "https://opencode.ai/zen/go/v1"
-    }).providerId).toBe("opencode-go");
+    })).not.toHaveProperty("protocol");
   });
 
   it("validates optional same-origin balance configuration", () => {

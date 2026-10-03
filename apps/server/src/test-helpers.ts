@@ -24,7 +24,7 @@ export function createStore(): Store {
 
 export function seedModel(store: Store) {
   const connection = store.createConnection({
-    name: "Mock", protocol: "openai-chat", baseUrl: "https://example.test/v1", apiKey: "key", secretHeaders: {}
+    name: "Mock", baseUrl: "https://example.test/v1", apiKey: "key", secretHeaders: {}
   });
   const settings: ModelSettings = { common: { maxOutputTokens: 128, stopSequences: [] }, protocol: {} };
   const input: ModelInput = {

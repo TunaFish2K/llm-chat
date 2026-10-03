@@ -18,7 +18,7 @@ import {
   type FileAssetDto,
   type ModelDto
 } from "@llm-chat/contracts";
-import { adapterFor } from "@llm-chat/providers";
+import { listConnectionModels } from "@llm-chat/providers";
 import type { TaskManager } from "./background-tasks";
 import { BalanceService } from "./balance";
 import { exportCharacterCardWithAssets, importCharacterCardWithAssets } from "./character-card";
@@ -241,7 +241,7 @@ export class AppTools {
     }
     const connection = requiredResource(this.deps.store.getConnection(id(input)), "connection_not_found", "连接不存在");
     if (action === "test") {
-      const models = await adapterFor(connection.protocol).listModels(
+      const models = await listConnectionModels(
         connection,
         signal,
         providerRequestContextForConversation(connection.id, "models")
@@ -250,7 +250,7 @@ export class AppTools {
     }
     if (action === "balance") return json(await this.deps.balance.get(connection, input.refresh === true));
     if (action === "discover_models") {
-      const discovered = await adapterFor(connection.protocol).listModels(
+      const discovered = await listConnectionModels(
         connection,
         signal,
         providerRequestContextForConversation(connection.id, "models")

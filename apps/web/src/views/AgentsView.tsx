@@ -8,6 +8,8 @@ import { fileToBase64 } from "../lib/format";
 import { linkClick, navigate, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, Modal } from "../lib/ui";
+import { IconButton } from "../components/ui";
+import { Search, Trash2 } from "lucide-react";
 
 export function defaultAgentInput(name: string): AgentInput {
   return {
@@ -144,8 +146,11 @@ export function AgentsView() {
       </div>
       <div className="panel-scroll">
         <div className="panel-inner agent-directory">
-          <input ref={searchInput} className="input" type="search" aria-label={t("AgentsView.search_agent_list")} placeholder={t("AgentsView.search_agent_names_or_descriptions")} value={query}
-            onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
+          <label className="search-field">
+            <Search size={15} aria-hidden="true" />
+            <input ref={searchInput} type="search" aria-label={t("AgentsView.search_agent_list")} placeholder={t("AgentsView.search_agent_names_or_descriptions")} value={query}
+              onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
+          </label>
           {agents.length === 0 ? (
             <EmptyState title={t("AgentsView.no_agents_yet")} hint={t("AgentsView.create_an_agent_or_import_a_character_card_json_png")} />
           ) : (
@@ -168,8 +173,7 @@ export function AgentsView() {
                     <div className="grow">
                     <div className="list-row-title">
                       <strong className="agent-name-button">{agent.name}</strong>
-                      {agent.protected ? <span className="tag accent">{t("SettingsView.built_in")}</span> : null}
-                      <span className="tag">{t("AgentsView.revision_v", { value1: (agent.revision) })}</span>
+                      {agent.protected ? <span className="meta">{t("SettingsView.built_in")}</span> : null}
                     </div>
                     <div className="sub">
                       {agent.description
@@ -180,13 +184,13 @@ export function AgentsView() {
                   </div>
                 </a>
                 <div className="list-row-actions">
-                  <a className="btn small" href={`/api/agents/${agent.id}/export?format=json`} download>{t("AgentsView.export_json")}</a>
-                  <a className="btn small" href={`/api/agents/${agent.id}/export?format=png`} download>{t("AgentsView.export_png")}</a>
+                  <a className="btn small ghost" href={`/api/agents/${agent.id}/export?format=json`} download>{t("AgentsView.export_json")}</a>
+                  <a className="btn small ghost" href={`/api/agents/${agent.id}/export?format=png`} download>{t("AgentsView.export_png")}</a>
                   {agent.roleplayEnabled ? (
-                    <a className="btn small" href={`/api/agents/${agent.id}/export?format=charx`} download>{t("AgentsView.export_charx")}</a>
+                    <a className="btn small ghost" href={`/api/agents/${agent.id}/export?format=charx`} download>{t("AgentsView.export_charx")}</a>
                   ) : null}
                   {!agent.protected ? (
-                    <button className="btn small danger" onClick={() => setDeleting(agent.id)}>{t("WorkspaceSidebar.delete_2")}</button>
+                    <IconButton label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeleting(agent.id)}><Trash2 size={15} /></IconButton>
                   ) : null}
                 </div>
               </div>

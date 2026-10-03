@@ -406,7 +406,7 @@ function SecuritySection() {
           />
         </Field>
         {password && confirm && password !== confirm ? (
-          <p role="alert" className="small" style={{ color: "var(--danger)" }}>{t("SettingsView.the_passwords_do_not_match")}</p>
+          <p role="alert" className="small text-danger">{t("SettingsView.the_passwords_do_not_match")}</p>
         ) : null}
         {message ? (
           <p role="status" className="small" style={{ color: "var(--success)" }}>
@@ -712,8 +712,8 @@ function SkillsSection() {
               <div className="list-row-title">
                 <strong>{skillName(skill)}</strong>
                 <SkillStateTag state={skill.state} />
-                {skill.bundled ? <span className="tag accent">{t("SettingsView.built_in")}</span> : null}
-                <span className="tag mono">{skill.revision.slice(0, 10)}</span>
+                {skill.bundled ? <span className="meta">{t("SettingsView.built_in")}</span> : null}
+                <span className="meta mono">{skill.revision.slice(0, 10)}</span>
               </div>
               <button
                 type="button"
@@ -861,11 +861,11 @@ function PluginsSection() {
               <div className="list-row-title">
                 <strong>{plugin.manifest.name}</strong>
                 <SkillStateTag state={plugin.state} />
-                <span className="tag mono">v{plugin.manifest.version}</span>
-                <span className="tag mono">{plugin.revision.slice(0, 10)}</span>
+                <span className="meta mono">v{plugin.manifest.version}</span>
+                <span className="meta mono">{plugin.revision.slice(0, 10)}</span>
               </div>
               <div className="sub">{plugin.manifest.description}</div>
-              {plugin.error ? <div className="sub" style={{ color: "var(--danger)" }}>{plugin.error}</div> : null}
+              {plugin.error ? <div className="sub text-danger">{plugin.error}</div> : null}
             </div>
             <div className="list-row-actions">
               <button className="btn small" onClick={() => setConfiguring(plugin)}>{t("SettingsView.configure")}</button>
@@ -973,7 +973,7 @@ function PluginConfigModal({
       }
     >
       {error ? (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="text-danger">
           {error}
         </p>
       ) : null}
@@ -1048,7 +1048,7 @@ function McpSection() {
                 </div>
                 <div className="sub mono">{server.url}</div>
                 {server.headerNames.length > 0 ? <div className="sub">{t("SettingsView.headers", { value1: (server.headerNames.join(", ")) })}</div> : null}
-                {server.lastError ? <div className="sub" style={{ color: "var(--danger)" }}>{server.lastError}</div> : null}
+                {server.lastError ? <div className="sub text-danger">{server.lastError}</div> : null}
               </div>
               <div className="list-row-actions">
                 <button
@@ -1154,7 +1154,7 @@ function McpEditor({
       }
     >
       {error ? (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="text-danger">
           {error}
         </p>
       ) : null}

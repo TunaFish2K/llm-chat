@@ -67,7 +67,7 @@ describe("SettingsView", () => {
       imageProtocol: "openai-images"
     });
     appStore.set({
-      connections: [makeConnection({ protocol: "openai-responses" })],
+      connections: [makeConnection({ providerId: "openai" })],
       models: [model]
     });
 
@@ -330,7 +330,6 @@ describe("SettingsView", () => {
     const user = userEvent.setup();
     const connection = makeConnection({
       name: "OpenAI",
-      protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1"
     });
     appStore.set({ connections: [], models: [], toasts: [] });
@@ -348,7 +347,6 @@ describe("SettingsView", () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith({
       name: "OpenAI",
       providerId: "custom",
-      protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "secret-key",
       secretHeaders: {}
@@ -363,7 +361,6 @@ describe("SettingsView", () => {
     const connection = makeConnection({
       name: "OpenAI",
       providerId: "openai",
-      protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1"
     });
     const create = vi.spyOn(endpoints, "createConnection").mockResolvedValue(connection);
@@ -383,7 +380,6 @@ describe("SettingsView", () => {
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
       name: "OpenAI",
       providerId: "openai",
-      protocol: "openai-responses",
       baseUrl: "https://api.openai.com/v1",
       apiKey: "secret-key"
     })));

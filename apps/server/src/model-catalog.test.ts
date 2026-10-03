@@ -6,7 +6,6 @@ const connection: ConnectionDto = {
   id: "00000000-0000-4000-8000-000000000001",
   name: "OpenAI proxy",
   providerId: "custom",
-  protocol: "openai-responses",
   baseUrl: "https://proxy.example/v1",
   hasApiKey: true,
   secretHeaderNames: [],
@@ -88,7 +87,7 @@ describe("ModelCatalogService", () => {
       "qwen3.8-max": {}
     } }
   }))) as unknown as typeof fetch;
-  const go = { ...connection, providerId: "opencode-go" as const, protocol: "openai-chat" as const };
+  const go = { ...connection, providerId: "opencode-go" as const };
   const ids = ["grok-4.6", "minimax-m3", "glm-5.3", "qwen3.8-max", "unknown"];
   const result = await new ModelCatalogService(fetchImpl).enrich(go, ids.map(id => ({ id, displayName: id })));
   expect(result.models.map(m => m.input.detectedProtocol)).toEqual(["openai-responses", "anthropic-messages", "openai-chat", "anthropic-messages", null]);
@@ -108,9 +107,9 @@ describe("ModelCatalogService", () => {
     openai: { npm: "@ai-sdk/openai", models: { "gpt-5.4": {} } },
     deepseek: { npm: "@ai-sdk/openai-compatible", models: { "deepseek-chat": {} } }
   })));
-  const openai = { ...connection, providerId: "openai" as const, protocol: "openai-chat" as const };
+  const openai = { ...connection, providerId: "openai" as const };
   expect((await service.enrich(openai, [{ id: "gpt-5.4", displayName: "GPT" }])).models[0]?.input.detectedProtocol).toBe("openai-responses");
-  const deepseek = { ...connection, providerId: "deepseek" as const, protocol: "openai-chat" as const };
+  const deepseek = { ...connection, providerId: "deepseek" as const };
   expect((await service.enrich(deepseek, [{ id: "deepseek-chat", displayName: "DeepSeek" }])).models[0]?.input.detectedProtocol).toBe("openai-chat");
  });
 

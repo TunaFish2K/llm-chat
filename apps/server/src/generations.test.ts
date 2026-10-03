@@ -1122,7 +1122,6 @@ it.each(["openai-chat", "openai-responses", "anthropic-messages"] as const)("use
  store.updateModel(model.id, { protocol });
  const started = store.startConversation({ text: "question", modelId: model.id });
  store.updateModel(model.id, { protocol: protocol === "openai-chat" ? "openai-responses" : "openai-chat" });
- store.updateConnection(connection.id, { protocol: "anthropic-messages" });
  const stream = vi.fn((_protocol, request: GenerateRequest) => {
   expect(request.connection.protocol).toBe(protocol);
   return events([{ type: "complete", stopReason: "stop" }]);

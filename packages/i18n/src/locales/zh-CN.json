@@ -438,7 +438,6 @@
   "AgentsView.search_agent_names_or_descriptions": "搜索 Agent 名称或描述",
   "AgentsView.no_agents_yet": "还没有 Agent",
   "AgentsView.create_an_agent_or_import_a_character_card_json_png": "新建一个 Agent 或导入 Character Card（JSON / PNG）。",
-  "AgentsView.revision_v": "修订 v{{value1}}",
   "AgentsView.no_model_configured": "未设置模型",
   "AgentsView.export_json": "导出 JSON",
   "AgentsView.export_png": "导出 PNG",
