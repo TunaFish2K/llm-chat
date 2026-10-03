@@ -314,9 +314,160 @@ img {
   overflow-x: auto;
   overflow-y: auto;
 }
-.markdown-table { display: flex; flex-direction: column; gap: 6px; }
-.markdown-table-actions { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
-.markdown-table-actions .btn { flex: 0 0 auto; }
+/*
+ * Code blocks and tables share one frame: hairline border, a slim header with the language
+ * or "table" label, and quiet icon actions. Streamdown ships Tailwind classes this app does
+ * not compile, so code blocks are styled through their data-streamdown hooks.
+ */
+.markdown [data-streamdown="code-block"],
+.markdown-table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: 0.7em;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-inset);
+}
+
+.markdown [data-streamdown="code-block-header"],
+.markdown-table-header {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 4px 0 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.markdown-table-header {
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-family: inherit;
+}
+
+/* Streamdown wraps the actions in an unlabeled sticky div; pin it into the header row. */
+.markdown [data-streamdown="code-block"] > :not([data-streamdown]) {
+  position: static;
+  grid-column: 2;
+  grid-row: 1;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding-right: 4px;
+}
+
+.markdown [data-streamdown="code-block-actions"],
+.markdown-table-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.markdown [data-streamdown="code-block-actions"] button,
+.markdown-table-actions .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.markdown [data-streamdown="code-block-actions"] button:hover:not(:disabled),
+.markdown-table-actions .icon-button:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.markdown [data-streamdown="code-block-actions"] button:focus-visible,
+.markdown-table-actions .icon-button:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: 1px;
+}
+
+.markdown [data-streamdown="code-block-actions"] button:disabled,
+.markdown-table-actions .icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@media (hover: hover) {
+  .markdown [data-streamdown="code-block-actions"],
+  .markdown-table .markdown-table-actions {
+    opacity: 0.55;
+  }
+
+  .markdown [data-streamdown="code-block"]:hover [data-streamdown="code-block-actions"],
+  .markdown [data-streamdown="code-block"]:focus-within [data-streamdown="code-block-actions"],
+  .markdown-table:hover .markdown-table-actions,
+  .markdown-table:focus-within .markdown-table-actions {
+    opacity: 1;
+  }
+}
+
+.markdown [data-streamdown="code-block-body"] {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.markdown [data-streamdown="code-block-body"] pre {
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  white-space: pre;
+}
+
+/* Each highlighted line is a span that Streamdown marks with Tailwind's `block`. */
+.markdown [data-streamdown="code-block-body"] code > span {
+  display: block;
+  min-height: 1lh;
+}
+
+.markdown-table .markdown-table-scroll {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* The frame draws the outer edge; cells keep only inner rules. */
+.markdown-table table th,
+.markdown-table table td {
+  border-width: 0 1px 1px 0;
+}
+
+.markdown-table table tr > :last-child { border-right-width: 0; }
+.markdown-table table tbody tr:last-child > * { border-bottom-width: 0; }
+.markdown-table table th { background: none; color: var(--text-muted); font-weight: 600; }
+.markdown .markdown-table table { background: var(--bg); }
 .table-format-menu { width: 160px; }
 
 .markdown th,

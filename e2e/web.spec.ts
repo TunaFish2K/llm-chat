@@ -625,8 +625,9 @@ test.describe("Agent 管理", () => {
       const actions = page.getByRole("group", { name: "表格操作" });
       expect(await actions.evaluate((element) => {
         const rects = [...element.querySelectorAll("button")].map((button) => button.getBoundingClientRect());
-        const table = element.previousElementSibling!.getBoundingClientRect();
-        return rects.length === 3 && rects.every((rect) => Math.abs(rect.top - rects[0]!.top) < 1 && rect.top >= table.bottom);
+        const header = element.closest(".markdown-table-header")!;
+        const table = header.nextElementSibling!.getBoundingClientRect();
+        return rects.length === 3 && rects.every((rect) => Math.abs(rect.top - rects[0]!.top) < 1 && rect.bottom <= table.top + 1);
       })).toBe(true);
       await actions.getByRole("button", { name: "下载", exact: true }).click();
       const download = page.waitForEvent("download");
