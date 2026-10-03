@@ -36,8 +36,6 @@ export function ServiceSettingsPanel({ kind }: { kind: "search" | "image" }) {
   const items = kind === "search" ? data.searchEngines : data.imageModels;
   return <div className="card service-settings">
     <h3>{kind === "search" ? t("SettingsView.search_engines") : t("ServiceSettingsPanel.image_tool_models")}</h3>
-    <p className="hint">{t("ServiceSettingsPanel.enable_multiple_options_if_needed_earlier_options_are_recommended_to")}</p>
-    {kind === "image" ? <p className="hint">{t("ServiceSettingsPanel.models_come_from_connections_and_models_image_tools_require_an")}</p> : null}
     {!items.length ? <p className="hint">{t("ServiceSettingsPanel.add_a_model_with_image_output_support_in_connections_and")}</p> : null}
     <fieldset disabled={busy} className="service-fields"><ol className="service-list">{items.map((item, index) => <li key={item.id}>
       <div className="service-heading">

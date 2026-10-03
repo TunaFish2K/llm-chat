@@ -274,7 +274,6 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
         <div className="field-heading">
           <div>
             <label>{t("AgentEditorView.alternate_greetings")}</label>
-            <span className="hint">{t("AgentEditorView.each_greeting_can_span_multiple_lines_preview_and_switch_greetings")}</span>
           </div>
           <button
             type="button"
@@ -340,7 +339,7 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
           onChange={(value) => setField("mes_example", value)}
         />
       </Field>
-      <Field label={t("AgentEditorView.base_system_prompt")} hint={t("AgentEditorView.applies_only_to_this_agent_used_when_the_character_card")}>
+      <Field label={t("AgentEditorView.base_system_prompt")}>
         <ExpandableTextarea label={t("AgentEditorView.base_system_prompt")} value={agent.execution.baseSystemPrompt ?? ""}
           onChange={(value) => mutate((draft) => { draft.execution.baseSystemPrompt = value; })} />
         <button type="button" className="btn ghost" onClick={() => setConfirmReset(true)}>
@@ -355,7 +354,7 @@ function CardTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft: Agen
         onClose={closeReset}
         onConfirm={() => void resetPrompt()}
       /> : null}</Presence>
-      <Field label={t("AgentEditorView.system_prompt")} hint={t("AgentEditorView.the_character_card_system_prompt_overrides_the_base_prompt_use")}>
+      <Field label={t("AgentEditorView.system_prompt")}>
         <ExpandableTextarea
           label={t("AgentEditorView.system_prompt")}
           value={data.system_prompt}
@@ -546,13 +545,13 @@ function ExecutionTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draft:
       <div className="card">
         <EnvironmentSettings value={execution.environment} onChange={environment => setExecution({ environment })} />
         <h3>{t("AgentEditorView.model_and_reasoning")}</h3>
-        <Field label={t("InspectorPanel.model")} hint={t("AgentEditorView.when_blank_new_conversations_use_the_most_recently_selected_model")}>
+        <Field label={t("InspectorPanel.model")}>
           <ModelPicker value={execution.modelId ?? null} models={models} connections={connections}
             label={t("InspectorPanel.model")} onChange={modelId => setExecution({ modelId })}
             emptyOption={{ label: t("AgentEditorView.no_default_model"), selected: execution.modelId == null,
               onSelect: () => setExecution({ modelId: null }) }} />
         </Field>
-        <Field label={t("AgentEditorView.fallback_vision_model")} hint={t("AgentEditorView.when_the_main_model_cannot_accept_images_this_model_creates")}>
+        <Field label={t("AgentEditorView.fallback_vision_model")}>
           <ModelPicker value={execution.visionModelId ?? null} models={models} connections={connections} imageInputOnly
             label={t("AgentEditorView.fallback_vision_model")} onChange={visionModelId => setExecution({ visionModelId })}
             emptyOption={{ label: t("AgentEditorView.not_configured"), selected: execution.visionModelId == null,
@@ -721,7 +720,6 @@ function ToolsTab({
 
   return (
     <div>
-      <p className="hint">{t("AgentEditorView.configure_search_engines_and_image_models_in_global_settings_manage")}</p>
 
       <div className="card">
         <h3>{t("AgentEditorView.tool_policy")}</h3>
@@ -833,7 +831,7 @@ function SkillsTab({
     <div className="card">
       <h3>{t("AgentEditorView.enabled_skills")}</h3>
       {skills.length === 0 ? (
-        <EmptyState title={t("AgentEditorView.no_available_skills")} hint={t("AgentEditorView.install_or_discover_skills_in_settings")} />
+        <EmptyState title={t("AgentEditorView.no_available_skills")} />
       ) : (
         <div className="agent-skill-list">
           {skills.map((skill) => (
@@ -869,7 +867,6 @@ function UserProfileTab({ agent, mutate }: { agent: AgentDto; mutate: (fn: (draf
   return (
     <div className="card">
       <h3>{t("AgentEditorView.user_profile_overrides")}</h3>
-      <p className="small muted">{t("AgentEditorView.leave_blank_to_use_the_global_user_profile")}</p>
       <Field label={t("SettingsView.user_display_name")}>
         <input
           className="input"

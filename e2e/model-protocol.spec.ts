@@ -13,6 +13,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
     expect(model.catalogManaged).toBe(true);
     await page.goto("/settings/connections");
     const card = page.locator(".card").filter({ has: page.locator("h3 strong").filter({ hasText: connection.name }) });
+    await card.locator(".connection-toggle").click();
     const row = card.locator("tbody tr").filter({ hasText: model.displayName }).filter({ hasText: "e2e-chat" });
     await row.getByRole("button", { name: locale === "zh-CN" ? "编辑" : "Edit", exact: true }).click();
     const dialog = page.getByRole("dialog");

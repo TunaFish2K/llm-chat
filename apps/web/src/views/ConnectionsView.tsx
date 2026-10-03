@@ -1,9 +1,10 @@
 import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ModelBrandIcon } from "../components/chat/ModelBrandIcon";
-import { Bot, Plus } from "lucide-react";
+import { Bot, ChevronRight, Plus, Search } from "lucide-react";
+import { literalSearchPattern } from "../components/Highlight";
 import type {
   ConnectionDto,
   ConnectionInput,
@@ -39,6 +40,23 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
   const [deletingModel, setDeletingModel] = useState<ModelDto | null>(null);
   const [balances, setBalances] = useState<Record<string, BalanceState>>({});
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [query, setQuery] = useState("");
+  const expand = (id: string) => setExpanded((current) => current.has(id) ? current : new Set(current).add(id));
+  const toggle = (id: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (!next.delete(id)) next.add(id);
+    return next;
+  });
+  const pattern = literalSearchPattern(query);
+  const visible = useMemo(() => connections.flatMap((connection) => {
+    const all = models.filter((model) => model.connectionId === connection.id);
+    if (!pattern) return [{ connection, all, models: all }];
+    const connectionHit = [connection.name, providerPreset(connection.providerId).label].some((text) => text.search(pattern) >= 0);
+    const hits = connectionHit ? all : all.filter((model) =>
+      [model.displayName, model.modelKey, resolveModelProtocol(model, connection)].some((text) => text.search(pattern) >= 0));
+    return connectionHit || hits.length ? [{ connection, all, models: hits }] : [];
+  }), [connections, models, pattern]);
 
   const loadBalance = useCallback(async (connection: ConnectionDto, refresh = false) => {
     setBalances((current) => ({ ...current, [connection.id]: { loading: true } }));
@@ -78,6 +96,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
 
   const discover = async (connection: ConnectionDto) => {
     setBusy(true);
+    expand(connection.id);
     try {
       const result = await endpoints.discoverModels(connection.id);
       void refreshConnectionsAndModels().catch(toastError);
@@ -100,6 +119,16 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     <div className={embedded ? "connection-actions" : "actions"}>
       <button className="btn primary" onClick={() => setEditingConnection("new")}>
         <Plus size={15} aria-hidden="true" />{t("ConnectionsView.new_connection")}</button>
+      {connections.length > 0 ? <label className="search-field compact connection-search">
+        <Search size={15} aria-hidden="true" />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("ModelPicker.search_models_connections_or_protocols")}
+          aria-label={t("ModelPicker.search_models")}
+        />
+      </label> : null}
     </div>
   );
 
@@ -113,27 +142,39 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
         <div className="panel-inner settings-panels">
           {embedded ? actions : null}
           {connections.length === 0 ? (
-            <EmptyState title={t("ConnectionsView.no_connections_yet")} hint={t("ConnectionsView.add_a_model_provider_connection_then_discover_models_or_add")} />
+            <EmptyState title={t("ConnectionsView.no_connections_yet")} />
+          ) : visible.length === 0 ? (
+            <EmptyState title={t("ConnectionsView.no_matches")} />
           ) : (
-            connections.map((connection) => {
+            visible.map(({ connection, all, models: connectionModels }) => {
               const balance = balances[connection.id];
-              const connectionModels = models.filter((model) => model.connectionId === connection.id);
+              const open = Boolean(pattern) || expanded.has(connection.id);
               return (
-                <div className="card" key={connection.id}>
+                <div className="card connection-card" key={connection.id} data-open={open || undefined}>
                   <header className="management-card-header">
                     <h3 className="list-row-title">
-                      <strong>{connection.name}</strong>
+                      <button
+                        type="button"
+                        className="connection-toggle"
+                        aria-expanded={open}
+                        onClick={() => { if (!pattern) toggle(connection.id); }}
+                      >
+                        <ChevronRight size={16} aria-hidden="true" />
+                        <strong>{connection.name}</strong>
+                      </button>
                       <span className="tag">{providerPreset(connection.providerId).label}</span>
                       <span className="tag">{connection.protocol}</span>
+                      <span className="small muted">{t("ConnectionsView.model_count", { value1: all.filter((model) => model.enabled).length, value2: all.length })}</span>
                     </h3>
                     <div className="list-row-actions">
-                      <button className="btn small" onClick={() => { setNewModelConnection(connection.id); setEditingModel("new"); }}>{t("ConnectionsView.add_model_manually")}</button>
+                      <button className="btn small" onClick={() => { expand(connection.id); setNewModelConnection(connection.id); setEditingModel("new"); }}>{t("ConnectionsView.add_model_manually")}</button>
                       <button className="btn small" disabled={busy} onClick={() => void testConnection(connection)}>{t("ConnectionsView.test_connection")}</button>
                       <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>{t("ConnectionsView.discover_models")}</button>
                       <button className="btn small" onClick={() => setEditingConnection(connection)}>{t("SettingsView.edit")}</button>
                       <button className="btn small danger" onClick={() => setDeletingConnection(connection)}>{t("WorkspaceSidebar.delete_2")}</button>
                     </div>
                   </header>
+                  {open ? <>
                   <p className="small muted mono">{connection.baseUrl}</p>
                   <p className="small muted">
                     API Key：{connection.hasApiKey ? t("ConnectionsView.configured") : t("ConnectionsView.not_configured")}
@@ -208,6 +249,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       </tbody>
                     </table>
                   )}
+                  </> : null}
                 </div>
               );
             })
@@ -391,7 +433,7 @@ function ConnectionEditor({ connection, onClose }: { connection: ConnectionDto |
           {error}
         </p>
       ) : null}
-      <Field label="Provider" hint={selectedProvider.description} htmlFor="conn-provider">
+      <Field label="Provider" htmlFor="conn-provider">
         <select
           id="conn-provider"
           className="select"
@@ -657,15 +699,6 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         <div className="model-management-note" data-managed={model.catalogManaged || undefined}>
           <div>
             <strong>{model.catalogManaged ? t("ConnectionsView.manage_model_settings_automatically") : t("ConnectionsView.using_manual_settings")}</strong>
-            <span>
-              {model.catalogManaged
-                ? model.catalogMetadata
-                  ? t("ConnectionsView.settings_come_from_models_dev_saving_technical_settings_below_switches")
-                  : t("ConnectionsView.no_catalog_match_yet_discovery_will_try_again_saving_settings")
-                : model.catalogMetadata
-                  ? t("ConnectionsView.restore_catalog_management_to_use_capabilities_limits_and_prices_from")
-                  : t("ConnectionsView.this_model_has_no_matching_catalog_entry_yet")}
-            </span>
           </div>
           <span className={`tag ${model.catalogManaged ? "ok" : ""}`}>{model.catalogManaged ? t("ConnectionsView.automatic") : t("ConnectionsView.manual")}</span>
         </div>
@@ -712,7 +745,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
           onChange={(event) => setModelKey(event.target.value)}
         />
       </Field>
-      <Field label={t("reasoning.source")} hint={t("reasoning.source_hint")}>
+      <Field label={t("reasoning.source")}>
         <select className="select" aria-label={t("reasoning.source")} value={reasoningManual ? "manual" : "auto"}
           onChange={event => setReasoningManual(event.target.value === "manual")}>
           <option value="auto">{t("ConnectionsView.automatic_protocol")}</option>
@@ -722,7 +755,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
       {reasoningManual ? <Field label={t("reasoning.native_values")} hint={t("reasoning.native_values_hint")}>
         <textarea className="textarea" aria-label={t("reasoning.native_values")} value={reasoningValues}
           onChange={event => setReasoningValues(event.target.value)} rows={4} />
-      </Field> : <p className="small muted">{(model?.connectionId === connectionId && model.modelKey === modelKey.trim() ? model.detectedReasoningEfforts?.join(" / ") : null) || t("reasoning.unknown_hint")}</p>}
+      </Field> : <p className="small muted">{(model?.connectionId === connectionId && model.modelKey === modelKey.trim() ? model.detectedReasoningEfforts?.join(" / ") : null) || "—"}</p>}
       <Field label={t("ConnectionsView.model_protocol")} hint={t("ConnectionsView.effective_model_protocol", { protocol: effectiveProtocol ?? "—" })}>
         <select className="select" aria-label={t("ConnectionsView.model_protocol")} value={protocol ?? ""}
           onChange={(event) => setProtocol((event.target.value || null) as ProviderProtocol | null)}>
@@ -732,7 +765,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
           ))}
         </select>
       </Field>
-      <Field label={t("ConnectionsView.image_protocol")} hint={t("ConnectionsView.when_configured_the_model_supports_both_native_responses_image_generation")}>
+      <Field label={t("ConnectionsView.image_protocol")}>
         <select
           className="select"
           aria-label={t("ConnectionsView.image_protocol")}
@@ -761,7 +794,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         </select>
       </Field>
       <div className="grid-3">
-        <Field label={t("ConnectionsView.context_window")} hint={t("ConnectionsView.leave_blank_if_unknown")}>
+        <Field label={t("ConnectionsView.context_window")}>
           <input
             className="input"
             type="number"
@@ -770,7 +803,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
             onChange={(event) => setContextWindow(event.target.value)}
           />
         </Field>
-        <Field label={t("ConnectionsView.maximum_input_tokens")} hint={t("ConnectionsView.uses_the_context_window_when_blank")}>
+        <Field label={t("ConnectionsView.maximum_input_tokens")}>
           <input
             className="input"
             type="number"
@@ -789,7 +822,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
           />
         </Field>
       </div>
-      <Field label={t("ConnectionsView.maximum_input_images")} hint={t("ConnectionsView.leave_blank_for_no_declared_limit_older_images_exceeding_the")}>
+      <Field label={t("ConnectionsView.maximum_input_images")}>
         <input
           className="input"
           type="number"
@@ -816,7 +849,7 @@ function ModelEditor({ model, onClose, initialConnectionId }: { model: ModelDto 
         </div>
       </Field>
       <div className="grid-2">
-        <Field label={t("ConnectionsView.default_temperature")} hint={t("ConnectionsView.leave_blank_to_use_the_provider_default")}>
+        <Field label={t("ConnectionsView.default_temperature")}>
           <input
             className="input"
             type="number"

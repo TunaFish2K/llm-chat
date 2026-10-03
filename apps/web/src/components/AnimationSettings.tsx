@@ -10,8 +10,6 @@ export function AnimationSettings() {
   useLayoutEffect(initializeAnimationPreferences, []);
   return <div className="settings-panels"><div className="card">
     <h3>{t("AnimationSettings.title")}</h3>
-    <p className="hint">{t("AnimationSettings.description")}</p>
-    <p className="hint">{t("SettingsView.display_preferences_are_local")}</p>
     <div className="animation-controls">
       {ANIMATION_CATEGORIES.map(category => {
         const speed = speeds[category], label = t(`AnimationSettings.${category}`);

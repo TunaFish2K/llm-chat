@@ -59,7 +59,7 @@ export function ConversationSearch({ onClose, onNavigate = navigate }: { onClose
           if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setSelected((n) => Math.max(0, Math.min(items.length - 1, n + (event.key === "ArrowDown" ? 1 : -1)))); }
           if (event.key === "Enter" && items[selected]) { event.preventDefault(); void open(items[selected]!.conversationId); }
         }} />
-      <p className="hint">{t("ConversationSearch.title_matches_come_first_then_recently_updated_conversations_shows_up", { value1: (offline ? t("detail.searching_records_synced_to_this_device") : "") })}</p>
+      {offline ? <p className="hint">{t("detail.searching_records_synced_to_this_device")}</p> : null}
       {loading ? <p role="status">{t("ConversationSearch.searching")}</p> : error ? <p role="alert">{error}</p> : query.trim() && !items.length ? <p>{t("ConversationSearch.no_matching_conversations")}</p> : null}
       <div ref={results} className="conversation-search-results" inert={loading || !resultsCurrent ? true : undefined} aria-busy={loading}>{items.map((item, index) => <button className="conversation-search-result" data-selected={index === selected || undefined} key={item.conversationId}
         onClick={() => void open(item.conversationId)}><strong><Highlight text={item.title} query={query} /></strong>

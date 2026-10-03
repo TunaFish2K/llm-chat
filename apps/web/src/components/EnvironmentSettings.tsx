@@ -28,7 +28,6 @@ export function EnvironmentSettings({ value, onChange }: { value: ExecutionEnvir
       </select>
     </Field>
     {current ? <>
-      <p className="hint">{t("environment.description")}</p>
       <div className="form-grid">
         <Field label={t("environment.engine")}>
           <select className="select" aria-label={t("environment.engine")} value={current.engine} onChange={event => onChange({ ...current, engine: event.target.value as "docker" | "podman" })}>
@@ -50,7 +49,6 @@ export function EnvironmentSettings({ value, onChange }: { value: ExecutionEnvir
       </div>
       {current.image === "llm-chat-runtime:alpine" ? <fieldset className="choice-fieldset">
         <legend>{t("container_resources.preload")}</legend>
-        <p className="hint">{t("container_resources.preload_hint")}</p>
         {[...resources.filter(item => !["builtin:alpine", "builtin:runtime"].includes(item.id)).map(item => ({ id: item.id, name: resourceName(item), available: item.available })),
           ...(current.preloadResourceIds ?? ["builtin:tools"]).filter(id => !resources.some(item => item.id === id)).map(id => ({ id, name: id, available: true }))].map(item => {
           const selectedIds = current.preloadResourceIds ?? ["builtin:tools"];

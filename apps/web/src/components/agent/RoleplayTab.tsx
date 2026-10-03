@@ -77,7 +77,6 @@ export function RoleplayTab({
         <div className="roleplay-mode-heading">
           <div>
             <h3>{t("RoleplayTab.roleplay_workflow")}</h3>
-            <p className="small muted">{t("RoleplayTab.presets_personas_lorebooks_and_scripts_belong_only_to_this_agent")}</p>
           </div>
           <Switch label={t("RoleplayTab.enable_roleplay")} checked={config.enabled} onChange={(enabled) => setConfig({ enabled })} />
         </div>
@@ -87,7 +86,6 @@ export function RoleplayTab({
         <div className="field-heading roleplay-preset-heading">
           <div>
             <h3>{t("RoleplayTab.prompt_presets")}</h3>
-            <p className="small muted">{t("RoleplayTab.supports_native_presets_and_common_sillytavern_json_presets")}</p>
           </div>
           <div className="row compact">
             <input
@@ -128,7 +126,7 @@ export function RoleplayTab({
         {preset ? (
           <PresetEditor preset={preset} updatePreset={updatePreset} />
         ) : (
-          <EmptyState title={t("RoleplayTab.no_presets")} hint={t("RoleplayTab.reload_the_agent_to_create_a_default_preset_automatically")} />
+          <EmptyState title={t("RoleplayTab.no_presets")} />
         )}
       </div>
 
@@ -152,7 +150,7 @@ function RegexEditor({ config, setConfig }: { config: AgentRoleplayConfig; setCo
   return (
     <section className="card roleplay-resource-section">
       <div className="field-heading">
-        <div><h3>{t("RoleplayTab.safe_regex")}</h3><p className="small muted">{t("RoleplayTab.uses_the_re2_linear_time_engine_imported_rules_are_disabled")}</p></div>
+        <div><h3>{t("RoleplayTab.safe_regex")}</h3></div>
         <button className="btn small" onClick={() => setConfig({ regexScripts: [...config.regexScripts, { id: crypto.randomUUID(), name: t("RoleplayTab.new_regex"), enabled: false, pattern: "", replacement: "", flags: "gu", scopes: ["display"], runOnEdit: false, importWarning: null }] })}><Plus size={15} />{t("AgentEditorView.add")}</button>
       </div>
       {config.regexScripts.length ? <div className="roleplay-resource-list">{config.regexScripts.map((script) => (
@@ -180,7 +178,7 @@ function QuickRepliesEditor({ config, setConfig }: { config: AgentRoleplayConfig
   return (
     <section className="card roleplay-resource-section">
       <div className="field-heading">
-        <div><h3>{t("RoleplayTab.quick_replies_and_restricted_scripts")}</h3><p className="small muted">{t("RoleplayTab.scripts_can_change_only_this_roleplay_conversation_s_variables_preset")}</p></div>
+        <div><h3>{t("RoleplayTab.quick_replies_and_restricted_scripts")}</h3></div>
         <button className="btn small" onClick={() => setConfig({ quickReplySets: [...config.quickReplySets, { id: crypto.randomUUID(), name: t("RoleplayTab.new_quick_reply_group"), enabled: true, replies: [] }] })}><Plus size={15} />{t("RoleplayTab.add_group")}</button>
       </div>
       {config.quickReplySets.length ? <div className="roleplay-resource-list">{config.quickReplySets.map((set) => (
@@ -218,7 +216,7 @@ function PersonasEditor({ config, setConfig }: {
   return (
     <section className="card roleplay-resource-section">
       <div className="field-heading">
-        <div><h3>{t("RoleplayTab.user_personas")}</h3><p className="small muted">{t("RoleplayTab.replaces_the_global_user_profile_only_in_this_agent_s")}</p></div>
+        <div><h3>{t("RoleplayTab.user_personas")}</h3></div>
         <button className="btn small" onClick={() => {
           const persona: AgentPersona = { id: crypto.randomUUID(), name: t("RoleplayTab.new_persona"), description: "", avatarAssetId: null };
           setConfig({ personas: [...config.personas, persona], defaultPersonaId: config.defaultPersonaId ?? persona.id });
@@ -264,7 +262,7 @@ function LorebooksEditor({ config, setConfig }: {
   return (
     <section className="card roleplay-resource-section">
       <div className="field-heading">
-        <div><h3>{t("RoleplayTab.additional_lorebooks")}</h3><p className="small muted">{t("RoleplayTab.injected_by_keyword_and_budget_the_character_card_s_built")}</p></div>
+        <div><h3>{t("RoleplayTab.additional_lorebooks")}</h3></div>
         <button className="btn small" onClick={() => {
           const book: AgentLorebook = {
             id: crypto.randomUUID(), name: t("RoleplayTab.new_lorebook"), enabled: true,
@@ -328,7 +326,7 @@ function AssetsEditor({ agent, config, onReplace }: { agent: AgentDto; config: A
   return (
     <section className="card roleplay-resource-section">
       <div className="field-heading">
-        <div><h3>{t("RoleplayTab.character_assets")}</h3><p className="small muted">{t("RoleplayTab.backgrounds_expressions_and_persona_avatars_can_be_displayed_audio_video")}</p></div>
+        <div><h3>{t("RoleplayTab.character_assets")}</h3></div>
         <div className="row compact">
           <select className="select compact-select" value={type} onChange={(event) => setType(event.target.value)}><option value="background">{t("RoleplayTab.background")}</option><option value="expression">{t("RoleplayTab.expression")}</option><option value="icon">{t("AgentEditorView.avatar")}</option><option value="audio">{t("RoleplayTab.audio")}</option><option value="video">{t("RoleplayTab.video")}</option><option value="asset">{t("RoleplayTab.other")}</option></select>
           <input ref={input} className="sr-only" type="file" onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void upload(file); }} />

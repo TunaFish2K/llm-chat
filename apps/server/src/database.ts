@@ -78,11 +78,12 @@ import {
   imageProviderProtocolSchema,
   providerPresetIdSchema,
   providerPreset,
+  knownModelProtocol,
   resolveModelProtocol,
   reasoningEffortSchema,
   nativeReasoningEffortsSchema
 } from "@llm-chat/contracts";
-import { fallbackModel, type CatalogModelInput } from "./model-catalog";
+import { fallbackModel, inferModelProtocol, type CatalogModelInput } from "./model-catalog";
 import {
   defaultRoleplayConfig,
   ensureRoleplayDefaults,
@@ -228,7 +229,7 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 47) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 48) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1194,6 +1195,25 @@ function migrate(sqlite: DatabaseSyncType): void {
         scope TEXT NOT NULL, id TEXT NOT NULL, fingerprint TEXT NOT NULL, response_json TEXT NOT NULL,
         PRIMARY KEY(scope, id)
       ); PRAGMA user_version = 47;`);
+    }
+    if (current < 48) {
+      // Detection previously ignored custom relays, provider-level SDKs and fuzzy catalog matches.
+      const efforts = sqlite.prepare("UPDATE models SET detected_reasoning_efforts_json = ? WHERE id = ?");
+      const protocol = sqlite.prepare("UPDATE models SET detected_protocol = ? WHERE id = ?");
+      for (const row of sqlite.prepare(`SELECT m.id, m.model_key, m.catalog_metadata_json, m.detected_protocol,
+        m.detected_reasoning_efforts_json, c.provider_id FROM models m JOIN connections c ON c.id = m.connection_id`).all() as Row[]) {
+        const meta = modelCatalogMetadataSchema.safeParse(parse(row.catalog_metadata_json, null)).data;
+        if (row.detected_reasoning_efforts_json == null && meta?.reasoningEfforts.length) {
+          efforts.run(json(meta.reasoningEfforts), String(row.id));
+        }
+        const providerId = providerPresetIdSchema.safeParse(row.provider_id).data;
+        if (!providerId) continue;
+        const detected = providerId === "custom"
+          ? inferModelProtocol(String(row.model_key))
+          : knownModelProtocol(providerId, String(row.model_key));
+        if (detected && row.detected_protocol !== detected) protocol.run(detected, String(row.id));
+      }
+      sqlite.exec("PRAGMA user_version = 48;");
     }
     sqlite.exec("COMMIT");
   } catch (error) {

@@ -17,7 +17,7 @@ it("atomically retains a message receipt across restart and rejects changed inpu
   const reopened = new Store(path);
   try {
     expect(reopened.submissionResult("receipt", "send", payload)?.value).toEqual(result);
-    expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 47 });
+    expect(reopened.sqlite.prepare("PRAGMA user_version").get()).toMatchObject({ user_version: 48 });
   } finally { reopened.close(); }
 });
 

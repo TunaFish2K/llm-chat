@@ -42,7 +42,6 @@ export function ContainerResourceSettings() {
   return <section className="container-resources settings-panels" aria-busy={busy}>
     <div>
       <h3>{t("container_resources.title")}{busy ? <LoaderCircle size={16} className="spin" aria-hidden="true" /> : null}</h3>
-      <p className="hint">{t("container_resources.description")}</p>
       {error ? <p role="alert">{error}<Button onClick={() => void refresh()}>{t("environment.refresh")}</Button></p> : null}
       <Field label={t("container_resources.node")}>
         <select className="select" aria-label={t("container_resources.node")} value={catalog.node} disabled={busy}
