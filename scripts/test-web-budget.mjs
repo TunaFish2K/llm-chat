@@ -5,9 +5,6 @@ import { join, relative } from "node:path";
 import { performance } from "node:perf_hooks";
 
 // Cold jsdom transforms vary across CI hosts; the per-file limit still catches regressions.
-// LLM_CHAT_BUDGET_ALL=1 runs every project once with coverage so CI does not repeat the web tests;
-// the suite limit then no longer measures web tests alone and is skipped.
-const allProjects = process.env.LLM_CHAT_BUDGET_ALL === "1";
 const suiteLimitMs = 90_000;
 const fileLimitMs = 45_000;
 const temporaryDirectory = mkdtempSync(join(tmpdir(), "llm-chat-web-budget-"));
@@ -26,8 +23,7 @@ function failureMessages(result) {
 try {
   const exitCode = await new Promise((resolve, reject) => {
     const child = spawn("pnpm", [
-      "exec", "vitest", "run", ...(allProjects ? ["--coverage"] : ["--project", "web", "--maxWorkers=4"]),
-      "--reporter=json", `--outputFile=${reportPath}`
+      "exec", "vitest", "run", "--project", "web", "--maxWorkers=4", "--reporter=json", `--outputFile=${reportPath}`
     ], { cwd: process.cwd(), stdio: "inherit" });
     child.once("error", reject);
     child.once("exit", (code, signal) => {
@@ -39,7 +35,7 @@ try {
   const report = JSON.parse(readFileSync(reportPath, "utf8"));
   const slowFiles = report.testResults
     .map((result) => ({ name: relative(process.cwd(), result.name), durationMs: result.endTime - result.startTime }))
-    .filter((result) => result.name.startsWith("apps/web/") && result.durationMs > fileLimitMs)
+    .filter((result) => result.durationMs > fileLimitMs)
     .sort((left, right) => right.durationMs - left.durationMs);
 
   console.log(`[web-budget] ${report.numPassedTests}/${report.numTotalTests} tests passed in ${(elapsedMs / 1_000).toFixed(2)}s`);
@@ -52,7 +48,7 @@ try {
     }
     process.exitCode = exitCode || 1;
   }
-  if (!allProjects && elapsedMs > suiteLimitMs) {
+  if (elapsedMs > suiteLimitMs) {
     console.error(`[web-budget] suite exceeded ${(suiteLimitMs / 1_000).toFixed(0)}s: ${(elapsedMs / 1_000).toFixed(2)}s`);
     process.exitCode = 1;
   }

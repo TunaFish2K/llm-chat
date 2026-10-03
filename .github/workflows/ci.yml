@@ -88,19 +88,21 @@ jobs:
       - name: Type check
         run: pnpm typecheck
 
-      - name: Run unit tests with coverage and the Web time budget
-        env:
-          LLM_CHAT_BUDGET_ALL: '1'
+      - name: Check the Web test time budget
         run: pnpm test:web:budget
 
-      - name: Audit production dependencies
-        run: pnpm audit --prod
-
+      # Some server tests serve the built Web entry.
       - name: Download this run's production build
         uses: actions/download-artifact@v4
         with:
           name: production-build
           path: apps
+
+      - name: Run unit tests with coverage
+        run: pnpm test:coverage
+
+      - name: Audit production dependencies
+        run: pnpm audit --prod
 
       - name: Run deployment smoke test
         run: pnpm test:deploy
