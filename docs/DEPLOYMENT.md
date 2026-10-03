@@ -181,8 +181,10 @@ SHA-256，再发布到现有文件资产目录；下载也按流或 Range 读取
 ### production：新 tag 经 CI 验证后自动部署
 
 推送新 tag 会运行 CI。它先检查同一提交 SHA 最新一次 `main` 分支 CI：成功时复用结果，
-没有记录时运行完整验证，失败或取消时阻止部署。正在验证的提交最多等待五分钟，超时后应等主分支
-验证完成再重跑 tag CI。`verified` 门禁通过后，`deploy` 任务调用
+没有记录时运行完整验证，失败或取消时阻止部署。正在验证的提交最多等待 30 分钟（verification 步骤的
+`LLM_CHAT_MAIN_CI_WAIT` 环境变量可调整秒数），因此推送 `main` 后可以立即推送 tag，
+主分支验证通过即自动部署。同一分支的新推送会取消旧的主分支 CI；被取消的提交不能部署，
+应等新提交验证通过后为其推送新 tag。`verified` 门禁通过后，`deploy` 任务调用
 `scripts/deployment/notify.py`，向 `https://v4.example.com:8443/hooks/llm-chat`
 发送签名请求，并等待服务器完成部署。所有 tag 名称均可使用；分支、PR、删除 tag 和强制修改
 已有 tag 不部署，不需要创建 GitHub Release。tag 必须包含这版 CI 工作流；历史版本不会自动获得新工作流。
@@ -366,11 +368,16 @@ pnpm --filter @llm-chat/server auth:reset \
 
 ## 验证和 CI
 
-CI 使用 Node.js 24、pnpm 11.7.0，并执行冻结安装。`quality` 运行类型、预算、覆盖率、审计和部署
-冒烟检查，只构建一次生产产物。四个浏览器项目随后在独立任务、独立数据库中并行运行，每个任务
-仍只有一个测试 worker。它们下载本次运行的产物，通过版本匹配的官方 Playwright 容器运行浏览器；
+CI 使用 Node.js 24、pnpm 11.7.0，并执行冻结安装。`build` 只构建一次生产产物并上传；`quality`
+与浏览器任务随后并行开始。`quality` 运行类型检查、一次带覆盖率的全部单元测试（同时检查 Web
+测试文件耗时）、依赖审计和部署冒烟检查。四个浏览器项目各分两片，在独立任务、独立数据库中运行，
+每个任务仍只有一个测试 worker。它们下载本次运行的产物，通过版本匹配的官方 Playwright 容器运行浏览器；
 应用和数据库运行在宿主机，不再安装浏览器系统依赖。质量与单个浏览器任务的超时均为 15 分钟。
 各浏览器任务无论成功、失败或取消，都尝试保存日志、失败截图和 trace。
+
+性能预算用例（`interaction-performance`、`heavy-conversations`、`streaming-performance`）耗时长且受机器
+负载影响，不参与推送 CI 和部署门禁。它们由 `Performance` 工作流每天运行，也可在 Actions 页面手动
+触发；本地使用 `pnpm test:e2e:perf`。修改历史渲染、流式输出或导航性能相关代码后，应手动运行一次。
 
 本地完整验证命令如下：
 
@@ -381,6 +388,7 @@ pnpm audit --prod
 pnpm test:deploy
 pnpm exec playwright install --with-deps chromium firefox webkit
 pnpm test:e2e
+pnpm test:e2e:perf
 ```
 
 `pnpm check` 包含类型检查、Web 预算检查、覆盖率测试和生产构建。`pnpm test:deploy` 会启动临时服务

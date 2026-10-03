@@ -58,8 +58,13 @@ process.env.E2E_AUTH_PORT = String(authPort);
 process.env.E2E_RUN_DIR = runDir;
 process.env.E2E_STATE_FILE = stateFile;
 
+// Performance budgets run in the separate perf workflow (E2E_PERF=1), not in the deployment gate.
+const perfSpecs = ["interaction-performance.spec.ts", "heavy-conversations.spec.ts", "streaming-performance.spec.ts"];
+const perfOnly = process.env.E2E_PERF === "1";
+
 export default defineConfig({
   testDir: "./e2e",
+  ...(perfOnly ? { testMatch: perfSpecs } : { testIgnore: perfSpecs }),
   outputDir: join(tmpdir(), `llm-chat-playwright-results-${worktreeId}`),
   fullyParallel: false,
   workers: 1,

@@ -36,6 +36,11 @@ class VerificationTests(unittest.TestCase):
         with patch('verification.time.sleep'):
             self.assertFalse(requires_validation(lambda: next(responses), REPO, SHA, 99))
 
+    def test_waits_long_enough_for_a_full_main_run(self):
+        responses = iter([[run(status='in_progress', conclusion=None)]] * 40 + [[run()]])
+        with patch('verification.time.sleep'), patch('verification.time.monotonic', side_effect=range(0, 2000, 20)):
+            self.assertFalse(requires_validation(lambda: next(responses), REPO, SHA, 99))
+
     def test_pending_run_cannot_authorize_deployment(self):
         with self.assertRaises(RuntimeError):
             self.check([run(status='in_progress', conclusion=None)], timeout=0)

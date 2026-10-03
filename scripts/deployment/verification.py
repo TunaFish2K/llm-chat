@@ -16,7 +16,7 @@ def latest_run(runs, repository, sha, current_id):
     return max(eligible, key=lambda run: run['id'], default=None)
 
 
-def requires_validation(fetch_runs, repository, sha, current_id, timeout=300):
+def requires_validation(fetch_runs, repository, sha, current_id, timeout=1800, interval=20):
     deadline = time.monotonic() + timeout
     while True:
         run = latest_run(fetch_runs(), repository, sha, current_id)
@@ -24,6 +24,8 @@ def requires_validation(fetch_runs, repository, sha, current_id, timeout=300):
             print('No main CI result for this commit; running full validation.', flush=True)
             return True
         if run['status'] == 'completed':
+            if run['conclusion'] == 'cancelled':
+                raise RuntimeError(f"Main CI run {run['id']} was cancelled; push a new tag once main CI for this commit succeeds")
             if run['conclusion'] != 'success':
                 raise RuntimeError(f"Main CI run {run['id']} finished with {run['conclusion']}; deployment blocked")
             print(f"Reusing successful main CI run {run['id']} for {sha}.", flush=True)
@@ -31,7 +33,7 @@ def requires_validation(fetch_runs, repository, sha, current_id, timeout=300):
         if time.monotonic() >= deadline:
             raise RuntimeError(f"Main CI run {run['id']} is still running; wait for it before publishing the tag")
         print(f"Waiting for main CI run {run['id']} ({run['status']}).", flush=True)
-        time.sleep(min(10, max(0, deadline - time.monotonic())))
+        time.sleep(min(interval, max(0, deadline - time.monotonic())))
 
 
 def main():
@@ -50,7 +52,8 @@ def main():
             with urlopen(request, timeout=30) as response:
                 return json.load(response)['workflow_runs']
 
-        required = requires_validation(fetch_runs, repository, sha, int(os.environ['GITHUB_RUN_ID']))
+        timeout = int(os.environ.get('LLM_CHAT_MAIN_CI_WAIT', '1800'))
+        required = requires_validation(fetch_runs, repository, sha, int(os.environ['GITHUB_RUN_ID']), timeout)
     with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
         output.write(f'validation_required={str(required).lower()}\n')
 

@@ -8,10 +8,16 @@ permissions:
   contents: read
   actions: read
 
+# A newer push to the same branch supersedes older runs; tag runs gate deployment and always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   verification:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    # Tag runs may wait up to 30 minutes for main CI of the same commit.
+    timeout-minutes: 35
     outputs:
       validation_required: ${{ steps.previous.outputs.validation_required }}
     steps:
@@ -22,9 +28,37 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 scripts/deployment/verification.py
 
-  quality:
+  build:
     needs: verification
     if: needs.verification.outputs.validation_required == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build production bundles
+        run: pnpm build
+      - name: Share the production build
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-build
+          path: |
+            apps/web/dist/
+            apps/server/dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  # Runs alongside the browser suites; both start from the shared build.
+  quality:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,27 +85,28 @@ jobs:
       - name: Install read-only sandbox runtime
         run: bash scripts/install-ci-bubblewrap.sh
 
-      - name: Run quality checks
-        run: pnpm check
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Run unit tests with coverage and the Web time budget
+        env:
+          LLM_CHAT_BUDGET_ALL: '1'
+        run: pnpm test:web:budget
 
       - name: Audit production dependencies
         run: pnpm audit --prod
 
+      - name: Download this run's production build
+        uses: actions/download-artifact@v4
+        with:
+          name: production-build
+          path: apps
+
       - name: Run deployment smoke test
         run: pnpm test:deploy
 
-      - name: Share the verified production build
-        uses: actions/upload-artifact@v4
-        with:
-          name: production-build
-          path: |
-            apps/web/dist/
-            apps/server/dist/
-          if-no-files-found: error
-          retention-days: 3
-
   browsers:
-    needs: quality
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -137,7 +172,7 @@ jobs:
         run: docker rm --force playwright || true
 
   verified:
-    needs: [verification, quality, browsers]
+    needs: [verification, build, quality, browsers]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 1
@@ -146,15 +181,18 @@ jobs:
         env:
           RESOLUTION: ${{ needs.verification.result }}
           REQUIRED: ${{ needs.verification.outputs.validation_required }}
+          BUILD: ${{ needs.build.result }}
           QUALITY: ${{ needs.quality.result }}
           BROWSERS: ${{ needs.browsers.result }}
         run: |
           test "$RESOLUTION" = success
           if [ "$REQUIRED" = true ]; then
+            test "$BUILD" = success
             test "$QUALITY" = success
             test "$BROWSERS" = success
           else
             test "$REQUIRED" = false
+            test "$BUILD" = skipped
             test "$QUALITY" = skipped
             test "$BROWSERS" = skipped
           fi
