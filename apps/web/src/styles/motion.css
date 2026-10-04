@@ -3,14 +3,19 @@
   -webkit-tap-highlight-color: transparent;
 }
 button { touch-action: manipulation; }
-:is(button, a[href], summary, [role="button"], [role="tab"], [role="menuitem"], [role="option"])[data-pressed] {
-  box-shadow: inset 0 0 0 100vmax var(--press-fill, color-mix(in srgb, currentColor 9%, transparent));
-  transition: box-shadow var(--motion-feedback-enter, 120ms) var(--ease);
+/* Press feedback: a ripple spreads from the pointer in a fixed overlay matched to the control. */
+.press-ripple-layer { position: fixed; overflow: hidden; pointer-events: none; z-index: 2147483000; contain: strict; }
+.press-ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(.2);
+  animation: ripple-in var(--ripple-in, 400ms) cubic-bezier(.2, 0, 0, 1) forwards;
+  transition: opacity var(--ripple-out, 250ms) var(--ease);
 }
-[data-pressed="true"] { transition-duration: 0ms !important; }
-[data-pressed="releasing"] { --press-fill: transparent; }
+.press-ripple[data-releasing] { opacity: 0; }
+@keyframes ripple-in { to { transform: scale(1); } }
 .btn.icon[data-pressed="true"] > svg { transform: scale(.94); }
-.btn.icon > svg { transition: transform var(--motion-feedback-enter, 120ms) var(--ease); }
+.btn.icon > svg { transition: transform var(--motion-feedback-exit, 250ms) var(--ease); }
 .tab-content { animation: surface-enter var(--motion-page-enter, 180ms) var(--ease); }
 .inspector-body { animation: surface-enter var(--motion-inspector-enter, 200ms) var(--ease); }
 .pending-message, .message-queue li { animation: surface-enter calc(var(--motion-message-enter, 120ms) * 1.5) var(--ease); }
@@ -41,4 +46,5 @@ button { touch-action: manipulation; }
   .msg[data-enter], [data-state="open"], [data-state="closed"] { animation: none !important; }
   .process-disclosure > summary .chev { transition: none; }
   .tab-content, .inspector-body, .pending-message, .message-queue li { animation: none; }
+  .press-ripple { animation: none; transform: none; }
 }

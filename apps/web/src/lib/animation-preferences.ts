@@ -4,7 +4,7 @@ import { createStore, useStore } from "./store";
 export const ANIMATION_TIMINGS = {
   sidebar: [140, 140], inspector: [200, 140], page: [180, 180], modal: [180, 140],
   popover: [180, 140], disclosure: [180, 180], message: [120, 120],
-  feedback: [120, 120], toast: [140, 140], loading: [700, 700]
+  feedback: [400, 250], toast: [140, 140], loading: [700, 700]
 } as const;
 export type AnimationCategory = keyof typeof ANIMATION_TIMINGS;
 export type AnimationSpeeds = Record<AnimationCategory, number>;

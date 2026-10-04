@@ -5,7 +5,7 @@ import { heavyHistory, heavyProfiles } from "./heavy-history";
 const key = "llm-chat.animations.v1";
 test.use({ serviceWorkers: "block" });
 
-test("点击反馈按下立即呈现，释放按设置速度淡出", async ({ page }) => {
+test("点击反馈从按下点扩散涟漪，释放按设置速度淡出", async ({ page }) => {
   await page.addInitScript(key => localStorage.setItem(key, JSON.stringify({ feedback: .25 })), key);
   await page.goto(`${APP_URL}/settings/animations`);
   const tab = page.getByRole("tab", { name: "动画", exact: true });
@@ -13,11 +13,16 @@ test("点击反馈按下立即呈现，释放按设置速度淡出", async ({ pa
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
   await page.mouse.down();
   await expect(tab).toHaveAttribute("data-pressed", "true");
-  const pressed = await tab.evaluate(element => getComputedStyle(element).boxShadow);
+  const ripple = page.locator(".press-ripple-layer");
+  await expect(ripple).toHaveCount(1);
+  const layer = (await ripple.boundingBox())!;
+  expect(Math.abs(layer.width - bounds.width)).toBeLessThan(1);
+  expect(Math.abs(layer.height - bounds.height)).toBeLessThan(1);
   await page.mouse.up();
   await expect(tab).toHaveAttribute("data-pressed", "releasing");
-  await expect.poll(() => tab.evaluate(element => getComputedStyle(element).boxShadow)).not.toBe(pressed);
+  await expect(page.locator(".press-ripple[data-releasing]")).toHaveCount(1);
   await expect(tab).not.toHaveAttribute("data-pressed");
+  await expect(ripple).toHaveCount(0);
 });
 
 for (const labels of [
