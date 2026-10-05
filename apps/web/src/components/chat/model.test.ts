@@ -120,7 +120,7 @@ describe("chat model helpers", () => {
   it("formats valid JSON while leaving plain text untouched", () => {
     expect(prettyJson('{"ok":true}')).toBe('{\n  "ok": true\n}');
     expect(prettyJson("plain text")).toBe("plain text");
-    expect(shortPath("/home/deploy/Documents")).toBe("Documents");
+    expect(shortPath("/home/user/Documents")).toBe("Documents");
     expect(shortPath("/")).toBe("/");
   });
 });

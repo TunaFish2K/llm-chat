@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Notify production after a new tag's verification gate succeeds and report its result."""
+"""Notify the production server after a new tag's verification gate succeeds and report its result."""
 import json
 import os
 from pathlib import Path

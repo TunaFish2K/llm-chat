@@ -1,7 +1,7 @@
 import type { GenerationBlockDto, MessageDto, ToolCallDto } from "@llm-chat/contracts";
 import { makeGeneration, makeMessage } from "../apps/web/test/fixtures";
 
-// Anonymous shapes measured read-only on production. No production content or IDs.
+// Anonymous shapes measured read-only on the production server. No production content or IDs.
 export const heavyProfiles = [
   { name: "workspace", messageCount: 12, calls: [7, 18, 2, 2, 0, 0], reasoningChars: 60_857, outputChars: 39_228 },
   { name: "search", messageCount: 10, calls: [13, 2, 0, 4, 9], reasoningChars: 0, outputChars: 70_917 }
