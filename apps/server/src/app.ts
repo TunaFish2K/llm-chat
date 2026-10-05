@@ -11,6 +11,8 @@ import { activeGenerationNotifications, publishGenerationState } from "./generat
 import { assertImageConfiguration } from "./image-configuration";
 import { recoverInterruptedWork } from "./runtime/startup-recovery";
 import { existsSync } from "node:fs";
+import type { IncomingHttpHeaders, IncomingMessage, OutgoingHttpHeaders } from "node:http";
+import { isIP } from "node:net";
 import { dirname, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import fastifyCompress from "@fastify/compress";
@@ -103,14 +105,17 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     parseAs: "buffer",
     bodyLimit: 64 * 1024 * 1024
   }, (_request, body, done) => done(null, body));
+  // Server channels are other network entrances of this same server. The page
+  // may call any of them, so fetch targets follow the requested host's site.
   await app.register(fastifyHelmet, {
+    crossOriginResourcePolicy: { policy: "same-site" },
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:", "blob:"],
-        connectSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "blob:", (request) => channelSources((request as IncomingMessage).headers)],
+        connectSrc: ["'self'", (request) => channelSources((request as IncomingMessage).headers)],
         workerSrc: ["'self'", "blob:"],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
@@ -220,6 +225,26 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
 
   app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/identity", async () => ({ id: offlineSourceId(store) }));
+
+  const serverId = offlineSourceId(store);
+  app.addHook("onRequest", async (request, reply) => {
+    const origin = sameSiteOrigin(request);
+    if (origin) {
+      reply.header("access-control-allow-origin", origin);
+      reply.header("access-control-allow-credentials", "true");
+      reply.header("access-control-expose-headers", CORS_EXPOSED_HEADERS);
+      reply.header("vary", "origin");
+    }
+    if (request.url.startsWith("/api/")) reply.header(SERVER_ID_HEADER, serverId);
+    if (origin && request.method === "OPTIONS" && request.headers["access-control-request-method"]) {
+      return reply.code(204)
+        .header("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE")
+        .header("access-control-allow-headers", CORS_REQUEST_HEADERS)
+        .header("access-control-max-age", "7200")
+        .send();
+    }
+  });
 
   app.addHook("onRequest", async (request, reply) => {
     if (!request.url.startsWith("/api/")) return;
@@ -983,6 +1008,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get("/api/events", async (request, reply) => {
     reply.hijack();
     reply.raw.writeHead(200, {
+      ...hookHeaders(reply),
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
@@ -1022,6 +1048,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!store.getGeneration(request.params.id)) throw withMessage(new StoreError("generation_not_found", "生成不存在"), "error.generation_not_found");
     reply.hijack();
     reply.raw.writeHead(200, {
+      ...hookHeaders(reply),
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
       connection: "keep-alive",
@@ -1194,9 +1221,59 @@ function authRateLimit(max: number) {
   } } };
 }
 
+const SERVER_ID_HEADER = "x-llm-chat-server-id";
+// The service worker copies these security headers into its cached app shell.
+const CORS_EXPOSED_HEADERS = `${SERVER_ID_HEADER}, retry-after, content-security-policy, cross-origin-opener-policy, origin-agent-cluster, referrer-policy, x-content-type-options, x-frame-options`;
+const CORS_REQUEST_HEADERS = "content-type, x-llm-chat-request, x-llm-chat-request-id, x-file-name, x-file-type, last-event-id";
+
+/** Sites approximate the registrable domain by dropping the first label. */
+function siteOf(hostname: string): string | null {
+  if (isIP(hostname.replace(/^\[|\]$/g, ""))) return null;
+  const labels = hostname.split(".");
+  return labels.length >= 3 ? labels.slice(1).join(".") : hostname;
+}
+
+// The service listens behind proxies on plain HTTP, so only the host is
+// trusted here; browsers already compare schemes for `same-site`.
+function hostnameOf(host: string | undefined): string | null {
+  try { return host ? new URL(`http://${host}`).hostname : null; } catch { return null; }
+}
+
+/** Scheme-less sources inherit the page scheme, matching every channel of this site. */
+function channelSources(headers: IncomingHttpHeaders): string {
+  const hostname = hostnameOf(headers.host);
+  if (!hostname || hostname.startsWith("[")) return "";
+  const site = siteOf(hostname);
+  return site ? `${site}:* *.${site}:*` : `${hostname}:*`;
+}
+
+/**
+ * Returns the caller origin of a browser request from another channel of this
+ * server. Browsers compute `same-site` from the public suffix list; the origin
+ * must additionally share this host's site so forged headers gain nothing.
+ */
+function sameSiteOrigin(request: FastifyRequest): string | null {
+  const origin = request.headers.origin;
+  if (request.headers["sec-fetch-site"] !== "same-site" || typeof origin !== "string") return null;
+  const hostname = hostnameOf(request.headers.host);
+  let caller: URL;
+  try { caller = new URL(origin); } catch { return null; }
+  if (!hostname || caller.origin !== origin || !["http:", "https:"].includes(caller.protocol)) return null;
+  const site = siteOf(hostname);
+  const matches = site
+    ? caller.hostname === site || caller.hostname.endsWith(`.${site}`)
+    : caller.hostname === hostname;
+  return matches ? origin : null;
+}
+
+/** Headers set by hooks (security, CORS, identity) for a hijacked response. */
+function hookHeaders(reply: FastifyReply): OutgoingHttpHeaders {
+  return Object.fromEntries(Object.entries(reply.getHeaders()).filter((entry) => entry[1] !== undefined)) as OutgoingHttpHeaders;
+}
+
 function isPublicApiRoute(request: FastifyRequest): boolean {
   const pathname = request.url.split("?", 1)[0] ?? "";
-  if (pathname === "/api/health") return true;
+  if (pathname === "/api/health" || pathname === "/api/identity") return true;
   return pathname === "/api/auth/login";
 }
 
@@ -1209,7 +1286,7 @@ function requireMutationSource(request: FastifyRequest): void {
     throw withMessage(new AuthHttpError(403, "request_header_required", "缺少写请求验证标记"), "error.the_write_request_verification_marker_is_missing");
   }
   const fetchSite = request.headers["sec-fetch-site"];
-  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none" && !sameSiteOrigin(request)) {
     throw withMessage(new AuthHttpError(403, "cross_site_request_rejected", "已拒绝跨站请求"), "error.cross_site_request_rejected");
   }
 }
@@ -1238,9 +1315,13 @@ function clearSessionCookies(reply: FastifyReply): void {
   reply.clearCookie("__Host-llm_chat_session", { path: "/", httpOnly: true, sameSite: "strict", secure: true });
 }
 
+export const WEB_ARTIFACT_FILES = ["index.html", "app-shell.json"] as const;
+
 export function assertWebArtifact(root: string): void {
-  if (!existsSync(resolve(root, "index.html"))) {
-    throw new Error(`Web build artifact is missing: ${resolve(root, "index.html")}. Run pnpm build before starting the server.`);
+  for (const file of WEB_ARTIFACT_FILES) {
+    if (!existsSync(resolve(root, file))) {
+      throw new Error(`Web build artifact is missing: ${resolve(root, file)}. Run pnpm build before starting the server.`);
+    }
   }
 }
 

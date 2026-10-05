@@ -1,7 +1,22 @@
 import type { AppEvent, GenerationEvent } from "@llm-chat/contracts";
+import { apiBase, apiUrl, ensureChannelReady } from "./server-channel";
 
 export interface Subscription {
   close(): void;
+}
+
+/**
+ * Streams open only after the active channel proved its server identity; the
+ * page origin opens synchronously. A mismatch never opens: HTTP requests
+ * report it. Other failures go to `retry`.
+ */
+function whenChannelReady(open: () => void, retry: () => void): void {
+  if (!apiBase()) { open(); return; }
+  ensureChannelReady().then((matches) => { if (matches) open(); }, retry);
+}
+
+function eventSource(path: string): EventSource {
+  return apiBase() ? new EventSource(apiUrl(path), { withCredentials: true }) : new EventSource(path);
 }
 
 /**
@@ -19,9 +34,18 @@ export function subscribeGeneration(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let attempts = 0;
 
+  const reconnect = () => {
+    onDisconnect?.();
+    const delay = Math.min(8_000, 500 * 2 ** attempts);
+    attempts += 1;
+    reconnectTimer = setTimeout(connect, delay);
+  };
   const connect = () => {
+    if (!closed) whenChannelReady(open, () => { if (!closed) reconnect(); });
+  };
+  const open = () => {
     if (closed) return;
-    const current = new EventSource(`/api/generations/${generationId}/events`);
+    const current = eventSource(`/api/generations/${generationId}/events`);
     source = current;
     let terminal = false;
     const types = ["snapshot", "block-delta", "usage", "tool-call", "vision-analysis", "status", "error"] as const;
@@ -46,10 +70,7 @@ export function subscribeGeneration(
       source?.close();
       source = null;
       if (closed || terminal) return;
-      onDisconnect?.();
-      const delay = Math.min(8_000, 500 * 2 ** attempts);
-      attempts += 1;
-      reconnectTimer = setTimeout(connect, delay);
+      reconnect();
     };
   };
   connect();
@@ -75,26 +96,39 @@ export function subscribeAppEvents(
   onStateChange?: (connected: boolean) => void
 ): Subscription {
   let closed = false;
-  const source = new EventSource("/api/events");
+  let source: EventSource | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   const types = ["submission-accepted", "container-resource", "resync", "task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
-  for (const type of types) {
-    source.addEventListener(type, (raw) => {
-      if (closed) return;
-      const message = raw as MessageEvent;
-      onEvent(JSON.parse(message.data as string) as AppEvent);
-    });
-  }
-  source.onopen = () => { if (!closed) onStateChange?.(true); };
-  source.onerror = () => {
-    // The browser retries automatically with the last received event id.
-    if (!closed) onStateChange?.(false);
+  const open = () => {
+    if (closed) return;
+    const current = eventSource("/api/events");
+    source = current;
+    for (const type of types) {
+      current.addEventListener(type, (raw) => {
+        if (closed) return;
+        const message = raw as MessageEvent;
+        onEvent(JSON.parse(message.data as string) as AppEvent);
+      });
+    }
+    current.onopen = () => { if (!closed) onStateChange?.(true); };
+    current.onerror = () => {
+      // The browser retries automatically with the last received event id.
+      if (!closed) onStateChange?.(false);
+    };
   };
+  const connect = () => whenChannelReady(open, () => {
+    if (closed) return;
+    onStateChange?.(false);
+    retryTimer = setTimeout(connect, 3_000);
+  });
+  connect();
 
   return {
     close() {
       if (closed) return;
       closed = true;
-      source.close();
+      clearTimeout(retryTimer);
+      source?.close();
     }
   };
 }

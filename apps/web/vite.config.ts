@@ -31,9 +31,10 @@ export default defineConfig({
           { src: "/icons/icon-maskable-512-v2.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
         ]
       },
+      // The worker manages its own shell from dist/app-shell.json, written after
+      // the build, so the worker script changes only when its own code does.
       injectManifest: {
-        globPatterns: ["**/*.{js,css,html,png,svg,webmanifest,woff2}"],
-        maximumFileSizeToCacheInBytes: 1024 * 1024
+        injectionPoint: ""
       }
     })
   ],

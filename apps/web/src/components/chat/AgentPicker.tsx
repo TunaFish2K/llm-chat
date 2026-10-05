@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Popover } from "radix-ui";
 import { Bot, Check, Search, X } from "lucide-react";
 import type { AgentSummaryDto } from "@llm-chat/contracts";
+import { assetUrl } from "../../lib/server-channel";
 
 function AgentAvatar({ agent }: { agent: AgentSummaryDto | undefined }) {
   useLocale();
@@ -11,7 +12,7 @@ function AgentAvatar({ agent }: { agent: AgentSummaryDto | undefined }) {
   useEffect(() => setFailed(false), [agent?.id, agent?.updatedAt]);
   return <span className="agent-picker-avatar" aria-hidden="true">
     {agent?.hasAvatar && !failed
-      ? <img src={`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`} alt="" onError={() => setFailed(true)} />
+      ? <img src={assetUrl(`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`)} alt="" onError={() => setFailed(true)} />
       : <Bot size={18} />}
   </span>;
 }

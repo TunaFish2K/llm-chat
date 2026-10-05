@@ -49,6 +49,16 @@ it("resyncs new/stale connections, replays a valid cursor and releases disconnec
     expect(replay).toContain("old-1199"); expect(replay).not.toContain("event: resync");
     for (let i = 0; i < 20; i++) await connect(String(cursor), "event: generation-snapshot");
     expect(active).toBe(0);
+    // Hijacked streams keep the headers another channel of this server needs.
+    const channelAbort = new AbortController();
+    const channel = await fetch(url + "/api/events", {
+      headers: { cookie, origin: "http://127.0.0.1:1", "sec-fetch-site": "same-site" }, signal: channelAbort.signal
+    });
+    expect(channel.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:1");
+    expect(channel.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(channel.headers.get("x-llm-chat-server-id")).toMatch(/^[\da-f-]{36}$/);
+    channelAbort.abort(); await channel.body?.cancel().catch(() => {});
+    await vi.waitFor(() => expect(active).toBe(0));
   } finally {
     await app.close(); subscribe.mockRestore(); await rm(directory, { recursive: true, force: true });
   }

@@ -237,8 +237,11 @@ test.describe("应用外壳", () => {
     await expect(page).toHaveTitle("Chat");
     const sw = await page.request.get(`${APP_URL}/sw.js`);
     expect(sw.ok()).toBeTruthy();
-    expect(await sw.text()).toContain("icons/icon-v2.svg");
-    expect(await sw.text()).toContain("theme-init.js");
+    // The worker serves the shell listed in app-shell.json instead of an embedded precache.
+    const shell = await (await page.request.get(`${APP_URL}/app-shell.json`)).json() as { entries: Array<{ url: string; integrity: string }> };
+    expect(shell.entries.map((entry) => entry.url)).toEqual(expect.arrayContaining(["/index.html", "/icons/icon-v2.svg", "/theme-init.js"]));
+    expect(shell.entries.every((entry) => entry.integrity.startsWith("sha256-"))).toBe(true);
+    expect(shell.entries.map((entry) => entry.url)).not.toContain("/sw.js");
     for (const locale of ["zh-CN", "en-US"]) {
       const localizedManifest = await page.request.get(`${APP_URL}/manifest.${locale}.webmanifest`);
       expect(await localizedManifest.json()).toMatchObject({ theme_color: "#000000", background_color: "#000000" });

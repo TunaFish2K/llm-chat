@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { subscribeAppEvents, subscribeGeneration } from "./sse";
 import { FakeEventSource } from "../../test/setup";
+import { SERVER_CHANNELS_KEY } from "./server-channel";
+
+// jsdom pages load from http://localhost:3000; another port is a same-site channel.
+const CHANNEL = "http://localhost:4000";
+function useChannel(boundServerId = "server") {
+  localStorage.setItem(SERVER_CHANNELS_KEY, JSON.stringify({ channels: [CHANNEL], active: CHANNEL, boundServerId }));
+  window.dispatchEvent(new StorageEvent("storage", { key: SERVER_CHANNELS_KEY }));
+}
 
 describe("subscribeAppEvents", () => {
   it("creates a single EventSource and keeps it across transient errors", () => {
@@ -98,5 +106,54 @@ describe("subscribeGeneration", () => {
     source.onerror?.(); vi.runAllTimers();
     expect(FakeEventSource.instances).toHaveLength(1);
     subscription.close();
+  });
+});
+
+describe("server channels", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("opens credentialed streams on the active channel after it proves the server identity", async () => {
+    useChannel();
+    const fetcher = vi.fn(async () => Response.json({ id: "server" }));
+    vi.stubGlobal("fetch", fetcher);
+    const app = subscribeAppEvents(vi.fn());
+    const generation = subscribeGeneration("generation", vi.fn());
+    expect(FakeEventSource.instances).toHaveLength(0);
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    expect(FakeEventSource.instances.map((source) => [source.url, source.withCredentials])).toEqual([
+      [`${CHANNEL}/api/events`, true], [`${CHANNEL}/api/generations/generation/events`, true]
+    ]);
+    expect(fetcher).toHaveBeenCalledOnce();
+    app.close(); generation.close();
+  });
+
+  it("never opens a stream on a channel of another server and retries unreachable ones", async () => {
+    useChannel("other");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "server" })));
+    const mismatch = subscribeAppEvents(vi.fn());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(FakeEventSource.instances).toHaveLength(0);
+    mismatch.close();
+
+    vi.useFakeTimers();
+    useChannel();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("offline")).mockResolvedValue(Response.json({ id: "server" })));
+    const onState = vi.fn();
+    const app = subscribeAppEvents(vi.fn(), onState);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onState).toHaveBeenCalledWith(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(FakeEventSource.instances).toHaveLength(1);
+    app.close();
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValueOnce(new TypeError("offline")).mockResolvedValue(Response.json({ id: "server" })));
+    useChannel();
+    const onDisconnect = vi.fn();
+    const generation = subscribeGeneration("generation", vi.fn(), onDisconnect);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onDisconnect).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(FakeEventSource.instances).toHaveLength(2);
+    generation.close();
   });
 });

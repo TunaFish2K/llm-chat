@@ -10,6 +10,7 @@ import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, Modal } from "../lib/ui";
 import { IconButton } from "../components/ui";
 import { Search, Trash2 } from "lucide-react";
+import { assetUrl } from "../lib/server-channel";
 
 export function defaultAgentInput(name: string): AgentInput {
   return {
@@ -164,7 +165,7 @@ export function AgentsView() {
                 >
                   <div className="agent-list-content">
                     {agent.hasAvatar ? (
-                      <img className="avatar-img" src={`/api/agents/${agent.id}/avatar`} alt="" />
+                      <img className="avatar-img" src={assetUrl(`/api/agents/${agent.id}/avatar`)} alt="" />
                     ) : (
                       <span className="avatar-placeholder" aria-hidden="true">
                         {agent.name.slice(0, 1)}
@@ -184,10 +185,10 @@ export function AgentsView() {
                   </div>
                 </a>
                 <div className="list-row-actions">
-                  <a className="btn small ghost" href={`/api/agents/${agent.id}/export?format=json`} download>{t("AgentsView.export_json")}</a>
-                  <a className="btn small ghost" href={`/api/agents/${agent.id}/export?format=png`} download>{t("AgentsView.export_png")}</a>
+                  <a className="btn small ghost" href={assetUrl(`/api/agents/${agent.id}/export?format=json`)} download>{t("AgentsView.export_json")}</a>
+                  <a className="btn small ghost" href={assetUrl(`/api/agents/${agent.id}/export?format=png`)} download>{t("AgentsView.export_png")}</a>
                   {agent.roleplayEnabled ? (
-                    <a className="btn small ghost" href={`/api/agents/${agent.id}/export?format=charx`} download>{t("AgentsView.export_charx")}</a>
+                    <a className="btn small ghost" href={assetUrl(`/api/agents/${agent.id}/export?format=charx`)} download>{t("AgentsView.export_charx")}</a>
                   ) : null}
                   {!agent.protected ? (
                     <IconButton label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeleting(agent.id)}><Trash2 size={15} /></IconButton>

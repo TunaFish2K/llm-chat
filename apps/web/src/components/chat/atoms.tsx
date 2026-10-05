@@ -8,6 +8,7 @@ import { Download, FileText } from "lucide-react";
 import type { AgentSummaryDto, FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
 import { toast } from "../../lib/app-state";
 import { formatBytes } from "../../lib/format";
+import { assetUrl } from "../../lib/server-channel";
 
 export function AgentAvatar({
   agent,
@@ -23,7 +24,7 @@ export function AgentAvatar({
   if (agent?.hasAvatar) {
     return (
       <span className={className}>
-        <img src={`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`} alt="" />
+        <img src={assetUrl(`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`)} alt="" />
       </span>
     );
   }
@@ -40,7 +41,7 @@ export function OfflineAwareImage({ src, alt, ...props }: React.ComponentProps<"
   useEffect(() => setFailed(false), [src]);
   const offline = useStore(offlineStore, (state) => state.offline);
   if (failed && offline) return <span className="image-unavailable">{t("atoms.not_downloaded_connect_to_view_it", { value1: (alt || t("ModelPicker.images")) })}</span>;
-  return <img {...props} src={src} alt={alt} onLoad={() => setFailed(false)} onError={() => setFailed(true)} />;
+  return <img {...props} src={assetUrl(src)} alt={alt} onLoad={() => setFailed(false)} onError={() => setFailed(true)} />;
 }
 
 /** Images always open through the server-issued URL, never a data: blob. */
@@ -51,7 +52,7 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
       {assets.map((asset) => (
         <a
           key={asset.id}
-          href={asset.url}
+          href={assetUrl(asset.url)}
           target="_blank"
           rel="noopener noreferrer"
           title={`${asset.fileName} · ${formatBytes(asset.byteSize)}`}
@@ -73,7 +74,7 @@ export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
       {files.length ? (
         <div className="message-files">
           {files.map((asset) => (
-            <a key={asset.id} className="message-file" href={asset.url} download={asset.fileName}>
+            <a key={asset.id} className="message-file" href={assetUrl(asset.url)} download={asset.fileName}>
               <FileText size={18} aria-hidden="true" />
               <span><strong>{asset.fileName}</strong><small>{formatBytes(asset.byteSize)}</small></span>
               <Download size={16} aria-hidden="true" />

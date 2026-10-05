@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { ModelInput, ModelSettings } from "@llm-chat/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "./app";
+import { offlineSourceId } from "./offline-history";
 import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
 import { LocalContainerEngine } from "./container-engine";
@@ -240,6 +241,53 @@ describe("server API", () => {
     dirs.push(dir);
     await expect(buildApp({ dataFile: join(dir, "test.sqlite"), logger: false, webRoot: join(dir, "missing") }))
       .rejects.toThrow("Web build artifact is missing");
+    const webRoot = testWebRoot(dir);
+    rmSync(join(webRoot, "app-shell.json"));
+    await expect(buildApp({ dataFile: join(dir, "test.sqlite"), logger: false, webRoot }))
+      .rejects.toThrow("app-shell.json");
+  });
+
+  it("lets other channels of the same site reach this server and nothing else", async () => {
+    const app = await testApp();
+    const identity = await app.inject({ method: "GET", url: "/api/identity", headers: { cookie: "" } });
+    expect(identity.statusCode).toBe(200);
+    const { id } = identity.json() as { id: string };
+    expect(id).toBe(offlineSourceId(app.store));
+    expect(identity.headers["x-llm-chat-server-id"]).toBe(id);
+    expect(identity.headers["cross-origin-resource-policy"]).toBe("same-site");
+
+    const host = "chat.example.com:9443";
+    const sibling = "https://v4.example.com";
+    const preflight = await app.inject({ method: "OPTIONS", url: "/api/conversations", headers: {
+      host, origin: sibling, "sec-fetch-site": "same-site", "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type, x-llm-chat-request"
+    } });
+    expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers).toMatchObject({
+      "access-control-allow-origin": sibling, "access-control-allow-credentials": "true", "access-control-max-age": "7200"
+    });
+    expect(String(preflight.headers["access-control-allow-headers"])).toContain("x-llm-chat-request-id");
+    const created = await app.inject({ method: "POST", url: "/api/conversations", payload: { agentId: app.store.getSettings().defaultAgentId },
+      headers: { host, origin: sibling, "sec-fetch-site": "same-site" } });
+    expect(created.statusCode).toBe(201);
+    expect(created.headers["access-control-allow-origin"]).toBe(sibling);
+    expect(String(created.headers["access-control-expose-headers"])).toContain("x-llm-chat-server-id");
+    const shell = await app.inject({ method: "GET", url: "/app-shell.json", headers: { host, origin: sibling, "sec-fetch-site": "same-site" } });
+    expect(shell.headers["access-control-allow-origin"]).toBe(sibling);
+    expect(String(shell.headers["content-security-policy"])).toContain("connect-src 'self' example.com:* *.example.com:*");
+    expect(String(shell.headers["content-security-policy"])).toContain("img-src 'self' data: blob: example.com:* *.example.com:*");
+
+    for (const [origin, fetchSite] of [["https://chat.other.example", "same-site"], [sibling, "cross-site"]] as const) {
+      const rejected = await app.inject({ method: "POST", url: "/api/conversations", payload: {},
+        headers: { host, origin, "sec-fetch-site": fetchSite } });
+      expect(rejected.statusCode).toBe(403);
+      expect(rejected.headers["access-control-allow-origin"]).toBeUndefined();
+    }
+    const ip = await app.inject({ method: "GET", url: "/api/identity", headers: { host: "192.0.2.1:3000", origin: "http://192.0.2.1:4000", "sec-fetch-site": "same-site" } });
+    expect(ip.headers["access-control-allow-origin"]).toBe("http://192.0.2.1:4000");
+    expect(String(ip.headers["content-security-policy"])).toContain("connect-src 'self' 192.0.2.1:*;");
+    const otherIp = await app.inject({ method: "GET", url: "/api/identity", headers: { host: "192.0.2.1:3000", origin: "http://192.0.2.2:3000", "sec-fetch-site": "same-site" } });
+    expect(otherIp.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
   it("ignores forwarded protocol and IP headers for cookies and login rate limits", async () => {
@@ -1356,6 +1404,7 @@ function testWebRoot(dir: string): string {
   writeFileSync(join(root, "index.html"), '<html><script src="/assets/index-12345678.js"></script></html>');
   writeFileSync(join(root, "assets/index-12345678.js"), "export const app = true;");
   writeFileSync(join(root, "render-frame.html"), "<html></html>");
+  writeFileSync(join(root, "app-shell.json"), JSON.stringify({ id: "test", protocol: 1, entries: [] }));
   return root;
 }
 

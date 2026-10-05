@@ -27,6 +27,7 @@ import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, ErrorState, Field, LoadingState, Switch } from "../lib/ui";
 import { ExpandableTextarea } from "../components/ExpandableTextarea";
 import { RoleplayTab } from "../components/agent/RoleplayTab";
+import { assetUrl } from "../lib/server-channel";
 
 const CONTEXT_POLICIES: ContextPolicy[] = ["auto", "trim", "summarize", "full"];
 function getTABS() { return [
@@ -464,7 +465,7 @@ function AvatarTab({ agent, onChanged }: { agent: AgentDto; onChanged: (agent: A
           <img
             className="avatar-img"
             style={{ width: 96, height: 96 }}
-            src={`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`}
+            src={assetUrl(`/api/agents/${agent.id}/avatar?t=${agent.updatedAt}`)}
             alt={t("AgentEditorView.avatar_for", { value1: (agent.name) })}
           />
         ) : (

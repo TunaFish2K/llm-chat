@@ -1405,6 +1405,8 @@
 .choice-fieldset .checkbox-row { min-height: 32px; align-items: center; overflow-wrap: anywhere; cursor: pointer; }
 .choice-fieldset .checkbox-row input { flex: 0 0 auto; margin: 0; width: 15px; height: 15px; }
 .choice-fieldset .checkbox-row:has(input:disabled) { opacity: 0.55; cursor: default; }
+.server-channel-row { justify-content: space-between; }
+.server-channel-row .checkbox-row { flex: 1 1 auto; min-width: 0; }
 
 /* Connection cards collapse to their header; search forces matches open. */
 .connection-toggle {

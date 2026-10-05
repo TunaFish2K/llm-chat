@@ -34,6 +34,7 @@ import { EditForkDialog } from "../components/chat/dialogs";
 import { RoleplayConversationDialog } from "../components/chat/RoleplayConversationDialog";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
 import { Markdown } from "../lib/markdown";
+import { assetUrl } from "../lib/server-channel";
 
 const TrajectoryView = lazy(() => import("./TrajectoryView").then((module) => ({ default: module.TrajectoryView })));
 const ConversationTasksView = lazy(() =>
@@ -375,7 +376,7 @@ export function ChatView({
         onOpenRoleplay={openRoleplay}
       />
 
-      {expression ? <img className="roleplay-expression" src={expression.uri} alt="" aria-hidden="true" /> : null}
+      {expression ? <img className="roleplay-expression" src={assetUrl(expression.uri)} alt="" aria-hidden="true" /> : null}
 
       {view !== "chat" && conversation ? (
         <section className="conversation-overlay" aria-label={view === "tasks" ? t("TrajectoryView.background_tasks") : t("ChatView.activity")}>

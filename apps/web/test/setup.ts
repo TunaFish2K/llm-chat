@@ -10,6 +10,7 @@ import { offlineStore } from "../src/lib/offline-history";
 import { clearStartupCache } from "../src/lib/startup-cache";
 import { saveRequestRetries } from "../src/lib/request-preferences";
 import { resetComposerWrites } from "../src/lib/composer-drafts";
+import { SERVER_CHANNELS_KEY } from "../src/lib/server-channel";
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, vi } from "vitest";
@@ -47,13 +48,15 @@ if (!HTMLElement.prototype.scrollTo) HTMLElement.prototype.scrollTo = function (
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
   readonly url: string;
+  readonly withCredentials: boolean;
   readonly listeners = new Map<string, Array<(event: MessageEvent) => void>>();
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
 
-  constructor(url: string) {
+  constructor(url: string, init?: EventSourceInit) {
     this.url = url;
+    this.withCredentials = init?.withCredentials ?? false;
     FakeEventSource.instances.push(this);
   }
 
@@ -107,6 +110,8 @@ afterEach(() => {
   memoryStorage.clear();
   tabStorage.clear();
   vi.unstubAllGlobals();
+  // Clearing storage without an event would keep the channel store's previous state.
+  window.dispatchEvent(new StorageEvent("storage", { key: SERVER_CHANNELS_KEY }));
   vi.restoreAllMocks();
   FakeEventSource.instances.length = 0;
 });

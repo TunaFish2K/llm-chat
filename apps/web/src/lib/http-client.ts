@@ -4,6 +4,7 @@ import { t } from "./i18n";
 import type { FileAssetDto } from "@llm-chat/contracts";
 import { requestRetries } from "./request-preferences";
 import { retryRequest } from "./request-retry";
+import { acceptServerId, apiBase, apiCredentials, apiUrl, ensureChannelReady, SERVER_ID_HEADER } from "./server-channel";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -31,6 +32,28 @@ export function onAuthRequired(listener: AuthListener): () => void {
 
 function emitAuthRequired(): void {
   for (const listener of authListeners) listener();
+}
+
+function channelMismatch(): ApiRequestError {
+  const i18n = { key: "http_client.server_channel_mismatch" } as const;
+  return new ApiRequestError(409, "server_channel_mismatch", t(i18n.key), undefined, i18n);
+}
+
+/**
+ * Sends an API request through the active server channel. Responses from a
+ * channel that reports another server identity never reach the caller.
+ */
+export function channelFetch(path: string, init: RequestInit): Promise<Response> {
+  const send = () => fetch(apiUrl(path), { ...init, credentials: apiCredentials() }).then((response) => {
+    if (!acceptServerId(response.headers.get(SERVER_ID_HEADER))) throw channelMismatch();
+    return response;
+  });
+  // The page origin needs no identity check; send in the same tick as before.
+  if (!apiBase()) return send();
+  return ensureChannelReady().then((matches) => {
+    if (!matches) throw channelMismatch();
+    return send();
+  });
 }
 
 export interface HttpResult<T> { data: T; status: number }
@@ -74,10 +97,9 @@ export function httpRequest<T>(method: string, path: string, body: unknown, sign
 async function performHttpRequest<T>(method: string, path: string, body: string | null, signal: AbortSignal, requestId?: string): Promise<HttpResult<T>> {
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await channelFetch(path, {
       method,
       signal,
-      credentials: "same-origin",
       headers: {
         ...(body !== null ? { "content-type": "application/json" } : {}),
         ...(requestId ? { "x-llm-chat-request": "1", "x-llm-chat-request-id": requestId } : {})
@@ -85,6 +107,7 @@ async function performHttpRequest<T>(method: string, path: string, body: string 
       body
     });
   } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
     throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"), undefined, { key: "http_client.network_request_failed" });
   }
   if (response.status === 401) {
@@ -153,10 +176,9 @@ export function uploadFileHttp(file: File, signal = new AbortController().signal
 }
 
 async function performFileUpload(file: File, requestId: string, signal: AbortSignal): Promise<FileAssetDto> {
-  const response = await fetch("/api/files", {
+  const response = await channelFetch("/api/files", {
     method: "POST",
     signal,
-    credentials: "same-origin",
     headers: {
       "content-type": "application/octet-stream",
       "x-llm-chat-request": "1",

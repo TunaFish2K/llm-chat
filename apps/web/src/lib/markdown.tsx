@@ -14,6 +14,7 @@ import "streamdown/styles.css";
 import { RichPreview } from "../components/RichPreview";
 import { splitRichContent } from "./rich-content";
 import { MarkdownTable } from "../components/MarkdownTable";
+import { assetUrl } from "./server-channel";
 
 const INLINE_MATH = /\\\((.+?)\\\)/g;
 const BLOCK_MATH = /\\\[(.+?)\\\]/gs;
@@ -48,7 +49,7 @@ function SafeLink({ href, children, ...props }: ComponentProps<"a">) {
     return <span>{children}</span>;
   }
   return (
-    <a {...props} href={href} target="_blank" rel="noopener noreferrer" title={textOf(children)} download={localFile || undefined}>
+    <a {...props} href={localFile ? assetUrl(href) : href} target="_blank" rel="noopener noreferrer" title={textOf(children)} download={localFile || undefined}>
       {children}
     </a>
   );
@@ -71,7 +72,7 @@ function SafeImage({ src, alt = "", ...props }: ComponentProps<"img">) {
   const safe = imageSource(src);
   if (!safe) return alt ? <span className="image-unavailable">{t("markdown.image", { value1: (alt) })}</span> : null;
   return (
-    <a className="markdown-image-link" href={safe} target="_blank" rel="noopener noreferrer">
+    <a className="markdown-image-link" href={assetUrl(safe)} target="_blank" rel="noopener noreferrer">
       <OfflineAwareImage {...props} src={safe} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
     </a>
   );

@@ -2,7 +2,7 @@ import { withMessage } from "@llm-chat/i18n";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildApp, assertWebArtifact } from "./app";
+import { buildApp, assertWebArtifact, WEB_ARTIFACT_FILES } from "./app";
 import { BUILD_ID } from "./runtime/build-info";
 import { startShutdownDeadline } from "./runtime/shutdown";
 import { loadRuntimeConfig, selectRuntimeConfig } from "./runtime/config";
@@ -85,7 +85,7 @@ async function main(): Promise<void> {
       if (!ready || closing) return reply.code(503).send({ ok: false, buildId: BUILD_ID });
       try {
         app!.store.sqlite.prepare("SELECT 1").get();
-        if (!existsSync(resolve(config.webRoot, "index.html"))) {
+        if (WEB_ARTIFACT_FILES.some((file) => !existsSync(resolve(config.webRoot, file)))) {
           return reply.code(503).send({ ok: false, buildId: BUILD_ID });
         }
         return { ok: true, buildId: BUILD_ID };

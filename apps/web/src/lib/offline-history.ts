@@ -3,6 +3,8 @@ import { t, localizedError } from "./i18n";
 import { historyImageUrls } from "./offline-assets";
 import { prepareOfflineIndex } from "./offline-index";
 import { clearStartupCache } from "./startup-cache";
+import { channelFetch } from "./http-client";
+import { apiCredentials, assetUrl } from "./server-channel";
 export { historyImageUrls } from "./offline-assets";
 import { conversationDeleted, deletedConversationIds, deletionRevision, markConversationsDeleted, setConversationSource } from "./conversation-lifecycle";
 import { draftImageUrls } from "./composer-draft-storage";
@@ -36,7 +38,7 @@ export function markOffline(): void {
 export function isOffline(): boolean { return offlineStore.get().offline; }
 
 async function fetchJson<T>(path: string, signal: AbortSignal): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), cache: "no-store" });
+  const response = await channelFetch(path, { signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]), cache: "no-store" });
   if (response.status === 401) { window.dispatchEvent(new Event("llm-chat:offline-auth-required")); throw localizedError("offline_history.sign_in_again"); }
   if (response.status === 404) {
     const body = await response.clone().json().catch(() => null);
@@ -175,7 +177,8 @@ export function syncOfflineHistory(): Promise<void> {
           signal.throwIfAborted();
           if (await cache.match(url)) continue;
           try {
-            const response = await fetch(url, { credentials: "same-origin", signal });
+            // Images are cached under their server path, whichever channel delivered them.
+            const response = await fetch(assetUrl(url), { credentials: apiCredentials(), signal });
             if (response.status === 401) window.dispatchEvent(new Event("llm-chat:offline-auth-required"));
             if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) throw localizedError("offline_history.image_not_downloaded");
             signal.throwIfAborted();

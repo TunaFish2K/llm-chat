@@ -120,7 +120,7 @@ test("强制更新修复同版本损坏和缺失的缓存，保留登录与本�
   const force = card.getByRole("button", { name: "强制更新", exact: true });
   await expect(force).toBeEnabled();
   const damaged = await page.evaluate(async () => {
-    const name = (await caches.keys()).find(name => name.startsWith("workbox-precache-"))!;
+    const name = (await caches.keys()).find(name => /^llm-chat-shell-[\da-f]{64}$/.test(name))!;
     const cache = await caches.open(name);
     const keys = await cache.keys();
     const index = keys.find(key => new URL(key.url).pathname === "/index.html")!;

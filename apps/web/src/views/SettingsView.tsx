@@ -8,6 +8,7 @@ import { useErrorState, displayError } from "../lib/error-display";
 import { LanguagePicker } from "../components/LanguagePicker";
 import { t, useLocale, localized } from "../lib/i18n";
 import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
+import { ServerChannelSettings } from "../components/ServerChannelSettings";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { stopNotificationSession } from "../lib/notifications";
 import { clearOfflineHistory } from "../lib/offline-history";
@@ -271,7 +272,8 @@ function GeneralSection() {
   const agents = useStore(appStore, (s) => s.agents);
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
 
-  if (!settings) return <div className="settings-panels"><RequestSettings /><LoadingState /></div>;
+  // Channels stay reachable while settings cannot load, so a wrong channel can be left.
+  if (!settings) return <div className="settings-panels"><RequestSettings /><ServerChannelSettings /><LoadingState /></div>;
 
   const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
     void updateSettingsImmediately(value).then(() => toast("success", localized("SettingsView.settings_saved"))).catch(toastError);
@@ -281,6 +283,7 @@ function GeneralSection() {
     <div className="settings-panels">
       <div className="card"><LanguagePicker /></div>
       <RequestSettings />
+      <ServerChannelSettings />
       <OfflineHistorySettings />
       <AppUpdateCard />
       <div className="card"><h3>{t("SettingsView.quick_tour")}</h3>

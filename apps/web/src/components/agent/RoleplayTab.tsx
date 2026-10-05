@@ -18,6 +18,7 @@ import { refreshAgents, toast, toastError } from "../../lib/app-state";
 import { fileToBase64 } from "../../lib/format";
 import { EmptyState, Field, Switch } from "../../lib/ui";
 import { ExpandableTextarea } from "../ExpandableTextarea";
+import { assetUrl } from "../../lib/server-channel";
 
 function getBLOCK_KINDS(): Array<[RoleplayPromptBlock["kind"], string]> { return [
   ["main", t("RoleplayTab.main_prompt")], ["lore_before", t("RoleplayTab.world_info_before_character")], ["character", t("RoleplayTab.character_definition")],
@@ -335,9 +336,9 @@ function AssetsEditor({ agent, config, onReplace }: { agent: AgentDto; config: A
       </div>
       {config.assets.length ? <div className="roleplay-asset-list">{config.assets.map((asset) => (
         <div className="roleplay-asset" key={asset.id}>
-          {asset.mimeType?.startsWith("image/") ? <img src={asset.uri} alt="" /> : <span className="roleplay-file-icon"><File size={18} /></span>}
+          {asset.mimeType?.startsWith("image/") ? <img src={assetUrl(asset.uri)} alt="" /> : <span className="roleplay-file-icon"><File size={18} /></span>}
           <span className="grow"><strong>{asset.name}</strong><small>{asset.type} · {asset.ext}</small></span>
-          <a className="btn ghost icon" href={asset.uri} download={asset.name} aria-label={t("RoleplayTab.download", { value1: (asset.name) })}>{asset.mimeType?.startsWith("image/") ? <Image size={15} /> : <File size={15} />}</a>
+          <a className="btn ghost icon" href={assetUrl(asset.uri)} download={asset.name} aria-label={t("RoleplayTab.download", { value1: (asset.name) })}>{asset.mimeType?.startsWith("image/") ? <Image size={15} /> : <File size={15} />}</a>
           <button className="btn ghost icon danger" disabled={busy} aria-label={t("WorkspaceSidebar.delete", { value1: (asset.name) })} onClick={() => void (async () => {
             setBusy(true); try { await endpoints.deleteRoleplayAsset(agent.id, asset.id); const updated = await endpoints.agent(agent.id); onReplace(updated); await refreshAgents(); } catch (error) { toastError(error); } finally { setBusy(false); }
           })()}><Trash2 size={15} /></button>

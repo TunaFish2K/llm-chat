@@ -238,6 +238,8 @@ async function assertRequiredWebArtifact(buildId) {
   await mkdir(webRoot, { recursive: true });
   const index = join(webRoot, "index.html");
   await writeFile(index, "<!doctype html><title>Web readiness test</title>");
+  const shell = join(webRoot, "app-shell.json");
+  await writeFile(shell, `${JSON.stringify({ id: "test", protocol: 1, entries: [] })}\n`);
   const server = launchNode([entry, "--config", configPath], process.env);
   const baseUrl = `http://127.0.0.1:${port}`;
   await waitForHttp(`${baseUrl}/readyz`, server, 20_000);
@@ -246,6 +248,11 @@ async function assertRequiredWebArtifact(buildId) {
   const missingProbe = await fetchJson(`${baseUrl}/readyz`);
   assert(missingProbe.response.status === 503 && missingProbe.body.ok === false, "readiness ignored the missing Web artifact");
   assert((await fetchJson(`${baseUrl}/healthz`)).response.status === 200, "Web readiness failure affected liveness");
+  await writeFile(index, "<!doctype html><title>Web readiness test</title>");
+  assert((await fetchJson(`${baseUrl}/readyz`)).response.status === 200, "readiness did not recover with the Web artifact");
+  await rm(shell);
+  const missingShell = await fetchJson(`${baseUrl}/readyz`);
+  assert(missingShell.response.status === 503 && missingShell.body.ok === false, "readiness ignored the missing app shell manifest");
   server.child.kill("SIGTERM");
   assert((await waitForExit(server, 35_000)).code === 0, "isolated release did not close cleanly");
 }
