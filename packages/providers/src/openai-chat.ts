@@ -14,7 +14,12 @@ export class OpenAiChatAdapter implements ProviderAdapter {
     const effort = providerReasoningEffort(request.settings);
     const messages: Array<Record<string, unknown>> = [];
     if (request.systemPrompt) messages.push({ role: "system", content: request.systemPrompt });
-    for (const message of prepareMessages(request)) {
+    const prepared = prepareMessages(request);
+    // DeepSeek thinking mode rejects any assistant turn without reasoning_content once
+    // the upstream has shown it uses that field; foreign or legacy turns get an empty one.
+    const requiresReasoningContent = prepared.some((message) =>
+      replayedReasoning(message.providerPayload)?.field === "reasoning_content");
+    for (const message of prepared) {
       if (message.role === "tool") {
         for (const result of message.toolResults ?? []) {
           messages.push({ role: "tool", tool_call_id: result.callId, content: result.content });
@@ -30,7 +35,14 @@ export class OpenAiChatAdapter implements ProviderAdapter {
             ...(message.text ? [{ type: "text", text: message.text }] : [])
           ]
         : message.text || null;
+      // A reasoning-only step has nothing Chat Completions accepts as an assistant turn.
+      if (message.role === "assistant" && !content && !message.toolCalls?.length) continue;
       const converted: Record<string, unknown> = { role: message.role, content };
+      if (message.role === "assistant") {
+        const replayed = replayedReasoning(message.providerPayload);
+        if (replayed) converted[replayed.field] = replayed.content;
+        else if (requiresReasoningContent) converted.reasoning_content = "";
+      }
       if (message.role === "assistant" && message.toolCalls?.length) {
         converted.tool_calls = message.toolCalls.map((call) => ({
           id: call.id,
@@ -75,6 +87,7 @@ export class OpenAiChatAdapter implements ProviderAdapter {
 
     let text = "";
     let reasoning = "";
+    let usesReasoningContent = false;
     let refusal = "";
     let ended = false;
     let stopReason = "stop";
@@ -94,9 +107,11 @@ export class OpenAiChatAdapter implements ProviderAdapter {
         text += delta.content;
         yield { type: "block", index: 1, blockType: "text", content: text, complete: false };
       }
-      const reasoningDelta = delta?.reasoning_content ?? delta?.reasoning;
-      if (typeof reasoningDelta === "string") {
-        reasoning += reasoningDelta;
+      // An empty reasoning_content key still marks an upstream that wants that field replayed.
+      if (typeof delta?.reasoning_content === "string") usesReasoningContent = true;
+      const reasoningText = reasoningDelta(delta);
+      if (reasoningText) {
+        reasoning += reasoningText;
         yield { type: "block", index: 0, blockType: "reasoning", content: reasoning, complete: false };
       }
       if (typeof delta?.refusal === "string") {
@@ -136,6 +151,11 @@ export class OpenAiChatAdapter implements ProviderAdapter {
     for (const call of toolCalls.values()) validateToolCall(call);
     assertStreamComplete(ended, Boolean(text.trim() || refusal.trim() || toolCalls.size));
     if (reasoning) yield { type: "block", index: 0, blockType: "reasoning", content: reasoning, complete: true };
+    if (reasoning) {
+      // Returned in the field this upstream uses when this history is replayed.
+      const field: ReasoningField = usesReasoningContent ? "reasoning_content" : "reasoning";
+      yield { type: "provider-context", payload: [{ type: "reasoning_content", field, content: reasoning }] };
+    }
     if (text) yield { type: "block", index: 1, blockType: "text", content: text, complete: true };
     if (refusal) yield { type: "block", index: 2, blockType: "refusal", content: refusal, complete: true };
     for (const [, call] of [...toolCalls.entries()].sort(([a], [b]) => a - b)) {
@@ -143,6 +163,31 @@ export class OpenAiChatAdapter implements ProviderAdapter {
     }
     yield { type: "complete", stopReason };
   }
+}
+
+type ReasoningField = "reasoning_content" | "reasoning";
+
+function replayedReasoning(payload: unknown): { field: ReasoningField; content: string } | undefined {
+  if (!Array.isArray(payload)) return undefined;
+  for (const item of payload as Array<Record<string, unknown>>) {
+    if (item?.type === "reasoning_content" && typeof item.content === "string"
+      && (item.field === "reasoning_content" || item.field === "reasoning")) {
+      return { field: item.field, content: item.content };
+    }
+  }
+  return undefined;
+}
+
+/** Relays may send an empty field next to the populated one, so take the first non-empty text. */
+function reasoningDelta(delta: Record<string, unknown> | undefined): string {
+  if (!delta) return "";
+  for (const value of [delta.reasoning_content, delta.reasoning]) {
+    if (typeof value === "string" && value) return value;
+  }
+  if (!Array.isArray(delta.reasoning_details)) return "";
+  return (delta.reasoning_details as Array<Record<string, unknown>>)
+    .map((detail) => typeof detail?.text === "string" ? detail.text : typeof detail?.summary === "string" ? detail.summary : "")
+    .join("");
 }
 
 function number(value: unknown): number | undefined {

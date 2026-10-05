@@ -264,6 +264,29 @@ describe("provider adapters", () => {
     expect(events.at(-1)).toEqual({ type: "complete", stopReason: "stop" });
   });
 
+  it.each([
+    [{ reasoning_content: "", reasoning: "想" }, "想", "reasoning_content"],
+    [{ reasoning_content: null, reasoning: "想" }, "想", "reasoning"],
+    [{ reasoning_details: [{ type: "reasoning.text", text: "想" }] }, "想", "reasoning"],
+    [{ reasoning_content: "" }, "", undefined]
+  ])("reads Chat reasoning from relay delta %j", async (delta, content, field) => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      frame({ choices: [{ delta }] }),
+      frame({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }),
+      "data: [DONE]\n\n"
+    ])));
+    const events = await collect(new OpenAiChatAdapter().stream(request("openai-chat")));
+    const reasoning = events.filter((event) => event.type === "block" && event.blockType === "reasoning");
+    const context = events.filter((event) => event.type === "provider-context");
+    if (content) {
+      expect(reasoning.at(-1)).toMatchObject({ content, complete: true });
+      expect(context).toEqual([{ type: "provider-context", payload: [{ type: "reasoning_content", field, content }] }]);
+    } else {
+      expect(reasoning).toEqual([]);
+      expect(context).toEqual([]);
+    }
+  });
+
   it("normalizes Chat cache usage across official and vendor dialects", async () => {
     const rawUsages = [
       {
@@ -315,6 +338,71 @@ describe("provider adapters", () => {
     expect(sentBody?.input).toEqual(expect.arrayContaining([expect.objectContaining({ id: "old" })]));
     expect(events).toContainEqual({ type: "provider-context", payload: [{ type: "reasoning", id: "r1", encrypted_content: "opaque" }] });
     expect(events).toContainEqual(expect.objectContaining({ type: "block", blockType: "text", content: "答案", complete: true }));
+  });
+
+  it("replays Chat reasoning_content to the same connection and fills it for other assistant turns", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return streamResponse([
+        frame({ choices: [{ delta: { reasoning_content: "想" } }] }),
+        frame({ choices: [{ delta: { reasoning_content: "好了" } }] }),
+        frame({ choices: [{ delta: { content: "答案" }, finish_reason: "stop" }] }),
+        "data: [DONE]\n\n"
+      ]);
+    }));
+    const req = request("openai-chat");
+    const source = { providerConnectionId: req.connection.id, providerProtocol: req.connection.protocol, providerModelKey: req.modelKey };
+    req.messages = [
+      { role: "user", text: "问题" },
+      { role: "assistant", text: "旧模型回答", providerConnectionId: "other" },
+      { role: "user", text: "查一下" },
+      {
+        role: "assistant", text: "", ...source,
+        toolCalls: [{ id: "call_1", name: "lookup", arguments: "{}" }],
+        providerPayload: [{ type: "reasoning_content", field: "reasoning_content", content: "先查" }]
+      },
+      { role: "tool", text: "", toolResults: [{ callId: "call_1", name: "lookup", content: "结果" }] },
+      { role: "assistant", text: "", ...source, providerPayload: [{ type: "reasoning_content", field: "reasoning_content", content: "孤立" }] }
+    ];
+    const events = await collect(new OpenAiChatAdapter().stream(req));
+    const assistants = (sentBody?.messages as Array<Record<string, unknown>>).filter((message) => message.role === "assistant");
+    expect(assistants).toEqual([
+      { role: "assistant", content: "旧模型回答", reasoning_content: "" },
+      expect.objectContaining({ content: null, reasoning_content: "先查", tool_calls: [expect.objectContaining({ id: "call_1" })] })
+    ]);
+    expect(events).toContainEqual({ type: "provider-context", payload: [{ type: "reasoning_content", field: "reasoning_content", content: "想好了" }] });
+  });
+
+  it("keeps the Chat reasoning field name and adds nothing when the upstream has no reasoning", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return streamResponse([
+        frame({ choices: [{ delta: { reasoning: "思考" } }] }),
+        frame({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }),
+        "data: [DONE]\n\n"
+      ]);
+    }));
+    const req = request("openai-chat");
+    const source = { providerConnectionId: req.connection.id, providerProtocol: req.connection.protocol, providerModelKey: req.modelKey };
+    req.messages = [
+      { role: "assistant", text: "plain" },
+      { role: "assistant", text: "routed", ...source, providerPayload: [{ type: "reasoning_content", field: "reasoning", content: "旧思考" }] },
+      { role: "user", text: "next" }
+    ];
+    const events = await collect(new OpenAiChatAdapter().stream(req));
+    const history = (index: number) => (bodies[index]?.messages as Array<Record<string, unknown>>).filter((message) => message.role !== "system");
+    expect(history(0)).toEqual([
+      { role: "assistant", content: "plain" },
+      { role: "assistant", content: "routed", reasoning: "旧思考" },
+      { role: "user", content: "next" }
+    ]);
+    expect(events).toContainEqual({ type: "provider-context", payload: [{ type: "reasoning_content", field: "reasoning", content: "思考" }] });
+    req.messages = [{ role: "assistant", text: "routed", ...source, providerModelKey: "other",
+      providerPayload: [{ type: "reasoning_content", field: "reasoning", content: "旧思考" }] }];
+    await collect(new OpenAiChatAdapter().stream(req));
+    expect(history(1)).toEqual([{ role: "assistant", content: "routed" }]);
   });
 
   it("sends native image generation and returns the final image result", async () => {

@@ -7,11 +7,13 @@ export function projectMessages(messages: ProviderMessage[], connection: Provide
     const message = { ...source };
     const sameSource = message.providerConnectionId === connection.id
       && message.providerProtocol === connection.protocol && message.providerModelKey === modelKey;
-    if (!sameSource || connection.protocol === "openai-chat" || !Array.isArray(message.providerPayload)) {
+    if (!sameSource || !Array.isArray(message.providerPayload)) {
       delete message.providerPayload;
     } else {
       const payload = message.providerPayload.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
-      message.providerPayload = connection.protocol === "openai-responses"
+      message.providerPayload = connection.protocol === "openai-chat"
+        ? payload.filter((item) => item.type === "reasoning_content" && typeof item.content === "string")
+        : connection.protocol === "openai-responses"
         ? payload.filter((item) => item.type === "reasoning" || item.type === "image_generation_call")
         : payload.filter((item) => item.type === "redacted_thinking"
           || (item.type === "thinking" && typeof item.signature === "string" && Boolean(item.signature)));
