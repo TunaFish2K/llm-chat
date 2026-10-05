@@ -127,7 +127,7 @@ test("拒绝报告其他服务器标识的通道且不发送业务请求", async
   const stranger = await channelProxy(AUTH_URL);
   try {
     await page.goto(`${home.origin}/settings/general`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByLabel("服务器通道", { exact: true })).toContainText("已绑定服务器");
+    await expect(page.getByLabel("服务器通道", { exact: true })).toContainText("后端标识符：");
     const card = await addChannel(page, stranger.origin);
     await card.getByLabel("通道地址").fill("http://localhost:1");
     await card.getByRole("button", { name: "添加", exact: true }).click();
@@ -139,7 +139,7 @@ test("拒绝报告其他服务器标识的通道且不发送业务请求", async
     expect(stranger.requests.filter((line) => line.includes("/api/") && !line.startsWith("GET /api/identity"))).toEqual([]);
     // Leaving the wrong channel needs no server.
     await Promise.all([page.waitForEvent("domcontentloaded"), channels.getByRole("radio", { name: /当前地址/ }).check()]);
-    await expect(page.getByLabel("服务器通道", { exact: true })).toContainText("已绑定服务器");
+    await expect(page.getByLabel("服务器通道", { exact: true })).toContainText("后端标识符：");
   } finally {
     try { if (!page.isClosed()) await page.goto("about:blank"); }
     finally { await home.close(); await stranger.close(); }

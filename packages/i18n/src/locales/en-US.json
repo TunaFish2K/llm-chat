@@ -1541,10 +1541,8 @@
   "http_client.server_channel_mismatch": "This server channel reaches a different server. Switch back to the current address in Settings, or reset the server binding.",
   "pwa.update_requires_page_address": "This update changes the update service. Check for updates on a network that can reach {{value1}}.",
   "ServerChannelSettings.title": "Server channels",
-  "ServerChannelSettings.description": "Other addresses of this same server, such as a direct IPv6 address or another port. Saved only on this device. Requests go through the selected channel, and each channel needs its own sign-in.",
-  "ServerChannelSettings.active_channel": "Channel in use",
-  "ServerChannelSettings.current_address": "Current address ({{value1}})",
-  "ServerChannelSettings.remove": "Remove",
+  "ServerChannelSettings.description": "Other addresses of the same backend. Saved on this device; sign in once per channel.",
+  "ServerChannelSettings.current_address": "Current address",
   "ServerChannelSettings.remove_channel": "Remove channel {{value1}}",
   "ServerChannelSettings.address": "Channel address",
   "ServerChannelSettings.add": "Add",
@@ -1554,8 +1552,9 @@
   "ServerChannelSettings.error_current": "This is the current address",
   "ServerChannelSettings.error_duplicate": "This channel is already added",
   "ServerChannelSettings.not_saved": "Channel settings were not saved and may be lost after a refresh.",
-  "ServerChannelSettings.bound_server": "Bound to server {{value1}}…; only channels reporting the same identity are accepted.",
-  "ServerChannelSettings.unbound_server": "No server is bound yet; the first server reached becomes the bound one.",
+  "ServerChannelSettings.bound_server": "Backend ID: {{value1}}",
+  "ServerChannelSettings.unbound_server": "Backend ID: not bound",
   "ServerChannelSettings.reset_binding": "Reset server binding",
-  "ServerChannelSettings.reset_binding_message": "Clears offline history and the startup cache on this device, then binds the next server reached. Use this only when the server was actually replaced."
+  "ServerChannelSettings.reset_binding_message": "Clears offline history and the startup cache on this device, then binds the next server reached. Use this only when the server was actually replaced.",
+  "ServerChannelSettings.active": "In use"
 }
