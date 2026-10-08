@@ -12,16 +12,52 @@ export interface ComposerDraft {
 }
 
 const prefix = "llm-chat.composer.v1.";
+// Drafts survive the OS killing an installed app, like a native composer.
+const DRAFT_TTL = 30 * 24 * 60 * 60 * 1000;
 const fallback = new Map<string, ComposerDraft>();
 let warned = false;
 const keyFor = (id: string | null) => prefix + (id ?? "new");
 
+function storedDraftKeys(storage: Storage = localStorage): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key?.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+}
+
+function draftKeys(): string[] {
+  const keys = new Set(fallback.keys());
+  try { for (const key of storedDraftKeys()) keys.add(key); } catch {}
+  return [...keys];
+}
+
+/** Move drafts from the per-tab store used by earlier releases, and drop abandoned ones. */
+export function migrateComposerDrafts(now = Date.now()): void {
+  try {
+    for (const key of storedDraftKeys(sessionStorage)) {
+      const raw = sessionStorage.getItem(key);
+      if (raw !== null && localStorage.getItem(key) === null) localStorage.setItem(key, raw);
+      sessionStorage.removeItem(key);
+    }
+  } catch {}
+  try {
+    for (const key of storedDraftKeys()) {
+      let savedAt: unknown;
+      try { savedAt = (JSON.parse(localStorage.getItem(key) ?? "null") as { savedAt?: unknown } | null)?.savedAt; } catch {}
+      if (typeof savedAt === "number" && now - savedAt > DRAFT_TTL) localStorage.removeItem(key);
+    }
+  } catch {}
+}
+migrateComposerDrafts();
+
 export function readComposerDraft(id: string | null): ComposerDraft | null {
   const key = keyFor(id);
   try {
-    const raw = window.sessionStorage.getItem(key);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return fallback.get(key) ?? null;
-    const value = JSON.parse(raw) as ComposerDraft;
+    const { savedAt: _savedAt, ...value } = JSON.parse(raw) as ComposerDraft & { savedAt?: number };
     if (typeof value.text !== "string" || !Array.isArray(value.attachments) ||
       !(value.agentId === null || typeof value.agentId === "string") ||
       !(value.workspace === null || typeof value.workspace === "string") ||
@@ -39,7 +75,7 @@ export function writeComposerDraft(id: string | null, draft: ComposerDraft): voi
   if (id && conversationDeleted(id)) return;
   const key = keyFor(id);
   try {
-    window.sessionStorage.setItem(key, JSON.stringify(draft));
+    window.localStorage.setItem(key, JSON.stringify({ ...draft, savedAt: Date.now() }));
     fallback.delete(key);
   } catch {
     fallback.set(key, draft);
@@ -61,9 +97,7 @@ export function preserveDeletedDraft(id: string): void {
   writeComposerDraft(null, draft);
 }
 export function recoveredDraftIds(): string[] {
-  const keys = new Set(fallback.keys());
-  try { for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i)!); } catch {}
-  return [...keys].filter((key) => key.startsWith(prefix + "recovered-")).map((key) => key.slice(prefix.length));
+  return draftKeys().filter((key) => key.startsWith(prefix + "recovered-")).map((key) => key.slice(prefix.length));
 }
 export function swapRecoveredDraft(): ComposerDraft | null {
   const id = recoveredDraftIds()[0];
@@ -77,24 +111,19 @@ export function swapRecoveredDraft(): ComposerDraft | null {
   return draft;
 }
 export function draftImageUrls(): string[] {
-  const keys = new Set(fallback.keys());
-  try { for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i)!); } catch {}
-  return [...keys].filter((key) => key.startsWith(prefix)).flatMap((key) =>
+  return draftKeys().flatMap((key) =>
     readComposerDraft(key.slice(prefix.length) === "new" ? null : key.slice(prefix.length))?.attachments
       .filter((asset) => asset.kind === "image").map((asset) => asset.url) ?? []);
 }
 export function removeStoredComposerDraft(id: string): void {
   fallback.delete(keyFor(id));
-  try { sessionStorage.removeItem(keyFor(id)); } catch {}
+  try { localStorage.removeItem(keyFor(id)); } catch {}
 }
 
 
 /** Merge only attachment references; background uploads must not restore stale text or settings. */
 export function updateDraftAttachments(scopeId: string, attachments: FileAssetDto[]): void {
-  const keys = new Set(fallback.keys());
-  try { for (let i = 0; i < sessionStorage.length; i++) keys.add(sessionStorage.key(i)!); } catch {}
-  for (const key of keys) {
-    if (!key.startsWith(prefix)) continue;
+  for (const key of draftKeys()) {
     const id = key.slice(prefix.length) === "new" ? null : key.slice(prefix.length);
     const draft = readComposerDraft(id);
     if (draft?.uploadScopeId === scopeId) writeComposerDraft(id, { ...draft, attachments });

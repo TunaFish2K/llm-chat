@@ -4,7 +4,10 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles/index.css";
 import { installPressFeedback } from "./lib/press-feedback";
+import { rememberLaunchRoute, restoreLaunchRoute } from "./lib/launch-route";
 
+restoreLaunchRoute();
+rememberLaunchRoute();
 installPressFeedback();
 
 const container = document.getElementById("root");

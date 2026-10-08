@@ -3,6 +3,7 @@ import { preserveDeletedDraft, removeComposerDraft, swapRecoveredDraft } from ".
 import { describe, expect, it, vi } from "vitest";
 import { endpoints } from "./api";
 import { flushServerDraft, readComposerDraft, scheduleServerDraft, serializeModelSelection, writeComposerDraft, type ComposerDraft } from "./composer-drafts";
+import { migrateComposerDrafts } from "./composer-draft-storage";
 import { makeConversation } from "../../test/fixtures";
 
 const draft: ComposerDraft = { text: "未发送", attachments: [], agentId: "agent", overrides: { modelId: "model" }, workspace: "/tmp", greetingIndex: 2 };
@@ -23,23 +24,38 @@ describe("tab drafts", () => {
     for (const value of ["invalid", "null", JSON.stringify({ ...draft, text: 42 }), JSON.stringify({ ...draft, overrides: { modelId: 4 } }),
       JSON.stringify({ ...draft, attachments: null }), JSON.stringify({ ...draft, agentId: 4 }),
       JSON.stringify({ ...draft, workspace: 4 }), JSON.stringify({ ...draft, greetingIndex: -1 })]) {
-      window.sessionStorage.setItem("llm-chat.composer.v1.bad", value);
+      window.localStorage.setItem("llm-chat.composer.v1.bad", value);
       expect(readComposerDraft("bad")).toBeNull();
     }
     const asset = { id: "file", url: "/api/files/file", fileName: "note.txt", mimeType: "text/plain", byteSize: 1, kind: "file", sha256: "hash", createdAt: 1 };
-    window.sessionStorage.setItem("llm-chat.composer.v1.assets", JSON.stringify({ ...draft, agentId: null, workspace: null, attachments: [null, {}, asset] }));
+    window.localStorage.setItem("llm-chat.composer.v1.assets", JSON.stringify({ ...draft, agentId: null, workspace: null, attachments: [null, {}, asset] }));
     expect(readComposerDraft("assets")?.attachments).toEqual([asset]);
+  });
+
+  it("moves drafts from earlier per-tab storage and drops abandoned ones", () => {
+    window.sessionStorage.setItem("llm-chat.composer.v1.legacy", JSON.stringify({ ...draft, text: "旧标签页" }));
+    window.sessionStorage.setItem("unrelated", "keep");
+    writeComposerDraft("stale", draft);
+    writeComposerDraft("fresh", draft);
+    const stale = JSON.parse(window.localStorage.getItem("llm-chat.composer.v1.stale")!);
+    window.localStorage.setItem("llm-chat.composer.v1.stale", JSON.stringify({ ...stale, savedAt: Date.now() - 31 * 24 * 60 * 60 * 1000 }));
+    migrateComposerDrafts();
+    expect(readComposerDraft("legacy")?.text).toBe("旧标签页");
+    expect(window.sessionStorage.getItem("llm-chat.composer.v1.legacy")).toBeNull();
+    expect(window.sessionStorage.getItem("unrelated")).toBe("keep");
+    expect(readComposerDraft("stale")).toBeNull();
+    expect(readComposerDraft("fresh")).toEqual(draft);
   });
 
   it("keeps an in-memory copy and warns once when storage is unavailable", () => {
     const warning = vi.fn();
     window.addEventListener("llm-chat:draft-storage-unavailable", warning);
-    const write = vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => { throw new Error("quota"); });
+    const write = vi.spyOn(window.localStorage, "setItem").mockImplementation(() => { throw new Error("quota"); });
     writeComposerDraft("fallback", draft);
     writeComposerDraft("fallback", { ...draft, text: "最新" });
     expect(readComposerDraft("fallback")?.text).toBe("最新");
     expect(warning).toHaveBeenCalledTimes(1);
-    const read = vi.spyOn(window.sessionStorage, "getItem").mockImplementation(() => { throw new Error("blocked"); });
+    const read = vi.spyOn(window.localStorage, "getItem").mockImplementation(() => { throw new Error("blocked"); });
     expect(readComposerDraft("fallback")?.text).toBe("最新");
     read.mockRestore(); write.mockRestore();
     writeComposerDraft("fallback", draft);

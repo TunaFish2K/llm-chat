@@ -46,7 +46,7 @@ test("大文件在切页后完成并回填原草稿，刷新后从已确认分�
     await page.goto(`${APP_URL}/c/${conversation.id}`);
     await expect(page.getByLabel("输入消息")).toHaveValue("分析这个数据文件");
     await expect(page.getByLabel("待发送附件")).toContainText("large-data.bin");
-    const draft = await page.evaluate((id) => JSON.parse(sessionStorage.getItem(`llm-chat.composer.v1.${id}`)!), conversation.id);
+    const draft = await page.evaluate((id) => JSON.parse(localStorage.getItem(`llm-chat.composer.v1.${id}`)!), conversation.id);
     expect(draft.attachments[0].byteSize).toBe(65 * 1024 ** 2);
     const range = await request.get(`${APP_URL}${draft.attachments[0].url}`, { headers: { range: "bytes=68157435-68157439" } });
     expect(range.status()).toBe(206); expect((await range.body()).length).toBe(5);

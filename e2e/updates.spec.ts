@@ -128,7 +128,7 @@ test("强制更新修复同版本损坏和缺失的缓存，保留登录与本�
     await cache.put(index, new Response("BROKEN CACHE", { headers: { "Content-Type": "text/html" } }));
     await cache.delete(css);
     localStorage.setItem("e2e-repair-preference", "keep");
-    sessionStorage.setItem("llm-chat.composer.v1.new", JSON.stringify({ text: "保留草稿" }));
+    localStorage.setItem("llm-chat.composer.v1.new", JSON.stringify({ text: "保留草稿" }));
     await (await caches.open("another-app-cache")).put("/sentinel", new Response("keep"));
     return { name, index: index.url, css: css.url };
   });
@@ -141,7 +141,7 @@ test("强制更新修复同版本损坏和缺失的缓存，保留登录与本�
   await expect(card).toBeVisible();
   const saved = await page.evaluate(async ({ name, index, css }) => ({
     preference: localStorage.getItem("e2e-repair-preference"),
-    draft: sessionStorage.getItem("llm-chat.composer.v1.new"),
+    draft: localStorage.getItem("llm-chat.composer.v1.new"),
     other: await (await (await caches.open("another-app-cache")).match("/sentinel"))!.text(),
     html: await (await (await caches.open(name)).match(index))!.text(),
     css: Boolean(await (await caches.open(name)).match(css))
