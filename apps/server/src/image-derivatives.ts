@@ -28,11 +28,11 @@ export interface DerivedImage {
   bytes: Buffer;
 }
 
-type Sharp = typeof import("sharp");
+type Sharp = typeof import("sharp").default;
 let sharpModule: Promise<Sharp> | undefined;
 async function loadSharp(): Promise<Sharp> {
-  sharpModule ??= import("sharp").then((module) => {
-    const sharp = (module as unknown as { default?: Sharp }).default ?? (module as unknown as Sharp);
+  // Loaded on first use so the server starts even when the native module is missing.
+  sharpModule ??= import("sharp").then(({ default: sharp }) => {
     // One image at a time keeps memory bounded on small servers.
     sharp.concurrency(1);
     sharp.cache(false);
