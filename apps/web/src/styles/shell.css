@@ -904,3 +904,8 @@ html[data-theme="light"] .image-session-cover { outline-color: rgb(0 0 0 / 10%);
   margin-left: var(--space-2);
   font-size: var(--text-sm);
 }
+
+/* Temporary file picker diagnostics (settings/picker-probe). */
+.picker-probe { display: grid; gap: var(--space-2); }
+.picker-probe-row > :is(label, button) { width: 100%; justify-content: flex-start; }
+.picker-probe-log { min-height: 120px; padding: var(--space-2); border-radius: var(--radius-sm); background: var(--surface-inset); font-size: var(--text-xs); white-space: pre-wrap; }

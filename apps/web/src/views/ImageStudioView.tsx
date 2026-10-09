@@ -7,30 +7,24 @@ import type {
   ImageSessionDto,
   ImageSessionNodeDto
 } from "@llm-chat/contracts";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  Download,
-  ImagePlus,
-  Images,
-  LoaderCircle,
-  Menu,
-  RefreshCw,
-  Send,
-  Settings2,
-  SquarePen,
-  Trash2,
-  X
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NativeFileButton } from "../components/NativeFileButton";
+import { ArrowDown, Copy, Download, ImagePlus, LoaderCircle, Pencil, RotateCcw, Send, Settings2, Square, SquarePen, Trash2, X } from "lucide-react";
+import { Popover } from "radix-ui";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AttachmentMenu } from "../components/chat/AttachmentEditor";
+import { ImageGallery, MessageAction, copyText } from "../components/chat/atoms";
+import { MessageFooter, VersionSwitcher } from "../components/chat/MessageStream";
+import { useStickToBottom } from "../components/chat/useStickToBottom";
+import { ModelPicker } from "../components/ModelPicker";
+import { Segmented } from "../components/ui";
 import { endpoints } from "../lib/api";
-import { toast, toastError } from "../lib/app-state";
+import { appStore, toast, toastError } from "../lib/app-state";
+import { formatTime } from "../lib/format";
 import { t, useLocale } from "../lib/i18n";
 import { refreshImageSessions } from "../lib/image-studio-state";
+import { PopoverLayer } from "../lib/motion";
 import { navigate, replaceRoute, routes } from "../lib/router";
 import { assetUrl } from "../lib/server-channel";
+import { useStore } from "../lib/store";
 import { ConfirmModal, ErrorState, LoadingState } from "../lib/ui";
 
 const NEW_DRAFT_KEY = "llm-chat.image-studio-draft.v1";
@@ -47,12 +41,14 @@ const EMPTY_DRAFT: ImageSessionDraft = {
   seed: null
 };
 const RATIOS = ["1:1", "16:9", "9:16", "4:3", "3:4"];
+const COUNTS = ["1", "2", "3", "4"] as const;
 const IMAGE_MIME_TYPES = new Set<ImageAssetDto["mimeType"]>([
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif"
 ]);
+const ACTIVE_STATUSES = new Set<ImageGenerationJobDto["status"]>(["queued", "running", "waiting-provider"]);
 
 function isImageAsset(asset: Awaited<ReturnType<typeof endpoints.uploadFile>>): asset is ImageAssetDto {
   return asset.kind === "image" && IMAGE_MIME_TYPES.has(asset.mimeType as ImageAssetDto["mimeType"]);
@@ -67,18 +63,15 @@ function readNewDraft(): ImageSessionDraft {
   }
 }
 
-export function ImageStudioView({
-  sessionId,
-  mobile,
-  sidebarCollapsed,
-  onToggleSidebar
-}: {
-  sessionId: string | null;
-  mobile: boolean;
-  sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
-}) {
+function selectedJob(node: ImageSessionNodeDto): ImageGenerationJobDto {
+  return node.versions.find((job) => job.id === node.selectedJobId) ?? node.versions.at(-1)!;
+}
+
+/** Image creation laid out like a chat: each node is a prompt bubble followed by its result. */
+export function ImageStudioView({ sessionId, mobile }: { sessionId: string | null; mobile: boolean }) {
   useLocale();
+  const allModels = useStore(appStore, (state) => state.models);
+  const connections = useStore(appStore, (state) => state.connections);
   const [models, setModels] = useState<ImageModelOptionDto[]>([]);
   const [session, setSession] = useState<ImageSessionDto | null>(null);
   const [draft, setDraft] = useState<ImageSessionDraft>(() => readNewDraft());
@@ -86,10 +79,12 @@ export function ImageStudioView({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ node: ImageSessionNodeDto; job: ImageGenerationJobDto } | null>(null);
   const hydrated = useRef<string | null>(null);
   const loadSequence = useRef(0);
-  const composer = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const scroller = useStickToBottom([session?.nodes], true);
 
   const loadSession = useCallback(async (hydrate = false) => {
     const ticket = ++loadSequence.current;
@@ -138,7 +133,8 @@ export function ImageStudioView({
   }, [sessionId, loadSession]);
 
   useEffect(() => {
-    if (draft.modelId || !models[0]) return;
+    if (draft.modelId && models.some((item) => item.id === draft.modelId)) return;
+    if (!models[0]) return;
     setDraft((value) => ({ ...value, modelId: models[0]!.id }));
   }, [models, draft.modelId]);
 
@@ -156,13 +152,28 @@ export function ImageStudioView({
   }, [sessionId, session, draft]);
 
   const model = models.find((item) => item.id === draft.modelId) ?? null;
-  const maxReferences = model?.capabilities.operations.includes("edit")
-    ? model.capabilities.maxReferenceImages
-    : 0;
+  const pickerModels = useMemo(() => allModels.filter((item) => models.some((option) => option.id === item.id)), [allModels, models]);
+  const maxReferences = model?.capabilities.operations.includes("edit") ? model.capabilities.maxReferenceImages : 0;
   const references = useMemo(() => draft.referenceAssetIds.flatMap((id) => {
     const asset = session?.assets.find((item) => item.id === id);
     return asset ? [asset] : [];
   }), [draft.referenceAssetIds, session?.assets]);
+  const activeJob = session?.nodes.map(selectedJob).find((job) => ACTIVE_STATUSES.has(job.status)) ?? null;
+  const parameterCount = model ? [
+    model.capabilities.count && draft.count > 1,
+    model.capabilities.aspectRatio && draft.aspectRatio,
+    model.capabilities.size && draft.size,
+    model.capabilities.quality && draft.quality,
+    model.capabilities.outputFormat && draft.outputFormat,
+    model.capabilities.negativePrompt && draft.negativePrompt.trim(),
+    model.capabilities.seed && draft.seed !== null
+  ].filter(Boolean).length : 0;
+  const hasParameters = Boolean(model && (model.capabilities.count || model.capabilities.aspectRatio || model.capabilities.size ||
+    model.capabilities.quality || model.capabilities.outputFormat || model.capabilities.negativePrompt || model.capabilities.seed));
+  const referenceBlocked = !model ? t("ImageStudio.model_required")
+    : maxReferences === 0 ? t("ImageStudio.model_no_reference")
+    : draft.referenceAssetIds.length >= maxReferences ? t("ImageStudio.reference_limit", { value1: String(maxReferences) })
+    : null;
 
   const ensureSession = async (): Promise<string> => {
     if (sessionId) return sessionId;
@@ -178,28 +189,26 @@ export function ImageStudioView({
   };
 
   const uploadReferences = async (files: File[]) => {
+    const images = files.filter((file) => file.type.startsWith("image/"));
+    if (!images.length) return;
+    if (referenceBlocked) { toast("info", referenceBlocked); return; }
     const remaining = Math.max(0, maxReferences - draft.referenceAssetIds.length);
-    if (!remaining) {
-      toast("info", model ? t("ImageStudio.reference_limit", { value1: String(maxReferences) }) : t("ImageStudio.model_required"));
-      return;
-    }
     setUploading(true);
     try {
       const id = await ensureSession();
       const assets: ImageAssetDto[] = [];
-      for (const file of files.slice(0, remaining)) {
+      for (const file of images.slice(0, remaining)) {
         const asset = await endpoints.uploadFile(file);
         if (!isImageAsset(asset)) throw new Error(t("ImageStudio.reference_must_be_image"));
         assets.push(asset);
       }
       await endpoints.attachImageSessionAssets(id, assets.map((asset) => asset.id));
-      const referenceAssetIds = [...new Set([...draft.referenceAssetIds, ...assets.map((asset) => asset.id)])]
-        .slice(0, maxReferences);
+      const referenceAssetIds = [...new Set([...draft.referenceAssetIds, ...assets.map((asset) => asset.id)])].slice(0, maxReferences);
       const nextDraft = { ...draft, referenceAssetIds };
       const saved = await endpoints.updateImageSession(id, { draft: nextDraft });
       setSession(saved);
       setDraft(nextDraft);
-      if (files.length > remaining) toast("info", t("ImageStudio.reference_limit", { value1: String(maxReferences) }));
+      if (images.length > remaining) toast("info", t("ImageStudio.reference_limit", { value1: String(maxReferences) }));
       await refreshImageSessions();
       if (!sessionId) replaceRoute(routes.images(id));
     } catch (cause) {
@@ -210,7 +219,8 @@ export function ImageStudioView({
   };
 
   const submit = async () => {
-    if (!draft.prompt.trim()) { toast("error", t("ImageStudio.prompt_required")); return; }
+    if (busy || uploading) return;
+    if (!draft.prompt.trim()) { input.current?.focus(); return; }
     if (!model) { toast("error", t("ImageStudio.model_required")); return; }
     if (draft.referenceAssetIds.length && !model.capabilities.operations.includes("edit")) {
       toast("error", t("ImageStudio.model_no_reference")); return;
@@ -218,7 +228,7 @@ export function ImageStudioView({
     setBusy(true);
     try {
       const id = await ensureSession();
-      const input: ImageGenerationInput = {
+      const request: ImageGenerationInput = {
         modelId: model.id,
         prompt: draft.prompt.trim(),
         operation: draft.referenceAssetIds.length ? "edit" : "generate",
@@ -231,8 +241,13 @@ export function ImageStudioView({
         ...(model.capabilities.outputFormat && draft.outputFormat ? { outputFormat: draft.outputFormat } : {}),
         ...(model.capabilities.seed && draft.seed !== null ? { seed: draft.seed } : {})
       };
-      await endpoints.updateImageSession(id, { draft });
-      await endpoints.createImageSessionNode(id, input);
+      // The prompt leaves the composer once sent, like a chat message; parameters and references stay.
+      const nextDraft = { ...draft, prompt: "" };
+      await endpoints.updateImageSession(id, { draft: nextDraft });
+      await endpoints.createImageSessionNode(id, request);
+      setDraft(nextDraft);
+      scroller.toBottom("auto");
+      scroller.scheduleFollow();
       if (!sessionId) replaceRoute(routes.images(id));
       else await loadSession(false);
       await refreshImageSessions();
@@ -244,10 +259,19 @@ export function ImageStudioView({
   };
 
   const runAction = async (action: () => Promise<unknown>) => {
-    setBusy(true);
     try { await action(); await loadSession(false); await refreshImageSessions(); }
     catch (cause) { toastError(cause); }
-    finally { setBusy(false); }
+  };
+
+  const selectVersion = (node: ImageSessionNodeDto, index: number) => {
+    const job = node.versions[index];
+    if (!session || !job) return;
+    const previous = node.selectedJobId;
+    const choose = (selectedJobId: string) => setSession((current) => current ? {
+      ...current, nodes: current.nodes.map((item) => item.id === node.id ? { ...item, selectedJobId } : item)
+    } : current);
+    choose(job.id);
+    void endpoints.selectImageSessionVersion(session.id, node.id, job.id).catch((cause) => { choose(previous); toastError(cause); });
   };
 
   const editJob = (job: ImageGenerationJobDto) => {
@@ -263,103 +287,166 @@ export function ImageStudioView({
       outputFormat: job.input.outputFormat ?? null,
       seed: job.input.seed ?? null
     });
-    composer.current?.scrollIntoView({
-      block: "end",
-      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"
+    requestAnimationFrame(() => {
+      const field = input.current;
+      if (!field) return;
+      field.focus();
+      field.setSelectionRange(field.value.length, field.value.length);
     });
   };
 
-  const copyPrompt = async (prompt: string) => {
-    try {
-      await navigator.clipboard.writeText(prompt);
-      toast("success", t("atoms.copied"));
-    } catch (cause) {
-      toastError(cause);
-    }
+  const useAsReference = (assets: ImageAssetDto[]) => {
+    if (referenceBlocked) { toast("info", referenceBlocked); return; }
+    const referenceAssetIds = [...new Set([...draft.referenceAssetIds, ...assets.map((asset) => asset.id)])].slice(0, maxReferences);
+    setDraft((value) => ({ ...value, referenceAssetIds }));
+    toast("success", t("ImageStudio.reference_added"));
+    input.current?.focus();
   };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    if (!event.repeat) void submit();
+  };
+
+  const updateDraft = (patch: Partial<ImageSessionDraft>) => setDraft((value) => ({ ...value, ...patch }));
 
   if (loading) return <LoadingState label={t("ImageStudio.loading")} />;
   if (error && !session) return <ErrorState message={error} onRetry={() => { setLoading(true); void loadSession(true); }} />;
 
-  return <section className="image-studio">
-    {!mobile ? <header className="image-studio-header">
-      {sidebarCollapsed ? <button className="icon-button" onClick={onToggleSidebar} aria-label={t("WorkspaceSidebar.expand_conversation_sidebar")}><Menu size={19} /></button> : null}
-      <div><h1>{session?.title ?? t("ImageStudio.title")}</h1><p>{t("ImageStudio.subtitle")}</p></div>
-      <button className="button secondary" onClick={() => navigate(routes.images())}><SquarePen size={16} />{t("ImageStudio.new_session")}</button>
+  return <div className="chat-workspace image-studio">
+    {!mobile ? <header className="conversation-header">
+      <div className="conversation-heading">
+        <span className="conversation-title" title={session?.title}><strong>{session?.title || t("ImageStudio.title")}</strong></span>
+      </div>
+      <button type="button" className="icon-button shell-control" onClick={() => navigate(routes.images())}
+        aria-label={t("ImageStudio.new_session")} title={t("ImageStudio.new_session")}><SquarePen size={18} /></button>
     </header> : null}
 
-    <div className="image-studio-scroll" role="region" aria-label={t("ImageStudio.timeline")}>
-      <div className="image-studio-timeline">
-        {session?.nodes.length ? session.nodes.map((node) => <TimelineNode
-          key={node.id}
-          node={node}
-          disabled={busy}
-          onSelect={(jobId) => runAction(() => endpoints.selectImageSessionVersion(session.id, node.id, jobId))}
-          onCancel={(jobId) => runAction(() => endpoints.cancelImageSessionGeneration(jobId))}
-          onRetry={(jobId) => runAction(() => endpoints.retryImageSessionGeneration(jobId))}
-          onRerun={(jobId) => runAction(() => endpoints.rerunImageSessionNode(session.id, node.id, jobId))}
-          onEdit={editJob}
-          onCopy={copyPrompt}
-          onReference={(asset) => setDraft((value) => ({ ...value,
-            referenceAssetIds: [...new Set([...value.referenceAssetIds, asset.id])].slice(0, model?.capabilities.maxReferenceImages ?? 4)
-          }))}
-          onDelete={(job) => setDeleteTarget({ node, job })}
-        />) : <div className="image-studio-empty">
-          <Images size={34} aria-hidden="true" />
-          <h2>{t("ImageStudio.empty_title")}</h2>
-          <p>{models.length ? t("ImageStudio.empty_description") : t("ImageStudio.no_models")}</p>
-          {!models.length ? <button className="button secondary" onClick={() => navigate(routes.settings("connections"))}>{t("ImageStudio.configure_models")}</button> : null}
-        </div>}
+    <div className="chat-scroll-shell">
+      <div className="chat-scroll" ref={scroller.ref} onScroll={scroller.onScroll} data-following-bottom={!scroller.detached || undefined}
+        aria-live="polite" aria-label={t("ImageStudio.timeline")}>
+        <div className="chat-thread" ref={scroller.contentRef}>
+          {session?.nodes.length ? session.nodes.map((node) => <ImageNode
+            key={node.id}
+            node={node}
+            assets={session.assets}
+            models={models}
+            referenceBlocked={referenceBlocked}
+            onSelect={(index) => selectVersion(node, index)}
+            onCancel={(job) => void runAction(() => endpoints.cancelImageSessionGeneration(job.id))}
+            onRetry={(job) => void runAction(() => endpoints.retryImageSessionGeneration(job.id))}
+            onRerun={(job) => void runAction(() => endpoints.rerunImageSessionNode(session.id, node.id, job.id))}
+            onEdit={editJob}
+            onReference={useAsReference}
+            onDelete={(job) => setDeleteTarget({ node, job })}
+          />) : <div className="welcome">
+            <h1>{t("ImageStudio.empty_title")}</h1>
+            <p>{models.length ? t("ImageStudio.empty_description") : t("ImageStudio.no_models")}</p>
+            {!models.length ? <button type="button" className="btn" onClick={() => navigate(routes.settings("connections"))}>{t("ImageStudio.configure_models")}</button> : null}
+          </div>}
+        </div>
       </div>
+      {scroller.detached ? <button type="button" className="icon-button jump-to-latest" onClick={() => scroller.toBottom("smooth")}
+        aria-label={t("ChatView.go_to_latest_message")} title={t("ChatView.go_to_latest_message")}><ArrowDown size={17} /></button> : null}
     </div>
 
-    <div className="image-studio-composer-wrap" ref={composer}>
-      <div className="image-studio-composer">
-        {references.length ? <div className="image-reference-list" aria-label={t("ImageStudio.references")}>
-          {references.map((asset) => <div className="image-reference" key={asset.id}>
-            <img src={assetUrl(asset.url)} alt={asset.fileName} />
-            <button onClick={() => setDraft((value) => ({ ...value, referenceAssetIds: value.referenceAssetIds.filter((id) => id !== asset.id) }))}
-              aria-label={t("ImageStudio.remove_reference", { value1: asset.fileName })}><X size={14} /></button>
-          </div>)}
-        </div> : null}
-        <label className="image-prompt-field">
-          <span className="sr-only">{t("ImageStudio.prompt")}</span>
-          <textarea value={draft.prompt} onChange={(event) => setDraft((value) => ({ ...value, prompt: event.target.value }))}
-            placeholder={t("ImageStudio.prompt_placeholder")} rows={2} maxLength={10_000}
-            onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void submit(); }} />
-        </label>
-        <div className="image-composer-tools">
-          <NativeFileButton className="image-tool-button" label={t("ImageStudio.add_reference")}
-            accept="image/jpeg,image/png,image/webp,image/gif" multiple={maxReferences > 1} busy={uploading}
-            disabled={!models.length || maxReferences === 0 || draft.referenceAssetIds.length >= maxReferences}
-            onFiles={uploadReferences}>
-            {uploading ? <LoaderCircle className="spin" size={19} /> : <ImagePlus size={19} />}
-          </NativeFileButton>
-          <label className="image-model-select"><span className="sr-only">{t("ImageStudio.model")}</span>
-            <select value={draft.modelId ?? ""} disabled={!models.length || busy} onChange={(event) => {
-              const next = models.find((item) => item.id === event.target.value);
-              setDraft((value) => ({ ...value, modelId: event.target.value || null,
-                referenceAssetIds: value.referenceAssetIds.slice(0, next?.capabilities.maxReferenceImages ?? 0) }));
-            }}>
-              {!models.length ? <option value="">{t("ImageStudio.no_model_option")}</option> : null}
-              {models.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
-            </select>
-          </label>
-          <details className="image-settings">
-            <summary aria-label={t("ImageStudio.parameters")} title={t("ImageStudio.parameters")}><Settings2 size={19} /></summary>
-            <div className="image-settings-panel">
-              {model?.capabilities.count ? <label><span>{t("ImageStudio.count")}</span><select value={draft.count} onChange={(event) => setDraft((value) => ({ ...value, count: Number(event.target.value) }))}>{[1, 2, 3, 4].map((value) => <option key={value}>{value}</option>)}</select></label> : null}
-              {model?.capabilities.aspectRatio ? <label><span>{t("ImageStudio.aspect_ratio")}</span><select value={draft.aspectRatio ?? ""} onChange={(event) => setDraft((value) => ({ ...value, aspectRatio: event.target.value || null }))}><option value="">{t("ImageStudio.auto")}</option>{RATIOS.map((value) => <option key={value}>{value}</option>)}</select></label> : null}
-              {model?.capabilities.size ? <label><span>{t("ImageStudio.size")}</span><select value={draft.size ?? ""} onChange={(event) => setDraft((value) => ({ ...value, size: event.target.value || null }))}><option value="">{t("ImageStudio.auto")}</option>{(model.imageProtocol === "google-imagen" || model.imageProtocol === "google-interactions" ? ["1K", "2K"] : ["1024x1024", "1536x1024", "1024x1536"]).map((value) => <option key={value}>{value}</option>)}</select></label> : null}
-              {model?.capabilities.quality ? <label><span>{t("ImageStudio.quality")}</span><select value={draft.quality ?? ""} onChange={(event) => setDraft((value) => ({ ...value, quality: event.target.value as ImageSessionDraft["quality"] || null }))}><option value="">{t("ImageStudio.auto")}</option>{["low", "medium", "high"].map((value) => <option key={value}>{value}</option>)}</select></label> : null}
-              {model?.capabilities.outputFormat ? <label><span>{t("ImageStudio.format")}</span><select value={draft.outputFormat ?? ""} onChange={(event) => setDraft((value) => ({ ...value, outputFormat: event.target.value as ImageSessionDraft["outputFormat"] || null }))}><option value="">{t("ImageStudio.auto")}</option>{["png", "jpeg", "webp"].map((value) => <option key={value}>{value}</option>)}</select></label> : null}
-              {model?.capabilities.negativePrompt ? <label className="wide"><span>{t("ImageStudio.negative_prompt")}</span><textarea rows={2} value={draft.negativePrompt} onChange={(event) => setDraft((value) => ({ ...value, negativePrompt: event.target.value }))} /></label> : null}
-              {model?.capabilities.seed ? <label><span>{t("ImageStudio.seed")}</span><input type="number" min={0} max={4_294_967_295} value={draft.seed ?? ""} placeholder={t("ImageStudio.random")} onChange={(event) => setDraft((value) => ({ ...value, seed: event.target.value ? Number(event.target.value) : null }))} /></label> : null}
+    <div className="composer">
+      <div className="composer-inner">
+        <div className="composer-surface"
+          onDragOver={(event) => { if ([...event.dataTransfer.items].some((item) => item.kind === "file")) event.preventDefault(); }}
+          onDrop={(event) => {
+            const files = [...event.dataTransfer.files];
+            if (files.length) { event.preventDefault(); void uploadReferences(files); }
+          }}>
+          <div className="composer-input-area">
+            <textarea
+              ref={input}
+              className="composer-input"
+              aria-label={t("ImageStudio.prompt")}
+              placeholder={models.length ? t("ImageStudio.prompt_placeholder") : t("ImageStudio.no_model_option")}
+              value={draft.prompt}
+              rows={2}
+              maxLength={10_000}
+              onChange={(event) => updateDraft({ prompt: event.target.value })}
+              onKeyDown={onKeyDown}
+              onPaste={(event) => {
+                const files = [...event.clipboardData.files];
+                if (files.length) { event.preventDefault(); void uploadReferences(files); }
+              }}
+            />
+            {activeJob ? <button type="button" className="composer-stop-button" onClick={() => void runAction(() => endpoints.cancelImageSessionGeneration(activeJob.id))}
+              aria-label={t("ImageStudio.cancel")} title={t("ImageStudio.cancel")}><Square size={17} fill="currentColor" /></button> : null}
+          </div>
+
+          {references.length ? <div className="composer-attachments" aria-label={t("ImageStudio.references")}>
+            {references.map((asset) => <div className="attachment-chip" key={asset.id}>
+              <img src={assetUrl(asset.url)} alt={asset.fileName} />
+              <span>{asset.fileName}</span>
+              <button type="button" aria-label={t("ImageStudio.remove_reference", { value1: asset.fileName })}
+                onClick={() => updateDraft({ referenceAssetIds: draft.referenceAssetIds.filter((id) => id !== asset.id) })}><X size={13} /></button>
+            </div>)}
+          </div> : null}
+
+          <div className="composer-tools">
+            <div className="composer-tool-scroll">
+              <ModelPicker
+                appearance="icon"
+                value={draft.modelId}
+                models={pickerModels}
+                connections={connections}
+                disabled={!models.length}
+                imageOutputOnly
+                label={t("ImageStudio.model")}
+                onChange={(modelId) => {
+                  const next = models.find((item) => item.id === modelId);
+                  const limit = next?.capabilities.operations.includes("edit") ? next.capabilities.maxReferenceImages : 0;
+                  updateDraft({ modelId, referenceAssetIds: draft.referenceAssetIds.slice(0, limit) });
+                }}
+              />
+              {hasParameters ? <Popover.Root modal={false} open={settingsOpen} onOpenChange={setSettingsOpen}>
+                <Popover.Trigger asChild><button type="button" className="chip composer-settings-trigger"
+                  aria-label={t("ImageStudio.parameters")} title={t("ImageStudio.parameters")}>
+                  <Settings2 size={26} />
+                  {parameterCount ? <b>{parameterCount}</b> : null}
+                </button></Popover.Trigger>
+                <Popover.Portal><Popover.Content className="composer-more-popover composer-settings-popover image-parameters" side="top" align="start" sideOffset={10}
+                  inert={!settingsOpen ? true : undefined} aria-hidden={!settingsOpen || undefined}><PopoverLayer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+                  {model?.capabilities.count ? <div className="composer-menu-field"><span>{t("ImageStudio.count")}</span>
+                    <Segmented label={t("ImageStudio.count")} options={COUNTS.map((value) => ({ value, label: value }))}
+                      value={String(draft.count) as (typeof COUNTS)[number]} onChange={(value) => updateDraft({ count: Number(value) })} /></div> : null}
+                  {model?.capabilities.aspectRatio ? <div className="composer-menu-field"><span>{t("ImageStudio.aspect_ratio")}</span>
+                    <Segmented label={t("ImageStudio.aspect_ratio")} options={[{ value: "", label: t("ImageStudio.auto") }, ...RATIOS.map((value) => ({ value, label: value }))]}
+                      value={draft.aspectRatio ?? ""} onChange={(value) => updateDraft({ aspectRatio: value || null })} /></div> : null}
+                  {model?.capabilities.size ? <label className="composer-menu-field"><span>{t("ImageStudio.size")}</span>
+                    <select className="select" value={draft.size ?? ""} onChange={(event) => updateDraft({ size: event.target.value || null })}>
+                      <option value="">{t("ImageStudio.auto")}</option>
+                      {(model.imageProtocol === "google-imagen" || model.imageProtocol === "google-interactions" ? ["1K", "2K"] : ["1024x1024", "1536x1024", "1024x1536"]).map((value) => <option key={value}>{value}</option>)}
+                    </select></label> : null}
+                  {model?.capabilities.quality ? <div className="composer-menu-field"><span>{t("ImageStudio.quality")}</span>
+                    <Segmented label={t("ImageStudio.quality")} options={[{ value: "", label: t("ImageStudio.auto") }, ...(["low", "medium", "high"] as const).map((value) => ({ value, label: t(`ImageStudio.quality_${value}`) }))]}
+                      value={draft.quality ?? ""} onChange={(value) => updateDraft({ quality: (value || null) as ImageSessionDraft["quality"] })} /></div> : null}
+                  {model?.capabilities.outputFormat ? <div className="composer-menu-field"><span>{t("ImageStudio.format")}</span>
+                    <Segmented label={t("ImageStudio.format")} options={[{ value: "", label: t("ImageStudio.auto") }, ...["png", "jpeg", "webp"].map((value) => ({ value, label: value.toUpperCase() }))]}
+                      value={draft.outputFormat ?? ""} onChange={(value) => updateDraft({ outputFormat: (value || null) as ImageSessionDraft["outputFormat"] })} /></div> : null}
+                  {model?.capabilities.negativePrompt ? <label className="composer-menu-field"><span>{t("ImageStudio.negative_prompt")}</span>
+                    <textarea className="textarea" rows={2} value={draft.negativePrompt} onChange={(event) => updateDraft({ negativePrompt: event.target.value })} /></label> : null}
+                  {model?.capabilities.seed ? <label className="composer-menu-field"><span>{t("ImageStudio.seed")}</span>
+                    <input className="input" type="number" inputMode="numeric" min={0} max={4_294_967_295} value={draft.seed ?? ""} placeholder={t("ImageStudio.random")}
+                      onChange={(event) => updateDraft({ seed: event.target.value ? Number(event.target.value) : null })} /></label> : null}
+                </Popover.Content></Popover.Portal>
+              </Popover.Root> : null}
             </div>
-          </details>
-          <button className="image-generate-button" disabled={busy || uploading || !models.length} onClick={() => void submit()} aria-label={t("ImageStudio.generate")} title={t("ImageStudio.generate")}>
-            {busy ? <LoaderCircle className="spin" size={20} /> : <Send size={20} />}
-          </button>
+            <div className="composer-action-group">
+              <AttachmentMenu files={false} multipleImages={maxReferences > 1} uploadFiles={uploadReferences}
+                disabled={Boolean(referenceBlocked)} uploading={uploading} />
+              <button type="button" className="send-button" onClick={() => void submit()}
+                disabled={busy || uploading || !model || !draft.prompt.trim()}
+                aria-label={t("ImageStudio.generate")} title={t("ImageStudio.generate")}>
+                {busy ? <LoaderCircle size={18} className="spin" /> : <Send size={18} />}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -368,64 +455,73 @@ export function ImageStudioView({
       title={t("ImageStudio.delete_version")}
       message={deleteTarget.node.versions.length === 1 ? t("ImageStudio.delete_node_message") : t("ImageStudio.delete_version_message")}
       confirmLabel={t("ImageStudio.delete")}
-      danger busy={busy}
+      danger
       onClose={() => setDeleteTarget(null)}
       onConfirm={() => void runAction(async () => {
         await endpoints.deleteImageSessionVersion(session.id, deleteTarget.node.id, deleteTarget.job.id);
         setDeleteTarget(null);
       })}
     /> : null}
-  </section>;
+  </div>;
 }
 
-function TimelineNode({ node, disabled, onSelect, onCancel, onRetry, onRerun, onEdit, onCopy, onReference, onDelete }: {
+function ImageNode({ node, assets, models, referenceBlocked, onSelect, onCancel, onRetry, onRerun, onEdit, onReference, onDelete }: {
   node: ImageSessionNodeDto;
-  disabled: boolean;
-  onSelect: (jobId: string) => void;
-  onCancel: (jobId: string) => void;
-  onRetry: (jobId: string) => void;
-  onRerun: (jobId: string) => void;
+  assets: ImageAssetDto[];
+  models: ImageModelOptionDto[];
+  referenceBlocked: string | null;
+  onSelect: (index: number) => void;
+  onCancel: (job: ImageGenerationJobDto) => void;
+  onRetry: (job: ImageGenerationJobDto) => void;
+  onRerun: (job: ImageGenerationJobDto) => void;
   onEdit: (job: ImageGenerationJobDto) => void;
-  onCopy: (prompt: string) => void;
-  onReference: (asset: ImageAssetDto) => void;
+  onReference: (assets: ImageAssetDto[]) => void;
   onDelete: (job: ImageGenerationJobDto) => void;
 }) {
+  useLocale();
   const index = Math.max(0, node.versions.findIndex((job) => job.id === node.selectedJobId));
   const job = node.versions[index] ?? node.versions.at(-1)!;
-  const active = ["queued", "running", "waiting-provider"].includes(job.status);
-  const label = {
-    queued: t("ImageStudio.status_queued"), running: t("ImageStudio.status_running"),
-    "waiting-provider": t("ImageStudio.status_waiting"), completed: t("ImageStudio.status_completed"),
-    failed: t("ImageStudio.status_failed"), cancelled: t("ImageStudio.status_cancelled")
-  }[job.status];
+  const active = ACTIVE_STATUSES.has(job.status);
+  const references = job.input.referenceAssetIds.flatMap((id) => {
+    const asset = assets.find((item) => item.id === id);
+    return asset ? [asset] : [];
+  });
+  const modelName = models.find((item) => item.id === job.modelId)?.displayName ?? job.modelKey;
+  const status = job.status === "queued" ? t("ImageStudio.status_queued")
+    : job.status === "running" ? t("ImageStudio.status_running")
+    : job.status === "waiting-provider" ? t("ImageStudio.status_waiting")
+    : job.status === "cancelled" ? t("ImageStudio.status_cancelled")
+    : null;
+  const single = job.outputAssets.length === 1 ? job.outputAssets[0]! : null;
 
-  return <article className="image-timeline-node" data-status={job.status}>
-    <header>
-      <div><span className="image-status"><i aria-hidden="true" />{label}</span><small>{job.connectionName} · {job.modelKey}</small></div>
-      {node.versions.length > 1 ? <div className="image-version-switcher" role="group" aria-label={t("ImageStudio.versions")}>
-        <button disabled={disabled || index === 0} onClick={() => onSelect(node.versions[index - 1]!.id)} aria-label={t("ImageStudio.previous_version")}><ChevronLeft size={15} /></button>
-        <span>{index + 1}/{node.versions.length}</span>
-        <button disabled={disabled || index === node.versions.length - 1} onClick={() => onSelect(node.versions[index + 1]!.id)} aria-label={t("ImageStudio.next_version")}><ChevronRight size={15} /></button>
-      </div> : null}
-    </header>
-    <p className="image-node-prompt">{job.prompt}</p>
-    {job.outputAssets.length ? <div className="image-result-grid" data-count={job.outputAssets.length}>
-      {job.outputAssets.map((asset) => <figure key={asset.id}>
-        <a href={assetUrl(asset.url)} target="_blank" rel="noreferrer"><img src={assetUrl(asset.url)} alt={job.revisedPrompt || job.prompt} /></a>
-        <figcaption>
-          <button onClick={() => onReference(asset)} title={t("ImageStudio.use_as_reference")} aria-label={t("ImageStudio.use_as_reference")}><ImagePlus size={16} /></button>
-          <a href={assetUrl(asset.url)} download={asset.fileName} title={t("ImageStudio.download")} aria-label={t("ImageStudio.download")}><Download size={16} /></a>
-        </figcaption>
-      </figure>)}
-    </div> : active ? <div className="image-job-progress" role="status"><LoaderCircle className="spin" size={23} /><span>{label}</span>{job.progress !== null ? <progress max={1} value={job.progress} /> : null}</div> : null}
-    {job.error ? <p className="image-job-error" role="alert">{job.error.message} {t("ImageStudio.try_again")}</p> : null}
-    <footer>
-      <button disabled={disabled} onClick={() => onCopy(job.prompt)}><Copy size={15} />{t("ImageStudio.copy_prompt")}</button>
-      <button disabled={disabled} onClick={() => onEdit(job)}><SquarePen size={15} />{t("ImageStudio.edit")}</button>
-      {active ? <button disabled={disabled} onClick={() => onCancel(job.id)}><X size={15} />{t("ImageStudio.cancel")}</button> : null}
-      {["failed", "cancelled"].includes(job.status) ? <button disabled={disabled} onClick={() => onRetry(job.id)}><RefreshCw size={15} />{t("ImageStudio.retry")}</button> : null}
-      {job.status === "completed" ? <button disabled={disabled} onClick={() => onRerun(job.id)}><RefreshCw size={15} />{t("ImageStudio.rerun")}</button> : null}
-      <button className="danger-quiet" disabled={disabled || active} onClick={() => onDelete(job)}><Trash2 size={15} />{t("ImageStudio.delete")}</button>
-    </footer>
-  </article>;
+  return <>
+    <article className="msg" data-role="user">
+      {references.length ? <ImageGallery assets={references} /> : null}
+      <div className="msg-bubble">{job.prompt}</div>
+      <MessageFooter metadata={<time>{formatTime(job.createdAt)}</time>}>
+        <MessageAction label={t("ImageStudio.copy_prompt")} onClick={() => void copyText(job.prompt)}><Copy size={14} /></MessageAction>
+        <MessageAction label={t("ImageStudio.edit")} onClick={() => onEdit(job)}><Pencil size={14} /></MessageAction>
+      </MessageFooter>
+    </article>
+    <article className="msg image-result" data-role="assistant" aria-busy={active || undefined}>
+      {job.outputAssets.length ? <ImageGallery assets={job.outputAssets} />
+        : job.status === "failed" ? <div className="refusal-block" role="alert">
+          <strong>{t("ImageStudio.status_failed")}</strong>{job.error?.message}
+        </div>
+        : status ? <div className="image-job-status" role="status">{active ? <LoaderCircle size={14} className="spin" /> : null}<span>{status}</span></div>
+        : null}
+      <MessageFooter metadata={<><span className="reply-identity">{modelName} · {job.connectionName}</span><time className="reply-timestamp">{formatTime(job.completedAt ?? job.createdAt)}</time></>}>
+        {active ? <MessageAction label={t("ImageStudio.cancel")} danger onClick={() => onCancel(job)}><Square size={14} fill="currentColor" /></MessageAction> : null}
+        {job.outputAssets.length ? <span title={referenceBlocked ?? undefined}>
+          <MessageAction label={t("ImageStudio.use_as_reference")} disabled={Boolean(referenceBlocked)} onClick={() => onReference(job.outputAssets)}><ImagePlus size={14} /></MessageAction>
+        </span> : null}
+        {single ? <a className="act" href={assetUrl(single.url)} download={single.fileName} aria-label={t("ImageStudio.download")} title={t("ImageStudio.download")}><Download size={14} /></a> : null}
+        {job.status === "failed" || job.status === "cancelled"
+          ? <MessageAction label={t("ImageStudio.retry")} onClick={() => onRetry(job)}><RotateCcw size={14} /></MessageAction>
+          : job.status === "completed" ? <MessageAction label={t("ImageStudio.rerun")} onClick={() => onRerun(job)}><RotateCcw size={14} /></MessageAction> : null}
+        {node.versions.length > 1 ? <VersionSwitcher label={t("ImageStudio.versions")} index={index} total={node.versions.length} onChange={onSelect} /> : null}
+        <MessageAction label={t("ImageStudio.delete")} danger disabled={active} onClick={() => onDelete(job)}><Trash2 size={14} /></MessageAction>
+      </MessageFooter>
+    </article>
+  </>;
 }

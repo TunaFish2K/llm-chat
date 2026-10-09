@@ -286,13 +286,7 @@ const RouteView = memo(function RouteView({
     );
   }
   if (route.name === "images") {
-    return <ImageStudioView
-      key={route.sessionId ?? "new"}
-      sessionId={route.sessionId}
-      mobile={mobile}
-      sidebarCollapsed={sidebarCollapsed}
-      onToggleSidebar={onToggleSidebar}
-    />;
+    return <ImageStudioView key={route.sessionId ?? "new"} sessionId={route.sessionId} mobile={mobile} />;
   }
   if (route.name === "tasks") return <LegacyTaskRedirect taskId={route.taskId} />;
   return (

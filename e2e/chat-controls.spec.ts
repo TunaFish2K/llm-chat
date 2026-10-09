@@ -205,8 +205,7 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
     try {
       await expect(page.locator(".composer").getByRole("button", { name: "正在取消" })).toBeDisabled();
       await checkToolbar(page);
-      await expect(page.locator(".composer-tools").getByLabel("上传图片", { exact: true })).toBeVisible();
-      await expect(page.locator(".composer-tools").getByLabel("上传文件", { exact: true })).toBeVisible();
+      await expect(page.locator(".composer-tools").getByRole("button", { name: "添加附件" })).toBeVisible();
     } finally { releaseCancel(); }
     await expect(page.locator(".composer-stop-button")).toHaveCount(0);
     await page.unroute("**/api/generations/*/cancel");
@@ -261,17 +260,13 @@ test("生成中排队、跨设备同步、删除与取消后继续", async ({ pa
   } finally { await other.close(); await fixture.cleanup(); await provider.close(); }
 });
 
-test("原生附件入口、灯泡滑条与历史附件编辑分叉", async ({ page, request }) => {
+test("附件菜单、灯泡滑条与历史附件编辑分叉", async ({ page, request }) => {
   const provider = await startMockProvider();
   const fixture = await setup(request, provider.baseUrl);
   try {
     await page.goto(`${APP_URL}/c/${fixture.conversation.id}`);
     await expect(page.getByRole("button", { name: "选择模型" }).locator(".model-brand-icon")).toBeVisible();
-    const imageInput = page.locator(".composer-tools").getByLabel("上传图片", { exact: true });
-    const fileInput = page.locator(".composer-tools").getByLabel("上传文件", { exact: true });
-    await expect(imageInput).toHaveAttribute("type", "file");
-    await expect(imageInput).toHaveAttribute("accept", /image\/png/);
-    await expect(fileInput).toHaveAttribute("type", "file");
+    await expect(page.locator(".composer .lucide-image-plus")).toHaveCount(0);
     if (test.info().project.name === "mobile-chromium") await page.setViewportSize({ width: 320, height: 740 });
     await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
     const agentMenu = page.getByRole("dialog", { name: "Agent 选择", exact: true });
@@ -289,9 +284,11 @@ test("原生附件入口、灯泡滑条与历史附件编辑分叉", async ({ pa
     expect(box!.x).toBeGreaterThanOrEqual(0);
     expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
     await page.keyboard.press("Escape");
-    await expect(imageInput).toBeVisible();
-    await expect(fileInput).toBeVisible();
-    await fileInput.setInputFiles({ name: "original.txt", mimeType: "text/plain", buffer: Buffer.from("original") });
+    await page.getByRole("button", { name: "添加附件" }).click();
+    await expect(page.getByRole("button", { name: "上传图片", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "上传文件", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await page.getByLabel("上传文件", { exact: true }).setInputFiles({ name: "original.txt", mimeType: "text/plain", buffer: Buffer.from("original") });
     await expect(page.getByLabel("待发送附件")).toContainText("original.txt");
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.getByText("你好，这是 E2E 流式回复。")).toBeVisible();

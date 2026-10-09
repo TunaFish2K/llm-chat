@@ -343,7 +343,7 @@ function GenerationTimeline({
   );
 }
 
-function MessageFooter({ metadata, children, liveAction, busy = false }: {
+export function MessageFooter({ metadata, children, liveAction, busy = false }: {
   metadata: ReactNode; children: ReactNode; liveAction?: ReactNode; busy?: boolean;
 }) {
   useLocale();

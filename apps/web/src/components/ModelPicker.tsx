@@ -15,7 +15,7 @@ type BalanceState = ConnectionBalanceDto | "loading" | "error";
 /** Shared model chooser for chat and Agent execution settings. */
 export function ModelPicker({
   value, models, connections, disabled = false, onChange, label,
-  description, emptyOption, appearance = "field", imageInputOnly = false
+  description, emptyOption, appearance = "field", imageInputOnly = false, imageOutputOnly = false
 }: {
   value: string | null;
   models: ModelDto[];
@@ -24,9 +24,11 @@ export function ModelPicker({
   onChange: (modelId: string) => void;
   label: string;
   description?: string;
-  emptyOption: { label: string; description?: string; selected: boolean; onSelect: () => void };
+  emptyOption?: { label: string; description?: string; selected: boolean; onSelect: () => void };
   appearance?: "icon" | "field";
   imageInputOnly?: boolean;
+  /** Only models that can produce images, for the image studio. */
+  imageOutputOnly?: boolean;
 }) {
   useLocale();
   const [open, setOpen] = useState(false);
@@ -37,11 +39,11 @@ export function ModelPicker({
   const touchLayout = window.matchMedia("(hover: none) and (pointer: coarse)").matches;
   const effective = models.find((model) => model.id === value);
   const connection = connections.find((item) => item.id === effective?.connectionId);
-  const unavailable = value !== null && (!effective?.enabled || !connection || (imageInputOnly && !effective.capabilities.imageInput));
-  const selectedName = value === null ? emptyOption.label : effective?.displayName ?? value;
+  const unavailable = value !== null && (!effective?.enabled || !connection || (imageInputOnly && !effective.capabilities.imageInput) || (imageOutputOnly && !effective.capabilities.imageOutput));
+  const selectedName = value === null ? emptyOption?.label ?? label : effective?.displayName ?? value;
   const groups = useMemo(() => {
     const eligible = models.filter(
-      (model) => model.enabled && (!imageInputOnly || model.capabilities.imageInput) && connections.some((connection) => connection.id === model.connectionId)
+      (model) => model.enabled && (!imageInputOnly || model.capabilities.imageInput) && (!imageOutputOnly || model.capabilities.imageOutput) && connections.some((connection) => connection.id === model.connectionId)
     );
     const pattern = literalSearchPattern(query);
     return connections
@@ -55,7 +57,7 @@ export function ModelPicker({
         )
       }))
       .filter((group) => group.models.length);
-  }, [models, connections, query, imageInputOnly]);
+  }, [models, connections, query, imageInputOnly, imageOutputOnly]);
 
   useEffect(() => {
     if (!open) return;
@@ -125,7 +127,7 @@ export function ModelPicker({
             />
           </label>
           <div className="picker-list">
-            <button
+            {emptyOption ? <button
               type="button"
               className="model-option"
               data-selected={emptyOption.selected || undefined}
@@ -140,7 +142,7 @@ export function ModelPicker({
                 {emptyOption.description ? <small>{emptyOption.description}</small> : null}
               </span>
               {emptyOption.selected ? <Check size={15} aria-hidden="true" /> : null}
-            </button>
+            </button> : null}
             {groups.map(({ connection, models: items }) => (
               <section className="model-group" key={connection.id}>
                 <h3>

@@ -3,7 +3,7 @@ import { api, APP_URL, gotoPath } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
 
 test.describe("独立绘图工作区", () => {
-  test("附件入口直接唤起原生选择器，并保留绘图版本时间线", async ({ page, request }) => {
+  test("附件抽屉唤起原生选择器，绘图沿用聊天消息与发送栏", async ({ page, request }) => {
     const provider = await startMockProvider();
     let sessionId: string | null = null;
     try {
@@ -31,29 +31,40 @@ test.describe("独立绘图工作区", () => {
       });
 
       await gotoPath(page, "/");
-      const chatImageInput = page.locator('.composer-native-files input[type="file"][accept*="image/png"]');
-      await expect(chatImageInput).toHaveCount(1);
+      // The paperclip drawer stays; its rows are labels for real, always-mounted file inputs.
+      await page.locator(".composer-tools").getByRole("button", { name: "添加附件" }).click();
+      const imageRow = page.getByRole("button", { name: "上传图片", exact: true });
+      await expect(imageRow).toBeVisible();
       const chooserPromise = page.waitForEvent("filechooser", { timeout: 2_000 });
-      await chatImageInput.click();
+      await imageRow.click();
       const chooser = await chooserPromise;
       expect(chooser.isMultiple()).toBe(true);
       await chooser.setFiles([]);
+      await page.keyboard.press("Escape");
 
       await page.getByRole("link", { name: /打开绘图工作区/ }).click();
       await expect(page).toHaveURL(/\/images$/);
-      await page.getByLabel("图片模型").selectOption(model.id);
-      await page.getByLabel("画面描述").fill("雨后的未来图书馆");
-      await page.getByRole("button", { name: "生成图片" }).click();
+      await page.getByRole("button", { name: "图片模型", exact: true }).click();
+      await page.getByRole("button", { name: /绘图 E2E/ }).click();
+      const prompt = page.getByLabel("画面描述");
+      await prompt.fill("雨后的未来图书馆");
+      await prompt.press("Enter");
       await expect(page).toHaveURL(/\/images\/[0-9a-f-]+$/);
       sessionId = page.url().split("/").at(-1)!;
+      await expect(prompt).toHaveValue("");
       await expect.poll(() => provider.requests.filter((entry: { kind?: string }) => entry.kind === "image").length).toBe(1);
-      await expect(page.getByText("生成完成")).toBeVisible();
-      await expect(page.locator(".image-result-grid img")).toHaveCount(1);
+      await expect(page.locator(".msg[data-role=user] .msg-bubble")).toHaveText("雨后的未来图书馆");
+      await expect(page.locator(".image-result .message-images img")).toHaveCount(1);
 
       await page.getByRole("button", { name: "重新生成" }).click();
-      await expect(page.getByText("2/2")).toBeVisible();
-      await expect(page.getByText("生成完成")).toBeVisible();
+      await expect(page.locator(".image-result .version-switch")).toContainText("2 / 2");
       await expect.poll(() => provider.requests.filter((entry: { kind?: string }) => entry.kind === "image").length).toBe(2);
+      await page.getByRole("button", { name: "上一版本" }).click();
+      await expect(page.locator(".image-result .version-switch")).toContainText("1 / 2");
+
+      await page.getByRole("button", { name: "编辑参数" }).click();
+      await expect(prompt).toBeFocused();
+      await expect(prompt).toHaveValue("雨后的未来图书馆");
     } finally {
       if (sessionId) await api(request, APP_URL, "DELETE", `/api/image-sessions/${sessionId}`).catch(() => {});
       await provider.close();

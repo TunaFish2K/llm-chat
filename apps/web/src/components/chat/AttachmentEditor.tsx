@@ -1,6 +1,7 @@
 import { t, useLocale } from "../../lib/i18n";
-import { type Dispatch, type SetStateAction } from "react";
-import { FileText, ImagePlus, LoaderCircle, Paperclip, X } from "lucide-react";
+import { useCallback, useId, useState, type ChangeEvent, type Dispatch, type KeyboardEvent, type ReactNode, type SetStateAction } from "react";
+import { Popover } from "radix-ui";
+import { FilePlus2, FileText, ImagePlus, LoaderCircle, Paperclip, X } from "lucide-react";
 import type { FileAssetDto } from "@llm-chat/contracts";
 import { toast } from "../../lib/app-state";
 import { formatBytes } from "../../lib/format";
@@ -8,7 +9,7 @@ import { uploadManager, uploadStore, type UploadIntent } from "../../lib/file-up
 import { useStore } from "../../lib/store";
 import { UploadTasks } from "../FileUploads";
 import { assetUrl } from "../../lib/server-channel";
-import { NativeFileButton } from "../NativeFileButton";
+import { PopoverLayer } from "../../lib/motion";
 
 export function useAttachments(initial: FileAssetDto[] = [], scope = "new", conversationId?: string) {
   useLocale();
@@ -25,33 +26,58 @@ export function useAttachments(initial: FileAssetDto[] = [], scope = "new", conv
     attachmentCount: current.attachments.length + current.tasks.length };
 }
 
-export function AttachmentMenu({ uploadFiles, disabled, uploading = false }: {
+export const IMAGE_UPLOAD_ACCEPT = "image/jpeg,image/png,image/webp,image/gif";
+
+/**
+ * The paperclip drawer. Menu rows are labels for real file inputs that stay mounted outside
+ * the popover, so a tap activates the native picker directly and the change event always
+ * lands; the drawer closes only after the picker returns.
+ */
+export function AttachmentMenu({ uploadFiles, disabled, uploading = false, files = true, multipleImages = true }: {
   uploadFiles: (files: File[], intent?: UploadIntent) => Promise<void>; disabled?: boolean; uploading?: boolean;
+  /** Offer the generic file row; image-only callers turn it off. */
+  files?: boolean; multipleImages?: boolean;
 }) {
   useLocale();
-  return <div className="composer-native-files" aria-label={t("AttachmentEditor.add_attachment")}>
-    <NativeFileButton
-      className="chip composer-attachment-button"
-      label={t("AttachmentEditor.upload_images")}
-      accept="image/jpeg,image/png,image/webp,image/gif"
-      multiple
-      disabled={Boolean(disabled)}
-      busy={uploading}
-      onFiles={(files) => uploadFiles(files, "image")}
-    >
-      <ImagePlus size={17} />
-    </NativeFileButton>
-    <NativeFileButton
-      className="chip composer-attachment-button"
-      label={t("AttachmentEditor.upload_files")}
-      multiple
-      disabled={Boolean(disabled)}
-      busy={uploading}
-      onFiles={(files) => uploadFiles(files, "file")}
-    >
-      {uploading ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
-    </NativeFileButton>
-  </div>;
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const fileId = `${id}-file`;
+  const imageId = `${id}-image`;
+  const picked = (intent: UploadIntent) => (event: ChangeEvent<HTMLInputElement>) => {
+    const chosen = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    setOpen(false);
+    if (chosen.length) void uploadFiles(chosen, intent);
+  };
+  const closeOnCancel = useCallback((input: HTMLInputElement | null) => {
+    if (!input) return;
+    const cancel = () => setOpen(false);
+    input.addEventListener("cancel", cancel);
+    return () => input.removeEventListener("cancel", cancel);
+  }, []);
+  const keyboard = (target: string) => (event: KeyboardEvent<HTMLLabelElement>) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    (document.getElementById(target) as HTMLInputElement | null)?.click();
+  };
+  const row = (target: string, icon: ReactNode, label: string) => <label htmlFor={target} className="attachment-menu-item" role="button" tabIndex={disabled ? -1 : 0}
+    aria-disabled={disabled || undefined} onKeyDown={keyboard(target)}>{icon}<span>{label}</span></label>;
+  return <>
+    {files ? <input id={fileId} ref={closeOnCancel} className="sr-only" tabIndex={-1} aria-hidden="true" aria-label={t("AttachmentEditor.upload_files")} type="file" multiple
+      disabled={disabled} onChange={picked("file")} /> : null}
+    <input id={imageId} ref={closeOnCancel} className="sr-only" tabIndex={-1} aria-hidden="true" aria-label={t("AttachmentEditor.upload_images")} type="file" multiple={multipleImages}
+      accept={IMAGE_UPLOAD_ACCEPT} disabled={disabled} onChange={picked("image")} />
+    <Popover.Root modal={false} open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild><button type="button" className="chip composer-attachment-button" disabled={disabled} aria-label={t("AttachmentEditor.add_attachment")} title={t("AttachmentEditor.add_attachment")}>
+        {uploading ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
+      </button></Popover.Trigger>
+      <Popover.Portal><Popover.Content className="composer-more-popover attachment-menu" side="top" align="start" sideOffset={8}
+        inert={!open ? true : undefined} aria-hidden={!open || undefined}><PopoverLayer open={open} onClose={() => setOpen(false)} />
+        {files ? row(fileId, <FilePlus2 size={17} />, t("AttachmentEditor.upload_files")) : null}
+        {row(imageId, <ImagePlus size={17} />, t("AttachmentEditor.upload_images"))}
+      </Popover.Content></Popover.Portal>
+    </Popover.Root>
+  </>;
 }
 
 export function AttachmentList({ attachments, setAttachments, disabled = false, uploadScope }: {

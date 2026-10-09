@@ -493,8 +493,7 @@ function NewConversationWelcome({
 
 function ImageStudioEntry() {
   const path = routes.images();
-  return <a className="welcome-image-studio" href={path} onClick={linkClick(path)}>
-    <Images size={18} aria-hidden="true" />
-    <span><strong>{t("ImageStudio.open")}</strong><small>{t("ImageStudio.open_description")}</small></span>
+  return <a className="btn welcome-image-studio" href={path} onClick={linkClick(path)}>
+    <Images size={16} aria-hidden="true" />{t("ImageStudio.open")}
   </a>;
 }

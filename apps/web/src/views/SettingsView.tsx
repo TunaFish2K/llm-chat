@@ -1,4 +1,5 @@
 import { useResource } from "../lib/resource";
+import { PickerProbe } from "../components/PickerProbe";
 import { Presence } from "../lib/motion";
 import { uploadManager } from "../lib/file-upload-manager";
 import { ContainerResourceSettings } from "../components/ContainerResourceSettings";
@@ -82,7 +83,7 @@ function useResourceEvents(resources: string[], load: () => Promise<void>): void
 
 export function SettingsView({ section }: { section: string }) {
   useLocale();
-  const active = getSECTIONS().some(([key]) => key === section) ? section : "general";
+  const active = section === "picker-probe" || getSECTIONS().some(([key]) => key === section) ? section : "general";
   return (
     <>
       <div className="page-header mobile-redundant-title settings-page-title">
@@ -120,6 +121,7 @@ export function SettingsView({ section }: { section: string }) {
             {active === "plugins" ? <PluginsSection /> : null}
             {active === "mcp" ? <McpSection /> : null}
             {active === "memories" ? <MemoriesSection /> : null}
+            {active === "picker-probe" ? <PickerProbe /> : null}
           </div>
         </div>
       )}
