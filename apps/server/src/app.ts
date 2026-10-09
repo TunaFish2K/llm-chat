@@ -50,7 +50,8 @@ import {
   type GenerationEvent,
   type ModelDto
 } from "@llm-chat/contracts";
-import { listConnectionModels, ProviderError } from "@llm-chat/providers";
+import { describeNetworkError, listConnectionModels, ProviderError } from "@llm-chat/providers";
+import { enableFatalReports, watchMemory } from "./runtime/memory-watch";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import { z, ZodError } from "zod";
 import { offlineManifest, offlineSourceId } from "./offline-history";
@@ -175,8 +176,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     onStateChange: (id) => publishGenerationState(store, eventHub, id),
     onSettled: (conversationId) => { queue.changed(conversationId); queue.kick(conversationId); },
     buildTools: (_currentStore, record) => registry.tools(record),
-    prepareImages: (_currentStore, record, model, signal, onAnalysis) =>
-      visionService.prepare(record, model, signal, onAnalysis),
+    prepareImages: (_currentStore, record, model, signal, onAnalysis, reuse) =>
+      visionService.prepare(record, model, signal, onAnalysis, reuse),
     runtimePrompt: (_currentStore, record) => taskManager.runtimePrompt(record.conversationId) + (record.agentSnapshot.execution.environment?.type === "container"
       ? "\n<execution_environment>Commands run in a persistent container. The selected project is mounted at /workdir and conversation attachments at /attachments. Use workspace_shell for commands; workspace_shell_readonly is not offered here. sudo installs system packages inside the container. Networking, including localhost and TUN routing, is shared with the host. Container commands and workspace tools do not require approval.</execution_environment>" : ""),
     imageService
@@ -193,7 +194,8 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.decorate("runner", runner);
   app.decorateRequest("authIdentity", null);
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((rawError, _request, reply) => {
+    const error = describeNetworkError(rawError) ?? rawError;
     if (error instanceof UploadError) {
       return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, i18n: errorI18n(error) } });
     }
@@ -216,7 +218,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error) } : {}) } });
     }
     if (error instanceof ProviderError) {
-      return reply.code(error.status && error.status < 500 ? error.status : 502).send({
+      return reply.code(error.status && (error.status < 500 || error.status === 504) ? error.status : 502).send({
         error: { code: error.code, message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error) } : {}) }
       });
     }
@@ -1001,8 +1003,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       sseBufferedBytes: [...streams].reduce((sum, stream) => sum + stream.bufferedBytes, 0) }, "Runtime memory");
   }, 60_000);
   memoryTimer.unref();
+  const diagnostics = enableFatalReports(store.dataDir);
+  if (diagnostics) app.log.info({ directory: diagnostics }, "Fatal error reports enabled");
+  const stopMemoryWatch = watchMemory(app.log, () => ({
+    activeGenerations: runner.activeCount,
+    activeSse: streams.size,
+    sseBufferedBytes: [...streams].reduce((sum, stream) => sum + stream.bufferedBytes, 0)
+  }), { intervalMs: 15_000 });
   app.addHook("preClose", async () => {
     clearInterval(memoryTimer);
+    stopMemoryWatch();
     for (const stream of streams) stream.close();
   });
   app.get("/api/events", async (request, reply) => {

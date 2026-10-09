@@ -99,7 +99,10 @@ describe("api client", () => {
     await expect(api.get("/api/item")).rejects.toMatchObject({ code: "request_failed", status: 500 });
 
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue("offline"));
-    await expect(api.get("/api/item")).rejects.toMatchObject({ code: "network_error", message: "网络请求失败" });
+    await expect(api.get("/api/item")).rejects.toMatchObject({ code: "network_error", message: expect.stringContaining("无法连接到服务器") });
+    vi.stubGlobal("navigator", { ...navigator, onLine: false });
+    await expect(api.get("/api/item")).rejects.toMatchObject({ code: "network_offline", message: "设备已离线，请检查网络连接" });
+    vi.unstubAllGlobals();
   });
 
   it("uploads a raw file with encoded metadata and maps upload errors", async () => {

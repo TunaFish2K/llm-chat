@@ -1,5 +1,6 @@
 import { withMessage } from "@llm-chat/i18n";
 import type { ImageProviderProtocol } from "@llm-chat/contracts";
+import { providerFetch } from "./network-error";
 import { ProviderError, type GeneratedImage, type ImageGenerationAdapter, type ImageGenerationCompleted, type ImageGenerationPollResult, type ImageGenerationRequest, type ImageGenerationStart } from "./types";
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
@@ -63,7 +64,7 @@ export class GoogleImagenAdapter implements ImageGenerationAdapter {
       ...(request.options.size ? { imageSize: request.options.size } : {}),
       ...(request.options.providerOptions ?? {})
     };
-    const response = await fetch(url, {
+    const response = await providerFetch(url, {
       method: "POST",
       headers: googleHeaders(request),
       body: JSON.stringify({ instances: [{ prompt: request.prompt }], parameters }),
@@ -88,7 +89,7 @@ export class GoogleInteractionsAdapter implements ImageGenerationAdapter {
       ...(request.options.size ? { image_size: request.options.size } : {}),
       ...(request.options.outputFormat ? { mime_type: `image/${request.options.outputFormat}` } : {})
     };
-    const response = await fetch(`${root}/interactions`, {
+    const response = await providerFetch(`${root}/interactions`, {
       method: "POST",
       headers: googleHeaders(request),
       body: JSON.stringify({
@@ -123,7 +124,7 @@ export class StabilityImageAdapter implements ImageGenerationAdapter {
     const resource = request.operation === "generate"
       ? `stable-image/generate/${encodeURIComponent(request.modelKey)}`
       : "stable-image/edit/inpaint";
-    const response = await fetch(`${stabilityRoot(request.connection.baseUrl)}/${resource}`, {
+    const response = await providerFetch(`${stabilityRoot(request.connection.baseUrl)}/${resource}`, {
       method: "POST",
       headers: { authorization: `Bearer ${request.connection.apiKey}`, accept: "application/json", ...request.connection.secretHeaders },
       body: form,
@@ -139,7 +140,7 @@ export class StabilityImageAdapter implements ImageGenerationAdapter {
   }
 
   async poll(request: ImageGenerationRequest, providerJobId: string): Promise<ImageGenerationPollResult> {
-    const response = await fetch(`${stabilityRoot(request.connection.baseUrl)}/stable-image/results/${encodeURIComponent(providerJobId)}`, {
+    const response = await providerFetch(`${stabilityRoot(request.connection.baseUrl)}/stable-image/results/${encodeURIComponent(providerJobId)}`, {
       headers: { authorization: `Bearer ${request.connection.apiKey}`, accept: "application/json", ...request.connection.secretHeaders },
       signal: request.signal
     });
@@ -162,7 +163,7 @@ export function imageAdapterFor(protocol: ImageProviderProtocol): ImageGeneratio
 }
 
 async function fetchJson(request: ImageGenerationRequest, resource: string, body: Record<string, unknown>): Promise<unknown> {
-  const response = await fetch(joinUrl(request.connection.baseUrl, resource), {
+  const response = await providerFetch(joinUrl(request.connection.baseUrl, resource), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${request.connection.apiKey}`, ...request.connection.secretHeaders },
     body: JSON.stringify(body), signal: request.signal
@@ -171,7 +172,7 @@ async function fetchJson(request: ImageGenerationRequest, resource: string, body
 }
 
 async function fetchMultipart(request: ImageGenerationRequest, resource: string, body: FormData): Promise<unknown> {
-  const response = await fetch(joinUrl(request.connection.baseUrl, resource), {
+  const response = await providerFetch(joinUrl(request.connection.baseUrl, resource), {
     method: "POST",
     headers: { authorization: `Bearer ${request.connection.apiKey}`, ...request.connection.secretHeaders },
     body, signal: request.signal

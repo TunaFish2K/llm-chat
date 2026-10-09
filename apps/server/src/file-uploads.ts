@@ -12,12 +12,12 @@ import type { Store } from "./database";
 import { ImageService, sniffImage } from "./images";
 
 const TTL = 24 * 60 * 60 * 1000;
-interface UploadRow { id: string; file_name: string; mime_type: string; byte_size: number; sha256: string; offset: number; state: FileUploadDto["state"]; expires_at: number; error: string | null }
+interface UploadRow { id: string; file_name: string; mime_type: string; byte_size: number; sha256: string; kind: "file" | "image" | null; offset: number; state: FileUploadDto["state"]; expires_at: number; error: string | null }
 
 export class UploadError extends Error {
   constructor(readonly statusCode: number, readonly code: string) { super(code); }
 }
-const failure = (status: number, code: "unavailable" | "expired" | "conflict" | "incomplete" | "chunk_too_large" | "empty_chunk" | "image_limit" | "disk_full" | "hash_mismatch" | "invalid_body") => withMessage(new UploadError(status, code), `uploads.${code}`);
+const failure = (status: number, code: "unavailable" | "expired" | "conflict" | "incomplete" | "chunk_too_large" | "empty_chunk" | "image_limit" | "image_type" | "disk_full" | "hash_mismatch" | "invalid_body") => withMessage(new UploadError(status, code), `uploads.${code}`);
 
 export class FileUploads {
   readonly root: string;
@@ -65,7 +65,7 @@ export class FileUploads {
   get(id: string): FileUploadDto {
     const row = this.row(id);
     if (!row || row.expires_at <= Date.now()) throw failure(404, "expired");
-    return { id, fileName: row.file_name, mimeType: row.mime_type, byteSize: row.byte_size, sha256: row.sha256,
+    return { id, fileName: row.file_name, mimeType: row.mime_type, byteSize: row.byte_size, sha256: row.sha256, ...(row.kind ? { kind: row.kind } : {}),
       offset: row.offset, state: row.state, expiresAt: row.expires_at, error: row.error,
       asset: row.state === "completed" ? this.store.getFileAsset(id) ?? null : null };
   }
@@ -75,9 +75,10 @@ export class FileUploads {
       const old = this.row(input.id);
       if (old) {
         const value = this.get(input.id);
-        if (value.sha256 !== input.sha256 || value.byteSize !== input.byteSize || value.fileName !== input.fileName || value.mimeType !== input.mimeType) throw failure(409, "conflict");
+        if (value.sha256 !== input.sha256 || value.byteSize !== input.byteSize || value.fileName !== input.fileName || value.mimeType !== input.mimeType || (value.kind && value.kind !== (input.kind ?? "file"))) throw failure(409, "conflict");
         return value;
       }
+      if (input.kind === "image" && input.byteSize > this.store.imageLimits().image) throw failure(413, "image_limit");
       if (this.store.getFileAsset(input.id)) throw failure(409, "conflict");
       try { await writeFile(this.path(input.id), new Uint8Array(), { flag: "wx", mode: 0o600 }); }
       catch (error) {
@@ -85,8 +86,8 @@ export class FileUploads {
         throw error;
       }
       try {
-        this.store.sqlite.prepare("INSERT INTO file_uploads (id,file_name,mime_type,byte_size,sha256,expires_at) VALUES (?,?,?,?,?,?)")
-          .run(input.id, input.fileName, input.mimeType, input.byteSize, input.sha256, Date.now() + TTL);
+        this.store.sqlite.prepare("INSERT INTO file_uploads (id,file_name,mime_type,byte_size,sha256,kind,expires_at) VALUES (?,?,?,?,?,?,?)")
+          .run(input.id, input.fileName, input.mimeType, input.byteSize, input.sha256, input.kind ?? "file", Date.now() + TTL);
       } catch (error) { await rm(this.path(input.id), { force: true }); throw error; }
       return this.get(input.id);
     });
@@ -108,12 +109,15 @@ export class FileUploads {
       try {
         await pipeline(Readable.from(body.iterator({ destroyOnReturn: false })), limit, createWriteStream(this.path(id), { flags: "r+", start: offset }), { signal: controller.signal });
         if (!size) throw failure(400, "empty_chunk");
-        if (!offset) {
+        // The limit may have changed since creation; check it before storing more bytes.
+        if (value.kind === "image" && !offset && value.byteSize > this.store.imageLimits().image) throw failure(413, "image_limit");
+        // Check the type once the 12-byte signature is complete, even when it spans chunks.
+        if (value.kind === "image" && offset < 12 && offset + size >= Math.min(12, value.byteSize)) {
           const file = await open(this.path(id), "r");
           try {
             const header = Buffer.alloc(12);
             await file.read(header, 0, 12, 0);
-            if (sniffImage(header) && value.byteSize > 5 * 1024 ** 2) throw failure(413, "image_limit");
+            if (!sniffImage(header)) throw failure(415, "image_type");
           } finally { await file.close(); }
         }
         const file = await open(this.path(id), "r+");
@@ -160,7 +164,7 @@ export class FileUploads {
       } catch (error) {
         if (!this.closed) {
           const raw = (error as { code?: string }).code;
-          const code = raw === "ENOSPC" ? "disk_full" : raw === "image_too_large" ? "image_limit" : raw === "hash_mismatch" ? raw : "incomplete";
+          const code = raw === "ENOSPC" ? "disk_full" : raw === "image_too_large" ? "image_limit" : raw === "image_type_invalid" ? "image_type" : raw === "hash_mismatch" ? raw : "incomplete";
           this.store.sqlite.prepare("UPDATE file_uploads SET state = 'failed', error = ? WHERE id = ?").run(code, id);
         }
       } finally { this.streams.delete(id); }

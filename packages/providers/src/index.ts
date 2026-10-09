@@ -1,6 +1,7 @@
 export * from "./messages";
 export * from "./types";
 export * from "./http";
+export * from "./network-error";
 export * from "./openai-chat";
 export * from "./openai-responses";
 export * from "./anthropic";

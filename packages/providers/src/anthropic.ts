@@ -3,6 +3,7 @@ import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
+import { providerFetch } from "./network-error";
 import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent } from "./types";
 
 interface AnthropicBlock {
@@ -113,7 +114,7 @@ export class AnthropicAdapter implements ProviderAdapter {
       }
     }
 
-    const response = await fetch(endpoint(request.connection.baseUrl, "messages"), {
+    const response = await providerFetch(endpoint(request.connection.baseUrl, "messages"), {
       method: "POST",
       headers: headers(request.connection, request.requestContext),
       body: JSON.stringify(body),

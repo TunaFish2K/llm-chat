@@ -65,16 +65,28 @@ export function prepareMessages(request: GenerateRequest): ProviderMessage[] {
 }
 
 /** Conservative estimate of transmitted content; image bytes are charged separately. */
+/** UTF-8 length without allocating an encoded copy of a possibly large string. */
+function utf8Length(text: string): number {
+  let bytes = text.length;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) continue;
+    if (code < 0x800) bytes += 1;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) { bytes += 2; index += 1; }
+    else bytes += 2;
+  }
+  return bytes;
+}
+
 export function estimateMessageTokens(systemPrompt: string, messages: ProviderMessage[], tools: ProviderToolDefinition[] = []): number {
-  const encoder = new TextEncoder();
-  let bytes = encoder.encode(systemPrompt).byteLength;
+  let bytes = utf8Length(systemPrompt);
   for (const message of messages) {
-    bytes += encoder.encode(message.text).byteLength;
+    bytes += utf8Length(message.text);
     for (const value of [message.toolCalls, message.toolResults, message.providerPayload]) {
-      if (value) bytes += encoder.encode(JSON.stringify(value)).byteLength;
+      if (value) bytes += utf8Length(JSON.stringify(value));
     }
   }
-  if (tools.length) bytes += encoder.encode(JSON.stringify(tools)).byteLength;
+  if (tools.length) bytes += utf8Length(JSON.stringify(tools));
   const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
   return Math.ceil((bytes / 3 + images * 1600 + messages.length * 6 + 12) * 1.15);
 }

@@ -791,6 +791,15 @@ export const conversationExecutionOverridesSchema = z.object({
 });
 export type ConversationExecutionOverrides = z.infer<typeof conversationExecutionOverridesSchema>;
 
+export const DEFAULT_MAX_IMAGE_UPLOAD_MIB = 100;
+export const MAX_IMAGE_UPLOAD_MIB = 1024;
+export const MAX_IMAGES_PER_MESSAGE = 4;
+/** Byte limits for images that enter the model context; attachments use the file limits. */
+export function imageUploadLimits(maxImageUploadMiB = DEFAULT_MAX_IMAGE_UPLOAD_MIB): { image: number; message: number } {
+  const image = maxImageUploadMiB * 1024 ** 2;
+  return { image, message: image * MAX_IMAGES_PER_MESSAGE };
+}
+
 export const appSettingsSchema = z.object({
   theme: z.enum(["system", "light", "dark"]),
   defaultAgentId: z.string().uuid(),
@@ -809,7 +818,8 @@ export const appSettingsSchema = z.object({
     chatLetterSpacing: z.number().min(0).max(0.15).optional(),
     chatLineHeight: z.number().min(1.2).max(2.4).optional()
   }),
-  lastWorkspacePath: z.string().max(4096).nullable().default(null)
+  lastWorkspacePath: z.string().max(4096).nullable().default(null),
+  maxImageUploadMiB: z.number().int().min(1).max(MAX_IMAGE_UPLOAD_MIB).default(DEFAULT_MAX_IMAGE_UPLOAD_MIB)
 });
 export const appSettingsUpdateSchema = z.preprocess((value, ctx) => {
   if (value && typeof value === "object" && ["defaultModelId", "defaultContextPolicy", "reasoningEffort", "defaultSystemPrompt"]
@@ -820,6 +830,7 @@ export const appSettingsUpdateSchema = z.preprocess((value, ctx) => {
 }, appSettingsSchema.partial().extend({
   // Patch schemas must not insert read defaults into unrelated updates.
   lastWorkspacePath: appSettingsSchema.shape.lastWorkspacePath.unwrap().optional(),
+  maxImageUploadMiB: appSettingsSchema.shape.maxImageUploadMiB.unwrap().optional(),
   uiPreferences: appSettingsSchema.shape.uiPreferences.partial().extend({ generationHaptics: z.boolean().optional() }).optional()
 }));
 export type AppSettings = z.infer<typeof appSettingsSchema>;
@@ -1139,10 +1150,14 @@ export const MAX_MESSAGE_ATTACHMENT_BYTES = 4 * 1024 ** 3;
 export const FILE_UPLOAD_CHUNK_BYTES = 4 * 1024 ** 2;
 export const fileUploadInputSchema = fileUploadMetadataSchema.extend({
   id: z.string().uuid(),
+  // "image" enters the model context and is limited by the image setting;
+  // "file" is stored as an attachment even when its bytes are an image.
+  kind: z.enum(["file", "image"]).default("file"),
   byteSize: z.number().int().positive().max(MAX_ATTACHMENT_FILE_BYTES),
   sha256: z.string().regex(/^[a-f0-9]{64}$/)
 });
-export type FileUploadInput = z.infer<typeof fileUploadInputSchema>;
+/** `kind` is optional so uploads created before it existed keep sniffing image bytes. */
+export type FileUploadInput = Omit<z.infer<typeof fileUploadInputSchema>, "kind"> & { kind?: "file" | "image" };
 export interface FileUploadDto extends FileUploadInput {
   offset: number;
   state: "uploading" | "checking" | "completed" | "failed";
@@ -1193,6 +1208,8 @@ export interface ContextSummaryDto {
 export type GenerationEvent =
   | { type: "snapshot"; generation: GenerationDto }
   | { type: "block-delta"; generationId: string; block: GenerationBlockDto }
+  /** `block.content` holds only the text after `offset`; the client appends it to what it has. */
+  | { type: "block-append"; generationId: string; block: GenerationBlockDto; offset: number }
   | { type: "usage"; generationId: string; usage: UsageDto }
   | { type: "tool-call"; generationId: string; toolCall: ToolCallDto }
   | { type: "vision-analysis"; generationId: string; analysis: VisionAnalysisDto }

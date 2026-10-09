@@ -888,8 +888,26 @@ describe("ChatView", () => {
       url: `/api/images/00000000-0000-4000-8000-000000000009?v=${"b".repeat(64)}`,
       createdAt: 1
     };
+    // jsdom has no workers; answer the hashing worker directly.
+    vi.stubGlobal("Worker", class {
+      onmessage: ((event: { data: { sha256: string } }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      postMessage() { queueMicrotask(() => this.onmessage?.({ data: { sha256: "b".repeat(64) } })); }
+      terminate() {}
+    });
+    let upload: Record<string, unknown> | undefined;
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      if (url === "/api/images" && init?.method === "POST") return Promise.resolve(json(asset, 201));
+      // Images use the resumable upload and are marked as images for the model context.
+      if (url === "/api/file-uploads" && init?.method === "POST") {
+        upload = { ...JSON.parse(String(init.body)), offset: 0, state: "uploading", expiresAt: Date.now() + 60_000, asset: null, error: null };
+        expect(upload).toMatchObject({ kind: "image", fileName: "pixel.png" });
+        return Promise.resolve(json(upload, 201));
+      }
+      if (upload && url.startsWith(`/api/file-uploads/${String(upload.id)}`)) {
+        if (init?.method === "PATCH") upload = { ...upload, offset: 8 };
+        if (url.endsWith("/complete")) upload = { ...upload, state: "completed", asset: { ...asset, id: upload.id, kind: "image" } };
+        return Promise.resolve(json(upload));
+      }
       if (url === "/api/conversations/conv-1/messages" && init?.method === "POST") {
         return Promise.resolve(json({ userMessageId: "u", assistantMessageId: "a", generationId: "g" }, 202));
       }
@@ -901,14 +919,14 @@ describe("ChatView", () => {
     const { container } = render(<ChatView conversationId="conv-1" />);
     const file = new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "pixel.png", { type: "image/png" });
 
-    await user.upload(container.querySelector('input[type="file"]')!, file);
+    await user.upload(container.querySelector('input[type="file"][accept^="image/"]')!, file);
     expect(await screen.findByRole("img", { name: "pixel.png" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "发送" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1/messages",
       expect.objectContaining({
         method: "POST",
-        body: expect.stringContaining(JSON.stringify([asset.id]))
+        body: expect.stringContaining(JSON.stringify([upload!.id]))
       })
     ));
   });

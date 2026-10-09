@@ -1,6 +1,6 @@
 import type { FileUploadDto, FileUploadInput } from "@llm-chat/contracts";
 import { errorI18n } from "@llm-chat/i18n";
-import { ApiRequestError, channelFetch, httpRequest } from "./http-client";
+import { ApiRequestError, channelFetch, httpRequest, networkFailure } from "./http-client";
 import { t } from "./i18n";
 
 async function request(method: string, path: string, signal: AbortSignal, body?: unknown): Promise<FileUploadDto> {
@@ -20,7 +20,8 @@ export const fileUploadHttp = {
       });
     } catch (error) {
       if (error instanceof ApiRequestError) throw error;
-      throw new ApiRequestError(0, "network_error", error instanceof Error ? error.message : t("uploads.network_error"));
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      throw networkFailure();
     }
     if (response.status === 401) window.dispatchEvent(new Event("llm-chat:offline-auth-required"));
     const text = await response.text();

@@ -2,6 +2,7 @@ import { providerReasoningEffort } from "@llm-chat/contracts";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
+import { providerFetch } from "./network-error";
 import type { GenerateRequest, ProviderAdapter, ProviderEvent } from "./types";
 
 export class OpenAiChatAdapter implements ProviderAdapter {
@@ -77,7 +78,7 @@ export class OpenAiChatAdapter implements ProviderAdapter {
       body.reasoning_effort = effort;
     }
 
-    const response = await fetch(endpoint(request.connection.baseUrl, "chat/completions"), {
+    const response = await providerFetch(endpoint(request.connection.baseUrl, "chat/completions"), {
       method: "POST",
       headers: headers(request.connection, request.requestContext),
       body: JSON.stringify(body),

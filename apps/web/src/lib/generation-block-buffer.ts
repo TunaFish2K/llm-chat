@@ -30,6 +30,19 @@ export class GenerationBlockBuffer {
     this.pending.set(generationId, { blocks, timer });
   }
 
+  /**
+   * Applies text appended after `offset`. Returns false when the local copy is
+   * not exactly `offset` characters long, so the caller can resync from a snapshot.
+   */
+  append(generationId: string, block: Block, offset: number, base: (key: string) => Block | undefined): boolean {
+    const key = `${block.stepIndex}:${block.index}`;
+    const previous = this.pending.get(generationId)?.blocks.get(key) ?? base(key);
+    const prior = previous?.content ?? "";
+    if (prior.length !== offset) return false;
+    this.push(generationId, { ...block, content: prior + block.content });
+    return true;
+  }
+
   take(generationId: string): Block[] {
     const current = this.pending.get(generationId);
     if (!current) return [];

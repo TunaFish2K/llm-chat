@@ -6,10 +6,11 @@ import { access, copyFile, mkdir, readFile, readdir, realpath, rename, rm, unlin
 import { isIP } from "node:net";
 import { basename, isAbsolute, resolve, sep } from "node:path";
 import type { FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
+import { describeNetworkError, providerFetch, readBoundedBytes } from "@llm-chat/providers";
 import type { FileAssetRecord, Store } from "./database";
 import { StoreError } from "./errors";
 
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_REMOTE_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const CACHE_MAX_BYTES = 256 * 1024 * 1024;
@@ -42,7 +43,8 @@ export class ImageService {
   }
 
   async importBytes(fileName: string, bytes: Uint8Array): Promise<ImageAssetDto> {
-    return this.importImageBytes(fileName, bytes, MAX_IMAGE_BYTES, "图片必须小于 5 MiB");
+    const limit = this.store.imageLimits().image;
+    return this.importImageBytes(fileName, bytes, limit, `图片必须小于 ${formatMiB(limit)}`);
   }
 
   async importGeneratedBytes(fileName: string, bytes: Uint8Array): Promise<ImageAssetDto> {
@@ -125,8 +127,15 @@ export class ImageService {
       if (existing.sha256 !== input.sha256 || existing.byteSize !== input.byteSize) throw new StoreError("file_asset_conflict", "File asset ID is already in use");
       return existing;
     }
-    const imageType = sniffImage(header);
-    if (imageType && input.byteSize > MAX_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "图片必须小于 5 MiB"), "error.the_remote_image_exceeds_5_mib");
+    // Only uploads chosen as images enter the model context. A file attachment
+    // keeps its file identity even when its bytes are an image.
+    const imageType = input.kind === "file" ? null : sniffImage(header);
+    if (input.kind === "image" && !imageType) throw withMessage(new StoreError("image_type_invalid", "仅支持 JPEG、PNG、WebP 和 GIF 图片"), "error.only_jpeg_png_webp_and_gif_images_are_supported");
+    const limit = this.store.imageLimits().image;
+    if (imageType && input.byteSize > limit) {
+      const size = formatMiB(limit);
+      throw withMessage(new StoreError("image_too_large", `图片必须小于 ${size}`), "error.image_upload_limit", { size });
+    }
     const storageKey = imageType ? `${input.sha256}.${extensionFor(imageType)}` : input.sha256;
     // Linking publishes a fully synced file without copying it or exposing a partial blob.
     await link(path, resolve(this.root, storageKey)).catch((error) => {
@@ -141,7 +150,9 @@ export class ImageService {
     const record = this.store.getFileAssetRecord(id);
     if (!record) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     if (record.byteSize > maxBytes) throw withMessage(new StoreError("file_too_large", "文件超过此操作的读取上限"), "uploads.read_limit");
-    return { asset: toDto(record), bytes: new Uint8Array(await readFile(resolve(this.root, record.storageKey))) };
+    // A Buffer is already a Uint8Array; copying it would double the memory held per image.
+    const bytes = await readFile(resolve(this.root, record.storageKey));
+    return { asset: toDto(record), bytes: new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) };
   }
 
   async readAsset(id: string): Promise<{ asset: ImageAssetDto; bytes: Uint8Array }> {
@@ -195,7 +206,7 @@ export class ImageService {
       await assertPublicUrl(current);
       const timeout = AbortSignal.timeout(10_000);
       const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
-      const response = await fetch(current, {
+      const response = await providerFetch(current, {
         redirect: "manual",
         headers: { accept: "image/avif,image/webp,image/png,image/jpeg,image/gif", "user-agent": "llm-chat-image-proxy/1.0" },
         signal: combined
@@ -208,9 +219,9 @@ export class ImageService {
       }
       if (!response.ok) throw withMessage(new StoreError("image_proxy_failed", `图片服务器返回 HTTP ${response.status}`), "error.the_image_server_returned_http", { value1: response.status });
       const declared = Number(response.headers.get("content-length") ?? 0);
-      if (declared > MAX_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "远程图片超过 5 MiB"), "error.the_remote_image_exceeds_5_mib");
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > MAX_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "远程图片超过 5 MiB"), "error.the_remote_image_exceeds_5_mib");
+      if (declared > MAX_REMOTE_IMAGE_BYTES) throw withMessage(new StoreError("image_too_large", "远程图片超过 5 MiB"), "error.the_remote_image_exceeds_5_mib");
+      const bytes = await readBoundedBytes(response, MAX_REMOTE_IMAGE_BYTES);
+      if (!bytes) throw withMessage(new StoreError("image_too_large", "远程图片超过 5 MiB"), "error.the_remote_image_exceeds_5_mib");
       const mimeType = sniffImage(bytes);
       if (!mimeType) throw withMessage(new StoreError("image_type_invalid", "远程响应不是受支持的图片"), "error.the_remote_response_is_not_a_supported_image");
       this.addCache(normalized, { bytes, mimeType, expiresAt: Date.now() + CACHE_TTL_MS, lastUsedAt: Date.now() });
@@ -224,7 +235,7 @@ export class ImageService {
     for (let redirects = 0; redirects <= 3; redirects += 1) {
       await assertPublicUrl(current);
       const combined = signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000);
-      const response = await fetch(current, { redirect: "manual", signal: combined, headers: { "user-agent": "llm-chat-file-fetch/1.0" } });
+      const response = await providerFetch(current, { redirect: "manual", signal: combined, headers: { "user-agent": "llm-chat-file-fetch/1.0" } });
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
         if (!location) throw withMessage(new StoreError("file_redirect_invalid", "文件重定向缺少 Location"), "error.the_file_redirect_has_no_location_header");
@@ -234,8 +245,8 @@ export class ImageService {
       if (!response.ok) throw withMessage(new StoreError("file_fetch_failed", `文件服务器返回 HTTP ${response.status}`), "error.the_file_server_returned_http", { value1: response.status });
       const declared = Number(response.headers.get("content-length") ?? 0);
       if (declared > maxBytes) throw withMessage(new StoreError("file_too_large", "远程文件超过大小限制"), "error.the_remote_file_exceeds_the_size_limit");
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength > maxBytes) throw withMessage(new StoreError("file_too_large", "远程文件超过大小限制"), "error.the_remote_file_exceeds_the_size_limit");
+      const bytes = await readBoundedBytes(response, maxBytes);
+      if (!bytes) throw withMessage(new StoreError("file_too_large", "远程文件超过大小限制"), "error.the_remote_file_exceeds_the_size_limit");
       let remoteName = "file";
       try {
         remoteName = decodeURIComponent(current.pathname.split("/").at(-1) || "file");
@@ -252,12 +263,29 @@ export class ImageService {
   }
 
   async cleanupOrphans(now = Date.now()): Promise<void> {
+    let removed = false;
     for (const asset of this.store.unreferencedFileAssets(now - ORPHAN_TTL_MS)) {
       const result = this.store.deleteFileAsset(asset.id);
       if (!result.storageKey) continue;
+      removed = true;
       await unlink(resolve(this.root, result.storageKey)).catch((error) => {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       });
+    }
+    if (removed) await this.pruneDerivatives();
+  }
+
+  /** Provider-sized copies live beside the originals and go when their blob goes. */
+  private async pruneDerivatives(): Promise<void> {
+    const root = resolve(this.store.dataDir, "image-derivatives");
+    const entries = await readdir(root).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return [] as string[];
+      throw error;
+    });
+    if (!entries.length) return;
+    const live = new Set((this.store.sqlite.prepare("SELECT sha256 FROM file_blobs").all() as Array<{ sha256: string }>).map((row) => row.sha256));
+    for (const name of entries) {
+      if (!live.has(name.split("-")[0] ?? "")) await rm(resolve(root, name), { force: true });
     }
   }
 
@@ -351,11 +379,17 @@ export function attachmentFileName(asset: Pick<FileAssetDto, "id" | "fileName">)
   return `${asset.id}-${cleanFileName(asset.fileName)}`;
 }
 
+function formatMiB(bytes: number): string {
+  return `${Math.round(bytes / 1024 ** 2)} MiB`;
+}
+
 async function assertPublicUrl(url: URL): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") throw withMessage(new StoreError("image_proxy_url_invalid", "只允许 HTTP 和 HTTPS 图片"), "error.only_http_and_https_images_are_allowed");
   if (url.username || url.password) throw withMessage(new StoreError("image_proxy_url_invalid", "图片 URL 不能包含凭据"), "error.image_urls_cannot_contain_credentials");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true });
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await lookup(hostname, { all: true }).catch((error: unknown) => {
+    throw describeNetworkError(error, url) ?? error;
+  });
   if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) {
     throw withMessage(new StoreError("image_proxy_private_address", "不允许代理私网或回环地址"), "error.private_and_loopback_addresses_cannot_be_proxied");
   }

@@ -8,6 +8,7 @@ import type { ConnectionRecord, GenerationRecord } from "./generation-types";
 import { StoreError } from "./errors";
 import { buildEffectiveSettings } from "./generation-policy";
 import type { ImageService } from "./images";
+import { ImageDerivatives, imageProfile } from "./image-derivatives";
 import { providerRequestContext } from "./provider-context";
 
 const VISION_PROMPT_VERSION = "vision-description-v1";
@@ -24,14 +25,26 @@ export type PreparedImages = ReadonlyMap<string, PreparedImage>;
 
 export class VisionService {
   private readonly inflight = new Map<string, Promise<VisionAnalysisDto>>();
+  readonly derivatives: ImageDerivatives;
 
-  constructor(private readonly store: Store, private readonly images: ImageService) {}
+  constructor(private readonly store: Store, private readonly images: ImageService) {
+    this.derivatives = new ImageDerivatives(store.dataDir, async (id) => {
+      const { bytes } = await images.readAsset(id);
+      return Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    });
+  }
 
+  /**
+   * Prepares the images a generation sends to the model. `reuse` carries images
+   * already prepared by an earlier tool step, so each image is read and encoded
+   * once per generation instead of once per step.
+   */
   async prepare(
     record: GenerationRecord,
     mainModel: ModelDto,
     signal: AbortSignal,
-    onAnalysis: (analysis: VisionAnalysisDto) => void
+    onAnalysis: (analysis: VisionAnalysisDto) => void,
+    reuse?: Map<string, PreparedImage>
   ): Promise<PreparedImages> {
     const messages = this.store.contextMessages(record.conversationId, record.assistantMessageId);
     const current = this.store.currentGenerationContext(record.id);
@@ -54,19 +67,27 @@ export class VisionService {
           ? assets.slice(-maxImageInputs)
           : []
       : [];
-    const directAssetIds = new Set(directAssets.map((asset) => asset.id));
+    const profile = imageProfile(record.protocol);
     const prepared = new Map<string, PreparedImage>();
-    for (const asset of directAssets) {
+    const directAssetIds = new Set<string>();
+    let requestBytes = 0;
+    let overBudget = false;
+    // Newest images matter most; once the request budget is spent, older ones
+    // fall back to text descriptions instead of growing one huge request body.
+    for (const asset of [...directAssets].reverse()) {
       signal.throwIfAborted();
-      const loaded = await this.images.readAsset(asset.id);
-      prepared.set(asset.id, {
-        asset,
-        image: {
-          mimeType: loaded.asset.mimeType,
-          dataBase64: Buffer.from(loaded.bytes).toString("base64"),
-          fileName: loaded.asset.fileName
-        }
-      });
+      if (overBudget) continue;
+      let item = reuse?.get(asset.id);
+      if (!item?.image) {
+        const derived = await this.derivatives.derive(asset, profile);
+        item = { asset, image: { mimeType: derived.mimeType, dataBase64: derived.bytes.toString("base64"), fileName: asset.fileName } };
+      }
+      const size = Math.ceil(item.image!.dataBase64.length * 3 / 4);
+      if (requestBytes + size > profile.requestBytes) { overBudget = true; continue; }
+      requestBytes += size;
+      directAssetIds.add(asset.id);
+      prepared.set(asset.id, item);
+      reuse?.set(asset.id, item);
     }
 
     const descriptionAssets = assets.filter((asset) => !directAssetIds.has(asset.id));
@@ -74,9 +95,11 @@ export class VisionService {
 
     const visionModelId = record.agentSnapshot.execution.visionModelId ?? null;
     if (!visionModelId) {
-      const limitHint = maxImageInputs == null || !mainModel.capabilities.imageInput
+      const limitHint = !mainModel.capabilities.imageInput
         ? "当前模型不支持图片"
-        : `当前模型最多接受 ${maxImageInputs} 张图片`;
+        : overBudget
+          ? `对话中的图片超过单次请求约 ${Math.round(profile.requestBytes / 1024 ** 2)} MiB 的上限`
+          : `当前模型最多接受 ${maxImageInputs} 张图片`;
       throw withMessage(new VisionError("vision_model_required", `${limitHint}，请先为 Agent 配置备用识图模型`), "error.configure_a_fallback_vision_model_for_the_agent_first", { value1: limitHint });
     }
     const visionModel = this.store.getModel(visionModelId);
@@ -139,7 +162,7 @@ export class VisionService {
     const started = this.store.beginVisionAnalysis({ cacheKey, assetId: asset.id, model: generatedModel });
     onAnalysis(started);
     try {
-      const loaded = await this.images.readAsset(asset.id);
+      const derived = await this.derivatives.derive(asset, imageProfile(connection.protocol));
       const maxOutputTokens = Math.min(2_048, model.maxOutputTokens);
       const settings = buildEffectiveSettings(model, connection.protocol, "none", {
         common: {
@@ -157,9 +180,9 @@ export class VisionService {
           role: "user",
           text: "Describe this image and transcribe its visible text.",
           images: [{
-            mimeType: loaded.asset.mimeType,
-            dataBase64: Buffer.from(loaded.bytes).toString("base64"),
-            fileName: loaded.asset.fileName
+            mimeType: derived.mimeType,
+            dataBase64: derived.bytes.toString("base64"),
+            fileName: asset.fileName
           }]
         }],
         settings,

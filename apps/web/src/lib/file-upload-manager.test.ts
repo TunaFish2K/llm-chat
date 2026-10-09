@@ -23,13 +23,13 @@ function setup(storage = new Map<string, string>()) {
   const hash = vi.fn<typeof hashFileInWorker>(async (_file, _signal, progress) => { progress(10); return "a".repeat(64); });
   const attach = vi.fn(); const changed = vi.fn(); const delay = vi.fn(async (_ms, signal: AbortSignal) => { signal.throwIfAborted(); });
   const online = vi.fn(() => true);
-  const image = vi.fn<(file: File) => Promise<FileAssetDto>>(async () => ({ ...asset, kind: "image" as const }));
-  const manager = new FileUploadManager({ http, hash, attach, changed, image, delay, online,
+  const imageLimits = vi.fn(() => ({ image: 5 * 1024 ** 2, message: 20 * 1024 ** 2 }));
+  const manager = new FileUploadManager({ http, hash, attach, changed, imageLimits, delay, online,
     storage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => { storage.set(key, value); }, removeItem: (key) => { storage.delete(key); } } });
   managers.push(manager);
   const scope = manager.ensure("conversation:a", [], "a");
   const file = new File(["0123456789"], "data.bin");
-  return { manager, scope, file, http, hash, attach, changed, delay, online, image, storage, get row() { return row; }, set row(value) { row = value; } };
+  return { manager, scope, file, http, hash, attach, changed, delay, online, imageLimits, storage, get row() { return row; }, set row(value) { row = value; } };
 }
 
 describe("upload queue", () => {
@@ -88,11 +88,11 @@ describe("upload queue", () => {
   });
 
   it("cancels tasks, drops late image results, and clears old scopes on logout or source change", async () => {
-    const x = setup(); let finish!: (value: FileAssetDto) => void;
-    x.image.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const x = setup(); let finish!: (value: FileUploadDto) => void;
+    x.http.complete.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     x.manager.enqueue(x.scope.id, [new File(["image"], "p.png", { type: "image/png" })]);
-    await vi.waitFor(() => expect(x.image).toHaveBeenCalled());
-    x.manager.cancel(x.scope.id, x.scope.tasks[0]!.id); finish(asset);
+    await vi.waitFor(() => expect(x.http.complete).toHaveBeenCalled());
+    x.manager.cancel(x.scope.id, x.scope.tasks[0]!.id); finish({ ...x.row, state: "completed", asset: { ...asset, kind: "image" } });
     await vi.waitFor(() => expect(x.scope.tasks).toHaveLength(0));
     expect(x.scope.attachments).toEqual([]);
     x.manager.setSource("different-instance"); expect(x.manager.all()).toEqual([]);
@@ -202,7 +202,22 @@ it("ignores damaged upload metadata and rejects oversized images before reading 
     expect(x.manager.all()).toHaveLength(1);
     const large = new File(["image"], "too-big.png", { type: "image/png" });
     Object.defineProperty(large, "size", { value: 5 * 1024 ** 2 + 1 });
-    expect(x.manager.enqueue(x.scope.id, [large])).toHaveLength(1);
-    expect(x.image).not.toHaveBeenCalled();
+    expect(x.manager.enqueue(x.scope.id, [large])).toEqual([expect.stringContaining("5.0 MiB")]);
+    expect(x.hash).not.toHaveBeenCalled();
   }
+});
+
+it("keeps the chosen kind: files skip image limits and images use the configured limit", async () => {
+  const x = setup();
+  const photo = new File(["image"], "photo.png", { type: "image/png" });
+  Object.defineProperty(photo, "size", { value: 50 * 1024 ** 2 });
+  expect(x.manager.enqueue(x.scope.id, [photo], "image")).toEqual([expect.stringContaining("5.0 MiB")]);
+  expect(x.manager.enqueue(x.scope.id, [new File(["%PDF"], "doc.pdf", { type: "application/pdf" })], "image")).toEqual([expect.any(String)]);
+  x.imageLimits.mockReturnValue({ image: 100 * 1024 ** 2, message: 400 * 1024 ** 2 });
+  const small = new File(["0123456789"], "small.png", { type: "image/png" });
+  expect(x.manager.enqueue(x.scope.id, [small], "file")).toEqual([]);
+  await vi.waitFor(() => expect(x.http.create).toHaveBeenCalledWith(expect.objectContaining({ fileName: "small.png", kind: "file" }), expect.anything()));
+  const other = x.manager.ensure("other", []);
+  expect(x.manager.enqueue(other.id, [small])).toEqual([]);
+  await vi.waitFor(() => expect(x.http.create).toHaveBeenCalledWith(expect.objectContaining({ kind: "image" }), expect.anything()));
 });

@@ -1,6 +1,6 @@
 import { clearSubmissions, recordSubmissionAcceptance, saveSubmission, setSubmissionSource, submissionStore } from "./submission";
 import { clearResources, invalidateResources } from "./resource";
-import { uploadManager } from "./file-upload-manager";
+import { setImageUploadLimit, uploadManager } from "./file-upload-manager";
 import { errorDisplayMessage } from "./error-display";
 import { t, type DisplayMessage, localized } from "./i18n";
 import { RefreshScheduler } from "./refresh-scheduler";
@@ -80,8 +80,10 @@ if (startup) {
   initializeDisplayPreferences(startup.settings);
 }
 let lastSnapshot = appStore.get();
+setImageUploadLimit(lastSnapshot.settings?.maxImageUploadMiB);
 appStore.subscribe(() => {
   const state = appStore.get();
+  if (state.settings !== lastSnapshot.settings) setImageUploadLimit(state.settings?.maxImageUploadMiB);
   const changed = state.sourceId !== lastSnapshot.sourceId || state.settings !== lastSnapshot.settings || state.agents !== lastSnapshot.agents
     || state.connections !== lastSnapshot.connections || state.models !== lastSnapshot.models || state.conversations !== lastSnapshot.conversations;
   lastSnapshot = state;
@@ -642,6 +644,13 @@ async function handleGenerationEvent(
     generationBlocks.push(generationId, event.block);
     return;
   }
+  if (event.type === "block-append") {
+    const applied = generationBlocks.append(generationId, event.block, event.offset,
+      (key) => generation.blocks.find((block) => `${block.stepIndex}:${block.index}` === key));
+    // A missed event leaves a gap; reconnecting delivers a full snapshot.
+    if (!applied) restartGenerationTracking(owner.conversationId, owner.messageId, generationId);
+    return;
+  }
   const next: GenerationDto = { ...withBlocks(generation, generationBlocks.take(generationId)) };
   if (event.type === "usage") {
     next.usage = event.usage;
@@ -716,7 +725,9 @@ function applyGeneration(conversationId: string, messageId: string, generation: 
     };
   });
   const messages = appStore.get().messages[conversationId];
-  if (messages) persistOfflineMessages(conversationId, messages, !isGenerationActive(generation.status));
+  // Each offline write clones and indexes the whole conversation. While text is
+  // streaming that ran every half second; write once when the reply settles.
+  if (messages && !isGenerationActive(generation.status)) persistOfflineMessages(conversationId, messages, true);
 }
 
 let appEventsSubscription: Subscription | null = null;

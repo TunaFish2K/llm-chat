@@ -13,7 +13,10 @@ it("rejects stale attachment owners and enforces image count and size atomically
   expect(() => store.attachFileToAgent(agentId, missing)).toThrow("文件资产不存在");
   expect(() => store.attachFileToToolCall(missing, missing)).toThrow("文件资产不存在");
   expect(() => store.validateAttachments(images.map(item => item.id))).toThrow("最多包含 4 张图片");
-  expect(() => store.validateAttachments(images.slice(0, 4).map(item => item.id))).toThrow("15 MiB");
+  expect(() => store.validateAttachments(images.slice(0, 4).map(item => item.id))).not.toThrow();
+  store.updateSettings({ maxImageUploadMiB: 4 });
+  expect(store.imageLimits()).toEqual({ image: 4 * 1024 ** 2, message: 16 * 1024 ** 2 });
+  expect(() => store.validateAttachments(images.slice(0, 4).map(item => item.id))).toThrow("16 MiB");
   expect(() => store.validateAttachments([missing])).toThrow("文件资产不存在");
   expect(() => assertImageConfiguration(store, agentId, model.id, [missing])).toThrow("图片资产不存在");
   expect(() => assertImageConfiguration(store, null, model.id, [])).toThrow("选择可用 Agent");

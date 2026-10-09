@@ -1,8 +1,7 @@
 import { withMessage } from "@llm-chat/i18n";
 import { httpHeaderNameSchema, httpHeaderValueSchema } from "@llm-chat/contracts";
 import { ProviderError, type ProviderConnection, type ProviderRequestContext } from "./types";
-
-const textDecoder = new TextDecoder();
+import { describeNetworkError, providerFetch } from "./network-error";
 
 export function endpoint(baseUrl: string, resource: string): string {
   const url = new URL(baseUrl);
@@ -48,7 +47,7 @@ export function headers(
 export async function ensureOk(response: Response): Promise<void> {
   if (response.ok) return;
   const requestId = response.headers.get("x-request-id") ?? response.headers.get("request-id");
-  let message = `上游服务返回 HTTP ${response.status}`;
+  let message = "";
   try {
     const body = (await response.json()) as { error?: { message?: string; type?: string } | string };
     if (typeof body.error === "string") message = body.error;
@@ -56,25 +55,32 @@ export async function ensureOk(response: Response): Promise<void> {
   } catch {
     // Some compatible endpoints return an HTML error page. Do not expose it.
   }
-  if (requestId) message += `（request id: ${requestId}）`;
+  const suffix = requestId ? `（request id: ${requestId}）` : "";
   const code = response.status === 401 || response.status === 403
     ? "provider_auth_error"
     : response.status === 429
       ? "provider_rate_limit"
       : "provider_http_error";
-  throw new ProviderError(code, message, response.status);
+  if (message) throw new ProviderError(code, message + suffix, response.status);
+  throw withMessage(new ProviderError(code, `上游服务返回 HTTP ${response.status}${suffix}`, response.status), "error.upstream_http_status", { status: response.status, suffix });
 }
 
 export async function* readSse(response: Response): AsyncGenerator<{ event: string; data: string }> {
   if (!response.body) throw withMessage(new ProviderError("provider_stream_error", "上游服务没有返回响应流"), "error.the_upstream_service_did_not_return_a_response_stream");
   const reader = response.body.getReader();
+  // A streaming decoder keeps partial UTF-8 sequences, so it must not be shared
+  // between concurrent responses.
+  const textDecoder = new TextDecoder();
   let buffer = "";
+  // Resume the boundary search where the last one stopped so a multi-megabyte
+  // frame, such as a generated image, is not rescanned on every chunk.
+  let scanned = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer += textDecoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-      let boundary = buffer.indexOf("\n\n");
+      let boundary = buffer.indexOf("\n\n", scanned);
       while (boundary >= 0) {
         const frame = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
@@ -87,10 +93,12 @@ export async function* readSse(response: Response): AsyncGenerator<{ event: stri
         if (data.length) yield { event, data: data.join("\n") };
         boundary = buffer.indexOf("\n\n");
       }
+      scanned = Math.max(0, buffer.length - 1);
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    throw new ProviderError(
+    if (error instanceof ProviderError) throw error;
+    throw describeNetworkError(error, response.url || undefined) ?? new ProviderError(
       "provider_stream_error",
       error instanceof Error ? error.message : "读取上游响应流失败"
     );
@@ -104,7 +112,7 @@ export async function listModelEndpoint(
   signal?: AbortSignal,
   requestContext?: ProviderRequestContext
 ): Promise<Array<{ id: string; displayName: string }>> {
-  const response = await fetch(endpoint(connection.baseUrl, "models"), {
+  const response = await providerFetch(endpoint(connection.baseUrl, "models"), {
     headers: headers(connection, requestContext),
     ...(signal ? { signal } : {})
   });
@@ -120,4 +128,40 @@ export async function listModelEndpoint(
       id: item.id,
       displayName: item.display_name ?? ("displayName" in item ? item.displayName : undefined) ?? ("name" in item ? item.name : undefined) ?? item.id
     }));
+}
+
+/**
+ * Reads a response body up to `limit` bytes. Returns null and cancels the body
+ * as soon as the limit is exceeded, so a response without Content-Length cannot
+ * be buffered without bound.
+ */
+export async function readBoundedBytes(response: Response, limit: number): Promise<Uint8Array | null> {
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    throw describeNetworkError(error, response.url || undefined) ?? error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (chunks.length === 1) return chunks[0]!;
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }

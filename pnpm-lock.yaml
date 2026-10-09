@@ -111,6 +111,9 @@ importers:
       re2-wasm:
         specifier: ^1.0.2
         version: 1.0.2
+      sharp:
+        specifier: ^0.34.5
+        version: 0.34.5
       yaml:
         specifier: ^2.8.1
         version: 2.9.0

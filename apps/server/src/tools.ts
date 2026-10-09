@@ -12,7 +12,7 @@ import { access, glob, mkdir, readFile, realpath, readdir, stat, writeFile } fro
 import { isIP } from "node:net";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { imageGenerationInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
-import type { ProviderToolDefinition } from "@llm-chat/providers";
+import { describeNetworkError, providerFetch, readBoundedBytes, type ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { AgentSnapshot } from "./generation-types";
 import type { TaskManager } from "./background-tasks";
@@ -557,7 +557,7 @@ async function searchWeb(
   if (!config) throw new Error("Web search is not configured for this Agent");
   if (config.provider === "tavily") {
     if (!apiKey) throw new Error("Tavily API key is not configured");
-    const response = await fetch(searchEndpoint(config.baseUrl || DEFAULT_TAVILY_BASE_URL), {
+    const response = await providerFetch(searchEndpoint(config.baseUrl || DEFAULT_TAVILY_BASE_URL), {
       method: "POST",
       headers: {
         accept: "application/json",
@@ -584,7 +584,7 @@ async function searchWeb(
   const endpoint = searchEndpoint(config.baseUrl);
   endpoint.searchParams.set("q", query);
   endpoint.searchParams.set("format", "json");
-  const response = await fetch(endpoint, {
+  const response = await providerFetch(endpoint, {
     headers: { accept: "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
     signal
   });
@@ -600,7 +600,7 @@ async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost:
   for (let redirects = 0; redirects <= 4; redirects += 1) {
     if (allowPrivate) assertHttpUrl(current);
     else await assertPublicUrl(current, resolveHost);
-    const response = await fetch(current, { redirect: "manual", headers: { "user-agent": "llm-chat-tool/1.0", accept: "text/html,text/plain,application/json" }, signal });
+    const response = await providerFetch(current, { redirect: "manual", headers: { "user-agent": "llm-chat-tool/1.0", accept: "text/html,text/plain,application/json" }, signal });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) throw new Error("Redirect response has no Location header");
@@ -610,8 +610,8 @@ async function fetchPublicText(rawUrl: string, signal: AbortSignal, resolveHost:
     if (!response.ok) throw new Error(`URL returned HTTP ${response.status}`);
     const declared = Number(response.headers.get("content-length") ?? 0);
     if (declared > MAX_FETCH_BYTES) throw new Error("Response is larger than 2 MiB");
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.byteLength > MAX_FETCH_BYTES) throw new Error("Response is larger than 2 MiB");
+    const bytes = await readBoundedBytes(response, MAX_FETCH_BYTES);
+    if (!bytes) throw new Error("Response is larger than 2 MiB");
     const contentType = response.headers.get("content-type") ?? "";
     const raw = new TextDecoder().decode(bytes);
     const text = contentType.includes("text/html") ? htmlToText(raw) : raw;
@@ -629,7 +629,9 @@ export async function assertPublicUrl(url: URL, resolveHost: typeof lookup): Pro
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Only HTTP and HTTPS URLs are allowed");
   if (url.username || url.password) throw new Error("URLs with credentials are not allowed");
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(hostname) ? [{ address: hostname }] : await resolveHost(hostname, { all: true });
+  const addresses = isIP(hostname) ? [{ address: hostname }] : await resolveHost(hostname, { all: true }).catch((error: unknown) => {
+    throw describeNetworkError(error, url) ?? error;
+  });
   if (!addresses.length || addresses.some(({ address }) => isPrivateAddress(address))) throw new Error("Private or loopback addresses are blocked");
 }
 

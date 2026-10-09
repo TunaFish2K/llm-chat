@@ -23,6 +23,7 @@ import type {
   ToolCatalogItemDto,
   ToolSettingsDto
 } from "@llm-chat/contracts";
+import { DEFAULT_MAX_IMAGE_UPLOAD_MIB, MAX_IMAGE_UPLOAD_MIB } from "@llm-chat/contracts";
 import { endpoints, type MemoryDto as MemoryItem } from "../lib/api";
 import { ChatTypographySettings } from "../components/ChatTypographySettings";
 import { AccentPicker } from "../components/AccentPicker";
@@ -266,6 +267,25 @@ function RequestSettings() {
   </div>;
 }
 
+function ImageUploadSettings({ value, save }: { value: number; save: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const next = Math.round(Number(draft));
+    if (!Number.isFinite(next) || next < 1 || next > MAX_IMAGE_UPLOAD_MIB) { setDraft(String(value)); return; }
+    if (next !== value) save(next);
+  };
+  return <div className="card">
+    <h3>{t("SettingsView.max_image_upload")}</h3>
+    <Field label={t("SettingsView.max_image_upload")} hint={t("SettingsView.max_image_upload_hint")}>
+      <input className="input" type="number" min={1} max={MAX_IMAGE_UPLOAD_MIB} step={1} inputMode="numeric"
+        aria-label={t("SettingsView.max_image_upload")} value={draft}
+        onChange={(event) => setDraft(event.currentTarget.value)} onBlur={commit}
+        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+    </Field>
+  </div>;
+}
+
 function GeneralSection() {
   useLocale();
   const settings = useStore(appStore, (s) => s.settings);
@@ -290,6 +310,7 @@ function GeneralSection() {
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
 
       <fieldset className="offline-settings-fields settings-panels">
+      <ImageUploadSettings value={settings.maxImageUploadMiB ?? DEFAULT_MAX_IMAGE_UPLOAD_MIB} save={(value) => patch({ maxImageUploadMiB: value })} />
       <div className="card">
         <h3>{t("SettingsView.default_agent")}</h3>
         <Field label={t("SettingsView.default_agent")}>

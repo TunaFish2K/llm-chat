@@ -3,6 +3,7 @@ import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
+import { providerFetch } from "./network-error";
 import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent } from "./types";
 
 /**
@@ -91,7 +92,7 @@ export class OpenAiResponsesAdapter implements ProviderAdapter {
       body.include = ["reasoning.encrypted_content"];
     }
 
-    const response = await fetch(endpoint(request.connection.baseUrl, "responses"), {
+    const response = await providerFetch(endpoint(request.connection.baseUrl, "responses"), {
       method: "POST",
       headers: headers(request.connection, request.requestContext),
       body: JSON.stringify(body),

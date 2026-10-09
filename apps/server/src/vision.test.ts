@@ -154,3 +154,69 @@ describe("VisionService", () => {
     store.close();
   });
 });
+
+describe("provider-sized images", () => {
+  async function bigPng(width: number, height: number, alpha = false): Promise<Buffer> {
+    const sharp = (await import("sharp")).default;
+    // Noise does not compress, so the PNG is large enough to need conversion.
+    const channels = alpha ? 4 : 3;
+    const raw = Buffer.alloc(width * height * channels);
+    for (let index = 0; index < raw.length; index += 1) raw[index] = (index * 2654435761) >>> 24;
+    return sharp(raw, { raw: { width, height, channels } }).png({ compressionLevel: 0 }).toBuffer();
+  }
+
+  it("resizes oversized images per protocol, caches them, and reads each image once per generation", async () => {
+    const sharp = (await import("sharp")).default;
+    const store = createStore();
+    const seeded = seedModel(store);
+    const main = store.updateModel(seeded.model.id, { capabilities: { ...seeded.model.capabilities, imageInput: true } })!;
+    const images = new ImageService(store);
+    await images.initialize();
+    const asset = await images.importBytes("photo.png", await bigPng(3000, 1500));
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "Look", [asset.id]);
+    const record = store.getGenerationRecord(created.generationId)!;
+    const service = new VisionService(store, images);
+    const read = vi.spyOn(images, "readAsset");
+    const reuse = new Map();
+
+    const first = await service.prepare(record, main, new AbortController().signal, () => undefined, reuse);
+    const sent = first.get(asset.id)!.image!;
+    expect(sent.mimeType).toBe("image/jpeg");
+    const metadata = await sharp(Buffer.from(sent.dataBase64, "base64")).metadata();
+    expect(Math.max(metadata.width!, metadata.height!)).toBe(2048);
+    await service.prepare(record, main, new AbortController().signal, () => undefined, reuse);
+    expect(read).toHaveBeenCalledTimes(1);
+
+    const anthropic = await service.prepare({ ...record, protocol: "anthropic-messages" }, main, new AbortController().signal, () => undefined);
+    const small = await sharp(Buffer.from(anthropic.get(asset.id)!.image!.dataBase64, "base64")).metadata();
+    expect(Math.max(small.width!, small.height!)).toBeLessThanOrEqual(1568);
+    // A second service finds the cached copy on disk instead of converting again.
+    const again = await new VisionService(store, images).prepare(record, main, new AbortController().signal, () => undefined);
+    expect(again.get(asset.id)!.image!.dataBase64).toBe(sent.dataBase64);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps transparency and falls back to descriptions when the request budget is spent", async () => {
+    const { convert, imageProfile } = await import("./image-derivatives");
+    const transparent = await convert(await bigPng(2400, 600, true), "image/png", imageProfile("openai-chat"));
+    expect(transparent.mimeType).toBe("image/webp");
+    const tiny = { id: "tiny", maxEdge: 64, maxBytes: 200, requestBytes: 1 };
+    await expect(convert(await bigPng(512, 512), "image/png", tiny)).rejects.toThrow("compressed");
+    await expect(convert(Buffer.alloc(300), "image/png", tiny)).rejects.toThrow();
+    expect((await convert(Buffer.from(PNG), "image/png", tiny)).bytes).toEqual(Buffer.from(PNG));
+
+    const store = createStore();
+    const seeded = seedModel(store);
+    const main = store.updateModel(seeded.model.id, { capabilities: { ...seeded.model.capabilities, imageInput: true } })!;
+    const images = new ImageService(store);
+    await images.initialize();
+    const assets = [await images.importBytes("a.png", await bigPng(900, 900)), await images.importBytes("b.png", await bigPng(901, 900))];
+    const conversation = store.createConversation({ systemPrompt: "" });
+    const created = store.createMessageGeneration(conversation.id, "Look", assets.map((asset) => asset.id));
+    const derived = await import("./image-derivatives");
+    vi.spyOn(derived, "imageProfile").mockReturnValue({ id: "budget-test", maxEdge: 2048, maxBytes: 8 * 1024 ** 2, requestBytes: assets[1]!.byteSize + 10 });
+    await expect(new VisionService(store, images).prepare(store.getGenerationRecord(created.generationId)!, main, new AbortController().signal, () => undefined))
+      .rejects.toThrow("单次请求");
+  });
+});

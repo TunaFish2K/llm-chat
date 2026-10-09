@@ -58,6 +58,21 @@ export function channelFetch(path: string, init: RequestInit): Promise<Response>
 
 export interface HttpResult<T> { data: T; status: number }
 
+/**
+ * Browsers hide why a fetch failed, so tell offline devices apart from a server
+ * that cannot be reached and name the server in the message.
+ */
+export function networkFailure(): ApiRequestError {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return new ApiRequestError(0, "network_offline", t("http_client.offline"), undefined, { key: "http_client.offline" });
+  }
+  let host = "";
+  try { host = new URL(apiUrl("/"), typeof location === "undefined" ? "http://localhost" : location.href).host; } catch { /* keep generic */ }
+  if (!host) return new ApiRequestError(0, "network_error", t("http_client.network_request_failed"), undefined, { key: "http_client.network_request_failed" });
+  const i18n = { key: "http_client.server_unreachable", params: { host } } as const;
+  return new ApiRequestError(0, "network_error", t(i18n.key, i18n.params), undefined, i18n);
+}
+
 /** A deadline covers both response headers and the response body. */
 export function withRequestSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -85,12 +100,12 @@ export function httpRequest<T>(method: string, path: string, body: unknown, sign
     const attempt = AbortSignal.any([deadline, AbortSignal.timeout(method === "GET" ? 15_000 : 30_000)]);
     return withRequestSignal(performHttpRequest<T>(method, path, serialized, attempt, requestId), attempt).catch(error => {
       if (error instanceof ApiRequestError) throw error;
-      throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));
+      throw networkFailure();
     });
   };
   return withRequestSignal(retryRequest(action, deadline, maxRetries), deadline).catch(error => {
     if (error instanceof ApiRequestError) throw error;
-    throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));
+    throw networkFailure();
   });
 }
 
@@ -108,7 +123,7 @@ async function performHttpRequest<T>(method: string, path: string, body: string 
     });
   } catch (error) {
     if (error instanceof ApiRequestError) throw error;
-    throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"), undefined, { key: "http_client.network_request_failed" });
+    throw networkFailure();
   }
   if (response.status === 401) {
     const text = await response.text();

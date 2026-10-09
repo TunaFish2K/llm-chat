@@ -1,4 +1,5 @@
 import { Client, SSEClientTransport, StreamableHTTPClientTransport, type Transport } from "@modelcontextprotocol/client";
+import { describeNetworkError } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { ServerTool } from "./tools";
 
@@ -77,7 +78,8 @@ export class McpManager {
           });
         }
       } catch (error) {
-        this.store.setMcpServerError(server.id, error instanceof Error ? error.message : String(error));
+        const shown = describeNetworkError(error, server.url) ?? error;
+        this.store.setMcpServerError(server.id, shown instanceof Error ? shown.message : String(shown));
       }
     }
     return result;
@@ -124,7 +126,7 @@ export class McpManager {
         await client.connect(transport);
       } catch {
         await client.close().catch(() => {});
-        throw firstError;
+        throw describeNetworkError(firstError, server.url) ?? firstError;
       }
     }
     const session = { client, transport, fingerprint };

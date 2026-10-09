@@ -1,4 +1,4 @@
-import { withMessage } from "@llm-chat/i18n";
+import { errorI18n, withMessage } from "@llm-chat/i18n";
 import { createHash } from "node:crypto";
 import {
   BALANCE_EXPRESSION_MAX_LENGTH,
@@ -6,6 +6,7 @@ import {
   type ConnectionBalanceDto
 } from "@llm-chat/contracts";
 import {
+  describeNetworkError,
   ensureOk,
   headers,
   type ProviderConnection
@@ -102,7 +103,10 @@ export class BalanceService {
         redirect: "error",
         signal: AbortSignal.timeout(this.timeoutMs)
       });
-    } catch {
+    } catch (error) {
+      const network = describeNetworkError(error, target);
+      const descriptor = errorI18n(network);
+      if (network && descriptor) throw withMessage(new BalanceError("balance_upstream_error", network.message, network.status === 504 ? 504 : 502), descriptor.key, descriptor.params);
       throw withMessage(new BalanceError("balance_upstream_error", "余额服务请求失败", 502), "error.the_balance_service_request_failed");
     }
 
@@ -127,6 +131,9 @@ export class BalanceService {
       text = await readBoundedText(response, MAX_RESPONSE_LENGTH);
     } catch (error) {
       if (error instanceof BalanceError) throw error;
+      const network = describeNetworkError(error, target);
+      const descriptor = errorI18n(network);
+      if (network && descriptor) throw withMessage(new BalanceError("balance_upstream_error", network.message, 502), descriptor.key, descriptor.params);
       throw withMessage(new BalanceError("balance_upstream_error", "读取余额服务响应失败", 502), "error.could_not_read_the_balance_service_response");
     }
     try {

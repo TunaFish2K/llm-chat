@@ -1,4 +1,4 @@
-import { MAX_MESSAGE_ATTACHMENT_BYTES } from "@llm-chat/contracts";
+import { DEFAULT_MAX_IMAGE_UPLOAD_MIB, MAX_MESSAGE_ATTACHMENT_BYTES, imageUploadLimits } from "@llm-chat/contracts";
 import { withMessage, errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { StoreError } from "./errors";
 import type { ConnectionRecord, ContextMessageRecord, ContextGenerationStep, GenerationRecord, AgentSnapshot } from "./generation-types";
@@ -229,10 +229,33 @@ CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON context_summaries(conve
 
 const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
 
+/**
+ * Message listing runs several small queries per message. Compiling each SQL
+ * string again on every call dominated that work, so reuse prepared statements.
+ * Statements finish synchronously (no iterate()), so sharing one is safe.
+ */
+function cacheStatements(sqlite: DatabaseSyncType, limit = 256): void {
+  const prepare = sqlite.prepare.bind(sqlite);
+  const cache = new Map<string, ReturnType<typeof prepare>>();
+  sqlite.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (rest.length) return (prepare as (...args: unknown[]) => ReturnType<typeof prepare>)(sql, ...rest);
+    const cached = cache.get(sql);
+    if (cached) {
+      cache.delete(sql);
+      cache.set(sql, cached);
+      return cached;
+    }
+    const statement = prepare(sql);
+    cache.set(sql, statement);
+    if (cache.size > limit) cache.delete(cache.keys().next().value!);
+    return statement;
+  }) as typeof sqlite.prepare;
+}
+
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 49) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 50) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1237,6 +1260,14 @@ function migrate(sqlite: DatabaseSyncType): void {
       }
       sqlite.exec("PRAGMA user_version = 49;");
     }
+    if (current < 50) {
+      if (!hasColumn(sqlite, "app_settings", "max_image_upload_mib")) {
+        sqlite.exec(`ALTER TABLE app_settings ADD COLUMN max_image_upload_mib INTEGER NOT NULL DEFAULT ${DEFAULT_MAX_IMAGE_UPLOAD_MIB}`);
+      }
+      // Uploads created before v50 keep the old behaviour (NULL): image bytes become images.
+      if (!hasColumn(sqlite, "file_uploads", "kind")) sqlite.exec("ALTER TABLE file_uploads ADD COLUMN kind TEXT");
+      sqlite.exec("PRAGMA user_version = 50;");
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -1323,6 +1354,7 @@ export class Store {
     this.dataDir = dirname(path);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.sqlite = new DatabaseSync(path, { timeout: 5_000 });
+    cacheStatements(this.sqlite);
     this.sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     const priorVersion = Number((this.sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
     migrate(this.sqlite);
@@ -1539,7 +1571,8 @@ export class Store {
         chatLetterSpacing: Number(row.chat_letter_spacing),
         chatLineHeight: Number(row.chat_line_height)
       },
-      lastWorkspacePath: textOrNull(row.last_workspace_path)
+      lastWorkspacePath: textOrNull(row.last_workspace_path),
+      maxImageUploadMiB: Number(row.max_image_upload_mib ?? DEFAULT_MAX_IMAGE_UPLOAD_MIB)
     };
   }
 
@@ -1551,18 +1584,20 @@ export class Store {
       lastAgentId: patch.lastAgentId ?? current.lastAgentId,
       userProfile: patch.userProfile ?? current.userProfile,
       uiPreferences: { ...current.uiPreferences, ...Object.fromEntries(Object.entries(patch.uiPreferences ?? {}).filter(([, value]) => value !== undefined)) },
-      lastWorkspacePath: patch.lastWorkspacePath === undefined ? current.lastWorkspacePath : patch.lastWorkspacePath
+      lastWorkspacePath: patch.lastWorkspacePath === undefined ? current.lastWorkspacePath : patch.lastWorkspacePath,
+      maxImageUploadMiB: patch.maxImageUploadMiB ?? current.maxImageUploadMiB
     };
     this.sqlite.prepare(`
       UPDATE app_settings SET theme = ?,
         default_agent_id = ?, last_agent_id = ?, user_display_name = ?, user_description = ?,
-        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?, accent_color = ?, amoled = ?, chat_font_size = ?, chat_letter_spacing = ?, chat_line_height = ?
+        sidebar_collapsed = ?, reasoning_collapse_policy = ?, generation_haptics = ?, last_workspace_path = ?, accent_color = ?, amoled = ?, chat_font_size = ?, chat_letter_spacing = ?, chat_line_height = ?, max_image_upload_mib = ?
       WHERE id = 1
     `).run(next.theme,
       next.defaultAgentId, next.lastAgentId, next.userProfile.displayName, next.userProfile.description,
       next.uiPreferences.sidebarCollapsed ? 1 : 0, next.uiPreferences.reasoningCollapsePolicy,
       next.uiPreferences.generationHaptics ? 1 : 0, next.lastWorkspacePath, next.uiPreferences.accentColor ?? null, Number(next.uiPreferences.amoled ?? false),
-      next.uiPreferences.chatFontSize ?? 13.5, next.uiPreferences.chatLetterSpacing ?? 0, next.uiPreferences.chatLineHeight ?? 1.55);
+      next.uiPreferences.chatFontSize ?? 13.5, next.uiPreferences.chatLetterSpacing ?? 0, next.uiPreferences.chatLineHeight ?? 1.55,
+      next.maxImageUploadMiB);
     if (patch.userProfile !== undefined) {
       this.sqlite.prepare("DELETE FROM context_summaries").run();
     }
@@ -2176,13 +2211,19 @@ export class Store {
     return this.toolCallFiles(toolCallId).filter((asset): asset is ImageAssetDto => asset.kind === "image");
   }
 
-  attachFilesToMessage(messageId: string, assetIds: string[], imageBytesLimit = 15 * 1024 * 1024): void {
+  attachFilesToMessage(messageId: string, assetIds: string[], imageBytesLimit = this.imageLimits().message): void {
     this.validateAttachments(assetIds, imageBytesLimit);
     const insert = this.sqlite.prepare("INSERT INTO message_file_assets (message_id, asset_id, asset_index) VALUES (?, ?, ?)");
     assetIds.forEach((assetId, index) => insert.run(messageId, assetId, index));
   }
 
-  validateAttachments(assetIds: string[], imageBytesLimit = 15 * 1024 * 1024): void {
+  /** Image byte limits from the user's setting; attachments that are not images are not affected. */
+  imageLimits(): { image: number; message: number } {
+    const row = this.sqlite.prepare("SELECT max_image_upload_mib FROM app_settings WHERE id = 1").get() as Row | undefined;
+    return imageUploadLimits(Number(row?.max_image_upload_mib ?? DEFAULT_MAX_IMAGE_UPLOAD_MIB));
+  }
+
+  validateAttachments(assetIds: string[], imageBytesLimit = this.imageLimits().message): void {
     const unique = [...new Set(assetIds)];
     if (unique.length !== assetIds.length || unique.length > 8) {
       throw withMessage(new StoreError("file_attachment_invalid", "每条消息最多包含 8 个不重复附件"), "error.each_message_can_contain_up_to_8_unique_attachments");
@@ -2194,7 +2235,8 @@ export class Store {
     const images = assets.filter((asset): asset is ImageAssetDto => asset?.kind === "image");
     if (images.length > 4) throw withMessage(new StoreError("image_attachment_invalid", "每条消息最多包含 4 张图片"), "error.each_message_can_contain_up_to_4_images");
     if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > imageBytesLimit) {
-      throw withMessage(new StoreError("image_attachments_too_large", "每条消息的图片总大小不能超过 15 MiB"), "error.images_cannot_exceed_15_mib_per_message");
+      const size = `${Math.round(imageBytesLimit / 1024 ** 2)} MiB`;
+      throw withMessage(new StoreError("image_attachments_too_large", `每条消息的图片总大小不能超过 ${size}`), "error.images_per_message_limit", { size });
     }
   }
 
@@ -3118,6 +3160,7 @@ export class Store {
     if (messageIds && !messageIds.length) return [];
     const selection = messageIds ? ` AND id IN (${messageIds.map(() => "?").join(",")})` : "";
     const messages = this.sqlite.prepare(`SELECT * FROM messages WHERE conversation_id = ? AND (? OR history_active = 1)${selection} ORDER BY ordinal`).all(conversationId, Number(includeInactive), ...(messageIds ?? [])) as Row[];
+    const generations = this.generationsForMessages(messages.filter((message) => message.role === "assistant").map((message) => String(message.id)));
     return messages.map((message) => {
       const assistant = message.role === "assistant";
       const activeGenerationId = textOrNull(message.active_generation_id);
@@ -3129,7 +3172,7 @@ export class Store {
         attachments: this.messageFiles(String(message.id)),
         generatedModel: assistant && activeGenerationId ? this.generatedModel(activeGenerationId) : null,
         activeGenerationId,
-        generations: assistant ? this.listGenerations(String(message.id)) : [],
+        generations: assistant ? generations.get(String(message.id)) ?? [] : [],
         greeting: message.greeting_json
           ? greetingMessageSchema.safeParse(parse(message.greeting_json, null)).data ?? null
           : null,
@@ -3159,9 +3202,30 @@ export class Store {
     return row ? imageGenerationJobDto(row, this) : null;
   }
 
-  private listGenerations(messageId: string): GenerationDto[] {
-    return (this.sqlite.prepare("SELECT * FROM generations WHERE assistant_message_id = ? ORDER BY version").all(messageId) as Row[])
-      .map((row) => this.generationDto(row));
+  /** Loads generations and their blocks for many messages in a few queries instead of one per row. */
+  private generationsForMessages(messageIds: string[]): Map<string, GenerationDto[]> {
+    const result = new Map<string, GenerationDto[]>();
+    for (let start = 0; start < messageIds.length; start += 500) {
+      const chunk = messageIds.slice(start, start + 500);
+      const rows = this.sqlite.prepare(`SELECT * FROM generations WHERE assistant_message_id IN (${chunk.map(() => "?").join(",")}) ORDER BY version`).all(...chunk) as Row[];
+      if (!rows.length) continue;
+      const ids = rows.map((row) => String(row.id));
+      const blocks = new Map<string, Row[]>();
+      for (let offset = 0; offset < ids.length; offset += 500) {
+        const part = ids.slice(offset, offset + 500);
+        for (const block of this.sqlite.prepare(`SELECT * FROM generation_blocks WHERE generation_id IN (${part.map(() => "?").join(",")}) ORDER BY block_index`).all(...part) as Row[]) {
+          const list = blocks.get(String(block.generation_id));
+          if (list) list.push(block); else blocks.set(String(block.generation_id), [block]);
+        }
+      }
+      for (const row of rows) {
+        const messageId = String(row.assistant_message_id);
+        const dto = this.generationDto(row, blocks.get(String(row.id)) ?? []);
+        const list = result.get(messageId);
+        if (list) list.push(dto); else result.set(messageId, [dto]);
+      }
+    }
+    return result;
   }
 
   getGeneration(id: string): GenerationDto | undefined {
@@ -3588,8 +3652,8 @@ export class Store {
     };
   }
 
-  private generationDto(row: Row): GenerationDto {
-    const blocks = this.sqlite.prepare("SELECT * FROM generation_blocks WHERE generation_id = ? ORDER BY block_index").all(String(row.id)) as Row[];
+  private generationDto(row: Row, prefetchedBlocks?: Row[]): GenerationDto {
+    const blocks = prefetchedBlocks ?? this.sqlite.prepare("SELECT * FROM generation_blocks WHERE generation_id = ? ORDER BY block_index").all(String(row.id)) as Row[];
     const snapshot = row.agent_snapshot_json ? parse<Partial<AgentSnapshot>>(row.agent_snapshot_json, {}) : {};
     const roleplay = parseRoleplayConfig(snapshot.roleplay, false);
     const roleplayState = resolveRoleplayState(roleplay, snapshot.roleplayState);

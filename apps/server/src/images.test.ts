@@ -53,6 +53,7 @@ describe("file assets and attachment workspaces", () => {
     await files.initialize();
     await expect(files.importBytes("bad.png", Buffer.from("not an image"))).rejects.toMatchObject({ code: "image_type_invalid" });
     await expect(files.importBytes("empty.png", new Uint8Array())).rejects.toMatchObject({ code: "image_too_large" });
+    store.updateSettings({ maxImageUploadMiB: 5 });
     await expect(files.importBytes("huge.png", Buffer.alloc(5 * 1024 * 1024 + 1))).rejects.toMatchObject({ code: "image_too_large" });
     await expect(files.importFile("empty.bin", "invalid mime", new Uint8Array())).rejects.toMatchObject({ code: "file_too_large" });
     await expect(files.importFile("huge.bin", "application/octet-stream", Buffer.alloc(64 * 1024 * 1024 + 1)))

@@ -179,7 +179,8 @@ describe("contract schemas", () => {
       defaultAgentId: uuid, lastAgentId: uuid,
       userProfile: { displayName: "User", description: "" },
       uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
-      lastWorkspacePath: null
+      lastWorkspacePath: null,
+      maxImageUploadMiB: 100
     };
     expect(appSettingsSchema.parse(app)).toEqual(app);
     expect(conversationInputSchema.parse({ agentId: uuid })).toEqual({ agentId: uuid, executionOverrides: {}, workspacePath: null });

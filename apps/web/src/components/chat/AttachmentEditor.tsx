@@ -6,7 +6,7 @@ import { FilePlus2, FileText, ImagePlus, LoaderCircle, Paperclip, X } from "luci
 import type { FileAssetDto } from "@llm-chat/contracts";
 import { toast } from "../../lib/app-state";
 import { formatBytes } from "../../lib/format";
-import { uploadManager, uploadStore } from "../../lib/file-upload-manager";
+import { uploadManager, uploadStore, type UploadIntent } from "../../lib/file-upload-manager";
 import { useStore } from "../../lib/store";
 import { UploadTasks } from "../FileUploads";
 import { assetUrl } from "../../lib/server-channel";
@@ -19,15 +19,15 @@ export function useAttachments(initial: FileAssetDto[] = [], scope = "new", conv
     const latest = uploadManager.ensure(scope, initial, conversationId).attachments;
     uploadManager.setAttachments(scope, typeof action === "function" ? action(latest) : action);
   };
-  const uploadFiles = async (files: File[]) => {
-    for (const error of uploadManager.enqueue(scope, files)) toast("error", error);
+  const uploadFiles = async (files: File[], intent?: UploadIntent) => {
+    for (const error of uploadManager.enqueue(scope, files, intent)) toast("error", error);
   };
   return { attachments: current.attachments, setAttachments, uploading: current.tasks.length > 0, uploadFiles, uploadScope: scope,
     attachmentCount: current.attachments.length + current.tasks.length };
 }
 
 export function AttachmentMenu({ uploadFiles, disabled, uploading = false }: {
-  uploadFiles: (files: File[]) => Promise<void>; disabled?: boolean; uploading?: boolean;
+  uploadFiles: (files: File[], intent?: UploadIntent) => Promise<void>; disabled?: boolean; uploading?: boolean;
 }) {
   useLocale();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -36,10 +36,10 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false }: {
   useBackLayer(open, () => setOpen(false));
   return <>
     <input hidden aria-label={t("AttachmentEditor.upload_files")} ref={fileInput} type="file" multiple onChange={(event) => {
-      void uploadFiles(Array.from(event.target.files ?? [])); event.target.value = "";
+      void uploadFiles(Array.from(event.target.files ?? []), "file"); event.target.value = "";
     }} />
     <input hidden aria-label={t("AttachmentEditor.upload_images")} ref={imageInput} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => {
-      void uploadFiles(Array.from(event.target.files ?? [])); event.target.value = "";
+      void uploadFiles(Array.from(event.target.files ?? []), "image"); event.target.value = "";
     }} />
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild><button type="button" className="chip composer-attachment-button" disabled={disabled} aria-label={t("AttachmentEditor.add_attachment")} title={t("AttachmentEditor.add_attachment")}>

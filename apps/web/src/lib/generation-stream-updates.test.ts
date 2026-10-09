@@ -112,3 +112,20 @@ it.each(["stop", "delete", "logout"])("does not publish delayed updates after %s
   if (action !== "stop") expect(messages["conv-1"]).toBeUndefined();
   dispose?.();
 });
+
+it("appends streamed text at the expected offset and resyncs after a gap", () => {
+  const stream = seed();
+  const append = (content: string, offset: number) => stream.emit("block-append", {
+    type: "block-append", offset, block: { id: "stream-0", stepIndex: 0, index: 0, type: "text", content, complete: false }
+  });
+  delta(stream, "Hel");
+  append("lo", 3);
+  append(", world", 5);
+  vi.advanceTimersByTime(50);
+  expect(current().blocks[0]?.content).toBe("Hello, world");
+  const before = FakeEventSource.instances.length;
+  append("lost", 99);
+  expect(stream.closed).toBe(true);
+  expect(FakeEventSource.instances.length).toBe(before + 1);
+  expect(current().blocks[0]?.content).toBe("Hello, world");
+});

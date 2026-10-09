@@ -67,22 +67,34 @@ describe("resumable file uploads", () => {
     await expect(uploads.append(tiny.id, 0, Readable.from([Buffer.from("xx")]))).rejects.toMatchObject({ code: "chunk_too_large" });
   });
 
-  it("rejects changed bytes and detects images by content, including headers split across chunks", async () => {
-    const { uploads, images } = await setup();
+  it("rejects changed bytes and checks image uploads by content, including headers split across chunks", async () => {
+    const { uploads, images, store } = await setup();
+    store.updateSettings({ maxImageUploadMiB: 5 });
     const bad = inputFor(Buffer.from("good")); await uploads.create(bad);
     await uploads.append(bad.id, 0, Readable.from([Buffer.from("evil")]));
     expect(await finish(uploads, bad.id)).toMatchObject({ state: "failed", error: "hash_mismatch", asset: null });
-    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]); const image = inputFor(png);
+    const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]); const image = inputFor(png, { kind: "image" });
     await uploads.create(image); await uploads.append(image.id, 0, Readable.from([png]));
     expect(await finish(uploads, image.id)).toMatchObject({ asset: { kind: "image", mimeType: "image/png" } });
-    const large = inputFor(png, { byteSize: 6 * 1024 ** 2 }); await uploads.create(large);
+    // A picture uploaded as a file stays an attachment and ignores the image limit.
+    const attached = inputFor(png, { fileName: "photo.png", mimeType: "image/png" });
+    await uploads.create(attached); await uploads.append(attached.id, 0, Readable.from([png]));
+    expect(await finish(uploads, attached.id)).toMatchObject({ asset: { kind: "file", mimeType: "image/png" } });
+    const notImage = inputFor(Buffer.from("plain"), { kind: "image" }); await uploads.create(notImage);
+    await expect(uploads.append(notImage.id, 0, Readable.from([Buffer.from("plain")]))).rejects.toMatchObject({ code: "image_type" });
+    await expect(uploads.create(inputFor(png, { byteSize: 6 * 1024 ** 2, kind: "image" }))).rejects.toMatchObject({ code: "image_limit" });
+    const large = inputFor(png, { byteSize: 6 * 1024 ** 2, kind: "image" });
+    store.updateSettings({ maxImageUploadMiB: 6 }); await uploads.create(large); store.updateSettings({ maxImageUploadMiB: 5 });
     await expect(uploads.append(large.id, 0, Readable.from([png]))).rejects.toMatchObject({ code: "image_limit" });
     expect(uploads.get(large.id).offset).toBe(0);
     const largeBytes = Buffer.alloc(6 * 1024 ** 2); png.copy(largeBytes);
-    const split = inputFor(largeBytes); await uploads.create(split);
+    const split = inputFor(largeBytes, { kind: "image" });
+    store.updateSettings({ maxImageUploadMiB: 6 }); await uploads.create(split);
     await uploads.append(split.id, 0, Readable.from([largeBytes.subarray(0, 1)]));
     await uploads.append(split.id, 1, Readable.from([largeBytes.subarray(1, FILE_UPLOAD_CHUNK_BYTES)]));
     await uploads.append(split.id, FILE_UPLOAD_CHUNK_BYTES, Readable.from([largeBytes.subarray(FILE_UPLOAD_CHUNK_BYTES)]));
+    // The limit is checked again when the upload is committed.
+    store.updateSettings({ maxImageUploadMiB: 5 });
     expect(await finish(uploads, split.id)).toMatchObject({ state: "failed", asset: null });
     await expect(images.fileAssetLocation(split.id)).rejects.toMatchObject({ code: "file_asset_not_found" });
   });

@@ -163,6 +163,23 @@ function trimContext(
   const countedPrompt = [compiled.systemPrompt, compiled.postHistoryInstructions].filter(Boolean).join("\n\n");
   let remaining = [...rawMessages];
   let omitted = 0;
+  // Recomposing the whole history for every dropped turn is quadratic. While the
+  // history is far over budget, drop whole turns using per-message estimates
+  // computed once, then finish with the exact check below.
+  let approximate = estimateTokens(countedPrompt, composeProviderMessages(remaining, preparedImages, compiled, []), compiled.tools);
+  if (approximate > budget * 1.5) {
+    const sizes = remaining.map((message) => estimateTokens("", toProviderMessages(message, preparedImages)));
+    let start = 0;
+    while (approximate > budget * 1.5) {
+      let nextUser = start + 1;
+      while (nextUser < remaining.length && remaining[nextUser]!.role !== "user") nextUser += 1;
+      if (nextUser >= remaining.length) break;
+      for (let index = start; index < nextUser; index += 1) approximate -= sizes[index]!;
+      start = nextUser;
+    }
+    remaining = remaining.slice(start);
+    omitted += start;
+  }
   while (remaining.length > 1 && estimateTokens(
     countedPrompt,
     composeProviderMessages(remaining, preparedImages, compiled, []), compiled.tools

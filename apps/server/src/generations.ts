@@ -6,6 +6,7 @@ import { validateToolInput } from "./tool-validation";
 import {
   adapterFor,
   assertStreamComplete,
+  describeNetworkError,
   prepareMessages,
   estimateMessageTokens,
   ProviderError,
@@ -19,7 +20,7 @@ import type { GenerationRecord } from "./generation-types";
 import { StoreError } from "./errors";
 import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
 import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
-import type { PreparedImages } from "./vision";
+import type { PreparedImage, PreparedImages } from "./vision";
 import { providerRequestContext } from "./provider-context";
 import type { ImageService } from "./images";
 import { ShellError } from "./shell";
@@ -52,7 +53,8 @@ export interface GenerationRunnerDependencies {
     record: GenerationRecord,
     model: Parameters<typeof buildContext>[2],
     signal: AbortSignal,
-    onAnalysis: (analysis: import("@llm-chat/contracts").VisionAnalysisDto) => void
+    onAnalysis: (analysis: import("@llm-chat/contracts").VisionAnalysisDto) => void,
+    reuse?: Map<string, PreparedImage>
   ) => Promise<PreparedImages>;
   buildTools: (store: Store, record: GenerationRecord) => Promise<ServerTool[]>;
   memoryPrompt: (store: Store) => string;
@@ -206,6 +208,8 @@ export class GenerationRunner {
     }>();
     let flushTimer: NodeJS.Timeout | undefined;
     let generatedImageIndex = 0;
+    // What subscribers already hold per block, so live events carry only new text.
+    const streamed = new Map<number, { type: string; content: string }>();
     const flush = () => {
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = undefined;
@@ -253,6 +257,7 @@ export class GenerationRunner {
       await restoreExposedTools(existingCalls, authorizedToolMap, exposeAuthorized);
       job.controller.signal.throwIfAborted();
       let stepIndex = nextStepIndex(existingCalls);
+      const preparedImageCache = new Map<string, PreparedImage>();
 
       if (resuming) {
         const existing = this.store.listToolCalls(generationId);
@@ -279,7 +284,7 @@ export class GenerationRunner {
         const stepToolMap = exposedToolMap();
         const tools = [...stepToolMap.values()].map((tool) => tool.definition);
         const preparedImages = await this.dependencies.prepareImages(this.store, record, model, job.controller.signal,
-          (analysis) => this.emit(generationId, { type: "vision-analysis", generationId, analysis }));
+          (analysis) => this.emit(generationId, { type: "vision-analysis", generationId, analysis }), preparedImageCache);
         job.controller.signal.throwIfAborted();
         const context = await this.dependencies.buildContext(this.store, record, model, connection, job.controller.signal,
           preparedImages, { tools, additionalSystemPrompt: [memoryPrompt, this.dependencies.runtimePrompt(this.store, record)].filter(Boolean).join("\n\n") });
@@ -332,7 +337,18 @@ export class GenerationRunner {
               }
             };
             job.latestBlocks.set(blockIndex, delta);
-            this.emit(generationId, delta);
+            const previous = streamed.get(blockIndex);
+            streamed.set(blockIndex, { type: event.blockType, content: event.content });
+            if (previous && !event.complete && previous.type === event.blockType && extends_(previous.content, event.content)) {
+              this.emit(generationId, {
+                type: "block-append",
+                generationId,
+                block: { ...delta.block, content: event.content.slice(previous.content.length) },
+                offset: previous.content.length
+              });
+            } else {
+              this.emit(generationId, delta);
+            }
             scheduleFlush();
           } else if (event.type === "tool-call") {
             calls.push(event.call);
@@ -469,7 +485,8 @@ export class GenerationRunner {
       } catch (error) {
         if (signal.aborted && !(error instanceof ShellError)) throw error;
         if (!this.jobs.has(generationId)) throw error;
-        const message = error instanceof Error ? error.message : "Tool execution failed";
+        const shown = describeNetworkError(error) ?? error;
+        const message = shown instanceof Error ? shown.message : "Tool execution failed";
         const rawError = JSON.stringify({ error: message, ...(error instanceof ShellError ? error.result : {}) });
         const output = await this.dependencies.persistToolOutput(this.store, call.id, rawError).catch(() => JSON.stringify({
           error: message.slice(0, 4096), ...(error instanceof ShellError ? {
@@ -480,7 +497,7 @@ export class GenerationRunner {
         const failed = this.store.updateToolCall(call.id, {
           approvalState: "failed",
           error: message,
-          ...(errorI18n(error) ? { errorI18n: errorI18n(error)! } : {}),
+          ...(errorI18n(shown) ? { errorI18n: errorI18n(shown)! } : {}),
           output,
           completedAt: Date.now()
         })!;
@@ -514,11 +531,22 @@ export class GenerationRunner {
 }
 
 function normalizeError(error: unknown): { code: string; message: string; i18n?: LocalizedMessage } {
+  error = describeNetworkError(error) ?? error;
   if (error instanceof ProviderError || error instanceof ContextError || error instanceof StoreError) {
     return { code: error.code, message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error)! } : {}) };
   }
   if (error instanceof Error) return { code: "generation_failed", message: error.message, ...(errorI18n(error) ? { i18n: errorI18n(error)! } : {}) };
   return { code: "generation_failed", message: "生成失败", i18n: { key: "error.generation_failed" } };
+}
+
+/**
+ * Providers report cumulative block text. Checking the tail of the old text is
+ * enough to tell an append from a rewrite without rescanning the whole reply.
+ */
+function extends_(previous: string, next: string): boolean {
+  if (next.length < previous.length) return false;
+  const start = Math.max(0, previous.length - 64);
+  return next.startsWith(previous.slice(start), start);
 }
 
 function cleanUsage(usage: UsageDto): UsageDto {

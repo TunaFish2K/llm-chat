@@ -8,6 +8,7 @@ export function makeSettings(patch: Partial<AppSettings> = {}): AppSettings {
     userProfile: { displayName: "主人", description: "" },
     uiPreferences: { sidebarCollapsed: false, reasoningCollapsePolicy: "collapse-on-answer", generationHaptics: true },
     lastWorkspacePath: null,
+    maxImageUploadMiB: 100,
     ...patch
   };
 }

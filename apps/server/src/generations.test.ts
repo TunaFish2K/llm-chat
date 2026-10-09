@@ -132,6 +132,39 @@ describe("GenerationRunner lifecycle", () => {
     expect(late).not.toHaveBeenCalled();
   });
 
+  it("streams appended text after the first full block and resends rewrites in full", async () => {
+    const store = createStore();
+    const generation = seedGeneration(store);
+    const gate = deferred<void>();
+    const runner = makeRunner(store, {
+      stream: () => (async function*() {
+        await gate.promise;
+        yield block(0, "Hel", false);
+        yield block(0, "Hello", false);
+        yield block(0, "Hello, world", false);
+        yield block(0, "Rewritten", false);
+        yield block(0, "Rewritten!", true);
+        yield { type: "complete", stopReason: "stop" } satisfies ProviderEvent;
+      })()
+    });
+    runner.start(generation.generationId);
+    await until(() => store.getGeneration(generation.generationId)?.status === "running");
+    const events: Array<{ type: string; content: string; offset?: number }> = [];
+    runner.subscribe(generation.generationId, (event) => {
+      if (event.type === "block-delta") events.push({ type: event.type, content: event.block.content });
+      if (event.type === "block-append") events.push({ type: event.type, content: event.block.content, offset: event.offset });
+    });
+    gate.resolve();
+    await terminal(store, generation.generationId);
+    expect(events).toEqual([
+      { type: "block-delta", content: "Hel" },
+      { type: "block-append", content: "lo", offset: 3 },
+      { type: "block-append", content: ", world", offset: 5 },
+      { type: "block-delta", content: "Rewritten" },
+      { type: "block-delta", content: "Rewritten!" }
+    ]);
+  });
+
   it("passes context, connection, memory prompt, and an empty tool list for a no-tools model", async () => {
     const store = createStore();
     const generation = seedGeneration(store);
@@ -753,6 +786,7 @@ describe("GenerationRunner errors and cancellation", () => {
     [new ProviderError("provider_down", "provider failed"), "provider_down", "provider failed"],
     [new ContextError("context_bad", "context failed"), "context_bad", "context failed"],
     [new Error("plain failure"), "generation_failed", "plain failure"],
+    [new TypeError("fetch failed", { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) }), "network_connection_refused", "上游服务 拒绝连接，请检查端口是否正确、服务是否正在运行"],
     ["not an error", "generation_failed", "生成失败"]
   ])("normalizes %p", async (error, code, message) => {
     const store = createStore();

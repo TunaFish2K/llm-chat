@@ -1,9 +1,8 @@
 import { errorI18n } from "@llm-chat/i18n";
-import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, MAX_MESSAGE_ATTACHMENT_BYTES, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
+import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_ATTACHMENT_BYTES, imageUploadLimits, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
 import { fileUploadHttp, type FileUploadHttp } from "./file-upload-http";
 import { hashFileInWorker } from "./file-hash-client";
-import { endpoints } from "./api";
-import { fileToBase64 } from "./format";
+import { formatBytes } from "./format";
 import { createStore } from "./store";
 import { updateDraftAttachments } from "./composer-draft-storage";
 import { t } from "./i18n";
@@ -22,6 +21,8 @@ export interface UploadScope {
 }
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const KEY = "llm-chat.uploads.v1";
+/** "image" sends a picture to the model; "file" keeps it as an attachment outside the context. */
+export type UploadIntent = "image" | "file";
 
 export function uploadDelay(ms: number, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
@@ -34,7 +35,7 @@ export function uploadDelay(ms: number, signal: AbortSignal): Promise<void> {
 interface Dependencies {
   http: FileUploadHttp;
   hash: typeof hashFileInWorker;
-  image: (file: File) => Promise<FileAssetDto>;
+  imageLimits: () => { image: number; message: number };
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   changed: () => void;
   attach: (scope: string, assets: FileAssetDto[]) => void;
@@ -88,19 +89,24 @@ export class FileUploadManager {
     this.deps.attach(id, assets);
     this.changed();
   }
-  enqueue(id: string, files: File[]): string[] {
+  /** Without an intent, pasted or dropped pictures are sent as images and everything else as files. */
+  enqueue(id: string, files: File[], intent?: UploadIntent): string[] {
     if (!this.enabled) return [t("error.authentication_required")];
     const scope = this.scopes.get(id)!;
     const errors: string[] = [];
+    const limits = this.deps.imageLimits();
     for (const file of files) {
       const pending = scope.tasks.map((task) => ({ byteSize: task.byteSize, kind: task.image ? "image" : "file" }));
       const all = [...scope.attachments, ...pending];
-      const image = IMAGE_TYPES.has(file.type);
+      const image = intent ? intent === "image" : IMAGE_TYPES.has(file.type);
       if (all.length >= 8) { errors.push(t("AttachmentEditor.attach_up_to_8_files_per_message")); break; }
-      if (!file.size || file.size > (image ? 5 * 1024 ** 2 : MAX_ATTACHMENT_FILE_BYTES)) { errors.push(t(image ? "uploads.image_limit" : "uploads.file_limit")); continue; }
+      if (image && !IMAGE_TYPES.has(file.type)) { errors.push(t("uploads.image_type")); continue; }
+      if (!file.size || file.size > (image ? limits.image : MAX_ATTACHMENT_FILE_BYTES)) {
+        errors.push(image ? t("uploads.image_limit_size", { size: formatBytes(limits.image) }) : t("uploads.file_limit")); continue;
+      }
       const images = all.filter((asset) => asset.kind === "image");
-      if (image && (images.length >= 4 || images.reduce((sum, asset) => sum + asset.byteSize, 0) + file.size > 15 * 1024 ** 2)) {
-        errors.push(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total")); continue;
+      if (image && (images.length >= MAX_IMAGES_PER_MESSAGE || images.reduce((sum, asset) => sum + asset.byteSize, 0) + file.size > limits.message)) {
+        errors.push(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total", { size: formatBytes(limits.message) })); continue;
       }
       if (all.reduce((sum, asset) => sum + asset.byteSize, 0) + file.size > MAX_MESSAGE_ATTACHMENT_BYTES) { errors.push(t("uploads.message_limit")); continue; }
       scope.tasks.push({ id: crypto.randomUUID(), fileName: file.name || "file", mimeType: file.type || "application/octet-stream", byteSize: file.size,
@@ -177,19 +183,15 @@ export class FileUploadManager {
       if (asset.kind === "image") {
         const images = scope.attachments.filter((item) => item.kind === "image");
         const pending = scope.tasks.filter((item) => item !== task && item.image);
-        if (images.length + pending.length >= 4 || [...images, ...pending].reduce((sum, item) => sum + item.byteSize, 0) + asset.byteSize > 15 * 1024 ** 2) {
-          throw new Error(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total"));
+        const limit = this.deps.imageLimits().message;
+        if (images.length + pending.length >= MAX_IMAGES_PER_MESSAGE || [...images, ...pending].reduce((sum, item) => sum + item.byteSize, 0) + asset.byteSize > limit) {
+          throw new Error(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total", { size: formatBytes(limit) }));
         }
       }
       scope.tasks = scope.tasks.filter((item) => item !== task);
       if (!scope.attachments.some((item) => item.id === asset.id)) scope.attachments = [...scope.attachments, asset];
       this.deps.attach(scope.id, scope.attachments); this.changed();
     };
-    if (task.image) {
-      if (!task.file) { task.status = "needs-file"; return; }
-      task.status = "uploading"; this.changed();
-      accept({ ...await this.deps.image(task.file), kind: "image" }); return;
-    }
     let remote: FileUploadDto | undefined;
     if (task.created) {
       remote = await this.io(task, signal, () => this.deps.http.get(task.id, signal));
@@ -213,7 +215,7 @@ export class FileUploadManager {
         task.sha256 = hash; task.verified = true;
       }
       if (!task.created) {
-        remote = await this.io(task, signal, () => this.deps.http.create({ id: task.id, fileName: task.fileName, mimeType: task.mimeType, byteSize: task.byteSize, sha256: task.sha256! }, signal));
+        remote = await this.io(task, signal, () => this.deps.http.create({ id: task.id, fileName: task.fileName, mimeType: task.mimeType, byteSize: task.byteSize, sha256: task.sha256!, kind: task.image ? "image" : "file" }, signal));
         task.created = true; this.changed();
       }
       while (remote?.state === "uploading") {
@@ -241,9 +243,12 @@ export class FileUploadManager {
 }
 
 export const uploadStore = createStore({ revision: 0 });
+let imageLimitMiB: number | undefined;
+/** Mirrors the server setting so oversized images are rejected before upload. */
+export function setImageUploadLimit(mib: number | undefined): void { imageLimitMiB = mib; }
 export const uploadManager = new FileUploadManager({
   http: fileUploadHttp, hash: hashFileInWorker,
-  image: async (file) => endpoints.uploadImage(file.name || "pasted-image.png", await fileToBase64(file)),
+  imageLimits: () => imageUploadLimits(imageLimitMiB),
   storage: { getItem: (key) => sessionStorage.getItem(key), setItem: (key, value) => sessionStorage.setItem(key, value), removeItem: (key) => sessionStorage.removeItem(key) },
   attach: updateDraftAttachments, changed: () => uploadStore.set((state) => ({ revision: state.revision + 1 })),
   delay: uploadDelay, online: () => navigator.onLine !== false

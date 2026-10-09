@@ -48,7 +48,7 @@ export function subscribeGeneration(
     const current = eventSource(`/api/generations/${generationId}/events`);
     source = current;
     let terminal = false;
-    const types = ["snapshot", "block-delta", "usage", "tool-call", "vision-analysis", "status", "error"] as const;
+    const types = ["snapshot", "block-delta", "block-append", "usage", "tool-call", "vision-analysis", "status", "error"] as const;
     for (const type of types) {
       source.addEventListener(type, (raw) => {
         // Native connection errors have no data; only named SSE messages carry JSON.
