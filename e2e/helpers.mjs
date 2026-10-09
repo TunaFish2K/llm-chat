@@ -69,11 +69,9 @@ export function agentInput(name, modelId = null) {
 
 /** On mobile viewports the sidebar is a drawer; open it when the toggle is visible. */
 export async function openDrawerIfNeeded(page) {
-  const drawer = page.locator('.mobile-drawer[data-side="left"]');
-  if (await drawer.isVisible()) {
-    if (await drawer.getAttribute("data-exiting")) await expect(drawer).toHaveCount(0);
-    else return;
-  }
+  // An exiting drawer can unmount between two queries; never read attributes from a locator that may vanish.
+  await expect(page.locator('.mobile-drawer[data-side="left"][data-exiting]')).toHaveCount(0);
+  if (await page.locator('.mobile-drawer[data-side="left"]').isVisible()) return;
   const toggle = page.getByRole("button", { name: "打开导航" });
   if (await toggle.isVisible()) {
     await toggle.click();

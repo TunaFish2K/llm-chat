@@ -2,9 +2,8 @@ name: Performance
 
 # Performance budgets are slow and machine-sensitive, so they run nightly or on demand
 # instead of gating every push and deployment.
+# Browser performance runs locally; this stays available only for a manual run.
 on:
-  schedule:
-    - cron: '17 19 * * *'
   workflow_dispatch:
 
 permissions:
