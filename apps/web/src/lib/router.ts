@@ -18,6 +18,7 @@ export function navigateIfCurrent(path: string, owner: NavigationOwner): boolean
 
 export type Route =
   | { name: "chat"; conversationId: string | null; view: "chat" | "trajectory" | "tasks"; taskId: string | null }
+  | { name: "images"; sessionId: string | null }
   | { name: "agents"; agentId: string | null }
   | { name: "tasks"; taskId: string | null }
   | { name: "settings"; section: string };
@@ -28,6 +29,7 @@ function parsePath(pathname: string): Route {
   if (head === "agents") return { name: "agents", agentId: parts[1] ?? null };
   if (head === "tasks") return { name: "tasks", taskId: parts[1] ?? null };
   if (head === "settings") return { name: "settings", section: parts[1] ?? "general" };
+  if (head === "images") return { name: "images", sessionId: parts[1] ?? null };
   if (head === "c") {
     const view = parts[2] === "trajectory" ? "trajectory" : parts[2] === "tasks" ? "tasks" : "chat";
     return {
@@ -45,6 +47,7 @@ export const routes = {
     conversationId ? `/c/${conversationId}${view === "trajectory" ? "/trajectory" : ""}` : "/",
   conversationTasks: (conversationId: string, taskId?: string | null) =>
     `/c/${conversationId}/tasks${taskId ? `/${taskId}` : ""}`,
+  images: (sessionId?: string | null) => sessionId ? `/images/${sessionId}` : "/images",
   agents: (agentId?: string | null) => (agentId ? `/agents/${agentId}` : "/agents"),
   settings: (section = "general") => `/settings/${section}`
 };

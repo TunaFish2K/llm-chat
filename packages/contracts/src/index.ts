@@ -986,10 +986,61 @@ export const imageGenerationInputSchema = z.object({
 });
 export type ImageGenerationInput = z.infer<typeof imageGenerationInputSchema>;
 
+export const imageSessionDraftSchema = z.object({
+  modelId: z.string().uuid().nullable().default(null),
+  prompt: z.string().max(10_000).default(""),
+  referenceAssetIds: z.array(z.string().uuid()).max(4).default([]),
+  negativePrompt: z.string().max(10_000).default(""),
+  count: z.number().int().min(1).max(4).default(1),
+  aspectRatio: z.string().max(20).nullable().default(null),
+  size: z.string().max(32).nullable().default(null),
+  quality: z.enum(["auto", "low", "medium", "high"]).nullable().default(null),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).nullable().default(null),
+  seed: z.number().int().min(0).max(4_294_967_295).nullable().default(null)
+});
+export type ImageSessionDraft = z.infer<typeof imageSessionDraftSchema>;
+
+export const imageSessionDraftPatchSchema = z.object({
+  modelId: z.string().uuid().nullable().optional(),
+  prompt: z.string().max(10_000).optional(),
+  referenceAssetIds: z.array(z.string().uuid()).max(4).optional(),
+  negativePrompt: z.string().max(10_000).optional(),
+  count: z.number().int().min(1).max(4).optional(),
+  aspectRatio: z.string().max(20).nullable().optional(),
+  size: z.string().max(32).nullable().optional(),
+  quality: z.enum(["auto", "low", "medium", "high"]).nullable().optional(),
+  outputFormat: z.enum(["png", "jpeg", "webp"]).nullable().optional(),
+  seed: z.number().int().min(0).max(4_294_967_295).nullable().optional()
+});
+export type ImageSessionDraftPatch = z.infer<typeof imageSessionDraftPatchSchema>;
+
+export interface ImageModelCapabilitiesDto {
+  operations: Array<"generate" | "edit">;
+  maxReferenceImages: number;
+  count: boolean;
+  aspectRatio: boolean;
+  size: boolean;
+  quality: boolean;
+  outputFormat: boolean;
+  negativePrompt: boolean;
+  seed: boolean;
+}
+
+export interface ImageModelOptionDto {
+  id: string;
+  displayName: string;
+  modelKey: string;
+  connectionName: string;
+  imageProtocol: ImageProviderProtocol;
+  capabilities: ImageModelCapabilitiesDto;
+}
+
 export interface ImageGenerationJobDto {
   id: string;
-  conversationId: string;
-  assistantMessageId: string;
+  conversationId: string | null;
+  assistantMessageId: string | null;
+  imageSessionId: string | null;
+  imageNodeId: string | null;
   toolCallId: string | null;
   modelId: string;
   modelKey: string;
@@ -997,6 +1048,7 @@ export interface ImageGenerationJobDto {
   imageProtocol: ImageProviderProtocol;
   operation: ImageGenerationOperation;
   prompt: string;
+  input: ImageGenerationInput;
   status: ImageGenerationJobStatus;
   progress: number | null;
   providerJobId: string | null;
@@ -1006,6 +1058,31 @@ export interface ImageGenerationJobDto {
   createdAt: number;
   startedAt: number | null;
   completedAt: number | null;
+}
+
+export interface ImageSessionSummaryDto {
+  id: string;
+  title: string;
+  coverAsset: ImageAssetDto | null;
+  nodeCount: number;
+  activeCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ImageSessionNodeDto {
+  id: string;
+  sessionId: string;
+  selectedJobId: string;
+  versions: ImageGenerationJobDto[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ImageSessionDto extends ImageSessionSummaryDto {
+  draft: ImageSessionDraft;
+  assets: ImageAssetDto[];
+  nodes: ImageSessionNodeDto[];
 }
 
 export interface VisionAnalysisDto {
@@ -1432,6 +1509,7 @@ export type AppEvent =
   | { id: number; type: "plugin"; pluginId: string; state: PluginDto["state"]; message?: string }
   | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
   | { id: number; type: "image-generation"; jobId: string; conversationId: string; job: ImageGenerationJobDto }
+  | { id: number; type: "image-session-generation"; jobId: string; imageSessionId: string; imageNodeId: string; job: ImageGenerationJobDto }
   | { id: number; type: "resource-changed"; resource: "container-resources" | "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
 
 const mcpServerFields = {

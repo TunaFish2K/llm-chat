@@ -34,12 +34,18 @@ describe("subscribeAppEvents", () => {
     expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ id: 7, taskId: "t1" }));
     source.emit("message-queue", { id: 8, type: "message-queue", conversationId: "c1" });
     expect(onEvent).toHaveBeenLastCalledWith({ id: 8, type: "message-queue", conversationId: "c1" });
+    source.emit("image-session-generation", {
+      id: 9, type: "image-session-generation", jobId: "job", imageSessionId: "session", imageNodeId: "node", job: {}
+    });
+    expect(onEvent).toHaveBeenLastCalledWith(expect.objectContaining({
+      type: "image-session-generation", imageSessionId: "session", imageNodeId: "node"
+    }));
 
     subscription.close();
     subscription.close();
     expect(source.closed).toBe(true);
     onEvent.mockClear(); onState.mockClear();
-    source.emit("resync", { id: 9, type: "resync" });
+    source.emit("resync", { id: 10, type: "resync" });
     source.onopen?.(); source.onerror?.();
     expect(onEvent).not.toHaveBeenCalled(); expect(onState).not.toHaveBeenCalled();
   });

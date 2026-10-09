@@ -13,6 +13,7 @@ import { mcpManager } from "./mcp";
 import { LocalContainerEngine } from "./container-engine";
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
 import { ImageService } from "./images";
+import { ImageGenerationManager } from "./image-generation";
 
 const dirs: string[] = [];
 const apps: Array<Awaited<ReturnType<typeof buildApp>>> = [];
@@ -329,6 +330,74 @@ describe("server API", () => {
     expect((await app.inject({ method: "DELETE", url: `/api/conversations/${root.id}` })).statusCode).toBe(204);
     expect(store.getConversation(child.id)).toBeUndefined();
     expect(store.getImageGenerationJob(job.id)).toBeUndefined();
+  });
+
+  it("serves independent image workspace models, sessions and timeline versions", async () => {
+    const app = await testApp();
+    vi.spyOn(ImageGenerationManager.prototype, "start").mockImplementation(() => {});
+    const { model } = seedStoreModel(app.store);
+    const imageModel = app.store.updateModel(model.id, {
+      imageProtocol: "openai-images",
+      capabilities: { ...model.capabilities, imageOutput: true, imageEdit: true, imageMultiple: true }
+    })!;
+    const catalog = await app.inject({ method: "GET", url: "/api/image-models" });
+    expect(catalog.statusCode).toBe(200);
+    expect(catalog.json()).toEqual([expect.objectContaining({
+      id: imageModel.id,
+      capabilities: expect.objectContaining({ operations: ["generate", "edit"], maxReferenceImages: 4 })
+    })]);
+
+    const created = await app.inject({ method: "POST", url: "/api/image-sessions", payload: {
+      title: "Launch art", draft: { modelId: imageModel.id, prompt: "moon base" }
+    } });
+    expect(created.statusCode, created.body).toBe(201);
+    const sessionId = created.json().id as string;
+    expect((await app.inject({ method: "GET", url: "/api/image-sessions" })).json()).toEqual([
+      expect.objectContaining({ id: sessionId, title: "Launch art", nodeCount: 0 })
+    ]);
+    const updated = await app.inject({ method: "PATCH", url: `/api/image-sessions/${sessionId}`, payload: {
+      title: "Moon studies", draft: { count: 2 }
+    } });
+    expect(updated.json()).toMatchObject({ title: "Moon studies", draft: { prompt: "moon base", count: 2 } });
+
+    const upload = await app.inject({ method: "POST", url: "/api/images", payload: {
+      fileName: "reference.png", dataBase64: "iVBORw0KGgo="
+    } });
+    const assetId = upload.json().id as string;
+    const attached = await app.inject({ method: "POST", url: `/api/image-sessions/${sessionId}/assets`, payload: { assetIds: [assetId] } });
+    expect(attached.json().assets).toEqual([expect.objectContaining({ id: assetId })]);
+
+    const generated = await app.inject({ method: "POST", url: `/api/image-sessions/${sessionId}/nodes`, payload: {
+      modelId: imageModel.id, prompt: "moon base", operation: "edit", referenceAssetIds: [assetId], count: 1
+    } });
+    expect(generated.statusCode, generated.body).toBe(202);
+    const first = generated.json();
+    expect(first).toMatchObject({ imageSessionId: sessionId, conversationId: null, status: "queued" });
+    expect((await app.inject({ method: "DELETE", url: `/api/image-sessions/${sessionId}` })).json().error.code).toBe("image_generation_active");
+    expect((await app.inject({ method: "DELETE", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}` })).json().error.code).toBe("image_generation_active");
+    expect((await app.inject({ method: "DELETE", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}/versions/${first.id}` })).json().error.code).toBe("image_generation_active");
+
+    expect((await app.inject({ method: "POST", url: `/api/image-generations/${first.id}/cancel`, payload: {} })).json().status).toBe("cancelled");
+    const retried = await app.inject({ method: "POST", url: `/api/image-generations/${first.id}/retry`, payload: {} });
+    expect(retried.statusCode).toBe(202);
+    const second = retried.json();
+    expect(second.imageNodeId).toBe(first.imageNodeId);
+    await app.inject({ method: "POST", url: `/api/image-generations/${second.id}/cancel`, payload: {} });
+    const rerun = await app.inject({
+      method: "POST", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}/versions`, payload: { jobId: first.id }
+    });
+    expect(rerun.statusCode).toBe(202);
+    const third = rerun.json();
+    await app.inject({ method: "POST", url: `/api/image-generations/${third.id}/cancel`, payload: {} });
+    expect((await app.inject({
+      method: "PATCH", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}`, payload: { selectedJobId: first.id }
+    })).json().selectedJobId).toBe(first.id);
+    expect((await app.inject({
+      method: "DELETE", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}/versions/${third.id}`
+    })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}` })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/api/image-sessions/${sessionId}` })).statusCode).toBe(204);
+    expect((await app.inject({ method: "GET", url: `/api/image-sessions/${sessionId}` })).statusCode).toBe(404);
   });
 
   it("rejects retired global generation settings and saves Agent-owned prompts", async () => {
@@ -1504,6 +1573,14 @@ it("returns typed not-found responses for stale settings, conversations and task
     ["GET", `/api/image-generations/${id}`, undefined, "image_generation_not_found"],
     ["POST", `/api/image-generations/${id}/cancel`, {}, "image_generation_not_found"],
     ["POST", `/api/image-generations/${id}/retry`, {}, "image_generation_not_found"],
+    ["GET", `/api/image-sessions/${id}`, undefined, "image_session_not_found"],
+    ["PATCH", `/api/image-sessions/${id}`, { title: "Missing" }, "image_session_not_found"],
+    ["DELETE", `/api/image-sessions/${id}`, undefined, "image_session_not_found"],
+    ["POST", `/api/image-sessions/${id}/assets`, { assetIds: [id] }, "image_session_not_found"],
+    ["POST", `/api/image-sessions/${id}/nodes`, { modelId: id, prompt: "image", operation: "generate" }, "image_session_not_found"],
+    ["PATCH", `/api/image-sessions/${id}/nodes/${id}`, { selectedJobId: id }, "image_generation_not_found"],
+    ["DELETE", `/api/image-sessions/${id}/nodes/${id}`, undefined, "image_node_not_found"],
+    ["DELETE", `/api/image-sessions/${id}/nodes/${id}/versions/${id}`, undefined, "image_generation_not_found"],
     ["GET", `/api/generations/${id}`, undefined, "generation_not_found"],
     ["GET", `/api/generations/${id}/events`, undefined, "generation_not_found"],
     ["POST", `/api/generations/${id}/cancel`, {}, "generation_not_found"],

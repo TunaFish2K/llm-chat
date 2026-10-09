@@ -2,11 +2,12 @@ import { PopoverLayer, Presence } from "../lib/motion";
 import { t, useLocale, localized } from "../lib/i18n";
 import { conversationDeleted } from "../lib/conversation-lifecycle";
 import { offlineStore } from "../lib/offline-history";
-import { useMemo, useState, type ReactNode } from "react";
-import type { ConversationDto } from "@llm-chat/contracts";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { ConversationDto, ImageSessionSummaryDto } from "@llm-chat/contracts";
 import {
   Bot,
   Download,
+  Images,
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
@@ -30,16 +31,10 @@ import { Popover } from "radix-ui";
 import { ConversationSearch } from "../components/ConversationSearch";
 import { ConversationList } from "../components/ConversationList";
 import type { PwaState } from "../lib/pwa";
+import { imageStudioStore, refreshImageSessions } from "../lib/image-studio-state";
+import { assetUrl } from "../lib/server-channel";
 
-export function WorkspaceSidebar({
-  route,
-  compact,
-  onClose,
-  onNavigate,
-  onToggleCompact,
-  pwa,
-  onInstall
-}: {
+interface WorkspaceSidebarProps {
   route: Route;
   compact: boolean;
   onClose?: () => void;
@@ -47,7 +42,21 @@ export function WorkspaceSidebar({
   onToggleCompact?: () => void;
   pwa: PwaState;
   onInstall: () => void;
-}) {
+}
+
+export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
+  return props.route.name === "images" ? <ImageWorkspaceSidebar {...props} /> : <ConversationWorkspaceSidebar {...props} />;
+}
+
+function ConversationWorkspaceSidebar({
+  route,
+  compact,
+  onClose,
+  onNavigate,
+  onToggleCompact,
+  pwa,
+  onInstall
+}: WorkspaceSidebarProps) {
   useLocale();
   const open = (path: string) => {
     if (onNavigate) onNavigate(path);
@@ -139,6 +148,7 @@ export function WorkspaceSidebar({
               <SquarePen size={18} />
             </button>
             <SidebarLink onNavigate={open} active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label={t("WorkspaceSidebar.chat")} compact />
+            <SidebarLink onNavigate={open} active={false} href={routes.images()} icon={<Images size={18} />} label={t("ImageStudio.title")} compact />
             <SidebarLink onNavigate={open} active={route.name === "agents"} href={routes.agents()} icon={<Bot size={18} />} label="Agent" compact />
           </nav>
           <div className="sidebar-rail-spacer" />
@@ -182,6 +192,7 @@ export function WorkspaceSidebar({
 
           <nav className="sidebar-navigation" aria-label={t("WorkspaceSidebar.feature_navigation")}>
             <SidebarLink onNavigate={open} active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={17} />} label={t("WorkspaceSidebar.chat")} compact={compact} />
+            <SidebarLink onNavigate={open} active={false} href={routes.images()} icon={<Images size={17} />} label={t("ImageStudio.title")} compact={compact} />
             <SidebarLink onNavigate={open} active={route.name === "agents"} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={compact} />
             <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label={t("WorkspaceSidebar.settings")} compact={compact} />
           </nav>
@@ -207,6 +218,103 @@ export function WorkspaceSidebar({
       ) : null}</Presence>
     </aside>
   );
+}
+
+function ImageWorkspaceSidebar({ route, compact, onClose, onNavigate, onToggleCompact, pwa, onInstall }: WorkspaceSidebarProps) {
+  useLocale();
+  const sessions = useStore(imageStudioStore, (state) => state.sessions);
+  const loading = useStore(imageStudioStore, (state) => state.loading);
+  const error = useStore(imageStudioStore, (state) => state.error);
+  const [renaming, setRenaming] = useState<ImageSessionSummaryDto | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [deleting, setDeleting] = useState<ImageSessionSummaryDto | null>(null);
+  const [busy, setBusy] = useState(false);
+  const activeId = route.name === "images" ? route.sessionId : null;
+  const open = (path: string) => {
+    if (onNavigate) onNavigate(path);
+    else { navigate(path); onClose?.(); }
+  };
+
+  useEffect(() => { void refreshImageSessions().catch(() => {}); }, []);
+
+  const rename = async () => {
+    if (!renaming || !renameValue.trim()) return;
+    setBusy(true);
+    try {
+      await endpoints.updateImageSession(renaming.id, { title: renameValue.trim() });
+      setRenaming(null);
+      await refreshImageSessions();
+      toast("success", localized("ImageStudio.session_renamed"));
+    } catch (cause) { toastError(cause); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!deleting) return;
+    setBusy(true);
+    try {
+      await endpoints.deleteImageSession(deleting.id);
+      if (activeId === deleting.id) open(routes.images());
+      setDeleting(null);
+      await refreshImageSessions();
+      toast("success", localized("ImageStudio.session_deleted"));
+    } catch (cause) { toastError(cause); }
+    finally { setBusy(false); }
+  };
+
+  return <aside className="workspace-sidebar" data-compact={compact || undefined} aria-label={t("ImageStudio.navigation_and_sessions")}>
+    <header className="sidebar-brand">
+      {compact ? <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label={t("WorkspaceSidebar.expand_conversation_sidebar")} title={t("WorkspaceSidebar.expand_conversation_sidebar")}>
+        <img src="/icons/icon-192-v2.png" width={28} height={28} alt="" /><PanelLeftOpen className="sidebar-brand-action" size={14} aria-hidden="true" />
+      </button> : <>
+        <a href={routes.images()} onClick={linkClick(routes.images(), open)} aria-label={t("ImageStudio.title")}><img src="/icons/icon-192-v2.png" width={28} height={28} alt="" /><span>{t("ImageStudio.title")}</span></a>
+        <div className="sidebar-header-actions">{onClose ? <button className="icon-button" onClick={onClose} aria-label={t("App.close_navigation")} title={t("App.close_navigation")}><X size={18} /></button> : onToggleCompact ? <button className="icon-button sidebar-collapse-button" onClick={onToggleCompact} aria-label={t("WorkspaceSidebar.collapse_conversation_sidebar")} title={t("WorkspaceSidebar.collapse_conversation_sidebar")}><PanelLeftClose size={18} /></button> : null}</div>
+      </>}
+    </header>
+
+    {compact ? <>
+      <nav className="sidebar-rail-primary" aria-label={t("WorkspaceSidebar.main_actions")}>
+        <button className="sidebar-rail-button primary" onClick={() => open(routes.images())} aria-label={t("ImageStudio.new_session")} title={t("ImageStudio.new_session")}><SquarePen size={18} /></button>
+        <SidebarLink onNavigate={open} active={route.name === "chat"} href={routes.chat()} icon={<MessageSquare size={18} />} label={t("WorkspaceSidebar.chat")} compact />
+        <SidebarLink onNavigate={open} active href={routes.images()} icon={<Images size={18} />} label={t("ImageStudio.title")} compact />
+        <SidebarLink onNavigate={open} active={route.name === "agents"} href={routes.agents()} icon={<Bot size={18} />} label="Agent" compact />
+      </nav>
+      <div className="sidebar-rail-spacer" />
+      <div className="sidebar-rail-utilities">
+        <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label={t("WorkspaceSidebar.settings")} compact />
+        {pwa.installAvailable ? <button className="sidebar-rail-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={18} /></button> : null}
+      </div>
+    </> : <div className="sidebar-expanded">
+      <div className="sidebar-primary-actions"><button className="button primary" onClick={() => open(routes.images())}><Plus size={17} /><span>{t("ImageStudio.new_session")}</span></button></div>
+      <div className="image-session-list" role="list" aria-label={t("ImageStudio.recent_sessions")}>
+        {sessions.map((session) => <div className="conversation-row" data-active={session.id === activeId || undefined} key={session.id} role="listitem">
+          <a href={routes.images(session.id)} onClick={linkClick(routes.images(session.id), open)}>
+            {session.coverAsset ? <img className="image-session-cover" src={assetUrl(session.coverAsset.url)} alt="" /> : <span className="image-session-cover empty"><Images size={15} /></span>}
+            <span>{session.title || t("ImageStudio.untitled")}</span><small>{formatTime(session.updatedAt)}</small>
+          </a>
+          <div className="conversation-actions"><ConversationPopover>{(menuOpen, close) => <><Popover.Trigger asChild><button className="icon-button" aria-label={t("ImageStudio.session_actions", { value1: session.title })}><MoreHorizontal size={16} /></button></Popover.Trigger>
+            <Popover.Portal><Popover.Content className="composer-more-popover conversation-menu" side="bottom" align="end" sideOffset={4} inert={!menuOpen ? true : undefined} aria-hidden={!menuOpen || undefined}><PopoverLayer open={menuOpen} onClose={close} />
+              <Popover.Close asChild><button onClick={() => { setRenaming(session); setRenameValue(session.title); }}><Pencil size={14} />{t("ImageStudio.rename_session")}</button></Popover.Close>
+              <Popover.Close asChild><button className="danger-quiet" onClick={() => setDeleting(session)}><Trash2 size={14} />{t("ImageStudio.delete_session")}</button></Popover.Close>
+            </Popover.Content></Popover.Portal>
+          </>}</ConversationPopover></div>
+        </div>)}
+        {!sessions.length ? <p className="sidebar-empty">{loading ? t("ImageStudio.loading_sessions") : error ? t("ImageStudio.sessions_failed") : t("ImageStudio.no_sessions")}</p> : null}
+      </div>
+      <nav className="sidebar-navigation" aria-label={t("WorkspaceSidebar.feature_navigation")}>
+        <SidebarLink onNavigate={open} active={false} href={routes.chat()} icon={<MessageSquare size={17} />} label={t("WorkspaceSidebar.chat")} compact={false} />
+        <SidebarLink onNavigate={open} active href={routes.images()} icon={<Images size={17} />} label={t("ImageStudio.title")} compact={false} />
+        <SidebarLink onNavigate={open} active={false} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={false} />
+        <SidebarLink onNavigate={open} active={false} href={routes.settings()} icon={<Settings size={17} />} label={t("WorkspaceSidebar.settings")} compact={false} />
+      </nav>
+      {pwa.installAvailable ? <footer className="sidebar-status"><button className="icon-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={15} /></button></footer> : null}
+    </div>}
+
+    <Presence>{renaming ? <Modal title={t("ImageStudio.rename_session")} onClose={() => setRenaming(null)} footer={<><button className="button secondary" onClick={() => setRenaming(null)}>{t("WorkspaceSidebar.cancel")}</button><button className="button primary" disabled={busy || !renameValue.trim()} onClick={() => void rename()}>{t("WorkspaceSidebar.save")}</button></>}>
+      <label className="field"><span>{t("ImageStudio.session_title")}</span><input className="input" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void rename(); }} /></label>
+    </Modal> : null}</Presence>
+    <Presence>{deleting ? <ConfirmModal title={t("ImageStudio.delete_session")} message={t("ImageStudio.delete_session_message", { value1: deleting.title })} confirmLabel={t("ImageStudio.delete_session")} danger busy={busy} onClose={() => setDeleting(null)} onConfirm={() => void remove()} /> : null}</Presence>
+  </aside>;
 }
 
 function SidebarLink({ active, href, icon, label, compact, onNavigate }: { active: boolean; href: string; icon: ReactNode; label: string; compact: boolean; onNavigate: (path: string) => void }) {

@@ -13,9 +13,17 @@ import { StoreError } from "./errors";
 import { EventHub } from "./events";
 import { ImageService } from "./images";
 import { ServiceSettings } from "./service-settings";
+import { assertImageWorkspaceRequest } from "./image-model-capabilities";
 
-type CreateImageGenerationInput = {
+type CreateImageGenerationInput = ({
   conversationId: string;
+  imageSessionId?: never;
+  imageNodeId?: never;
+} | {
+  conversationId?: never;
+  imageSessionId: string;
+  imageNodeId?: string;
+}) & {
   input: ImageGenerationInput;
   toolCallId?: string;
 };
@@ -39,25 +47,38 @@ export class ImageGenerationManager {
   }
 
   create(input: CreateImageGenerationInput): ImageGenerationJobDto {
-    const conversation = this.store.getConversation(input.conversationId);
-    if (!conversation) throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+    if (input.conversationId && !this.store.getConversation(input.conversationId)) {
+      throw withMessage(new StoreError("conversation_not_found", "会话不存在"), "error.conversation_not_found");
+    }
+    if (input.imageSessionId && !this.store.getImageSession(input.imageSessionId)) {
+      throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+    }
     const model = this.store.getModel(input.input.modelId);
     if (!model?.enabled) throw withMessage(new StoreError("image_model_not_found", "图片模型不存在或已停用"), "error.the_image_model_does_not_exist_or_is_disabled");
     if (!model.capabilities.imageOutput || !model.imageProtocol) {
       throw withMessage(new StoreError("image_model_unsupported", "所选模型不支持图片生成"), "error.the_selected_model_does_not_support_image_generation");
     }
-    if (!new ServiceSettings(this.store).images().some((item) => item.modelId === model.id && item.available)) {
+    if (input.conversationId && !new ServiceSettings(this.store).images().some((item) => item.modelId === model.id && item.available)) {
       throw withMessage(new StoreError("image_model_disabled", "此图片模型未在全局图片工具设置中启用"), "error.this_image_model_is_not_enabled_in_the_global_image_tool_settings");
     }
     const connection = this.store.getConnection(model.connectionId);
     if (!connection) throw withMessage(new StoreError("connection_not_found", "模型连接不存在"), "error.model_connection_not_found");
-    this.assertInputsBelongToConversation(input.conversationId, input.input);
+    if (input.imageSessionId) assertImageWorkspaceRequest(model.imageProtocol, input.input);
+    if (input.conversationId) {
+      this.assertInputsBelongToConversation(input.conversationId, input.input);
+      return this.store.createImageGenerationJob({
+        conversationId: input.conversationId,
+        ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+        model, connection, request: input.input
+      });
+    }
+    const imageSessionId = input.imageSessionId;
+    if (!imageSessionId) throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+    this.assertInputsBelongToSession(imageSessionId, input.input);
     return this.store.createImageGenerationJob({
-      conversationId: input.conversationId,
-      ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
-      model,
-      connection,
-      request: input.input
+      imageSessionId,
+      ...(input.imageNodeId ? { imageNodeId: input.imageNodeId } : {}),
+      model, connection, request: input.input
     });
   }
 
@@ -125,7 +146,9 @@ export class ImageGenerationManager {
       if (!input || !model?.enabled || !connection || model.imageProtocol !== job.imageProtocol) {
         throw withMessage(new StoreError("image_generation_config_invalid", "图片生成任务的模型配置已失效"), "error.the_image_task_s_model_configuration_is_no_longer_valid");
       }
-      this.assertInputsBelongToConversation(job.conversationId, input);
+      if (job.conversationId) this.assertInputsBelongToConversation(job.conversationId, input);
+      else if (job.imageSessionId) this.assertInputsBelongToSession(job.imageSessionId, input);
+      else throw withMessage(new StoreError("image_generation_config_invalid", "图片任务缺少归属"), "error.the_image_generation_request_is_corrupt");
       const request = await this.requestFor(job, input, connection, controller.signal);
       controller.signal.throwIfAborted();
       const adapter = imageAdapter(job.imageProtocol);
@@ -265,13 +288,26 @@ export class ImageGenerationManager {
   }
 
   private emit(job: ImageGenerationJobDto): void {
-    this.events.emit({ type: "image-generation", jobId: job.id, conversationId: job.conversationId, job });
+    if (job.conversationId) {
+      this.events.emit({ type: "image-generation", jobId: job.id, conversationId: job.conversationId, job });
+    } else if (job.imageSessionId && job.imageNodeId) {
+      this.events.emit({ type: "image-session-generation", jobId: job.id,
+        imageSessionId: job.imageSessionId, imageNodeId: job.imageNodeId, job });
+    }
   }
 
   private assertInputsBelongToConversation(conversationId: string, input: ImageGenerationInput): void {
     for (const assetId of [...input.referenceAssetIds, ...(input.maskAssetId ? [input.maskAssetId] : [])]) {
       if (!this.store.getImageAsset(assetId) || !this.store.imageAssetBelongsToConversation(conversationId, assetId)) {
         throw withMessage(new StoreError("image_asset_not_allowed", "引用图片不属于当前会话"), "error.the_reference_image_does_not_belong_to_this_conversation");
+      }
+    }
+  }
+
+  private assertInputsBelongToSession(sessionId: string, input: ImageGenerationInput): void {
+    for (const assetId of [...input.referenceAssetIds, ...(input.maskAssetId ? [input.maskAssetId] : [])]) {
+      if (!this.store.getImageAsset(assetId) || !this.store.imageAssetBelongsToSession(sessionId, assetId)) {
+        throw withMessage(new StoreError("image_asset_not_allowed", "引用图片不属于当前绘图会话"), "error.image_asset_not_allowed");
       }
     }
   }

@@ -43,6 +43,10 @@ import type {
   ImageGenerationInput,
   ImageGenerationJobDto,
   ImageGenerationJobStatus,
+  ImageSessionDraft,
+  ImageSessionDto,
+  ImageSessionNodeDto,
+  ImageSessionSummaryDto,
   MessageDto,
   ModelCatalogMetadata,
   ModelDto,
@@ -75,6 +79,7 @@ import {
   imageGenerationInputSchema,
   imageGenerationJobStatusSchema,
   imageGenerationOperationSchema,
+  imageSessionDraftSchema,
   imageProviderProtocolSchema,
   providerPresetIdSchema,
   providerPreset,
@@ -255,7 +260,7 @@ function cacheStatements(sqlite: DatabaseSyncType, limit = 256): void {
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 50) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 51) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1268,6 +1273,95 @@ function migrate(sqlite: DatabaseSyncType): void {
       if (!hasColumn(sqlite, "file_uploads", "kind")) sqlite.exec("ALTER TABLE file_uploads ADD COLUMN kind TEXT");
       sqlite.exec("PRAGMA user_version = 50;");
     }
+    if (current < 51) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS image_sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          draft_json TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_image_sessions_updated ON image_sessions(updated_at DESC);
+        CREATE TABLE IF NOT EXISTS image_session_nodes (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES image_sessions(id) ON DELETE CASCADE,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          UNIQUE(session_id, id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_image_session_nodes_session ON image_session_nodes(session_id, created_at);
+        CREATE TABLE IF NOT EXISTS image_session_assets (
+          session_id TEXT NOT NULL REFERENCES image_sessions(id) ON DELETE CASCADE,
+          asset_id TEXT NOT NULL REFERENCES file_assets(id) ON DELETE CASCADE,
+          created_at INTEGER NOT NULL,
+          PRIMARY KEY(session_id, asset_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_image_session_assets_asset ON image_session_assets(asset_id);
+      `);
+      if (!hasColumn(sqlite, "image_generation_jobs", "image_session_id")) {
+        sqlite.exec(`
+          ALTER TABLE image_generation_jobs RENAME TO image_generation_jobs_v50;
+          DROP INDEX IF EXISTS idx_image_jobs_conversation;
+          DROP INDEX IF EXISTS idx_image_jobs_status;
+          CREATE TABLE image_generation_jobs (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
+            assistant_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+            image_session_id TEXT REFERENCES image_sessions(id) ON DELETE CASCADE,
+            image_node_id TEXT,
+            tool_call_id TEXT,
+            model_id TEXT NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+            connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+            model_key TEXT NOT NULL,
+            connection_name TEXT NOT NULL,
+            image_protocol TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            request_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            progress REAL,
+            provider_job_id TEXT,
+            output_asset_ids_json TEXT NOT NULL DEFAULT '[]',
+            revised_prompt TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            created_at INTEGER NOT NULL,
+            started_at INTEGER,
+            completed_at INTEGER,
+            error_i18n_json TEXT,
+            FOREIGN KEY(image_session_id, image_node_id)
+              REFERENCES image_session_nodes(session_id, id) ON DELETE CASCADE,
+            CHECK (
+              (conversation_id IS NOT NULL AND assistant_message_id IS NOT NULL AND image_session_id IS NULL AND image_node_id IS NULL)
+              OR
+              (conversation_id IS NULL AND assistant_message_id IS NULL AND image_session_id IS NOT NULL AND image_node_id IS NOT NULL AND tool_call_id IS NULL)
+            )
+          );
+          INSERT INTO image_generation_jobs (
+            id, conversation_id, assistant_message_id, image_session_id, image_node_id, tool_call_id,
+            model_id, connection_id, model_key, connection_name, image_protocol, operation, prompt,
+            request_json, status, progress, provider_job_id, output_asset_ids_json, revised_prompt,
+            error_code, error_message, created_at, started_at, completed_at, error_i18n_json
+          ) SELECT id, conversation_id, assistant_message_id, NULL, NULL, tool_call_id,
+            model_id, connection_id, model_key, connection_name, image_protocol, operation, prompt,
+            request_json, status, progress, provider_job_id, output_asset_ids_json, revised_prompt,
+            error_code, error_message, created_at, started_at, completed_at, error_i18n_json
+            FROM image_generation_jobs_v50;
+          DROP TABLE image_generation_jobs_v50;
+        `);
+      }
+      sqlite.exec(`
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_conversation ON image_generation_jobs(conversation_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_session ON image_generation_jobs(image_session_id, image_node_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_image_jobs_status ON image_generation_jobs(status, created_at);
+        CREATE TABLE IF NOT EXISTS image_session_node_selections (
+          node_id TEXT PRIMARY KEY REFERENCES image_session_nodes(id) ON DELETE CASCADE,
+          job_id TEXT NOT NULL UNIQUE REFERENCES image_generation_jobs(id) ON DELETE CASCADE
+        );
+        PRAGMA user_version = 51;
+      `);
+    }
     sqlite.exec("COMMIT");
   } catch (error) {
     sqlite.exec("ROLLBACK");
@@ -2258,6 +2352,118 @@ export class Store {
     this.attachFileToToolCall(toolCallId, assetId);
   }
 
+  listImageSessions(): ImageSessionSummaryDto[] {
+    return (this.sqlite.prepare("SELECT * FROM image_sessions ORDER BY updated_at DESC").all() as Row[])
+      .map((row) => imageSessionSummaryDto(row, this));
+  }
+
+  getImageSession(id: string): ImageSessionDto | undefined {
+    const row = this.sqlite.prepare("SELECT * FROM image_sessions WHERE id = ?").get(id) as Row | undefined;
+    if (!row) return undefined;
+    return {
+      ...imageSessionSummaryDto(row, this),
+      draft: imageSessionDraftSchema.parse(parse(row.draft_json, {})),
+      assets: (this.sqlite.prepare(`SELECT a.*, b.byte_size FROM file_assets a
+        JOIN file_blobs b ON b.sha256 = a.sha256
+        JOIN image_session_assets s ON s.asset_id = a.id
+        WHERE s.session_id = ? AND a.kind = 'image' ORDER BY s.created_at`).all(id) as Row[])
+        .map((asset) => fileAssetDto(asset) as ImageAssetDto),
+      nodes: this.listImageSessionNodes(id)
+    };
+  }
+
+  createImageSession(input: { title?: string | undefined; draft?: OptionalInput<ImageSessionDraft> | undefined }): ImageSessionDto {
+    const id = randomUUID();
+    const now = Date.now();
+    const draft = imageSessionDraftSchema.parse(input.draft ?? {});
+    const title = input.title?.trim().slice(0, 120) || draft.prompt.trim().slice(0, 60) || "未命名绘图";
+    this.sqlite.prepare("INSERT INTO image_sessions (id, title, draft_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+      .run(id, title, json(draft), now, now);
+    return this.getImageSession(id)!;
+  }
+
+  updateImageSession(id: string, patch: { title?: string | undefined; draft?: OptionalInput<ImageSessionDraft> | undefined }): ImageSessionDto | undefined {
+    const current = this.getImageSession(id);
+    if (!current) return undefined;
+    const title = patch.title === undefined ? current.title : patch.title.trim().slice(0, 120);
+    if (!title) throw withMessage(new StoreError("image_session_title_required", "绘图会话标题不能为空"), "error.validation");
+    const draft = patch.draft === undefined ? current.draft : imageSessionDraftSchema.parse({ ...current.draft, ...patch.draft });
+    this.sqlite.prepare("UPDATE image_sessions SET title = ?, draft_json = ?, updated_at = ? WHERE id = ?")
+      .run(title, json(draft), Date.now(), id);
+    return this.getImageSession(id);
+  }
+
+  deleteImageSession(id: string): boolean {
+    return Number(this.sqlite.prepare("DELETE FROM image_sessions WHERE id = ?").run(id).changes) > 0;
+  }
+
+  attachAssetsToImageSession(sessionId: string, assetIds: string[]): ImageSessionDto {
+    if (!this.getImageSession(sessionId)) throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+    return this.transaction(() => {
+      const insert = this.sqlite.prepare("INSERT OR IGNORE INTO image_session_assets (session_id, asset_id, created_at) VALUES (?, ?, ?)");
+      for (const assetId of assetIds) {
+        if (!this.getImageAsset(assetId)) throw withMessage(new StoreError("image_asset_not_allowed", "只能添加有效图片"), "error.the_reference_image_does_not_belong_to_this_conversation");
+        insert.run(sessionId, assetId, Date.now());
+      }
+      this.sqlite.prepare("UPDATE image_sessions SET updated_at = ? WHERE id = ?").run(Date.now(), sessionId);
+      return this.getImageSession(sessionId)!;
+    });
+  }
+
+  imageAssetBelongsToSession(sessionId: string, assetId: string): boolean {
+    return Boolean(this.sqlite.prepare("SELECT 1 FROM image_session_assets WHERE session_id = ? AND asset_id = ?")
+      .get(sessionId, assetId));
+  }
+
+  listImageSessionNodes(sessionId: string): ImageSessionNodeDto[] {
+    return (this.sqlite.prepare("SELECT * FROM image_session_nodes WHERE session_id = ? ORDER BY created_at").all(sessionId) as Row[])
+      .flatMap((row) => {
+        const versions = (this.sqlite.prepare("SELECT * FROM image_generation_jobs WHERE image_node_id = ? ORDER BY created_at").all(String(row.id)) as Row[])
+          .map((job) => imageGenerationJobDto(job, this));
+        if (!versions.length) return [];
+        const selection = this.sqlite.prepare("SELECT job_id FROM image_session_node_selections WHERE node_id = ?").get(String(row.id)) as Row | undefined;
+        const selectedJobId = selection && versions.some((job) => job.id === selection.job_id)
+          ? String(selection.job_id)
+          : versions.at(-1)!.id;
+        return [{ id: String(row.id), sessionId, selectedJobId, versions,
+          createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) }];
+      });
+  }
+
+  selectImageSessionVersion(sessionId: string, nodeId: string, jobId: string): ImageSessionNodeDto {
+    const job = this.getImageGenerationJob(jobId);
+    if (!job || job.imageSessionId !== sessionId || job.imageNodeId !== nodeId) {
+      throw withMessage(new StoreError("image_generation_not_found", "图片生成任务不存在"), "error.image_generation_task_not_found");
+    }
+    this.sqlite.prepare(`INSERT INTO image_session_node_selections (node_id, job_id) VALUES (?, ?)
+      ON CONFLICT(node_id) DO UPDATE SET job_id = excluded.job_id`).run(nodeId, jobId);
+    return this.listImageSessionNodes(sessionId).find((node) => node.id === nodeId)!;
+  }
+
+  deleteImageSessionNode(sessionId: string, nodeId: string): boolean {
+    const result = this.sqlite.prepare("DELETE FROM image_session_nodes WHERE id = ? AND session_id = ?").run(nodeId, sessionId);
+    if (result.changes) this.sqlite.prepare("UPDATE image_sessions SET updated_at = ? WHERE id = ?").run(Date.now(), sessionId);
+    return Number(result.changes) > 0;
+  }
+
+  deleteImageSessionVersion(sessionId: string, nodeId: string, jobId: string): ImageSessionNodeDto | null {
+    return this.transaction(() => {
+      const job = this.getImageGenerationJob(jobId);
+      if (!job || job.imageSessionId !== sessionId || job.imageNodeId !== nodeId) {
+        throw withMessage(new StoreError("image_generation_not_found", "图片生成任务不存在"), "error.image_generation_task_not_found");
+      }
+      this.sqlite.prepare("DELETE FROM image_generation_jobs WHERE id = ?").run(jobId);
+      const versions = this.listImageSessionNodes(sessionId).find((node) => node.id === nodeId);
+      if (!versions) {
+        this.sqlite.prepare("DELETE FROM image_session_nodes WHERE id = ? AND session_id = ?").run(nodeId, sessionId);
+        this.sqlite.prepare("UPDATE image_sessions SET updated_at = ? WHERE id = ?").run(Date.now(), sessionId);
+        return null;
+      }
+      const selected = versions.versions.at(-1)!.id;
+      return this.selectImageSessionVersion(sessionId, nodeId, selected);
+    });
+  }
+
   createImageAssistantMessage(conversationId: string): string {
     return this.transaction(() => this.insertImageAssistantMessage(conversationId));
   }
@@ -2272,32 +2478,61 @@ export class Store {
     return id;
   }
 
-  createImageGenerationJob(input: {
+  createImageGenerationJob(input: ({
     conversationId: string;
     assistantMessageId?: string;
     toolCallId?: string;
+    imageSessionId?: never;
+    imageNodeId?: never;
+  } | {
+    conversationId?: never;
+    assistantMessageId?: never;
+    toolCallId?: never;
+    imageSessionId: string;
+    imageNodeId?: string;
+  }) & {
     model: ModelDto;
     connection: ConnectionRecord;
     request: ImageGenerationInput;
   }): ImageGenerationJobDto {
     return this.transaction(() => {
-      const assistantMessageId = input.assistantMessageId ?? this.insertImageAssistantMessage(input.conversationId);
       const protocol = input.model.imageProtocol;
       if (!protocol) throw withMessage(new StoreError("image_protocol_required", "图片模型缺少图片协议"), "error.the_image_model_has_no_image_protocol");
       const now = Date.now();
       const id = randomUUID();
+      const conversationId = input.conversationId ?? null;
+      const assistantMessageId = input.conversationId
+        ? input.assistantMessageId ?? this.insertImageAssistantMessage(input.conversationId)
+        : null;
+      let imageSessionId: string | null = null;
+      let imageNodeId: string | null = null;
+      if (input.imageSessionId) {
+        if (!this.getImageSession(input.imageSessionId)) throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+        imageSessionId = input.imageSessionId;
+        imageNodeId = input.imageNodeId ?? randomUUID();
+        const existing = this.sqlite.prepare("SELECT session_id FROM image_session_nodes WHERE id = ?").get(imageNodeId) as Row | undefined;
+        if (existing && existing.session_id !== imageSessionId) throw withMessage(new StoreError("image_node_not_found", "绘图节点不存在"), "error.image_node_not_found");
+        if (!existing) this.sqlite.prepare("INSERT INTO image_session_nodes (id, session_id, created_at, updated_at) VALUES (?, ?, ?, ?)")
+          .run(imageNodeId, imageSessionId, now, now);
+      }
       this.sqlite.prepare(`
         INSERT INTO image_generation_jobs (
-          id, conversation_id, assistant_message_id, tool_call_id, model_id, connection_id,
+          id, conversation_id, assistant_message_id, image_session_id, image_node_id, tool_call_id, model_id, connection_id,
           model_key, connection_name, image_protocol, operation, prompt, request_json, status,
           progress, provider_job_id, output_asset_ids_json, revised_prompt, error_code, error_message,
           created_at, started_at, completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, '[]', NULL, NULL, NULL, ?, NULL, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, '[]', NULL, NULL, NULL, ?, NULL, NULL)
       `).run(
-        id, input.conversationId, assistantMessageId, input.toolCallId ?? null, input.model.id,
+        id, conversationId, assistantMessageId, imageSessionId, imageNodeId, input.toolCallId ?? null, input.model.id,
         input.connection.id, input.model.modelKey, input.connection.name, protocol, input.request.operation,
         input.request.prompt, json(input.request), now
       );
+      if (imageSessionId && imageNodeId) {
+        this.sqlite.prepare(`INSERT INTO image_session_node_selections (node_id, job_id) VALUES (?, ?)
+          ON CONFLICT(node_id) DO UPDATE SET job_id = excluded.job_id`).run(imageNodeId, id);
+        this.sqlite.prepare("UPDATE image_session_nodes SET updated_at = ? WHERE id = ?").run(now, imageNodeId);
+        this.sqlite.prepare("UPDATE image_sessions SET updated_at = ? WHERE id = ?").run(now, imageSessionId);
+      }
       return this.getImageGenerationJob(id)!;
     });
   }
@@ -2357,7 +2592,8 @@ export class Store {
   attachImageJobOutputs(id: string, assetIds: string[]): ImageGenerationJobDto | undefined {
     const job = this.getImageGenerationJob(id);
     if (!job) return undefined;
-    this.attachFilesToMessage(job.assistantMessageId, assetIds, 128 * 1024 * 1024);
+    if (job.assistantMessageId) this.attachFilesToMessage(job.assistantMessageId, assetIds, 128 * 1024 * 1024);
+    else if (job.imageSessionId) this.attachAssetsToImageSession(job.imageSessionId, assetIds);
     return this.updateImageGenerationJob(id, { outputAssetIds: assetIds });
   }
 
@@ -2371,6 +2607,7 @@ export class Store {
         AND NOT EXISTS (SELECT 1 FROM vision_analyses v WHERE v.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM queued_message_assets q WHERE q.asset_id = a.id)
         AND NOT EXISTS (SELECT 1 FROM file_uploads u WHERE u.id = a.id)
+        AND NOT EXISTS (SELECT 1 FROM image_session_assets s WHERE s.asset_id = a.id)
     `).all(before) as Row[]).map(fileAssetRecord);
   }
 
@@ -3765,10 +4002,20 @@ function imageGenerationJobDto(row: Row, store: Store): ImageGenerationJobDto {
   const imageProtocol = imageProviderProtocolSchema.parse(String(row.image_protocol));
   const errorCode = textOrNull(row.error_code);
   const errorMessage = textOrNull(row.error_message);
+  const input = imageGenerationInputSchema.safeParse(parse(row.request_json, {})).data
+    ?? imageGenerationInputSchema.parse({
+      modelId: String(row.model_id),
+      prompt: String(row.prompt),
+      operation,
+      referenceAssetIds: [],
+      count: 1
+    });
   return {
     id: String(row.id),
-    conversationId: String(row.conversation_id),
-    assistantMessageId: String(row.assistant_message_id),
+    conversationId: textOrNull(row.conversation_id),
+    assistantMessageId: textOrNull(row.assistant_message_id),
+    imageSessionId: textOrNull(row.image_session_id),
+    imageNodeId: textOrNull(row.image_node_id),
     toolCallId: textOrNull(row.tool_call_id),
     modelId: String(row.model_id),
     modelKey: String(row.model_key),
@@ -3776,6 +4023,7 @@ function imageGenerationJobDto(row: Row, store: Store): ImageGenerationJobDto {
     imageProtocol,
     operation,
     prompt: String(row.prompt),
+    input,
     status,
     progress: row.progress === null || row.progress === undefined ? null : Number(row.progress),
     providerJobId: textOrNull(row.provider_job_id),
@@ -3785,6 +4033,25 @@ function imageGenerationJobDto(row: Row, store: Store): ImageGenerationJobDto {
     createdAt: Number(row.created_at),
     startedAt: row.started_at === null || row.started_at === undefined ? null : Number(row.started_at),
     completedAt: row.completed_at === null || row.completed_at === undefined ? null : Number(row.completed_at)
+  };
+}
+
+function imageSessionSummaryDto(row: Row, store: Store): ImageSessionSummaryDto {
+  const id = String(row.id);
+  const nodes = store.listImageSessionNodes(id);
+  const versions = nodes.flatMap((node) => node.versions);
+  const coverAsset = [...nodes].reverse().flatMap((node) => {
+    const selected = node.versions.find((job) => job.id === node.selectedJobId) ?? node.versions.at(-1);
+    return selected?.status === "completed" ? selected.outputAssets.slice(0, 1) : [];
+  })[0] ?? [...versions].reverse().find((job) => job.status === "completed")?.outputAssets[0] ?? null;
+  return {
+    id,
+    title: String(row.title),
+    coverAsset,
+    nodeCount: nodes.length,
+    activeCount: versions.filter((job) => ["queued", "running", "waiting-provider"].includes(job.status)).length,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at)
   };
 }
 

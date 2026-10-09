@@ -98,7 +98,7 @@ export function subscribeAppEvents(
   let closed = false;
   let source: EventSource | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  const types = ["submission-accepted", "container-resource", "resync", "task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
+  const types = ["submission-accepted", "container-resource", "resync", "task", "task-output", "plugin", "skill", "resource-changed", "image-generation", "image-session-generation", "message-queue", "generation-state", "generation-snapshot"] as const;
   const open = () => {
     if (closed) return;
     const current = eventSource("/api/events");

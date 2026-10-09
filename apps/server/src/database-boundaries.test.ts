@@ -52,6 +52,64 @@ it("keeps image jobs transactional and tolerates missing or invalid persisted re
   expect(store.getImageGenerationJob(job.id)?.outputAssets).toEqual([]);
 });
 
+it("stores independent image sessions with owned assets and selectable timeline versions", () => {
+  const store = createStore();
+  const { connection, model } = seedModel(store);
+  const imageModel = store.updateModel(model.id, {
+    imageProtocol: "openai-images",
+    capabilities: { ...model.capabilities, imageOutput: true, imageEdit: true }
+  })!;
+  const session = store.createImageSession({ title: "Concept board", draft: { modelId: imageModel.id, prompt: "glass house" } });
+  const other = store.createImageSession({});
+  const reference = store.createImageAsset({
+    sha256: "c".repeat(64), fileName: "reference.png", mimeType: "image/png", byteSize: 8, storageKey: "reference"
+  });
+  const plain = store.createFileAsset({
+    sha256: "d".repeat(64), fileName: "notes.txt", mimeType: "text/plain", kind: "file", byteSize: 4, storageKey: "notes"
+  });
+  expect(() => store.attachAssetsToImageSession(session.id, [plain.id])).toThrow("只能添加有效图片");
+  expect(store.attachAssetsToImageSession(session.id, [reference.id]).assets).toEqual([expect.objectContaining({ id: reference.id })]);
+  expect(store.imageAssetBelongsToSession(session.id, reference.id)).toBe(true);
+  expect(store.imageAssetBelongsToSession(other.id, reference.id)).toBe(false);
+
+  const request = {
+    modelId: imageModel.id, prompt: "glass house", operation: "edit" as const,
+    referenceAssetIds: [reference.id], count: 1
+  };
+  const first = store.createImageGenerationJob({
+    imageSessionId: session.id, connection: store.getConnection(connection.id)!, model: imageModel, request
+  });
+  const second = store.createImageGenerationJob({
+    imageSessionId: session.id, imageNodeId: first.imageNodeId!, connection: store.getConnection(connection.id)!,
+    model: imageModel, request: { ...request, prompt: "glass house at dusk" }
+  });
+  expect(store.listMessages(store.createConversation({ systemPrompt: "" }).id)).toEqual([]);
+  expect(store.getImageSession(session.id)?.nodes[0]).toMatchObject({
+    id: first.imageNodeId, selectedJobId: second.id, versions: [{ id: first.id }, { id: second.id }]
+  });
+  expect(() => store.createImageGenerationJob({
+    imageSessionId: other.id, imageNodeId: first.imageNodeId!, connection: store.getConnection(connection.id)!, model: imageModel, request
+  })).toThrow("绘图节点不存在");
+
+  const output = store.createImageAsset({
+    sha256: "e".repeat(64), fileName: "output.png", mimeType: "image/png", byteSize: 12, storageKey: "output"
+  });
+  store.attachImageJobOutputs(first.id, [output.id]);
+  store.updateImageGenerationJob(first.id, { status: "completed", completedAt: Date.now() });
+  expect(store.selectImageSessionVersion(session.id, first.imageNodeId!, first.id).selectedJobId).toBe(first.id);
+  expect(store.listImageSessions()[0]).toMatchObject({ id: session.id, coverAsset: { id: output.id }, nodeCount: 1 });
+  expect(store.unreferencedFileAssets(Date.now() + 1).map((asset) => asset.id)).not.toContain(output.id);
+
+  expect(store.deleteImageSessionVersion(session.id, first.imageNodeId!, first.id)?.versions).toHaveLength(1);
+  expect(store.deleteImageSessionVersion(session.id, first.imageNodeId!, second.id)).toBeNull();
+  expect(store.getImageSession(session.id)?.nodes).toEqual([]);
+  expect(store.updateImageSession(session.id, { title: "Updated", draft: { count: 2 } })).toMatchObject({
+    title: "Updated", draft: { prompt: "glass house", count: 2 }
+  });
+  expect(store.deleteImageSession(session.id)).toBe(true);
+  expect(store.getImageSession(session.id)).toBeUndefined();
+});
+
 it("keeps shared blobs until the final asset is removed", () => {
   const store = createStore();
   const input = { sha256: "a".repeat(64), fileName: "a.txt", mimeType: "text/plain", kind: "file" as const, byteSize: 5, storageKey: "blob" };

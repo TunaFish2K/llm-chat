@@ -3,6 +3,7 @@ import { routes, type Route } from "./router";
 
 export function parentRoute(route: Route): string | null {
   if (route.name === "agents" && route.agentId) return routes.agents();
+  if (route.name === "images" && route.sessionId) return routes.images();
   if (route.name === "chat" && route.conversationId) {
     if (route.taskId) return routes.conversationTasks(route.conversationId);
     if (route.view !== "chat") return routes.chat(route.conversationId);

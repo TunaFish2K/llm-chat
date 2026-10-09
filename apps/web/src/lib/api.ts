@@ -33,6 +33,11 @@ import type {
   ImageAssetDto,
   ImageGenerationInput,
   ImageGenerationJobDto,
+  ImageModelOptionDto,
+  ImageSessionDraft,
+  ImageSessionDto,
+  ImageSessionNodeDto,
+  ImageSessionSummaryDto,
   McpServerDto,
   McpServerInput,
   McpServerPatch,
@@ -295,6 +300,28 @@ export const endpoints = {
   imageGeneration: (conversationId: string, id: string) => api.get<ImageGenerationJobDto>(`/api/image-generations/${id}`, { conversationId }),
   cancelImageGeneration: (conversationId: string, id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/cancel`, {}, { conversationId }),
   retryImageGeneration: (conversationId: string, id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/retry`, {}, { conversationId }),
+  imageModels: () => api.get<ImageModelOptionDto[]>("/api/image-models", { networkOnly: true }),
+  imageSessions: () => api.get<ImageSessionSummaryDto[]>("/api/image-sessions", { networkOnly: true }),
+  imageSession: (id: string) => api.get<ImageSessionDto>(`/api/image-sessions/${id}`, { networkOnly: true }),
+  createImageSession: (input: { title?: string; draft?: Partial<ImageSessionDraft> }) =>
+    api.post<ImageSessionDto>("/api/image-sessions", input, { networkOnly: true }),
+  updateImageSession: (id: string, patch: { title?: string; draft?: Partial<ImageSessionDraft> }) =>
+    api.patch<ImageSessionDto>(`/api/image-sessions/${id}`, patch, { networkOnly: true }),
+  deleteImageSession: (id: string) => api.delete<void>(`/api/image-sessions/${id}`, { networkOnly: true }),
+  attachImageSessionAssets: (id: string, assetIds: string[]) =>
+    api.post<ImageSessionDto>(`/api/image-sessions/${id}/assets`, { assetIds }, { networkOnly: true }),
+  createImageSessionNode: (id: string, input: ImageGenerationInput) =>
+    api.post<ImageGenerationJobDto>(`/api/image-sessions/${id}/nodes`, input, { networkOnly: true }),
+  rerunImageSessionNode: (id: string, nodeId: string, jobId: string) =>
+    api.post<ImageGenerationJobDto>(`/api/image-sessions/${id}/nodes/${nodeId}/versions`, { jobId }, { networkOnly: true }),
+  selectImageSessionVersion: (id: string, nodeId: string, selectedJobId: string) =>
+    api.patch<ImageSessionNodeDto>(`/api/image-sessions/${id}/nodes/${nodeId}`, { selectedJobId }, { networkOnly: true }),
+  deleteImageSessionNode: (id: string, nodeId: string) =>
+    api.delete<void>(`/api/image-sessions/${id}/nodes/${nodeId}`, { networkOnly: true }),
+  deleteImageSessionVersion: (id: string, nodeId: string, jobId: string) =>
+    api.delete<void>(`/api/image-sessions/${id}/nodes/${nodeId}/versions/${jobId}`, { networkOnly: true }),
+  cancelImageSessionGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/cancel`, {}, { networkOnly: true }),
+  retryImageSessionGeneration: (id: string) => api.post<ImageGenerationJobDto>(`/api/image-generations/${id}/retry`, {}, { networkOnly: true }),
   uploadImage: (fileName: string, dataBase64: string) =>
     api.post<ImageAssetDto>("/api/images", { fileName, dataBase64 }),
   uploadFile,

@@ -58,6 +58,20 @@ export async function startMockProvider(options = {}) {
       });
       return;
     }
+    if (req.method === "POST" && url.pathname.endsWith("/images/generations")) {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        try {
+          requests.push({ kind: "image", ...JSON.parse(body) });
+        } catch {}
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{
+          b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        }] }));
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: { message: "not found" } }));
   });

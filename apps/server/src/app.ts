@@ -33,6 +33,7 @@ import {
   fileUploadMetadataSchema,
   forkConversationSchema,
   imageGenerationInputSchema,
+  imageSessionDraftPatchSchema,
   imageUploadSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
@@ -48,6 +49,7 @@ import {
   serviceSettingsInputSchema,
   type FileAssetDto,
   type GenerationEvent,
+  type ImageModelOptionDto,
   type ModelDto
 } from "@llm-chat/contracts";
 import { describeNetworkError, listConnectionModels, ProviderError } from "@llm-chat/providers";
@@ -83,6 +85,7 @@ import { importSillyTavernPreset } from "./roleplay";
 import { executeRestrictedStscript } from "./stscript";
 import { providerRequestContextForConversation } from "./provider-context";
 import { ImageGenerationManager } from "./image-generation";
+import { imageModelCapabilities } from "./image-model-capabilities";
 
 export interface AppOptions {
   dataFile: string;
@@ -901,9 +904,90 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     const input = store.getImageGenerationInput(previous.id);
     if (!input) throw withMessage(new StoreError("image_generation_config_invalid", "图片生成请求已损坏"), "error.the_image_generation_request_is_corrupt");
-    const job = imageJobs.create({ conversationId: previous.conversationId, input });
+    const job = previous.conversationId
+      ? imageJobs.create({ conversationId: previous.conversationId, input })
+      : previous.imageSessionId && previous.imageNodeId
+        ? imageJobs.create({ imageSessionId: previous.imageSessionId, imageNodeId: previous.imageNodeId, input })
+        : (() => { throw withMessage(new StoreError("image_generation_config_invalid", "图片任务缺少归属"), "error.the_image_generation_request_is_corrupt"); })();
     imageJobs.start(job.id);
     return reply.code(202).send(job);
+  });
+  app.get("/api/image-models", async (): Promise<ImageModelOptionDto[]> => store.listModels().flatMap((model) => {
+    if (!model.enabled || !model.capabilities.imageOutput || !model.imageProtocol) return [];
+    const connection = store.getConnection(model.connectionId);
+    if (!connection) return [];
+    return [{ id: model.id, displayName: model.displayName, modelKey: model.modelKey,
+      connectionName: connection.name, imageProtocol: model.imageProtocol,
+      capabilities: imageModelCapabilities(model.imageProtocol) }];
+  }));
+  app.get("/api/image-sessions", async () => store.listImageSessions());
+  app.post("/api/image-sessions", async (request, reply) => {
+    const value = z.object({ title: z.string().trim().max(120).optional(), draft: imageSessionDraftPatchSchema.optional() }).parse(request.body ?? {});
+    return reply.code(201).send(store.createImageSession(value));
+  });
+  app.get<{ Params: { id: string } }>("/api/image-sessions/:id", async (request) => {
+    const session = store.getImageSession(request.params.id);
+    if (!session) throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+    return session;
+  });
+  app.patch<{ Params: { id: string } }>("/api/image-sessions/:id", async (request) => {
+    const patch = z.object({ title: z.string().trim().min(1).max(120).optional(), draft: imageSessionDraftPatchSchema.optional() }).parse(request.body);
+    const session = store.updateImageSession(request.params.id, patch);
+    if (!session) throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+    return session;
+  });
+  app.delete<{ Params: { id: string } }>("/api/image-sessions/:id", async (request, reply) => {
+    const session = store.getImageSession(request.params.id);
+    if (!session) throw withMessage(new StoreError("image_session_not_found", "绘图会话不存在"), "error.image_session_not_found");
+    if (session.activeCount) {
+      throw withMessage(new StoreError("image_generation_active", "请先取消正在运行的图片任务"), "error.image_generation_active");
+    }
+    store.deleteImageSession(request.params.id);
+    return reply.code(204).send();
+  });
+  app.post<{ Params: { id: string } }>("/api/image-sessions/:id/assets", async (request) => {
+    const { assetIds } = z.object({ assetIds: z.array(z.string().uuid()).min(1).max(8) }).parse(request.body);
+    return store.attachAssetsToImageSession(request.params.id, assetIds);
+  });
+  app.post<{ Params: { id: string } }>("/api/image-sessions/:id/nodes", async (request, reply) => {
+    const input = imageGenerationInputSchema.parse(request.body);
+    const job = imageJobs.create({ imageSessionId: request.params.id, input });
+    imageJobs.start(job.id);
+    return reply.code(202).send(job);
+  });
+  app.post<{ Params: { id: string; nodeId: string } }>("/api/image-sessions/:id/nodes/:nodeId/versions", async (request, reply) => {
+    const { jobId } = z.object({ jobId: z.string().uuid() }).parse(request.body);
+    const previous = store.getImageGenerationJob(jobId);
+    if (!previous || previous.imageSessionId !== request.params.id || previous.imageNodeId !== request.params.nodeId) {
+      throw withMessage(new StoreError("image_generation_not_found", "图片生成任务不存在"), "error.image_generation_task_not_found");
+    }
+    const input = store.getImageGenerationInput(jobId);
+    if (!input) throw withMessage(new StoreError("image_generation_config_invalid", "图片生成请求已损坏"), "error.the_image_generation_request_is_corrupt");
+    const job = imageJobs.create({ imageSessionId: request.params.id, imageNodeId: request.params.nodeId, input });
+    imageJobs.start(job.id);
+    return reply.code(202).send(job);
+  });
+  app.patch<{ Params: { id: string; nodeId: string } }>("/api/image-sessions/:id/nodes/:nodeId", async (request) => {
+    const { selectedJobId } = z.object({ selectedJobId: z.string().uuid() }).parse(request.body);
+    return store.selectImageSessionVersion(request.params.id, request.params.nodeId, selectedJobId);
+  });
+  app.delete<{ Params: { id: string; nodeId: string } }>("/api/image-sessions/:id/nodes/:nodeId", async (request, reply) => {
+    const node = store.getImageSession(request.params.id)?.nodes.find((item) => item.id === request.params.nodeId);
+    if (node?.versions.some((job) => ["queued", "running", "waiting-provider"].includes(job.status))) {
+      throw withMessage(new StoreError("image_generation_active", "请先取消正在运行的图片任务"), "error.image_generation_active");
+    }
+    if (!store.deleteImageSessionNode(request.params.id, request.params.nodeId)) {
+      throw withMessage(new StoreError("image_node_not_found", "绘图节点不存在"), "error.image_node_not_found");
+    }
+    return reply.code(204).send();
+  });
+  app.delete<{ Params: { id: string; nodeId: string; jobId: string } }>("/api/image-sessions/:id/nodes/:nodeId/versions/:jobId", async (request, reply) => {
+    const job = store.getImageGenerationJob(request.params.jobId);
+    if (job && ["queued", "running", "waiting-provider"].includes(job.status)) {
+      throw withMessage(new StoreError("image_generation_active", "请先取消正在运行的图片任务"), "error.image_generation_active");
+    }
+    store.deleteImageSessionVersion(request.params.id, request.params.nodeId, request.params.jobId);
+    return reply.code(204).send();
   });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/messages", async (request, reply) => {
     requireCurrentMessageClient(request.body);

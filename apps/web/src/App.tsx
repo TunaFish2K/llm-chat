@@ -45,6 +45,7 @@ const AgentEditorView = lazy(() =>
   import("./views/AgentEditorView").then((module) => ({ default: module.AgentEditorView }))
 );
 const SettingsView = lazy(() => import("./views/SettingsView").then((module) => ({ default: module.SettingsView })));
+const ImageStudioView = lazy(() => import("./views/ImageStudioView").then((module) => ({ default: module.ImageStudioView })));
 
 /** Owns shell geometry, authentication and routing. */
 export function App() {
@@ -283,6 +284,15 @@ const RouteView = memo(function RouteView({
         <SettingsView section={route.section} />
       </section>
     );
+  }
+  if (route.name === "images") {
+    return <ImageStudioView
+      key={route.sessionId ?? "new"}
+      sessionId={route.sessionId}
+      mobile={mobile}
+      sidebarCollapsed={sidebarCollapsed}
+      onToggleSidebar={onToggleSidebar}
+    />;
   }
   if (route.name === "tasks") return <LegacyTaskRedirect taskId={route.taskId} />;
   return (

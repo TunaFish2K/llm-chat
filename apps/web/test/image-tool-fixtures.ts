@@ -3,9 +3,12 @@ import { makeGeneration, makeMessage } from "./fixtures";
 
 export function makeImageJob(patch: Partial<ImageGenerationJobDto> = {}): ImageGenerationJobDto {
   return {
-    id: "image-job", conversationId: "conv-1", assistantMessageId: "image-message", toolCallId: "image-call",
+    id: "image-job", conversationId: "conv-1", assistantMessageId: "image-message",
+    imageSessionId: null, imageNodeId: null, toolCallId: "image-call",
     modelId: "image-model", modelKey: "image-model", connectionName: "Images", imageProtocol: "openai-images",
-    operation: "generate", prompt: "a beach", status: "failed", progress: null, providerJobId: null,
+    operation: "generate", prompt: "a beach",
+    input: { modelId: "00000000-0000-4000-8000-000000000001", prompt: "a beach", operation: "generate", referenceAssetIds: [], count: 1 },
+    status: "failed", progress: null, providerJobId: null,
     outputAssets: [], revisedPrompt: null, error: { code: "upstream_error", message: "Upstream request failed" },
     createdAt: 3, startedAt: 4, completedAt: 5, ...patch
   };
@@ -35,6 +38,6 @@ export function imageRetryMessages(conversationId = "conv-1"): MessageDto[] {
         id: `text-${stepIndex}`, stepIndex, index: 0, type: "text", content, complete: true
       }))
     })] }),
-    ...jobs.map((job, index) => makeMessage({ id: job.assistantMessageId, ordinal: index + 3, imageGenerationJob: job, attachments: job.outputAssets }))
+    ...jobs.map((job, index) => makeMessage({ id: job.assistantMessageId!, ordinal: index + 3, imageGenerationJob: job, attachments: job.outputAssets }))
   ];
 }

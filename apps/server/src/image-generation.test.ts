@@ -101,6 +101,55 @@ describe("ImageGenerationManager", () => {
     expect(events).toContain("completed");
     await manager.close();
   });
+
+  it("runs independent image sessions without the chat tool toggle and emits workspace events", async () => {
+    const store = createStore();
+    const { model } = seedModel(store);
+    const imageModel = store.updateModel(model.id, {
+      imageProtocol: "openai-images",
+      capabilities: { ...model.capabilities, imageOutput: true, imageEdit: true }
+    })!;
+    new ServiceSettings(store).update({ imageModels: [{ modelId: imageModel.id, enabled: false }] });
+    const session = store.createImageSession({ title: "Independent" });
+    const foreign = store.createImageSession({ title: "Foreign" });
+    const images = new ImageService(store);
+    await images.initialize();
+    const reference = await images.importBytes("reference.png", png);
+    store.attachAssetsToImageSession(foreign.id, [reference.id]);
+    const hub = new EventHub();
+    const events: Array<{ sessionId: string; status: string }> = [];
+    hub.subscribe(0, (event) => {
+      if (event.type === "image-session-generation") events.push({ sessionId: event.imageSessionId, status: event.job.status });
+    });
+    const manager = new ImageGenerationManager(store, images, hub);
+    vi.spyOn(providers, "imageAdapter").mockReturnValue({
+      protocol: "openai-images",
+      start: vi.fn(async () => output)
+    });
+    expect(() => manager.create({
+      imageSessionId: session.id,
+      input: { modelId: imageModel.id, prompt: "edit", operation: "edit", referenceAssetIds: [reference.id], count: 1 }
+    })).toThrow("不属于当前绘图会话");
+    expect(() => manager.create({
+      imageSessionId: session.id,
+      input: { modelId: imageModel.id, prompt: "mask", operation: "inpaint", referenceAssetIds: [], count: 1 }
+    })).toThrow("不支持此绘图请求");
+
+    const completed = await manager.createAndWait({
+      imageSessionId: session.id,
+      input: { modelId: imageModel.id, prompt: "a quiet observatory", operation: "generate", referenceAssetIds: [], count: 1 }
+    });
+    expect(completed).toMatchObject({
+      status: "completed", conversationId: null, assistantMessageId: null, imageSessionId: session.id
+    });
+    expect(store.getImageSession(session.id)).toMatchObject({
+      assets: [expect.objectContaining({ id: completed.outputAssets[0]!.id })],
+      nodes: [{ selectedJobId: completed.id }]
+    });
+    expect(events).toContainEqual({ sessionId: session.id, status: "completed" });
+    expect(store.sqlite.prepare("SELECT COUNT(*) AS value FROM messages").get()).toMatchObject({ value: 0 });
+    await manager.close();
+  });
 });
 
 const png = Buffer.from("iVBORw0KGgo=", "base64");

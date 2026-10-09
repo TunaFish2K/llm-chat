@@ -408,6 +408,7 @@ export function routeTitle(
     if (!route.agentId) return "Agent";
     return agents.find((item) => item.id === route.agentId)?.name ?? "Agent";
   }
+  if (route.name === "images") return t("ImageStudio.title");
   if (route.name === "tasks") return t("TrajectoryView.background_tasks");
   return t("WorkspaceSidebar.settings");
 }

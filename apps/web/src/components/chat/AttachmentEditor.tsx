@@ -1,8 +1,6 @@
 import { t, useLocale } from "../../lib/i18n";
-import { useBackLayer } from "../../lib/mobile-navigation";
-import { useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { Popover } from "radix-ui";
-import { FilePlus2, FileText, ImagePlus, LoaderCircle, Paperclip, X } from "lucide-react";
+import { type Dispatch, type SetStateAction } from "react";
+import { FileText, ImagePlus, LoaderCircle, Paperclip, X } from "lucide-react";
 import type { FileAssetDto } from "@llm-chat/contracts";
 import { toast } from "../../lib/app-state";
 import { formatBytes } from "../../lib/format";
@@ -10,6 +8,7 @@ import { uploadManager, uploadStore, type UploadIntent } from "../../lib/file-up
 import { useStore } from "../../lib/store";
 import { UploadTasks } from "../FileUploads";
 import { assetUrl } from "../../lib/server-channel";
+import { NativeFileButton } from "../NativeFileButton";
 
 export function useAttachments(initial: FileAssetDto[] = [], scope = "new", conversationId?: string) {
   useLocale();
@@ -30,27 +29,29 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false }: {
   uploadFiles: (files: File[], intent?: UploadIntent) => Promise<void>; disabled?: boolean; uploading?: boolean;
 }) {
   useLocale();
-  const fileInput = useRef<HTMLInputElement>(null);
-  const imageInput = useRef<HTMLInputElement>(null);
-  const [open, setOpen] = useState(false);
-  useBackLayer(open, () => setOpen(false));
-  return <>
-    <input hidden aria-label={t("AttachmentEditor.upload_files")} ref={fileInput} type="file" multiple onChange={(event) => {
-      void uploadFiles(Array.from(event.target.files ?? []), "file"); event.target.value = "";
-    }} />
-    <input hidden aria-label={t("AttachmentEditor.upload_images")} ref={imageInput} type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => {
-      void uploadFiles(Array.from(event.target.files ?? []), "image"); event.target.value = "";
-    }} />
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild><button type="button" className="chip composer-attachment-button" disabled={disabled} aria-label={t("AttachmentEditor.add_attachment")} title={t("AttachmentEditor.add_attachment")}>
-        {uploading ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
-      </button></Popover.Trigger>
-      <Popover.Portal><Popover.Content className="composer-more-popover attachment-menu" side="top" align="start" sideOffset={8} inert={!open ? true : undefined} aria-hidden={!open || undefined}>
-        <button type="button" onClick={() => { fileInput.current?.click(); setOpen(false); }}><FilePlus2 size={17} />{t("AttachmentEditor.upload_files")}</button>
-        <button type="button" onClick={() => { imageInput.current?.click(); setOpen(false); }}><ImagePlus size={17} />{t("AttachmentEditor.upload_images")}</button>
-      </Popover.Content></Popover.Portal>
-    </Popover.Root>
-  </>;
+  return <div className="composer-native-files" aria-label={t("AttachmentEditor.add_attachment")}>
+    <NativeFileButton
+      className="chip composer-attachment-button"
+      label={t("AttachmentEditor.upload_images")}
+      accept="image/jpeg,image/png,image/webp,image/gif"
+      multiple
+      disabled={Boolean(disabled)}
+      busy={uploading}
+      onFiles={(files) => uploadFiles(files, "image")}
+    >
+      <ImagePlus size={17} />
+    </NativeFileButton>
+    <NativeFileButton
+      className="chip composer-attachment-button"
+      label={t("AttachmentEditor.upload_files")}
+      multiple
+      disabled={Boolean(disabled)}
+      busy={uploading}
+      onFiles={(files) => uploadFiles(files, "file")}
+    >
+      {uploading ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
+    </NativeFileButton>
+  </div>;
 }
 
 export function AttachmentList({ attachments, setAttachments, disabled = false, uploadScope }: {

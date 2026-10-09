@@ -30,6 +30,7 @@ import { createStore } from "./store";
 import { resetRequestSession } from "./http-client";
 import { clearStartupCache, readStartupCache, scheduleStartupCache, setStartupAuthRequired, startupAuthRequired, type StartupSnapshot } from "./startup-cache";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
+import { refreshImageSessions, resetImageStudioState } from "./image-studio-state";
 
 export interface Toast {
   id: number;
@@ -786,6 +787,7 @@ export function startAppEvents(): void {
         eventRefreshes.schedule("agents", refreshAgents);
         eventRefreshes.schedule("models", refreshConnectionsAndModels);
         eventRefreshes.schedule("tasks", refreshTaskCounts);
+        eventRefreshes.schedule("image-sessions", refreshImageSessions);
         const id = currentConversationId(); if (id) refreshMessages(id);
         window.dispatchEvent(new Event("llm-chat:queue-reconnect"));
         for (const resource of ["agents", "conversations", "settings", "connections", "models"]) {
@@ -799,6 +801,9 @@ export function startAppEvents(): void {
         eventRefreshes.schedule("tasks", refreshTaskCounts);
       } else if (event.type === "image-generation") {
         refreshMessages(event.conversationId);
+      } else if (event.type === "image-session-generation") {
+        eventRefreshes.schedule("image-sessions", refreshImageSessions);
+        window.dispatchEvent(new CustomEvent("llm-chat:image-session-generation", { detail: event }));
       } else if (event.type === "container-resource") {
         window.dispatchEvent(new CustomEvent("llm-chat:container-resource", { detail: event.job }));
       } else if (event.type === "resource-changed") {
@@ -848,6 +853,7 @@ export function initAuthGate(): () => void {
     clearResources(); clearSubmissions();
     currentSource = undefined;
     uploadManager.reset();
+    resetImageStudioState();
     messageSession++; messageReads.clear(); messageVisits.clear(); conversationWrites.clear(); unsavedConversations.clear(); branchSelections.clear(); generationSelections.clear(); settingsWrites = undefined; unsavedSettings = {}; clearMutationQueues();
     stopNotificationSession();
     stopAppEvents();
