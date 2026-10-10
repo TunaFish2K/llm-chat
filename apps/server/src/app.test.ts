@@ -565,12 +565,12 @@ describe("server API", () => {
     expect((await put(0, bytes.subarray(0, 4))).json()).toMatchObject({ offset: 4 });
     expect((await put(0, bytes)).statusCode).toBe(409);
     expect((await put(4, bytes.subarray(4))).json()).toMatchObject({ offset: 10 });
-    expect((await app.inject({ method: "POST", url: `/api/file-uploads/${input.id}/complete` })).statusCode).toBe(202);
-    let asset: import("@llm-chat/contracts").FileAssetDto;
-    await vi.waitFor(async () => {
-      const status = (await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).json();
-      expect(status.state).toBe("completed"); asset = status.asset;
-    });
+    // Small files are verified inline, so completion answers with the finished asset instead of 202.
+    const completed = await app.inject({ method: "POST", url: `/api/file-uploads/${input.id}/complete` });
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({ state: "completed" });
+    const asset: import("@llm-chat/contracts").FileAssetDto = completed.json().asset;
+    expect((await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).json()).toMatchObject({ state: "completed", asset: { id: asset.id } });
     const head = await app.inject({ method: "HEAD", url: asset!.url });
     expect(head.statusCode).toBe(200); expect(head.body).toBe(""); expect(head.headers["content-length"]).toBe("10");
     const suffix = await app.inject({ method: "GET", url: asset!.url, headers: { range: "bytes=-3", "accept-encoding": "gzip" } });

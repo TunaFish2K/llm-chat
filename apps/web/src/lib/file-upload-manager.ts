@@ -39,6 +39,8 @@ interface Dependencies {
   imageLimits: () => { image: number; message: number };
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   changed: () => void;
+  /** Progress ticks; may be coalesced, unlike `changed`, which callers read back immediately. */
+  progressed?: () => void;
   attach: (scope: string, assets: FileAssetDto[]) => void;
   delay: typeof uploadDelay;
   online: () => boolean;
@@ -77,7 +79,7 @@ export class FileUploadManager {
     this.changed(); this.pump();
   }
   /** Progress ticks only repaint; the stored queue changes on status transitions. */
-  private progressed(): void { this.deps.changed(); }
+  private progressed(): void { (this.deps.progressed ?? this.deps.changed)(); }
   private changed(): void {
     try {
       this.deps.storage.setItem(KEY, JSON.stringify({ sourceId: this.sourceId, scopes: this.all().map((scope) => ({
@@ -255,11 +257,15 @@ export class FileUploadManager {
 
 export const uploadStore = createStore({ revision: 0 });
 let notifyFrame: number | undefined;
-/** Hash and chunk progress can tick many times per frame; the composer re-renders at most once. */
+/** State changes notify at once: a send confirmed in the same frame must see reattached files. */
 function notifyUploadsChanged(): void {
-  const bump = () => { notifyFrame = undefined; uploadStore.set((state) => ({ revision: state.revision + 1 })); };
-  if (typeof requestAnimationFrame !== "function" || document.visibilityState !== "visible") return bump();
-  notifyFrame ??= requestAnimationFrame(bump);
+  if (notifyFrame !== undefined) { cancelAnimationFrame(notifyFrame); notifyFrame = undefined; }
+  uploadStore.set((state) => ({ revision: state.revision + 1 }));
+}
+/** Hash and chunk progress can tick many times per frame; the composer re-renders at most once. */
+function notifyUploadProgress(): void {
+  if (typeof requestAnimationFrame !== "function" || document.visibilityState !== "visible") return notifyUploadsChanged();
+  notifyFrame ??= requestAnimationFrame(() => { notifyFrame = undefined; uploadStore.set((state) => ({ revision: state.revision + 1 })); });
 }
 let imageLimitMiB: number | undefined;
 /** Mirrors the server setting so oversized images are rejected before upload. */
@@ -268,6 +274,6 @@ export const uploadManager = new FileUploadManager({
   http: fileUploadHttp, hash: hashFileInWorker,
   imageLimits: () => imageUploadLimits(imageLimitMiB),
   storage: { getItem: (key) => sessionStorage.getItem(key), setItem: (key, value) => sessionStorage.setItem(key, value), removeItem: (key) => sessionStorage.removeItem(key) },
-  attach: updateDraftAttachments, changed: notifyUploadsChanged,
+  attach: updateDraftAttachments, changed: notifyUploadsChanged, progressed: notifyUploadProgress,
   delay: uploadDelay, online: () => navigator.onLine !== false
 });
