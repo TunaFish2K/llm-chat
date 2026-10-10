@@ -1,0 +1,131 @@
+/* Full-screen image viewer shared by chat and the image studio. Dark in both themes so pictures read true. */
+
+.image-preview {
+  position: fixed;
+  inset: 0;
+  z-index: 78;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  color: #f2f2f2;
+  background: rgb(8 9 8 / 97%);
+  backdrop-filter: blur(12px);
+}
+
+.image-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+}
+
+.image-preview-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+
+.image-preview-count {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.image-preview-tools {
+  justify-content: center;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+}
+
+.image-preview-button,
+.image-preview-zoom {
+  display: inline-grid;
+  place-items: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: inherit;
+  background: rgb(255 255 255 / 8%);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.image-preview-zoom {
+  min-width: 64px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-preview-button:hover:not(:disabled),
+.image-preview-zoom:hover { background: rgb(255 255 255 / 16%); }
+
+.image-preview-button:focus-visible,
+.image-preview-zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.image-preview-button:disabled { opacity: 0.35; cursor: default; }
+
+.image-preview-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: rgb(255 255 255 / 18%);
+}
+
+.image-preview-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  cursor: zoom-in;
+}
+
+.image-preview-stage[data-zoomed] { cursor: grab; }
+.image-preview-stage[data-zoomed]:active { cursor: grabbing; }
+
+/* Absolute centring gives the percentage limits a definite box; inside the grid cell they would not resolve. */
+.image-preview-stage img {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  max-width: calc(100% - 32px);
+  max-height: calc(100% - 16px);
+  object-fit: contain;
+  transform-origin: center;
+  will-change: transform;
+  -webkit-user-drag: none;
+}
+
+.image-preview-stage img[data-status="loading"] { opacity: 0; }
+.image-preview-stage img[data-status="failed"] { display: none; }
+
+.image-preview-state {
+  position: absolute;
+  margin: 0;
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.image-preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  background: rgb(0 0 0 / 45%);
+}
+
+.image-preview-nav[data-side="left"] { left: 12px; }
+.image-preview-nav[data-side="right"] { right: 12px; }
+
+@media (max-width: 767px) {
+  .image-preview-stage img { max-width: 100%; max-height: calc(100% - 8px); }
+  .image-preview-nav { display: none; }
+  .image-preview-tools { gap: 4px; }
+}

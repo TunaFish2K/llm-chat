@@ -1,5 +1,6 @@
 import { withMessage } from "@llm-chat/i18n";
 import type { ImageProviderProtocol } from "@llm-chat/contracts";
+import { providerErrorMessage } from "./http";
 import { providerFetch } from "./network-error";
 import { ProviderError, type GeneratedImage, type ImageGenerationAdapter, type ImageGenerationCompleted, type ImageGenerationPollResult, type ImageGenerationRequest, type ImageGenerationStart } from "./types";
 
@@ -182,8 +183,11 @@ async function fetchMultipart(request: ImageGenerationRequest, resource: string,
 
 async function responsePayload(response: Response): Promise<unknown> {
   if (!response.ok) {
-    const text = await response.text();
-    throw new ProviderError("image_provider_error", text.slice(0, 2_000) || `图片服务返回 HTTP ${response.status}`, response.status);
+    const text = (await response.text()).trim();
+    // Prefer the message inside a JSON error; plain text is shown as is, HTML error pages never are.
+    const message = providerErrorMessage(text) || (/^\s*[<{[]/.test(text) ? "" : text);
+    if (message) throw new ProviderError("image_provider_error", message.slice(0, 2_000), response.status);
+    throw withMessage(new ProviderError("image_provider_error", `上游服务返回 HTTP ${response.status}`, response.status), "error.upstream_http_status", { status: response.status, suffix: "" });
   }
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.startsWith("image/")) return new Uint8Array(await response.arrayBuffer());

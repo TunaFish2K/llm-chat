@@ -15,6 +15,7 @@ import { RichPreview } from "../components/RichPreview";
 import { splitRichContent } from "./rich-content";
 import { MarkdownTable } from "../components/MarkdownTable";
 import { assetUrl } from "./server-channel";
+import { openImagePreview } from "./image-preview";
 
 const INLINE_MATH = /\\\((.+?)\\\)/g;
 const BLOCK_MATH = /\\\[(.+?)\\\]/gs;
@@ -67,14 +68,20 @@ function imageSource(src: string | undefined): string | null {
   }
 }
 
+/** A download name for a markdown image that has no alt text. */
+function imageFileName(src: string | undefined): string {
+  try { return decodeURIComponent(new URL(src ?? "", location.href).pathname.split("/").pop() || "image"); } catch { return "image"; }
+}
+
 function SafeImage({ src, alt = "", ...props }: ComponentProps<"img">) {
   useLocale();
   const safe = imageSource(src);
   if (!safe) return alt ? <span className="image-unavailable">{t("markdown.image", { value1: (alt) })}</span> : null;
   return (
-    <a className="markdown-image-link" href={assetUrl(safe)} target="_blank" rel="noopener noreferrer">
+    <button type="button" className="markdown-image-link" aria-label={t("ImagePreview.open", { value1: alt || t("ImagePreview.title") })}
+      onClick={() => openImagePreview([{ url: safe, fileName: alt || imageFileName(src), sourceUrl: safe.startsWith("/api/image-proxy") ? src : undefined }])}>
       <OfflineAwareImage {...props} src={safe} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
-    </a>
+    </button>
   );
 }
 

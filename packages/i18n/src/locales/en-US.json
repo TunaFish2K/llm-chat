@@ -1633,7 +1633,6 @@
   "ImageStudio.status_cancelled": "Cancelled",
   "ImageStudio.versions": "Generation versions",
   "ImageStudio.use_as_reference": "Use as reference",
-  "ImageStudio.download": "Download image",
   "ImageStudio.copy_prompt": "Copy prompt",
   "ImageStudio.edit": "Edit",
   "ImageStudio.edit_prompt": "Edit prompt",
@@ -1649,5 +1648,18 @@
   "ImageStudio.reference_added": "Added as a reference image",
   "ImageStudio.quality_low": "Low",
   "ImageStudio.quality_medium": "Medium",
-  "ImageStudio.quality_high": "High"
+  "ImageStudio.quality_high": "High",
+  "ImagePreview.title": "Image preview",
+  "ImagePreview.open": "Preview image: {{value1}}",
+  "ImagePreview.close": "Close preview",
+  "ImagePreview.zoom_in": "Zoom in",
+  "ImagePreview.zoom_out": "Zoom out",
+  "ImagePreview.fit": "Fit to screen",
+  "ImagePreview.download": "Download",
+  "ImagePreview.download_named": "Download {{value1}}",
+  "ImagePreview.open_original": "View original",
+  "ImagePreview.previous": "Previous image",
+  "ImagePreview.next": "Next image",
+  "ImagePreview.loading": "Loading image",
+  "ImagePreview.load_failed": "The image could not be loaded"
 }

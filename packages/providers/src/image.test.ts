@@ -156,6 +156,17 @@ it.each(["plain error", ""])("reports upstream status and bounded error text", a
   expect(error).toMatchObject({ code: "image_provider_error", status: 429 }); expect(error.message.length).toBeLessThanOrEqual(2000);
 });
 
+it.each([
+  [JSON.stringify({ error: { message: "Your prompt was rejected" } }), "Your prompt was rejected"],
+  [JSON.stringify({ errors: ["invalid size", "invalid seed"] }), "invalid size; invalid seed"],
+  ["<html><body>Bad gateway</body></html>", "上游服务返回 HTTP 400"],
+  [JSON.stringify({ detail: "unknown shape" }), "上游服务返回 HTTP 400"]
+])("shows the readable part of an upstream error body %s", async (body, message) => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(body, { status: 400 })));
+  const error = await imageAdapterFor("openai-images").start(request("openai-images")).catch(error => error);
+  expect(error).toMatchObject({ code: "image_provider_error", status: 400, message });
+});
+
 it("rejects non-JSON success bodies", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("not JSON")));
   await expect(imageAdapterFor("openai-images").start(request("openai-images"))).rejects.toMatchObject({ code: "image_response_invalid" });

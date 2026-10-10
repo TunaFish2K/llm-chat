@@ -1,6 +1,6 @@
 /* The image studio reuses chat layout; only generated results differ from chat thumbnails. */
 
-.image-result .message-images a {
+.image-result .image-tile {
   width: min(100%, 320px);
   height: auto;
   aspect-ratio: 1 / 1;
@@ -25,5 +25,5 @@
 }
 
 @media (max-width: 767px) {
-  .image-result .message-images a { width: min(100%, 260px); }
+  .image-result .image-tile { width: min(100%, 260px); }
 }

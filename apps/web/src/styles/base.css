@@ -498,6 +498,10 @@ img {
   width: fit-content;
   max-width: 100%;
   margin: 8px 0 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
 }
 
 .markdown-image-link img {

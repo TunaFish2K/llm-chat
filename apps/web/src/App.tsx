@@ -39,6 +39,7 @@ import { InspectorPanel } from "./views/InspectorPanel";
 import { LoginView } from "./views/LoginView";
 import { WorkspaceSidebar } from "./views/WorkspaceSidebar";
 import { QuickTour } from "./components/QuickTour";
+import { ImagePreview } from "./components/ImagePreview";
 
 const AgentsView = lazy(() => import("./views/AgentsView").then((module) => ({ default: module.AgentsView })));
 const AgentEditorView = lazy(() =>
@@ -247,6 +248,7 @@ export function App() {
         data-ready={backOffset >= 64 || undefined} style={{ transform: `translateX(${backOffset - 44}px)` }}><ArrowLeft size={20} /></div> : null}
       <GlobalFileUploads />
       <QuickTour />
+      <ImagePreview />
       <ToastStack toasts={toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
         updating={["checking", "downloading", "applying", "repairing"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
     </AppFrame>

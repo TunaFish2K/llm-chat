@@ -6,7 +6,8 @@ import { useStore } from "../../lib/store";
 import type { ReactNode } from "react";
 import { Download, FileText } from "lucide-react";
 import type { AgentSummaryDto, FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
-import { toast } from "../../lib/app-state";
+import { toast, toastError } from "../../lib/app-state";
+import { downloadImage, openImagePreview } from "../../lib/image-preview";
 import { formatBytes } from "../../lib/format";
 import { assetUrl, thumbnailUrl } from "../../lib/server-channel";
 
@@ -44,21 +45,29 @@ export function OfflineAwareImage({ src, alt, ...props }: React.ComponentProps<"
   return <img {...props} src={assetUrl(src)} alt={alt} onLoad={() => setFailed(false)} onError={() => setFailed(true)} />;
 }
 
-/** Images always open through the server-issued URL, never a data: blob. */
-export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
+/** Images open in the app's viewer through the server-issued URL, never a data: blob. */
+export function ImageGallery({ assets, downloadable = false }: { assets: ImageAssetDto[]; downloadable?: boolean }) {
   useLocale();
+  const previews = assets.map((asset) => ({ url: asset.url, fileName: asset.fileName }));
   return (
     <div className="message-images">
-      {assets.map((asset) => (
-        <a
-          key={asset.id}
-          href={assetUrl(asset.url)}
-          target="_blank"
-          rel="noopener noreferrer"
-          title={`${asset.fileName} · ${formatBytes(asset.byteSize)}`}
-        >
-          <OfflineAwareImage src={thumbnailUrl(asset.url)} alt={asset.fileName} loading="lazy" decoding="async" />
-        </a>
+      {assets.map((asset, index) => (
+        <div className="image-tile" key={asset.id}>
+          <button
+            type="button"
+            className="image-tile-open"
+            onClick={() => openImagePreview(previews, index)}
+            aria-label={t("ImagePreview.open", { value1: asset.fileName })}
+            title={`${asset.fileName} · ${formatBytes(asset.byteSize)}`}
+          >
+            <OfflineAwareImage src={thumbnailUrl(asset.url)} alt={asset.fileName} loading="lazy" decoding="async" />
+          </button>
+          {downloadable ? <button type="button" className="image-tile-download"
+            onClick={() => void downloadImage(asset).catch(toastError)}
+            aria-label={t("ImagePreview.download_named", { value1: asset.fileName })} title={t("ImagePreview.download")}>
+            <Download size={15} />
+          </button> : null}
+        </div>
       ))}
     </div>
   );

@@ -44,17 +44,23 @@ export function headers(
   return merged;
 }
 
+/** The human-readable part of an upstream error body, or "" when it carries none (HTML pages are never shown). */
+export function providerErrorMessage(text: string): string {
+  let body: unknown;
+  try { body = JSON.parse(text); } catch { return ""; }
+  if (!body || typeof body !== "object") return "";
+  const { error, message, errors } = body as { error?: unknown; message?: unknown; errors?: unknown };
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") return (error as { message: string }).message;
+  if (typeof message === "string") return message;
+  if (Array.isArray(errors)) return errors.filter((item): item is string => typeof item === "string").join("; ");
+  return "";
+}
+
 export async function ensureOk(response: Response): Promise<void> {
   if (response.ok) return;
   const requestId = response.headers.get("x-request-id") ?? response.headers.get("request-id");
-  let message = "";
-  try {
-    const body = (await response.json()) as { error?: { message?: string; type?: string } | string };
-    if (typeof body.error === "string") message = body.error;
-    if (body.error && typeof body.error === "object" && body.error.message) message = body.error.message;
-  } catch {
-    // Some compatible endpoints return an HTML error page. Do not expose it.
-  }
+  const message = providerErrorMessage(await response.text().catch(() => ""));
   const suffix = requestId ? `（request id: ${requestId}）` : "";
   const code = response.status === 401 || response.status === 403
     ? "provider_auth_error"

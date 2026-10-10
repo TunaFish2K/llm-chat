@@ -7,7 +7,7 @@ import type {
   ImageSessionDto,
   ImageSessionNodeDto
 } from "@llm-chat/contracts";
-import { ArrowDown, Copy, Download, ImagePlus, LoaderCircle, Pencil, RotateCcw, Send, Settings2, Square, SquarePen, Trash2, X } from "lucide-react";
+import { ArrowDown, Copy, ImagePlus, LoaderCircle, Pencil, RotateCcw, Send, Settings2, Square, SquarePen, Trash2, X } from "lucide-react";
 import { Popover } from "radix-ui";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { AttachmentMenu } from "../components/chat/AttachmentEditor";
@@ -18,6 +18,7 @@ import { ModelPicker } from "../components/ModelPicker";
 import { Button, Field, Modal, Segmented } from "../components/ui";
 import { endpoints } from "../lib/api";
 import { appStore, toast, toastError } from "../lib/app-state";
+import { displayError } from "../lib/error-display";
 import { formatTime } from "../lib/format";
 import { t, useLocale } from "../lib/i18n";
 import { refreshImageSessions } from "../lib/image-studio-state";
@@ -524,7 +525,6 @@ function ImageNode({ node, assets, models, referenceBlocked, onSelect, onCancel,
     : job.status === "waiting-provider" ? t("ImageStudio.status_waiting")
     : job.status === "cancelled" ? t("ImageStudio.status_cancelled")
     : null;
-  const single = job.outputAssets.length === 1 ? job.outputAssets[0]! : null;
 
   return <>
     <article className="msg" data-role="user">
@@ -536,9 +536,9 @@ function ImageNode({ node, assets, models, referenceBlocked, onSelect, onCancel,
       </MessageFooter>
     </article>
     <article className="msg image-result" data-role="assistant" aria-busy={active || undefined}>
-      {job.outputAssets.length ? <ImageGallery assets={job.outputAssets} />
+      {job.outputAssets.length ? <ImageGallery assets={job.outputAssets} downloadable />
         : job.status === "failed" ? <div className="refusal-block" role="alert">
-          <strong>{t("ImageStudio.status_failed")}</strong>{job.error?.message}
+          <strong>{t("ImageStudio.status_failed")}</strong>{job.error ? displayError(job.error) : t("detail.unknown_error")}
         </div>
         : status ? <div className="image-job-status" role="status">{active ? <LoaderCircle size={14} className="spin" /> : null}<span>{status}</span></div>
         : null}
@@ -547,7 +547,6 @@ function ImageNode({ node, assets, models, referenceBlocked, onSelect, onCancel,
         {job.outputAssets.length ? <span title={referenceBlocked ?? undefined}>
           <MessageAction label={t("ImageStudio.use_as_reference")} disabled={Boolean(referenceBlocked)} onClick={() => onReference(job.outputAssets)}><ImagePlus size={14} /></MessageAction>
         </span> : null}
-        {single ? <a className="act" href={assetUrl(single.url)} download={single.fileName} aria-label={t("ImageStudio.download")} title={t("ImageStudio.download")}><Download size={14} /></a> : null}
         {job.status === "failed" || job.status === "cancelled"
           ? <MessageAction label={t("ImageStudio.retry")} onClick={() => onRetry(job)}><RotateCcw size={14} /></MessageAction>
           : job.status === "completed" ? <MessageAction label={t("ImageStudio.rerun")} onClick={() => onRerun(job)}><RotateCcw size={14} /></MessageAction> : null}

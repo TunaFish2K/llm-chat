@@ -1617,7 +1617,6 @@
   "ImageStudio.status_cancelled": "已取消",
   "ImageStudio.versions": "生成版本",
   "ImageStudio.use_as_reference": "用作参考图",
-  "ImageStudio.download": "下载图片",
   "ImageStudio.copy_prompt": "复制提示词",
   "ImageStudio.edit": "编辑",
   "ImageStudio.edit_prompt": "编辑提示词",
@@ -1633,5 +1632,18 @@
   "ImageStudio.reference_added": "已添加为参考图",
   "ImageStudio.quality_low": "低",
   "ImageStudio.quality_medium": "中",
-  "ImageStudio.quality_high": "高"
+  "ImageStudio.quality_high": "高",
+  "ImagePreview.title": "图片预览",
+  "ImagePreview.open": "预览图片：{{value1}}",
+  "ImagePreview.close": "关闭预览",
+  "ImagePreview.zoom_in": "放大",
+  "ImagePreview.zoom_out": "缩小",
+  "ImagePreview.fit": "适应屏幕",
+  "ImagePreview.download": "下载",
+  "ImagePreview.download_named": "下载 {{value1}}",
+  "ImagePreview.open_original": "查看原图",
+  "ImagePreview.previous": "上一张",
+  "ImagePreview.next": "下一张",
+  "ImagePreview.loading": "正在加载图片",
+  "ImagePreview.load_failed": "图片加载失败"
 }
