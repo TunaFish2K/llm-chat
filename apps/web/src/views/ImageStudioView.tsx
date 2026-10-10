@@ -15,13 +15,13 @@ import { ImageGallery, MessageAction, copyText } from "../components/chat/atoms"
 import { MessageFooter, VersionSwitcher } from "../components/chat/MessageStream";
 import { useStickToBottom } from "../components/chat/useStickToBottom";
 import { ModelPicker } from "../components/ModelPicker";
-import { Segmented } from "../components/ui";
+import { Button, Field, Modal, Segmented } from "../components/ui";
 import { endpoints } from "../lib/api";
 import { appStore, toast, toastError } from "../lib/app-state";
 import { formatTime } from "../lib/format";
 import { t, useLocale } from "../lib/i18n";
 import { refreshImageSessions } from "../lib/image-studio-state";
-import { PopoverLayer } from "../lib/motion";
+import { PopoverLayer, Presence } from "../lib/motion";
 import { navigate, replaceRoute, routes } from "../lib/router";
 import { assetUrl } from "../lib/server-channel";
 import { useStore } from "../lib/store";
@@ -84,6 +84,11 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
   const hydrated = useRef<string | null>(null);
   const loadSequence = useRef(0);
   const input = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const [editing, setEditing] = useState<ImageGenerationJobDto | null>(null);
+  const [editBusy, setEditBusy] = useState(false);
+  const [pending, setPending] = useState<{ prompt: string; references: ImageAssetDto[] } | null>(null);
   const scroller = useStickToBottom([session?.nodes], true);
 
   const loadSession = useCallback(async (hydrate = false) => {
@@ -115,6 +120,8 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
   }, []);
 
   useEffect(() => {
+    // A session this view just created already holds the live draft; refresh it in place without a loading flash.
+    if (sessionId && hydrated.current === sessionId) { void loadSession(false); return; }
     setLoading(Boolean(sessionId));
     if (!sessionId) {
       hydrated.current = null;
@@ -175,17 +182,29 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
     : draft.referenceAssetIds.length >= maxReferences ? t("ImageStudio.reference_limit", { value1: String(maxReferences) })
     : null;
 
-  const ensureSession = async (): Promise<string> => {
+  const ensureSession = async (title = draft.prompt): Promise<string> => {
     if (sessionId) return sessionId;
     const created = await endpoints.createImageSession({
-      title: draft.prompt.trim().slice(0, 60) || t("ImageStudio.untitled"),
-      draft
+      title: title.trim().slice(0, 60) || t("ImageStudio.untitled"),
+      draft: draftRef.current
     });
     setSession(created);
     hydrated.current = created.id;
     sessionStorage.removeItem(NEW_DRAFT_KEY);
     await refreshImageSessions();
     return created.id;
+  };
+
+  /** Uploads images into a session so jobs there may reference them. */
+  const attachImages = async (id: string, images: File[]): Promise<ImageAssetDto[]> => {
+    const assets: ImageAssetDto[] = [];
+    for (const file of images) {
+      const asset = await endpoints.uploadFile(file);
+      if (!isImageAsset(asset)) throw new Error(t("ImageStudio.reference_must_be_image"));
+      assets.push(asset);
+    }
+    setSession(await endpoints.attachImageSessionAssets(id, assets.map((asset) => asset.id)));
+    return assets;
   };
 
   const uploadReferences = async (files: File[]) => {
@@ -196,13 +215,7 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
     setUploading(true);
     try {
       const id = await ensureSession();
-      const assets: ImageAssetDto[] = [];
-      for (const file of images.slice(0, remaining)) {
-        const asset = await endpoints.uploadFile(file);
-        if (!isImageAsset(asset)) throw new Error(t("ImageStudio.reference_must_be_image"));
-        assets.push(asset);
-      }
-      await endpoints.attachImageSessionAssets(id, assets.map((asset) => asset.id));
+      const assets = await attachImages(id, images.slice(0, remaining));
       const referenceAssetIds = [...new Set([...draft.referenceAssetIds, ...assets.map((asset) => asset.id)])].slice(0, maxReferences);
       const nextDraft = { ...draft, referenceAssetIds };
       const saved = await endpoints.updateImageSession(id, { draft: nextDraft });
@@ -225,9 +238,14 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
     if (draft.referenceAssetIds.length && !model.capabilities.operations.includes("edit")) {
       toast("error", t("ImageStudio.model_no_reference")); return;
     }
+    // The prompt leaves the composer the moment it is sent, like a chat message; parameters and references stay.
+    const sent = draft.prompt;
+    setPending({ prompt: sent.trim(), references });
+    setDraft((value) => ({ ...value, prompt: "" }));
+    draftRef.current = { ...draftRef.current, prompt: "" };
     setBusy(true);
     try {
-      const id = await ensureSession();
+      const id = await ensureSession(sent);
       const request: ImageGenerationInput = {
         modelId: model.id,
         prompt: draft.prompt.trim(),
@@ -241,19 +259,22 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
         ...(model.capabilities.outputFormat && draft.outputFormat ? { outputFormat: draft.outputFormat } : {}),
         ...(model.capabilities.seed && draft.seed !== null ? { seed: draft.seed } : {})
       };
-      // The prompt leaves the composer once sent, like a chat message; parameters and references stay.
-      const nextDraft = { ...draft, prompt: "" };
-      await endpoints.updateImageSession(id, { draft: nextDraft });
       await endpoints.createImageSessionNode(id, request);
-      setDraft(nextDraft);
+      // Save whatever the composer holds now, so reopening the session never brings the sent prompt back.
+      void endpoints.updateImageSession(id, { draft: draftRef.current }).catch(() => {});
+      // Show the new node before the pending bubble goes away, also for a session created just now.
+      loadSequence.current += 1;
+      setSession(await endpoints.imageSession(id));
       scroller.toBottom("auto");
       scroller.scheduleFollow();
       if (!sessionId) replaceRoute(routes.images(id));
-      else await loadSession(false);
       await refreshImageSessions();
     } catch (cause) {
+      // A failed send keeps the prompt, unless something new was typed meanwhile.
+      setDraft((value) => value.prompt ? value : { ...value, prompt: sent });
       toastError(cause);
     } finally {
+      setPending(null);
       setBusy(false);
     }
   };
@@ -274,25 +295,20 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
     void endpoints.selectImageSessionVersion(session.id, node.id, job.id).catch((cause) => { choose(previous); toastError(cause); });
   };
 
-  const editJob = (job: ImageGenerationJobDto) => {
-    setDraft({
-      modelId: job.input.modelId,
-      prompt: job.input.prompt,
-      referenceAssetIds: job.input.referenceAssetIds,
-      negativePrompt: job.input.negativePrompt ?? "",
-      count: job.input.count,
-      aspectRatio: job.input.aspectRatio ?? null,
-      size: job.input.size ?? null,
-      quality: job.input.quality ?? null,
-      outputFormat: job.input.outputFormat ?? null,
-      seed: job.input.seed ?? null
-    });
-    requestAnimationFrame(() => {
-      const field = input.current;
-      if (!field) return;
-      field.focus();
-      field.setSelectionRange(field.value.length, field.value.length);
-    });
+  const submitEdit = async (prompt: string, referenceAssetIds: string[]) => {
+    const nodeId = editing?.imageNodeId;
+    if (!session || !editing || !nodeId) return;
+    setEditBusy(true);
+    try {
+      await endpoints.rerunImageSessionNode(session.id, nodeId, editing.id, { prompt: prompt.trim(), referenceAssetIds });
+      setEditing(null);
+      await loadSession(false);
+      await refreshImageSessions();
+    } catch (cause) {
+      toastError(cause);
+    } finally {
+      setEditBusy(false);
+    }
   };
 
   const useAsReference = (assets: ImageAssetDto[]) => {
@@ -327,7 +343,7 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
       <div className="chat-scroll" ref={scroller.ref} onScroll={scroller.onScroll} data-following-bottom={!scroller.detached || undefined}
         aria-live="polite" aria-label={t("ImageStudio.timeline")}>
         <div className="chat-thread" ref={scroller.contentRef}>
-          {session?.nodes.length ? session.nodes.map((node) => <ImageNode
+          {session?.nodes.map((node) => <ImageNode
             key={node.id}
             node={node}
             assets={session.assets}
@@ -337,14 +353,20 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
             onCancel={(job) => void runAction(() => endpoints.cancelImageSessionGeneration(job.id))}
             onRetry={(job) => void runAction(() => endpoints.retryImageSessionGeneration(job.id))}
             onRerun={(job) => void runAction(() => endpoints.rerunImageSessionNode(session.id, node.id, job.id))}
-            onEdit={editJob}
+            onEdit={setEditing}
             onReference={useAsReference}
             onDelete={(job) => setDeleteTarget({ node, job })}
-          />) : <div className="welcome">
+          />)}
+          {pending ? <article className="msg pending-message" data-role="user" aria-busy="true">
+            {pending.references.length ? <ImageGallery assets={pending.references} /> : null}
+            <div className="msg-bubble">{pending.prompt}</div>
+            <MessageFooter busy metadata={<LoaderCircle className="spin message-request-state" size={13} role="status" aria-label={t("ImageStudio.status_queued")} />}>{null}</MessageFooter>
+          </article> : null}
+          {!session?.nodes.length && !pending ? <div className="welcome">
             <h1>{t("ImageStudio.empty_title")}</h1>
             <p>{models.length ? t("ImageStudio.empty_description") : t("ImageStudio.no_models")}</p>
             {!models.length ? <button type="button" className="btn" onClick={() => navigate(routes.settings("connections"))}>{t("ImageStudio.configure_models")}</button> : null}
-          </div>}
+          </div> : null}
         </div>
       </div>
       {scroller.detached ? <button type="button" className="icon-button jump-to-latest" onClick={() => scroller.toBottom("smooth")}
@@ -451,6 +473,16 @@ export function ImageStudioView({ sessionId, mobile }: { sessionId: string | nul
       </div>
     </div>
 
+    <Presence>{editing && session ? <EditImagePromptDialog
+      job={editing}
+      assets={session.assets}
+      model={models.find((item) => item.id === editing.input.modelId) ?? null}
+      busy={editBusy}
+      onUpload={(files) => attachImages(session.id, files)}
+      onClose={() => setEditing(null)}
+      onSubmit={(prompt, referenceAssetIds) => void submitEdit(prompt, referenceAssetIds)}
+    /> : null}</Presence>
+
     {deleteTarget && session ? <ConfirmModal
       title={t("ImageStudio.delete_version")}
       message={deleteTarget.node.versions.length === 1 ? t("ImageStudio.delete_node_message") : t("ImageStudio.delete_version_message")}
@@ -500,7 +532,7 @@ function ImageNode({ node, assets, models, referenceBlocked, onSelect, onCancel,
       <div className="msg-bubble">{job.prompt}</div>
       <MessageFooter metadata={<time>{formatTime(job.createdAt)}</time>}>
         <MessageAction label={t("ImageStudio.copy_prompt")} onClick={() => void copyText(job.prompt)}><Copy size={14} /></MessageAction>
-        <MessageAction label={t("ImageStudio.edit")} onClick={() => onEdit(job)}><Pencil size={14} /></MessageAction>
+        <MessageAction label={t("ImageStudio.edit")} disabled={active} onClick={() => onEdit(job)}><Pencil size={14} /></MessageAction>
       </MessageFooter>
     </article>
     <article className="msg image-result" data-role="assistant" aria-busy={active || undefined}>
@@ -524,4 +556,85 @@ function ImageNode({ node, assets, models, referenceBlocked, onSelect, onCancel,
       </MessageFooter>
     </article>
   </>;
+}
+
+/** Rewrites a sent prompt into a new version of the same node, mirroring chat's edit-and-branch dialog. */
+function EditImagePromptDialog({ job, assets, model, busy, onUpload, onClose, onSubmit }: {
+  job: ImageGenerationJobDto;
+  assets: ImageAssetDto[];
+  model: ImageModelOptionDto | null;
+  busy: boolean;
+  onUpload: (files: File[]) => Promise<ImageAssetDto[]>;
+  onClose: () => void;
+  onSubmit: (prompt: string, referenceAssetIds: string[]) => void;
+}) {
+  useLocale();
+  const [prompt, setPrompt] = useState(job.input.prompt);
+  const [referenceIds, setReferenceIds] = useState(job.input.referenceAssetIds);
+  const [extra, setExtra] = useState<ImageAssetDto[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const maxReferences = model?.capabilities.operations.includes("edit") ? model.capabilities.maxReferenceImages : 0;
+  const references = referenceIds.flatMap((id) => {
+    const asset = assets.find((item) => item.id === id) ?? extra.find((item) => item.id === id);
+    return asset ? [asset] : [];
+  });
+  const valid = Boolean(model && prompt.trim()) && prompt.length <= 10_000 && referenceIds.length <= maxReferences;
+
+  const upload = async (files: File[]) => {
+    const images = files.filter((file) => file.type.startsWith("image/")).slice(0, Math.max(0, maxReferences - referenceIds.length));
+    if (!images.length) {
+      if (files.length) toast("info", maxReferences ? t("ImageStudio.reference_limit", { value1: String(maxReferences) }) : t("ImageStudio.model_no_reference"));
+      return;
+    }
+    setUploading(true);
+    try {
+      const added = await onUpload(images);
+      setExtra((value) => [...value, ...added]);
+      setReferenceIds((value) => [...new Set([...value, ...added.map((asset) => asset.id)])].slice(0, maxReferences));
+    } catch (cause) {
+      toastError(cause);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const submit = () => { if (valid && !busy && !uploading) onSubmit(prompt, referenceIds); };
+
+  return <Modal
+    title={t("ImageStudio.edit_prompt")}
+    onClose={onClose}
+    footer={<>
+      <Button onClick={onClose} disabled={busy}>{t("WorkspaceSidebar.cancel")}</Button>
+      <Button variant="primary" onClick={submit} disabled={busy || uploading || !valid}>
+        {busy ? t("dialogs.creating") : t("ImageStudio.generate_version")}
+      </Button>
+    </>}
+  >
+    <Field label={t("ImageStudio.prompt")}>
+      <textarea
+        className="textarea"
+        rows={7}
+        aria-label={t("ImageStudio.prompt")}
+        value={prompt}
+        maxLength={10_000}
+        autoFocus
+        onChange={(event) => setPrompt(event.target.value)}
+        disabled={busy}
+        onPaste={(event) => { if (event.clipboardData.files.length) { event.preventDefault(); void upload([...event.clipboardData.files]); } }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => { event.preventDefault(); void upload([...event.dataTransfer.files]); }}
+      />
+    </Field>
+    {references.length ? <div className="composer-attachments" aria-label={t("ImageStudio.references")}>
+      {references.map((asset) => <div className="attachment-chip" key={asset.id}>
+        <img src={assetUrl(asset.url)} alt={asset.fileName} />
+        <span>{asset.fileName}</span>
+        <button type="button" disabled={busy} aria-label={t("ImageStudio.remove_reference", { value1: asset.fileName })}
+          onClick={() => setReferenceIds((value) => value.filter((id) => id !== asset.id))}><X size={13} /></button>
+      </div>)}
+    </div> : null}
+    {maxReferences ? <AttachmentMenu files={false} multipleImages={maxReferences > 1} uploadFiles={upload}
+      disabled={busy || referenceIds.length >= maxReferences} uploading={uploading} /> : null}
+    <p className="small muted">{t("ImageStudio.edit_prompt_hint")}</p>
+  </Modal>;
 }

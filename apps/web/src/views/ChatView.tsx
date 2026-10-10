@@ -6,7 +6,7 @@ import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
 import { browseOfflineBranch } from "../lib/app-state";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ArrowDown, Images } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import type { AgentDto, ConversationRoleplayState, ForkConversationInput, MessageDto } from "@llm-chat/contracts";
 import { readComposerDraft } from "../lib/composer-drafts";
 import { endpoints } from "../lib/api";
@@ -21,7 +21,7 @@ import {
   trackGeneration
 } from "../lib/app-state";
 import type { InspectionTarget } from "../lib/inspection";
-import { captureNavigation, linkClick, navigate, navigateIfCurrent, routes } from "../lib/router";
+import { captureNavigation, navigate, navigateIfCurrent, routes } from "../lib/router";
 import { useStore } from "../lib/store";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui";
 import { AgentAvatar } from "../components/chat/atoms";
@@ -456,7 +456,7 @@ function NewConversationWelcome({
   const greeting = greetings[activeIndex];
   if (selected && greeting) {
     return (
-      <><article className="msg greeting-preview" data-role="assistant">
+      <article className="msg greeting-preview" data-role="assistant">
         <div className="msg-head">
           <AgentAvatar agent={selected} label={selected.name} />
           <div className="msg-identity">
@@ -478,7 +478,7 @@ function NewConversationWelcome({
             />
           </footer>
         ) : null}
-      </article><ImageStudioEntry /></>
+      </article>
     );
   }
   return (
@@ -486,14 +486,6 @@ function NewConversationWelcome({
       <AgentAvatar agent={selected} size="large" label={selected?.name ?? t("WorkspaceSidebar.new_conversation")} />
       <h1>{selected?.name ?? t("WorkspaceSidebar.new_conversation")}</h1>
       <p>{selected?.description || t("ChatView.choose_an_agent_and_model_then_start_a_conversation")}</p>
-      <ImageStudioEntry />
     </div>
   );
-}
-
-function ImageStudioEntry() {
-  const path = routes.images();
-  return <a className="btn welcome-image-studio" href={path} onClick={linkClick(path)}>
-    <Images size={16} aria-hidden="true" />{t("ImageStudio.open")}
-  </a>;
 }

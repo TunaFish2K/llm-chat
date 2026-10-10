@@ -236,10 +236,6 @@
   text-align: center;
 }
 
-.welcome-image-studio { margin-top: var(--space-2); }
-
-.greeting-preview + .welcome-image-studio { align-self: center; }
-
 .welcome h1 {
   font-size: var(--text-2xl);
 }

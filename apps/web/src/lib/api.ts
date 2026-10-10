@@ -312,8 +312,8 @@ export const endpoints = {
     api.post<ImageSessionDto>(`/api/image-sessions/${id}/assets`, { assetIds }, { networkOnly: true }),
   createImageSessionNode: (id: string, input: ImageGenerationInput) =>
     api.post<ImageGenerationJobDto>(`/api/image-sessions/${id}/nodes`, input, { networkOnly: true }),
-  rerunImageSessionNode: (id: string, nodeId: string, jobId: string) =>
-    api.post<ImageGenerationJobDto>(`/api/image-sessions/${id}/nodes/${nodeId}/versions`, { jobId }, { networkOnly: true }),
+  rerunImageSessionNode: (id: string, nodeId: string, jobId: string, edit?: { prompt: string; referenceAssetIds: string[] }) =>
+    api.post<ImageGenerationJobDto>(`/api/image-sessions/${id}/nodes/${nodeId}/versions`, { jobId, ...edit }, { networkOnly: true }),
   selectImageSessionVersion: (id: string, nodeId: string, selectedJobId: string) =>
     api.patch<ImageSessionNodeDto>(`/api/image-sessions/${id}/nodes/${nodeId}`, { selectedJobId }, { networkOnly: true }),
   deleteImageSessionNode: (id: string, nodeId: string) =>

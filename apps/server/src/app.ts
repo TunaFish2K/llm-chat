@@ -956,14 +956,26 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return reply.code(202).send(job);
   });
   app.post<{ Params: { id: string; nodeId: string } }>("/api/image-sessions/:id/nodes/:nodeId/versions", async (request, reply) => {
-    const { jobId } = z.object({ jobId: z.string().uuid() }).parse(request.body);
+    const { jobId, prompt, referenceAssetIds } = z.object({
+      jobId: z.string().uuid(),
+      prompt: imageGenerationInputSchema.shape.prompt.optional(),
+      referenceAssetIds: z.array(z.string().uuid()).max(4).optional()
+    }).parse(request.body);
     const previous = store.getImageGenerationJob(jobId);
     if (!previous || previous.imageSessionId !== request.params.id || previous.imageNodeId !== request.params.nodeId) {
       throw withMessage(new StoreError("image_generation_not_found", "图片生成任务不存在"), "error.image_generation_task_not_found");
     }
     const input = store.getImageGenerationInput(jobId);
     if (!input) throw withMessage(new StoreError("image_generation_config_invalid", "图片生成请求已损坏"), "error.the_image_generation_request_is_corrupt");
-    const job = imageJobs.create({ imageSessionId: request.params.id, imageNodeId: request.params.nodeId, input });
+    // Editing a prompt adds a version to the same node, like editing a chat message adds a branch.
+    const edited = referenceAssetIds
+      ? { ...input, referenceAssetIds, operation: referenceAssetIds.length ? "edit" as const : "generate" as const }
+      : input;
+    const job = imageJobs.create({
+      imageSessionId: request.params.id,
+      imageNodeId: request.params.nodeId,
+      input: prompt ? { ...edited, prompt } : edited
+    });
     imageJobs.start(job.id);
     return reply.code(202).send(job);
   });

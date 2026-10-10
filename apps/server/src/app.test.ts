@@ -389,6 +389,19 @@ describe("server API", () => {
     expect(rerun.statusCode).toBe(202);
     const third = rerun.json();
     await app.inject({ method: "POST", url: `/api/image-generations/${third.id}/cancel`, payload: {} });
+    // Editing the prompt adds a version on the same node; dropping every reference turns it back into generation.
+    const edited = await app.inject({
+      method: "POST", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}/versions`,
+      payload: { jobId: first.id, prompt: "moon base at dawn", referenceAssetIds: [] }
+    });
+    expect(edited.statusCode, edited.body).toBe(202);
+    expect(edited.json()).toMatchObject({ imageNodeId: first.imageNodeId, prompt: "moon base at dawn" });
+    expect(app.store.getImageGenerationInput(edited.json().id)).toMatchObject({ prompt: "moon base at dawn", operation: "generate", referenceAssetIds: [], count: 1 });
+    await app.inject({ method: "POST", url: `/api/image-generations/${edited.json().id}/cancel`, payload: {} });
+    expect((await app.inject({
+      method: "POST", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}/versions`,
+      payload: { jobId: first.id, referenceAssetIds: [crypto.randomUUID()] }
+    })).statusCode).toBe(400);
     expect((await app.inject({
       method: "PATCH", url: `/api/image-sessions/${sessionId}/nodes/${first.imageNodeId}`, payload: { selectedJobId: first.id }
     })).json().selectedJobId).toBe(first.id);
