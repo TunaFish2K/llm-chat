@@ -124,7 +124,7 @@ describe("upload queue", () => {
     x.manager.enqueue(x.scope.id, [x.file]);
     await vi.waitFor(() => expect(x.scope.attachments).toEqual([asset]));
     expect(x.http.append).toHaveBeenCalledTimes(2);
-    expect(x.delay).toHaveBeenCalledWith(500, expect.any(AbortSignal));
+    expect(x.delay).toHaveBeenCalledWith(100, expect.any(AbortSignal));
   });
 
   it("preserves newly edited text when updating background attachment references", () => {

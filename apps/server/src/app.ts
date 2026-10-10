@@ -48,6 +48,7 @@ import {
   toolSettingsInputSchema,
   serviceSettingsInputSchema,
   type FileAssetDto,
+  type ImageAssetDto,
   type GenerationEvent,
   type ImageModelOptionDto,
   type ModelDto
@@ -75,6 +76,7 @@ import { AuthError, AuthManager, type AuthIdentity } from "./auth";
 import { compactConversationContext, ContextError } from "./context";
 import { ImageService } from "./images";
 import { VisionService } from "./vision";
+import { THUMBNAIL_PROFILE } from "./image-derivatives";
 import { ModelCatalogService } from "./model-catalog";
 import { MessageQueue } from "./message-queue";
 import { ServiceSettings } from "./service-settings";
@@ -293,10 +295,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   });
   await registerFileUploadRoutes(app, uploads);
   for (const resource of ["files", "images"]) {
-    app.get<{ Params: { id: string }; Querystring: { v?: string } }>(`/api/${resource}/:id`, { config: { compress: false } }, async (request, reply) => {
+    app.get<{ Params: { id: string }; Querystring: { v?: string; size?: string } }>(`/api/${resource}/:id`, { config: { compress: false } }, async (request, reply) => {
       const { asset, path } = await imageService.fileAssetLocation(request.params.id);
       if (resource === "images" && asset.kind !== "image") throw new StoreError("image_asset_not_found", "Image asset not found");
-      if (request.query.v !== asset.sha256) return reply.header("cache-control", "no-store").redirect(asset.url, 307);
+      // GIFs keep their animation, so they are always served in full.
+      const thumbnail = request.query.size === "thumb" && asset.kind === "image" && asset.mimeType !== "image/gif";
+      if (request.query.v !== asset.sha256) {
+        return reply.header("cache-control", "no-store").redirect(thumbnail ? `${asset.url}&size=thumb` : asset.url, 307);
+      }
+      if (thumbnail) return sendThumbnail(request, reply, asset as ImageAssetDto, path, visionService);
       return sendFileAsset(request, reply, asset, path);
     });
   }
@@ -1263,6 +1270,24 @@ async function userOperation<T>(code: string, operation: () => T | Promise<T>): 
 
 function attachmentIds(value: { assetIds?: string[] | undefined; imageAssetIds?: string[] | undefined }): string[] {
   return [...new Set([...(value.assetIds ?? []), ...(value.imageAssetIds ?? [])])];
+}
+
+async function sendThumbnail(request: FastifyRequest, reply: FastifyReply, asset: ImageAssetDto, path: string, vision: VisionService) {
+  // Phones would otherwise download and decode a full-size photo for a 100 px chip.
+  const etag = `"${asset.sha256}-thumb"`;
+  reply.header("etag", etag)
+    .header("cache-control", "private, max-age=31536000, immutable")
+    .header("x-content-type-options", "nosniff")
+    .header("content-disposition", `inline; filename*=UTF-8''${encodeURIComponent(asset.fileName)}`);
+  if (request.headers["if-none-match"] === etag) return reply.code(304).send();
+  let derived;
+  try { derived = await vision.derivatives.derive(asset, THUMBNAIL_PROFILE); }
+  catch (error) {
+    request.log.warn({ err: error, assetId: asset.id }, "thumbnail failed; serving the original");
+    return sendFileAsset(request, reply, asset, path);
+  }
+  reply.type(derived.mimeType).header("content-length", derived.bytes.byteLength);
+  return reply.send(request.method === "HEAD" ? Readable.from([]) : derived.bytes);
 }
 
 function sendFileAsset(

@@ -5,6 +5,7 @@ import { errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { registerSW } from "virtual:pwa-register";
 import type { ShellInstallResult } from "./app-shell";
 import { apiBase } from "./server-channel";
+import { returningFromPicker } from "./picker-return";
 
 export interface PwaState {
   supported: boolean;
@@ -222,7 +223,7 @@ function registerServiceWorker(): void {
       if (watchingUpdates) return;
       watchingUpdates = true;
       const check = () => {
-        if (document.visibilityState === "hidden" || !registration) return;
+        if (document.visibilityState === "hidden" || !registration || returningFromPicker()) return;
         const now = Date.now();
         if (now - lastUpdateCheck < 30_000) return;
         lastUpdateCheck = now;

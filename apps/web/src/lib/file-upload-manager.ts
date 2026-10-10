@@ -21,6 +21,7 @@ export interface UploadScope {
 }
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 const KEY = "llm-chat.uploads.v1";
+const CHECK_DELAYS_MS = [100, 200, 500];
 /** "image" sends a picture to the model; "file" keeps it as an attachment outside the context. */
 export type UploadIntent = "image" | "file";
 
@@ -75,6 +76,8 @@ export class FileUploadManager {
     }
     this.changed(); this.pump();
   }
+  /** Progress ticks only repaint; the stored queue changes on status transitions. */
+  private progressed(): void { this.deps.changed(); }
   private changed(): void {
     try {
       this.deps.storage.setItem(KEY, JSON.stringify({ sourceId: this.sourceId, scopes: this.all().map((scope) => ({
@@ -207,7 +210,7 @@ export class FileUploadManager {
       if (!task.file) { task.status = "needs-file"; return; }
       if (!task.verified) {
         task.status = "hashing"; task.hashedBytes = 0; this.changed();
-        const hash = await this.deps.hash(task.file, signal, (bytes) => { if (!signal.aborted) { task.hashedBytes = bytes; this.changed(); } });
+        const hash = await this.deps.hash(task.file, signal, (bytes) => { if (!signal.aborted) { task.hashedBytes = bytes; this.progressed(); } });
         signal.throwIfAborted();
         if (task.file.size !== task.byteSize || (task.sha256 && task.sha256 !== hash)) {
           task.file = undefined; task.status = "needs-file"; task.error = t("uploads.wrong_file"); return;
@@ -218,22 +221,30 @@ export class FileUploadManager {
         remote = await this.io(task, signal, () => this.deps.http.create({ id: task.id, fileName: task.fileName, mimeType: task.mimeType, byteSize: task.byteSize, sha256: task.sha256!, kind: task.image ? "image" : "file" }, signal));
         task.created = true; this.changed();
       }
+      if (remote?.state === "uploading") { task.status = "uploading"; this.changed(); }
+      // The last response carries the acknowledged offset; only a failed request needs a fresh query.
+      let stale = !remote;
       while (remote?.state === "uploading") {
+        const known: FileUploadDto | undefined = remote;
         remote = await this.io(task, signal, async () => {
-          const latest = await this.deps.http.get(task.id, signal);
-          task.offset = latest.offset; task.status = "uploading"; this.changed();
-          if (latest.state !== "uploading" || latest.offset === task.byteSize) return latest;
-          try { return await this.deps.http.append(task.id, latest.offset, task.file!.slice(latest.offset, latest.offset + FILE_UPLOAD_CHUNK_BYTES), signal); }
-          catch (error) { if ((error as { status?: number }).status === 409) return this.deps.http.get(task.id, signal); throw error; }
+          const latest = stale || !known ? await this.deps.http.get(task.id, signal) : known;
+          stale = true;
+          task.offset = latest.offset;
+          if (latest.state !== "uploading" || latest.offset === task.byteSize) { stale = false; return latest; }
+          let next: FileUploadDto;
+          try { next = await this.deps.http.append(task.id, latest.offset, task.file!.slice(latest.offset, latest.offset + FILE_UPLOAD_CHUNK_BYTES), signal); }
+          catch (error) { if ((error as { status?: number }).status === 409) next = await this.deps.http.get(task.id, signal); else throw error; }
+          stale = false;
+          return next;
         });
-        task.offset = remote.offset; this.changed();
+        task.offset = remote.offset; this.progressed();
         if (remote.offset === task.byteSize) break;
       }
       if (remote?.state === "uploading") remote = await this.io(task, signal, () => this.deps.http.complete(task.id, signal));
     }
-    while (remote?.state === "checking") {
-      task.status = "checking"; this.changed();
-      await this.deps.delay(500, signal);
+    for (let poll = 0; remote?.state === "checking"; poll++) {
+      if (task.status !== "checking") { task.status = "checking"; this.changed(); }
+      await this.deps.delay(CHECK_DELAYS_MS[Math.min(poll, CHECK_DELAYS_MS.length - 1)]!, signal);
       remote = await this.io(task, signal, () => this.deps.http.get(task.id, signal));
     }
     signal.throwIfAborted();
@@ -243,6 +254,13 @@ export class FileUploadManager {
 }
 
 export const uploadStore = createStore({ revision: 0 });
+let notifyFrame: number | undefined;
+/** Hash and chunk progress can tick many times per frame; the composer re-renders at most once. */
+function notifyUploadsChanged(): void {
+  const bump = () => { notifyFrame = undefined; uploadStore.set((state) => ({ revision: state.revision + 1 })); };
+  if (typeof requestAnimationFrame !== "function" || document.visibilityState !== "visible") return bump();
+  notifyFrame ??= requestAnimationFrame(bump);
+}
 let imageLimitMiB: number | undefined;
 /** Mirrors the server setting so oversized images are rejected before upload. */
 export function setImageUploadLimit(mib: number | undefined): void { imageLimitMiB = mib; }
@@ -250,6 +268,6 @@ export const uploadManager = new FileUploadManager({
   http: fileUploadHttp, hash: hashFileInWorker,
   imageLimits: () => imageUploadLimits(imageLimitMiB),
   storage: { getItem: (key) => sessionStorage.getItem(key), setItem: (key, value) => sessionStorage.setItem(key, value), removeItem: (key) => sessionStorage.removeItem(key) },
-  attach: updateDraftAttachments, changed: () => uploadStore.set((state) => ({ revision: state.revision + 1 })),
+  attach: updateDraftAttachments, changed: notifyUploadsChanged,
   delay: uploadDelay, online: () => navigator.onLine !== false
 });

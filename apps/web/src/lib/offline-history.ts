@@ -11,6 +11,7 @@ import { draftImageUrls } from "./composer-draft-storage";
 import type { MessageDto, OfflineConversationDto, OfflineManifestDto } from "@llm-chat/contracts";
 import { createStore } from "./store";
 import { OFFLINE_IMAGES_PREFIX, offlineConversationIndex, iterateOfflineConversations, putOfflineConversation, deleteOfflineConversation, offlineRead, offlineWrite, readOfflineManifest, resetOfflineDb, type OfflineControl } from "./offline-db";
+import { returningFromPicker } from "./picker-return";
 
 export const offlineStore = createStore({
   offline: false, enabled: true, syncing: false, synced: 0, total: 0,
@@ -244,7 +245,7 @@ export function initOfflineHistory(): void {
     }
     window.addEventListener("offline", markOffline);
     window.addEventListener("online", () => void syncOfflineHistory());
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") void syncOfflineHistory(); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && !returningFromPicker()) void syncOfflineHistory(); });
     setInterval(() => { if (document.visibilityState === "visible") void syncOfflineHistory(); }, 60_000);
   }
   void updateStats().catch(failure);

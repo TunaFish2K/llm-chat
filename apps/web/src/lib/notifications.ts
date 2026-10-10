@@ -8,6 +8,7 @@ import type { NotificationCommand } from "./notification-protocol";
 import { NotificationTracker } from "./notification-tracker";
 import { navigate } from "./router";
 import { createStore } from "./store";
+import { returningFromPicker } from "./picker-return";
 
 interface NotificationSettings {
   initialized: boolean;
@@ -116,6 +117,7 @@ function listen(): void {
   }
   window.addEventListener("storage", (event) => { if (event.key === changesKey) void synchronize().catch(failure); });
   const foreground = () => {
+    if (returningFromPicker()) return;
     void synchronize().then(() => notificationCommand({ kind: "foreground" })).catch(failure);
   };
   window.addEventListener("focus", foreground);

@@ -23,6 +23,7 @@ describe("file hashing", () => {
       constructor() { worker = this; }
     }
     vi.stubGlobal("Worker", FakeWorker);
+    vi.stubGlobal("crypto", {});
     const file = new File(["abc"], "test"); const progress = vi.fn();
     const ready = hashFileInWorker(file, new AbortController().signal, progress);
     worker!.onmessage?.({ data: { bytes: 3 } }); worker!.onmessage?.({ data: { sha256: "abc" } });
@@ -34,5 +35,15 @@ describe("file hashing", () => {
       if (error === "read") worker!.onmessage?.({ data: { error: true } }); else worker!.onerror?.();
       await expect(failed).rejects.toThrow("读取文件"); expect(worker!.terminate).toHaveBeenCalledOnce();
     }
+    vi.unstubAllGlobals();
+  });
+  it("hashes small files natively without starting a worker", async () => {
+    const created = vi.fn(); vi.stubGlobal("Worker", class { constructor() { created(); } });
+    const progress = vi.fn();
+    expect(await hashFileInWorker(new File(["abc"], "test"), new AbortController().signal, progress))
+      .toBe(createHash("sha256").update("abc").digest("hex"));
+    expect(progress).toHaveBeenCalledWith(3);
+    expect(created).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

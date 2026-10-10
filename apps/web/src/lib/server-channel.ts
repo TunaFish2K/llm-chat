@@ -100,6 +100,11 @@ export function assetUrl(url: string | undefined): string | undefined {
   return url?.startsWith("/api/") ? apiUrl(url) : url;
 }
 
+/** A small server-rendered preview; GIFs come back in full so they keep animating. */
+export function thumbnailUrl(url: string): string {
+  return url.startsWith("/api/images/") ? `${url}${url.includes("?") ? "&" : "?"}size=thumb` : url;
+}
+
 /** Credentials mode that sends the channel's own session cookie. */
 export function apiCredentials(): RequestCredentials {
   return apiBase() ? "include" : "same-origin";

@@ -38,7 +38,10 @@ async function imageResponse(request: Request, url: URL): Promise<Response> {
     const control = await offlineRead<OfflineControl>("meta", "control").catch(() => undefined);
     if (control?.enabled && control.authorized) {
       // Offline copies are keyed by path, whichever channel downloaded them.
-      const cached = await (await caches.open(OFFLINE_IMAGES_PREFIX + control.epoch)).match(self.location.origin + url.pathname + url.search);
+      // Offline sync stores originals; a thumbnail request falls back to that copy.
+      const original = new URL(url.href);
+      original.searchParams.delete("size");
+      const cached = await (await caches.open(OFFLINE_IMAGES_PREFIX + control.epoch)).match(self.location.origin + original.pathname + original.search);
       if (cached) return cached;
     }
     return new Response(t("sw.this_image_has_not_been_downloaded_connect_to_view_it"), { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });

@@ -8,7 +8,7 @@ import { Download, FileText } from "lucide-react";
 import type { AgentSummaryDto, FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
 import { toast } from "../../lib/app-state";
 import { formatBytes } from "../../lib/format";
-import { assetUrl } from "../../lib/server-channel";
+import { assetUrl, thumbnailUrl } from "../../lib/server-channel";
 
 export function AgentAvatar({
   agent,
@@ -57,7 +57,7 @@ export function ImageGallery({ assets }: { assets: ImageAssetDto[] }) {
           rel="noopener noreferrer"
           title={`${asset.fileName} · ${formatBytes(asset.byteSize)}`}
         >
-          <OfflineAwareImage src={asset.url} alt={asset.fileName} loading="lazy" decoding="async" />
+          <OfflineAwareImage src={thumbnailUrl(asset.url)} alt={asset.fileName} loading="lazy" decoding="async" />
         </a>
       ))}
     </div>

@@ -8,8 +8,9 @@ import { formatBytes } from "../../lib/format";
 import { uploadManager, uploadStore, type UploadIntent } from "../../lib/file-upload-manager";
 import { useStore } from "../../lib/store";
 import { UploadTasks } from "../FileUploads";
-import { assetUrl } from "../../lib/server-channel";
+import { assetUrl, thumbnailUrl } from "../../lib/server-channel";
 import { PopoverLayer } from "../../lib/motion";
+import { notePickerClosed, pickerInputEvents } from "../../lib/picker-return";
 
 export function useAttachments(initial: FileAssetDto[] = [], scope = "new", conversationId?: string) {
   useLocale();
@@ -44,6 +45,7 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false, files
   const fileId = `${id}-file`;
   const imageId = `${id}-image`;
   const picked = (intent: UploadIntent) => (event: ChangeEvent<HTMLInputElement>) => {
+    notePickerClosed();
     const chosen = Array.from(event.currentTarget.files ?? []);
     event.currentTarget.value = "";
     setOpen(false);
@@ -51,7 +53,7 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false, files
   };
   const closeOnCancel = useCallback((input: HTMLInputElement | null) => {
     if (!input) return;
-    const cancel = () => setOpen(false);
+    const cancel = () => { notePickerClosed(); setOpen(false); };
     input.addEventListener("cancel", cancel);
     return () => input.removeEventListener("cancel", cancel);
   }, []);
@@ -64,9 +66,9 @@ export function AttachmentMenu({ uploadFiles, disabled, uploading = false, files
     aria-disabled={disabled || undefined} onKeyDown={keyboard(target)}>{icon}<span>{label}</span></label>;
   return <>
     {files ? <input id={fileId} ref={closeOnCancel} className="sr-only" tabIndex={-1} aria-hidden="true" aria-label={t("AttachmentEditor.upload_files")} type="file" multiple
-      disabled={disabled} onChange={picked("file")} /> : null}
+      onClick={pickerInputEvents.onClick} disabled={disabled} onChange={picked("file")} /> : null}
     <input id={imageId} ref={closeOnCancel} className="sr-only" tabIndex={-1} aria-hidden="true" aria-label={t("AttachmentEditor.upload_images")} type="file" multiple={multipleImages}
-      accept={IMAGE_UPLOAD_ACCEPT} disabled={disabled} onChange={picked("image")} />
+      accept={IMAGE_UPLOAD_ACCEPT} onClick={pickerInputEvents.onClick} disabled={disabled} onChange={picked("image")} />
     <Popover.Root modal={false} open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild><button type="button" className="chip composer-attachment-button" disabled={disabled} aria-label={t("AttachmentEditor.add_attachment")} title={t("AttachmentEditor.add_attachment")}>
         {uploading ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
@@ -86,7 +88,7 @@ export function AttachmentList({ attachments, setAttachments, disabled = false, 
   useLocale();
   return <> {attachments.length ? <div className="composer-attachments" aria-label={t("AttachmentEditor.pending_attachments")}>
     {attachments.map((asset) => <div className="attachment-chip" key={asset.id}>
-      {asset.kind === "image" ? <img src={assetUrl(asset.url)} alt={asset.fileName} /> : <FileText size={20} />}
+      {asset.kind === "image" ? <img src={assetUrl(thumbnailUrl(asset.url))} alt={asset.fileName} decoding="async" /> : <FileText size={20} />}
       <span>{asset.fileName}<small className="muted"> {formatBytes(asset.byteSize)}</small></span>
       <button type="button" disabled={disabled} aria-label={t("AttachmentEditor.remove", { value1: (asset.fileName) })} onClick={() => setAttachments((items) => items.filter((item) => item.id !== asset.id))}><X size={13} /></button>
     </div>)}

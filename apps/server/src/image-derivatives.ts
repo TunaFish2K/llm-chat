@@ -19,6 +19,9 @@ export interface ImageProfile {
 const ANTHROPIC: ImageProfile = { id: "anthropic-v1", maxEdge: 1568, maxBytes: 3_750_000, requestBytes: 24 * 1024 ** 2 };
 const OPENAI: ImageProfile = { id: "openai-v1", maxEdge: 2048, maxBytes: 8 * 1024 ** 2, requestBytes: 36 * 1024 ** 2 };
 
+/** Small previews for chat lists; the original opens when the image is clicked. */
+export const THUMBNAIL_PROFILE: ImageProfile = { id: "thumb-v1", maxEdge: 512, maxBytes: 256 * 1024, requestBytes: Infinity };
+
 export function imageProfile(protocol: ProviderProtocol): ImageProfile {
   return protocol === "anthropic-messages" ? ANTHROPIC : OPENAI;
 }

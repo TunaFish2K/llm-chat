@@ -7,6 +7,7 @@ import { LoaderCircle, Trash2, X } from "lucide-react";
 import type { QueuedMessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { refreshMessages, toastError } from "../../lib/app-state";
+import { returningFromPicker } from "../../lib/picker-return";
 
 export function useMessageQueue(conversationId?: string) {
   useLocale();
@@ -33,7 +34,7 @@ export function useMessageQueue(conversationId?: string) {
     };
     window.addEventListener("llm-chat:message-queue", update);
     window.addEventListener("llm-chat:queue-reconnect", update);
-    const resume = () => { if (document.visibilityState === "visible") update(new Event("resume")); };
+    const resume = () => { if (document.visibilityState === "visible" && !returningFromPicker()) update(new Event("resume")); };
     window.addEventListener("focus", resume);
     window.addEventListener("pageshow", resume);
     document.addEventListener("visibilitychange", resume);

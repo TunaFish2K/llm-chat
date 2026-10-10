@@ -12,6 +12,8 @@ import type { Store } from "./database";
 import { ImageService, sniffImage } from "./images";
 
 const TTL = 24 * 60 * 60 * 1000;
+const INLINE_VERIFY_BYTES = 64 * 1024 ** 2;
+const INLINE_VERIFY_MS = 2_000;
 interface UploadRow { id: string; file_name: string; mime_type: string; byte_size: number; sha256: string; kind: "file" | "image" | null; offset: number; state: FileUploadDto["state"]; expires_at: number; error: string | null }
 
 export class UploadError extends Error {
@@ -138,11 +140,17 @@ export class FileUploads {
     if ((value.state !== "uploading" && !(value.state === "failed" && value.error === "disk_full")) || value.offset !== value.byteSize) throw failure(409, "incomplete");
     // Mark synchronously before enqueueing, so repeated completion cannot enqueue another finalizer.
     this.store.sqlite.prepare("UPDATE file_uploads SET state = 'checking', expires_at = ? WHERE id = ?").run(Date.now() + TTL, id);
-    this.finishLater(id);
+    const finished = this.finishLater(id);
+    // Small files verify in milliseconds; answering with the result saves the client a polling round.
+    if (value.byteSize <= INLINE_VERIFY_BYTES) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([finished, new Promise((resolve) => { timer = setTimeout(resolve, INLINE_VERIFY_MS); })]);
+      clearTimeout(timer);
+    }
     return this.get(id);
   }
-  private finishLater(id: string): void {
-    void this.locked(id, async () => {
+  private finishLater(id: string): Promise<void> {
+    return this.locked(id, async () => {
       const value = this.get(id);
       const controller = new AbortController();
       this.streams.set(id, controller);
