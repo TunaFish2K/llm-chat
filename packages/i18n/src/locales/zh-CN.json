@@ -1645,5 +1645,13 @@
   "ImagePreview.previous": "上一张",
   "ImagePreview.next": "下一张",
   "ImagePreview.loading": "正在加载图片",
-  "ImagePreview.load_failed": "图片加载失败"
+  "ImagePreview.load_failed": "图片加载失败",
+  "Auth.methods_failed": "无法读取登录方式，请重试",
+  "Auth.loading": "正在加载登录方式…",
+  "Auth.oidc_sign_in": "统一登录",
+  "Auth.password": "访问密码",
+  "Auth.current_method": "当前登录方式",
+  "Auth.local_logout_hint": "退出当前浏览器的本站会话；统一身份服务的登录状态保留。",
+  "Auth.provider_logout": "同时退出身份服务",
+  "Auth.provider_logout_unavailable": "本站会话已退出。当前身份服务未提供标准退出接口，请前往身份服务退出。"
 }

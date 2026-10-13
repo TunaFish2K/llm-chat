@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,24 @@ afterEach(() => {
 });
 
 describe("password authentication", () => {
+  it("migrates schema-51 password sessions and preserves revoked sessions", () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-password-migration-"));
+    dirs.push(dir);
+    const path = join(dir, "test.sqlite");
+    const original = new Store(path);
+    const insert = original.sqlite.prepare(`INSERT INTO auth_password_sessions
+      (id, token_hash, created_at, last_used_at, expires_at, revoked_at) VALUES (?, ?, 1, 1, ?, ?)`);
+    insert.run("active", createHash("sha256").update("legacy-session").digest("hex"), Date.now() + 86400000, null);
+    insert.run("revoked", createHash("sha256").update("revoked-session").digest("hex"), Date.now() + 86400000, 2);
+    original.sqlite.exec("DROP TABLE auth_browser_sessions; DROP TABLE auth_oidc_transactions; PRAGMA user_version = 51");
+    original.close();
+    const migrated = new Store(path);
+    const auth = new AuthManager(migrated, () => {});
+    expect(auth.authenticate("legacy-session")).toMatchObject({ sessionId: "active", method: "password" });
+    expect(auth.authenticate("revoked-session")).toBeNull();
+    migrated.close();
+  });
+
   it("creates and announces one eight-digit initial password", async () => {
     const { auth, store, messages } = createAuth();
     const password = await auth.ensurePassword(1_000);
@@ -94,7 +113,7 @@ describe("password authentication", () => {
     const identity = auth.authenticate(session.token, 5_002)!;
     store.sqlite.exec(`
       CREATE TRIGGER fail_password_session_revoke
-      BEFORE UPDATE OF revoked_at ON auth_password_sessions
+      BEFORE UPDATE OF revoked_at ON auth_browser_sessions
       BEGIN SELECT RAISE(ABORT, 'forced rollback'); END;
     `);
 

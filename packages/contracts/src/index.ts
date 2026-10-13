@@ -1555,3 +1555,16 @@ export interface OfflineConversationDto {
   conversation: ConversationDto;
   messages: MessageDto[];
 }
+
+/** Public login capabilities contain no provider credentials. */
+export interface AuthenticationMethodsDto {
+  password: boolean;
+  oidc: boolean;
+  oidcLabel: string | null;
+  oidcLoginPath: string | null;
+}
+export interface AuthenticationSessionDto {
+  method: "password" | "oidc";
+  password: boolean;
+  identity: string | null;
+}

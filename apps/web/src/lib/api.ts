@@ -1,3 +1,4 @@
+import type { AuthenticationMethodsDto, AuthenticationSessionDto } from "@llm-chat/contracts";
 import type { ContainerResourceCatalog, ContainerResourceJob, ContainerResourceNode } from "@llm-chat/contracts";
 import { ApiRequestError, httpRequest, uploadFileHttp, type HttpResult } from "./http-client";
 import { conversationDeleted, DeletedConversationError, localDeletions, markConversationsDeleted, trackConversationRequest } from "./conversation-lifecycle";
@@ -154,6 +155,9 @@ export interface McpTestResult {
 }
 
 export const endpoints = {
+  authenticationMethods: () => api.get<AuthenticationMethodsDto>("/api/auth/methods"),
+  authenticationSession: () => api.get<AuthenticationSessionDto>("/api/auth/session"),
+  logoutIdentityProvider: () => api.post<{ url: string | null }>("/api/auth/oidc/logout"),
   submission: (id: string, conversationId: string | null = null, kind: "start" | "send" | "queue" = "start") => api.get<import("@llm-chat/contracts").SubmissionAcceptedDto>(`/api/submissions/${encodeURIComponent(id)}?kind=${kind}${conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : ""}`, { networkOnly: true }),
   containerResources: () => request<ContainerResourceCatalog>("GET", "/api/container-resources"),
   setContainerResourceNode: (node: ContainerResourceNode) => request("PUT", "/api/container-resources/settings", { node }),

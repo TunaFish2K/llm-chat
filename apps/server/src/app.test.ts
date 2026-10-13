@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { ModelInput, ModelSettings } from "@llm-chat/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildApp } from "./app";
+import { AuthManager } from "./auth";
 import { offlineSourceId } from "./offline-history";
 import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
@@ -27,6 +28,26 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("upgrades existing proxy password cookies without accepting OIDC tokens in a legacy cookie", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "llm-chat-oidc-cookie-")); dirs.push(dir);
+    let password = "";
+    const authentication = { password: { enabled: true }, oidc: { issuer: "https://id.example", clientId: "chat", clientSecretFile: "/unused",
+      clientAuthentication: "client_secret_basic" as const, publicOrigins: ["https://chat.example"], allowedSubjects: ["owner"] } };
+    const app = await buildApp({ dataFile: join(dir, "store.sqlite"), logger: false, authentication,
+      authAnnounce: message => { password = message.match(/\d{8}/)?.[0] ?? ""; } });
+    apps.push(app);
+    const login = await app.inject({ method: "POST", url: "/api/auth/login", headers: { "x-llm-chat-request": "1" }, payload: { password } });
+    const cookie = String(login.headers["set-cookie"]).split(";", 1)[0]!;
+    const migrated = await app.inject({ method: "GET", url: "/api/auth/session", headers: { host: "chat.example", cookie } });
+    expect(migrated.statusCode).toBe(200);
+    expect(migrated.json()).toMatchObject({ method: "password", password: true });
+    expect(String(migrated.headers["set-cookie"])).toContain("__Host-llm_chat_session=");
+    const oidc = new AuthManager(app.store, () => {}, authentication).loginOidc("https://id.example", "owner");
+    expect((await app.inject({ method: "GET", url: "/api/auth/session", headers: { host: "chat.example", cookie: "llm_chat_session=" + oidc.token } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/api/auth/methods", headers: { host: "chat.example" } })).json()).toMatchObject({ password: true, oidc: true });
+    expect((await app.inject({ method: "GET", url: "/api/auth/methods", headers: { host: "forged.example" } })).json()).toMatchObject({ password: true, oidc: false });
+  });
+
   it.each(["start", "send"])("publishes failed generation state if attachment preparation fails after accepting %s", async kind => {
     const app = await testApp(); seedStoreModel(app.store);
     const run = vi.spyOn(app.runner, "start").mockImplementation(() => {});

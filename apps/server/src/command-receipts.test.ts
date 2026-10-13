@@ -17,7 +17,7 @@ async function fixture(store = createStore()) {
   await app.register(compress, { threshold: 1 });
   app.decorateRequest("authIdentity", null);
   app.addHook("onRequest", async request => {
-    if (request.headers["x-session"] !== "none") request.authIdentity = { sessionId: String(request.headers["x-session"] ?? "test"), expiresAt: Date.now() + 60_000, refreshCookie: false };
+    if (request.headers["x-session"] !== "none") request.authIdentity = { method: "password", sessionId: String(request.headers["x-session"] ?? "test"), expiresAt: Date.now() + 60_000, refreshCookie: false };
   });
   app.setErrorHandler((error, _request, reply) => reply.code(error instanceof StoreError ? 409 : 500).send({ error: { code: error instanceof StoreError ? error.code : "internal_error" } }));
   registerCommandReceipts(app, store);

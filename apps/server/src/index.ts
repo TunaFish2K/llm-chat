@@ -78,7 +78,7 @@ async function main(): Promise<void> {
     assertWebArtifact(config.webRoot);
     app = await buildApp({
       dataFile: resolve(instanceLock.dataDir, "llm-chat.sqlite"),
-      webRoot: config.webRoot
+      webRoot: config.webRoot, ...(config.authentication ? { authentication: config.authentication } : {})
     });
     app.get("/healthz", async () => ({ ok: true, buildId: BUILD_ID }));
     app.get("/readyz", async (_request, reply) => {

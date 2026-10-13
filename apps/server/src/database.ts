@@ -260,7 +260,7 @@ function cacheStatements(sqlite: DatabaseSyncType, limit = 256): void {
 function migrate(sqlite: DatabaseSyncType): void {
   const current = Number((sqlite.prepare("PRAGMA user_version").get() as Row).user_version);
   // v40 was previously used for submission receipts; retain those tables when upgrading.
-  if (current > 51) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
+  if (current > 52) throw withMessage(new Error(`数据库版本 ${current} 高于当前服务支持的版本`), "error.database_version_is_newer_than_this_service_supports", { value1: current });
   sqlite.exec("BEGIN IMMEDIATE");
   try {
     sqlite.exec(MIGRATION_V1);
@@ -1360,6 +1360,35 @@ function migrate(sqlite: DatabaseSyncType): void {
           job_id TEXT NOT NULL UNIQUE REFERENCES image_generation_jobs(id) ON DELETE CASCADE
         );
         PRAGMA user_version = 51;
+      `);
+    }
+    if (current < 52) {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS auth_browser_sessions (
+          id TEXT PRIMARY KEY,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          revoked_at INTEGER,
+          method TEXT NOT NULL CHECK (method IN ('password', 'oidc')),
+          issuer TEXT,
+          subject TEXT,
+          client_id TEXT
+        );
+        INSERT OR IGNORE INTO auth_browser_sessions (id, token_hash, created_at, last_used_at, expires_at, revoked_at, method)
+          SELECT id, token_hash, created_at, last_used_at, expires_at, revoked_at, 'password' FROM auth_password_sessions;
+        CREATE INDEX IF NOT EXISTS idx_auth_browser_sessions_active ON auth_browser_sessions(token_hash, revoked_at, expires_at);
+        CREATE TABLE IF NOT EXISTS auth_oidc_transactions (
+          state TEXT PRIMARY KEY,
+          browser_hash TEXT NOT NULL,
+          verifier TEXT NOT NULL,
+          nonce TEXT NOT NULL,
+          origin TEXT NOT NULL,
+          return_to TEXT NOT NULL,
+          expires_at INTEGER NOT NULL
+        );
+        PRAGMA user_version = 52;
       `);
     }
     sqlite.exec("COMMIT");

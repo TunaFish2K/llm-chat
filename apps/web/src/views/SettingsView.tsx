@@ -1,3 +1,4 @@
+import type { AuthenticationSessionDto } from "@llm-chat/contracts";
 import { useResource } from "../lib/resource";
 import { PickerProbe } from "../components/PickerProbe";
 import { Presence } from "../lib/motion";
@@ -373,6 +374,12 @@ function GeneralSection() {
 
 function SecuritySection() {
   useLocale();
+  const [session, setSession] = useState<AuthenticationSessionDto | null>(null);
+  useEffect(() => {
+    let active = true;
+    void endpoints.authenticationSession().then((value) => { if (active) setSession(value); }).catch(toastError);
+    return () => { active = false; };
+  }, []);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -393,13 +400,17 @@ function SecuritySection() {
     }
   };
 
-  const logout = async () => {
+  const logout = async (identityProvider = false) => {
     uploadManager.reset();
     setBusy(true);
     try {
       await stopNotificationSession();
       await clearOfflineHistory({ logout: true });
-      await endpoints.logout();
+      if (identityProvider) {
+        const result = await endpoints.logoutIdentityProvider();
+        if (result.url) { window.location.assign(result.url); return; }
+        window.alert(t("Auth.provider_logout_unavailable"));
+      } else await endpoints.logout();
       window.location.reload();
     } catch (error) {
       toastError(error);
@@ -409,7 +420,9 @@ function SecuritySection() {
 
   return (
     <div className="settings-panels">
-      <div className="card">
+      {session ? <div className="card"><h3>{t("Auth.current_method")}</h3>
+        <p>{session.method === "oidc" ? t("Auth.oidc_sign_in") : t("Auth.password")}</p></div> : null}
+      {session?.password !== false ? <div className="card">
         <h3>{t("SettingsView.change_access_password")}</h3>
         <Field label={t("SettingsView.new_password")} hint={t("SettingsView.at_least_8_characters_changing_the_password_revokes_all_previous")} htmlFor="new-password">
           <input
@@ -444,11 +457,12 @@ function SecuritySection() {
           disabled={busy || password.length < 8 || password !== confirm}
           onClick={() => void changePassword()}
         >{t("SettingsView.change_password")}</button>
-      </div>
+      </div> : null}
       <div className="card">
         <h3>{t("SettingsView.sign_out")}</h3>
-        <p className="small muted">{t("SettingsView.you_will_need_the_access_password_to_sign_in_again")}</p>
+        <p className="small muted">{t("Auth.local_logout_hint")}</p>
         <button className="btn danger" disabled={busy} onClick={() => void logout()}>{t("SettingsView.sign_out")}</button>
+        {session?.method === "oidc" ? <button className="btn" disabled={busy} onClick={() => void logout(true)}>{t("Auth.provider_logout")}</button> : null}
       </div>
     </div>
   );

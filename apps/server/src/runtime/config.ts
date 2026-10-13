@@ -1,10 +1,11 @@
+import { parseAuthentication, type AuthenticationConfig } from "../auth-configuration";
 import { withMessage } from "@llm-chat/i18n";
 import { randomUUID } from "node:crypto";
 import { chmod, link, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 const REMOVED_CONFIG_KEYS = new Set(["authMode", "trustProxy", "serveWeb", "shutdownTimeoutMs", "buildId"]);
-const CONFIG_KEYS = new Set(["host", "port", "dataDir"]);
+const CONFIG_KEYS = new Set(["host", "port", "dataDir", "authentication"]);
 
 export const DEFAULT_RUNTIME_CONFIG = {
   host: "127.0.0.1",
@@ -17,6 +18,7 @@ export interface RuntimeConfig {
   port: number;
   dataDir: string;
   webRoot: string;
+  authentication?: AuthenticationConfig;
 }
 
 export interface RuntimeConfigSelection {
@@ -122,7 +124,8 @@ export function parseRuntimeConfig(
     host,
     port,
     dataDir: resolve(dirname(configPath), configuredDataDir),
-    webRoot: resolve(projectRoot, "apps/web/dist")
+    webRoot: resolve(projectRoot, "apps/web/dist"),
+    ...(document.authentication === undefined ? {} : { authentication: parseAuthentication(document.authentication, configPath) })
   };
 }
 

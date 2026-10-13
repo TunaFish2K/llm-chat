@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; extended by [ADR-007](ADR-007-openid-connect-authentication.md).
 
 ## Decision
 

@@ -1661,5 +1661,13 @@
   "ImagePreview.previous": "Previous image",
   "ImagePreview.next": "Next image",
   "ImagePreview.loading": "Loading image",
-  "ImagePreview.load_failed": "The image could not be loaded"
+  "ImagePreview.load_failed": "The image could not be loaded",
+  "Auth.methods_failed": "Unable to load sign-in methods. Please try again.",
+  "Auth.loading": "Loading sign-in methods…",
+  "Auth.oidc_sign_in": "Single sign-on",
+  "Auth.password": "Access password",
+  "Auth.current_method": "Current sign-in method",
+  "Auth.local_logout_hint": "Sign out of this application in this browser. Your identity provider session stays active.",
+  "Auth.provider_logout": "Also sign out of the identity provider",
+  "Auth.provider_logout_unavailable": "You have signed out of this application. The provider has no standard sign-out endpoint; sign out at the provider."
 }

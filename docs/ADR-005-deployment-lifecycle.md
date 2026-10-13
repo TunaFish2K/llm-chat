@@ -48,7 +48,7 @@ atomically creates a missing file with complete safe defaults and owner-only per
 existing invalid file. Maintenance commands require an existing configuration so they cannot silently select a new
 default data directory. Relative `dataDir` values resolve from the configuration file's directory.
 
-Runtime configuration contains only `host`, `port`, and `dataDir`. Password authentication is always enabled.
+Runtime configuration contains `host`, `port`, `dataDir`, and optional `authentication` settings. At least one authentication method must be enabled; see ADR-007.
 Proxy headers do not override the direct connection protocol or client IP. Existing configurations must remove
 `authMode`, `trustProxy`, `serveWeb`, `shutdownTimeoutMs`, and `buildId`; the parser reports retired fields instead
 of silently accepting them. Passwords and sessions are preserved.
@@ -117,7 +117,7 @@ systemd, or nginx configuration.
   writes before SQLite closes.
 - A task that ignores `SIGTERM` is forcibly terminated after two seconds, and the application has a bounded final
   shutdown deadline. Operators must choose a manager grace period longer than that deadline.
-- Every deployment includes the Web artifact and requires password authentication.
+- Every deployment includes the Web artifact and requires browser authentication.
 - Runtime configuration has one explicit JSON source and can bootstrap itself on first server start; operators must
   manage and back up an external configuration file separately.
 - Build IDs make mixed-release observations visible in probes and logs, while immutable releases make update and

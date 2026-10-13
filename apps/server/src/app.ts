@@ -1,3 +1,5 @@
+import { configuredOrigin, DEFAULT_AUTHENTICATION, type AuthenticationConfig } from "./auth-configuration";
+import { OidcLogin, OIDC_COOKIE, OIDC_CALLBACK, OIDC_TRANSACTION_SECONDS } from "./oidc";
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
 import { registerCommandReceipts } from "./command-receipts";
 import { Readable } from "node:stream";
@@ -95,13 +97,22 @@ export interface AppOptions {
   webRoot?: string;
   skillDiscoveryRoot?: string;
   authAnnounce?: (message: string) => void;
+  authentication?: AuthenticationConfig;
 }
 
 export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const webRoot = options.webRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
   assertWebArtifact(webRoot);
   const app = Fastify({
-    logger: options.logger ?? true,
+    logger: options.logger === false ? false : {
+      serializers: {
+        req(request) {
+          return { method: request.method, url: request.url.startsWith("/api/auth/")
+            ? request.url.split("?")[0]! : request.url, hostname: request.hostname,
+            remoteAddress: request.ip, remotePort: request.socket.remotePort ?? 0 };
+        }
+      }
+    },
     bodyLimit: 65 * 1024 * 1024
   });
   await app.register(fastifyCookie);
@@ -147,9 +158,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const uploads = new FileUploads(store, imageService);
   await uploads.initialize();
   const visionService = new VisionService(store, imageService);
+  const authentication = options.authentication ?? DEFAULT_AUTHENTICATION;
+  const oidc = new OidcLogin(store, authentication);
   const auth = new AuthManager(store, options.authAnnounce ?? ((message) => {
     if (options.logger !== false) process.stderr.write(`\n${message}\n`);
-  }));
+  }), authentication);
   await auth.ensurePassword();
   const balanceService = new BalanceService();
   const modelCatalog = new ModelCatalogService();
@@ -257,12 +270,15 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!request.url.startsWith("/api/")) return;
     if (!isReadMethod(request.method)) requireMutationSource(request);
     if (isPublicApiRoute(request)) return;
-    const token = sessionToken(request);
+    const token = sessionToken(request, authentication);
     const identity = auth.authenticate(token);
-    if (!identity) {
+    const upgradingLegacyCookie = authentication.oidc && configuredOrigin(authentication, request.headers.host)
+      && !request.cookies[sessionCookieName(request, authentication)] && Boolean(request.cookies.llm_chat_session);
+    if (!identity || (upgradingLegacyCookie && identity.method !== "password")) {
       return reply.code(401).send({ error: { code: "authentication_required", i18n: { key: "error.authentication_required" }, message: "请输入访问密码" } });
     }
-    if (identity.refreshCookie) setSessionCookie(request, reply, token!);
+    if (identity.refreshCookie || upgradingLegacyCookie) setSessionCookie(request, reply, token!, authentication);
+    if (upgradingLegacyCookie) reply.clearCookie("llm_chat_session", { path: "/", httpOnly: true, secure: true, sameSite: "strict" });
     request.authIdentity = identity;
   });
 
@@ -314,20 +330,51 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
       .type(proxied.mimeType).send(Buffer.from(proxied.bytes));
   });
 
+  app.get("/api/auth/methods", async (request) => ({
+    password: authentication.password.enabled,
+    oidc: Boolean(configuredOrigin(authentication, request.headers.host)),
+    oidcLabel: authentication.oidc?.label ?? null,
+    oidcLoginPath: configuredOrigin(authentication, request.headers.host) ? "/api/auth/oidc/start" : null
+  }));
+  app.get("/api/auth/session", async (request) => ({
+    method: request.authIdentity!.method,
+    password: authentication.password.enabled,
+    identity: request.authIdentity!.subject ?? null
+  }));
+  app.get<{ Querystring: { returnTo?: string } }>("/api/auth/oidc/start", authRateLimit(20), async (request, reply) => {
+    const result = await oidc.start(request.headers.host, request.cookies[OIDC_COOKIE], request.query.returnTo);
+    reply.setCookie(OIDC_COOKIE, result.browser, { path: "/api/auth/oidc", httpOnly: true,
+      secure: result.secure, sameSite: "lax", maxAge: OIDC_TRANSACTION_SECONDS });
+    return reply.redirect(result.url);
+  });
+  app.get(OIDC_CALLBACK, authRateLimit(30), async (request, reply) => {
+    const result = await oidc.callback(request.headers.host, request.url, request.cookies[OIDC_COOKIE], auth);
+    setSessionCookie(request, reply, result.token, authentication);
+    return reply.redirect(result.returnTo);
+  });
+  app.post("/api/auth/oidc/logout", async (request, reply) => {
+    if (request.authIdentity!.method !== "oidc") throw new AuthError(400, "oidc_session_required", "当前会话未使用 OIDC 登录");
+    auth.logout(sessionToken(request, authentication));
+    clearSessionCookies(reply);
+    // Local logout succeeds even when provider discovery is unavailable.
+    const url = await oidc.logoutUrl(request.headers.host).catch(() => null);
+    return { url };
+  });
+
   app.post("/api/auth/login", authRateLimit(8), async (request, reply) => {
     const value = z.object({ password: z.string().min(1).max(128) }).parse(request.body);
     const result = await auth.login(value.password);
-    setSessionCookie(request, reply, result.token);
+    setSessionCookie(request, reply, result.token, authentication);
     return { ok: true };
   });
   app.put("/api/auth/password", async (request, reply) => {
     const value = z.object({ password: passwordSchema }).parse(request.body);
     const result = await auth.changePassword(request.authIdentity!.sessionId, value.password);
-    setSessionCookie(request, reply, result.token);
+    setSessionCookie(request, reply, result.token, authentication);
     return { ok: true, sessionsRevoked: result.sessionsRevoked };
   });
   app.post("/api/auth/logout", async (request, reply) => {
-    auth.logout(sessionToken(request));
+    auth.logout(sessionToken(request, authentication));
     clearSessionCookies(reply);
     return reply.code(204).send();
   });
@@ -1405,7 +1452,7 @@ function hookHeaders(reply: FastifyReply): OutgoingHttpHeaders {
 function isPublicApiRoute(request: FastifyRequest): boolean {
   const pathname = request.url.split("?", 1)[0] ?? "";
   if (pathname === "/api/health" || pathname === "/api/identity") return true;
-  return pathname === "/api/auth/login";
+  return ["/api/auth/login", "/api/auth/methods", "/api/auth/oidc/start", OIDC_CALLBACK].includes(pathname);
 }
 
 function isReadMethod(method: string): boolean {
@@ -1422,20 +1469,22 @@ function requireMutationSource(request: FastifyRequest): void {
   }
 }
 
-function sessionToken(request: FastifyRequest): string | undefined {
-  return request.cookies[sessionCookieName(request)];
+function sessionToken(request: FastifyRequest, authentication: AuthenticationConfig): string | undefined {
+  return request.cookies[sessionCookieName(request, authentication)]
+    ?? (authentication.oidc && configuredOrigin(authentication, request.headers.host) ? request.cookies.llm_chat_session : undefined);
 }
 
-function sessionCookieName(request: FastifyRequest): "__Host-llm_chat_session" | "llm_chat_session" {
-  return request.protocol === "https" ? "__Host-llm_chat_session" : "llm_chat_session";
+function sessionCookieName(request: FastifyRequest, authentication: AuthenticationConfig): "__Host-llm_chat_session" | "llm_chat_session" {
+  return (configuredOrigin(authentication, request.headers.host)?.startsWith("https:") || request.protocol === "https")
+    ? "__Host-llm_chat_session" : "llm_chat_session";
 }
 
-function setSessionCookie(request: FastifyRequest, reply: FastifyReply, token: string): void {
-  const secure = request.protocol === "https";
-  reply.setCookie(sessionCookieName(request), token, {
+function setSessionCookie(request: FastifyRequest, reply: FastifyReply, token: string, authentication: AuthenticationConfig): void {
+  const secure = sessionCookieName(request, authentication) === "__Host-llm_chat_session";
+  reply.setCookie(sessionCookieName(request, authentication), token, {
     path: "/",
     httpOnly: true,
-    sameSite: "strict",
+    sameSite: authentication.oidc ? "lax" : "strict",
     secure,
     maxAge: 180 * 24 * 60 * 60
   });
