@@ -24,7 +24,8 @@ export function closeImagePreview(): void {
 /** Saves an image as a file; a plain download link would only open it when the API is on another origin. */
 export async function downloadImage(image: Pick<PreviewImage, "url" | "fileName">): Promise<void> {
   const url = assetUrl(image.url) ?? image.url;
-  const response = await fetch(url, { credentials: apiCredentials() });
+  // Older servers cached <img> loads without `Vary: Origin`; reusing that copy fails CORS for another channel.
+  const response = await fetch(url, { credentials: apiCredentials(), cache: "reload" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const blob = await response.blob();
   const objectUrl = URL.createObjectURL(blob);

@@ -250,11 +250,12 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   const serverId = offlineSourceId(store);
   app.addHook("onRequest", async (request, reply) => {
     const origin = sameSiteOrigin(request);
+    // Always vary: an <img> load without Origin must not be cached for a later CORS fetch.
+    reply.header("vary", "origin");
     if (origin) {
       reply.header("access-control-allow-origin", origin);
       reply.header("access-control-allow-credentials", "true");
       reply.header("access-control-expose-headers", CORS_EXPOSED_HEADERS);
-      reply.header("vary", "origin");
     }
     if (request.url.startsWith("/api/")) reply.header(SERVER_ID_HEADER, serverId);
     if (origin && request.method === "OPTIONS" && request.headers["access-control-request-method"]) {

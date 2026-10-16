@@ -277,6 +277,7 @@ describe("server API", () => {
     expect(id).toBe(offlineSourceId(app.store));
     expect(identity.headers["x-llm-chat-server-id"]).toBe(id);
     expect(identity.headers["cross-origin-resource-policy"]).toBe("same-site");
+    expect(identity.headers.vary).toContain("origin");
 
     const host = "chat.example.com:9443";
     const sibling = "https://v4.example.com";
@@ -551,6 +552,7 @@ describe("server API", () => {
     expect(first.statusCode).toBe(200);
     expect(first.headers["content-type"]).toContain("image/png");
     expect(first.headers["cache-control"]).toBe("private, max-age=31536000, immutable");
+    expect(first.headers.vary).toContain("origin");
     expect(first.headers.etag).toBe(`"${asset.sha256}"`);
     expect(first.rawPayload.equals(Buffer.from(dataBase64, "base64"))).toBe(true);
 
