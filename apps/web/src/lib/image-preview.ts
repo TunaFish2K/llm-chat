@@ -1,11 +1,9 @@
 import { createStore } from "./store";
 
 export interface PreviewImage {
-  /** Full-size image shown in the viewer and offered as the original. */
+  /** Full-size image shown in the viewer, downloaded and shared. */
   url: string;
   fileName: string;
-  /** Opened by "view original" when it differs from the shown url, e.g. a proxied external image. */
-  sourceUrl?: string | undefined;
 }
 
 /** The single app-wide image viewer; galleries open it instead of navigating to the file. */

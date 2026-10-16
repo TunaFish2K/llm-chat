@@ -1657,7 +1657,6 @@
   "ImagePreview.fit": "Fit to screen",
   "ImagePreview.download": "Download",
   "ImagePreview.download_named": "Download {{value1}}",
-  "ImagePreview.open_original": "View original",
   "ImagePreview.previous": "Previous image",
   "ImagePreview.next": "Next image",
   "ImagePreview.loading": "Loading image",

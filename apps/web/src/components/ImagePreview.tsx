@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Download, ExternalLink, LoaderCircle, Maximize, Share, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, LoaderCircle, Maximize, Share, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { toastError } from "../lib/app-state";
 import { t, useLocale } from "../lib/i18n";
@@ -18,7 +18,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1
 interface View { scale: number; x: number; y: number }
 const FIT: View = { scale: 1, x: 0, y: 0 };
 
-/** App-wide viewer for chat and image studio pictures: zoom, pan, pinch, swipe, download, other apps and the original file. */
+/** App-wide viewer for chat and image studio pictures: zoom, pan, pinch, swipe, download and other apps. */
 export function ImagePreview() {
   const open = useStore(imagePreviewStore, (state) => state.open);
   return <Presence>{open ? <MotionProvider><Viewer /></MotionProvider> : null}</Presence>;
@@ -175,7 +175,6 @@ function Viewer() {
 
   if (!image) return null;
   const source = assetUrl(image.url) ?? image.url;
-  const original = image.sourceUrl ? assetUrl(image.sourceUrl) ?? image.sourceUrl : source;
 
   return <m.div ref={root} className="image-preview" role="dialog" aria-modal="true" aria-label={t("ImagePreview.title")}
     aria-hidden={!present || undefined} inert={!present ? true : undefined}
@@ -222,8 +221,6 @@ function Viewer() {
         disabled={Boolean(busy)} aria-label={t("ImagePreview.share")} title={t("ImagePreview.share")}>
         {busy === "share" ? <LoaderCircle size={18} className="spin" /> : <Share size={18} />}
       </button> : null}
-      <a className="image-preview-button" href={original} target="_blank" rel="noopener noreferrer"
-        aria-label={t("ImagePreview.open_original")} title={t("ImagePreview.open_original")}><ExternalLink size={18} /></a>
     </footer>
   </m.div>;
 }

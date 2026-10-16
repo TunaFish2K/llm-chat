@@ -1641,7 +1641,6 @@
   "ImagePreview.fit": "适应屏幕",
   "ImagePreview.download": "下载",
   "ImagePreview.download_named": "下载 {{value1}}",
-  "ImagePreview.open_original": "查看原图",
   "ImagePreview.previous": "上一张",
   "ImagePreview.next": "下一张",
   "ImagePreview.loading": "正在加载图片",

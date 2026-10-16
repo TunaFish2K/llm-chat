@@ -79,7 +79,7 @@ function SafeImage({ src, alt = "", ...props }: ComponentProps<"img">) {
   if (!safe) return alt ? <span className="image-unavailable">{t("markdown.image", { value1: (alt) })}</span> : null;
   return (
     <button type="button" className="markdown-image-link" aria-label={t("ImagePreview.open", { value1: alt || t("ImagePreview.title") })}
-      onClick={() => openImagePreview([{ url: safe, fileName: alt || imageFileName(src), sourceUrl: safe.startsWith("/api/image-proxy") ? src : undefined }])}>
+      onClick={() => openImagePreview([{ url: safe, fileName: alt || imageFileName(src) }])}>
       <OfflineAwareImage {...props} src={safe} alt={alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" />
     </button>
   );
