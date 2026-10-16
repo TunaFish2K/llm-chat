@@ -1,5 +1,4 @@
 import { createStore } from "./store";
-import { apiCredentials, assetUrl } from "./server-channel";
 
 export interface PreviewImage {
   /** Full-size image shown in the viewer and offered as the original. */
@@ -19,30 +18,4 @@ export function openImagePreview(images: PreviewImage[], index = 0): void {
 
 export function closeImagePreview(): void {
   imagePreviewStore.set({ open: false });
-}
-
-/** Saves an image as a file; a plain download link would only open it when the API is on another origin. */
-export async function downloadImage(image: Pick<PreviewImage, "url" | "fileName">): Promise<void> {
-  const url = assetUrl(image.url) ?? image.url;
-  // Older servers cached <img> loads without `Vary: Origin`; reusing that copy fails CORS for another channel.
-  const response = await fetch(url, { credentials: apiCredentials(), cache: "reload" });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = withExtension(image.fileName || "image", blob.type);
-    document.body.append(link);
-    link.click();
-    link.remove();
-  } finally {
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
-  }
-}
-
-/** Markdown images are named after their alt text, which rarely carries an extension. */
-function withExtension(name: string, mimeType: string): string {
-  const extension = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg", "image/avif": "avif" }[mimeType];
-  return !extension || /\.[a-z0-9]{2,5}$/i.test(name) ? name : `${name}.${extension}`;
 }

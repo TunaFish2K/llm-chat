@@ -580,11 +580,18 @@
   outline-offset: 2px;
 }
 
-/* Per-image download on generated results: revealed on hover or focus, always shown on touch screens. */
-.image-tile-download {
+/* Per-image actions on generated results: revealed on hover or focus, always shown on touch screens. */
+.image-tile-actions {
   position: absolute;
   top: 6px;
   right: 6px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 120ms var(--ease);
+}
+
+.image-tile-actions button {
   display: grid;
   place-items: center;
   width: 30px;
@@ -594,15 +601,13 @@
   border-radius: 50%;
   color: #fff;
   background: rgb(0 0 0 / 55%);
-  opacity: 0;
-  transition: opacity 120ms var(--ease);
 }
 
-.image-tile:hover .image-tile-download,
-.image-tile-download:focus-visible { opacity: 1; }
+.image-tile:hover .image-tile-actions,
+.image-tile-actions:focus-within { opacity: 1; }
 
 @media (hover: none) {
-  .image-tile-download { opacity: 1; }
+  .image-tile-actions { opacity: 1; }
 }
 
 .message-images img {
@@ -631,7 +636,28 @@
   text-decoration: none;
 }
 
-.message-file:hover { border-color: var(--accent-line); color: var(--text); }
+.message-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: auto;
+  gap: 6px;
+}
+
+/* Opens the attachment in another app through the share sheet. */
+.message-file-share {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.message-file:hover,
+.message-file-share:hover { border-color: var(--accent-line); color: var(--text); }
 .message-file span { min-width: 0; display: grid; }
 .message-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
 .message-file small { color: var(--text-faint); }

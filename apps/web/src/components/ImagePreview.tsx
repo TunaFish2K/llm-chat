@@ -1,12 +1,14 @@
-import { ChevronLeft, ChevronRight, Download, ExternalLink, LoaderCircle, Maximize, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, ExternalLink, LoaderCircle, Maximize, Share, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { toastError } from "../lib/app-state";
 import { t, useLocale } from "../lib/i18n";
-import { closeImagePreview, downloadImage, imagePreviewStore, type PreviewImage } from "../lib/image-preview";
+import { canShareFile, downloadAsset } from "../lib/asset-file";
+import { closeImagePreview, imagePreviewStore, type PreviewImage } from "../lib/image-preview";
 import { useBackLayer } from "../lib/mobile-navigation";
 import { m, MotionProvider, Presence, useIsPresent, useReducedMotion } from "../lib/motion";
 import { assetUrl } from "../lib/server-channel";
 import { useStore } from "../lib/store";
+import { openInOtherApp } from "./chat/atoms";
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 8;
@@ -16,7 +18,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1
 interface View { scale: number; x: number; y: number }
 const FIT: View = { scale: 1, x: 0, y: 0 };
 
-/** App-wide viewer for chat and image studio pictures: zoom, pan, pinch, swipe, download and the original file. */
+/** App-wide viewer for chat and image studio pictures: zoom, pan, pinch, swipe, download, other apps and the original file. */
 export function ImagePreview() {
   const open = useStore(imagePreviewStore, (state) => state.open);
   return <Presence>{open ? <MotionProvider><Viewer /></MotionProvider> : null}</Presence>;
@@ -28,7 +30,7 @@ function Viewer() {
   const [index, setIndex] = useState(() => imagePreviewStore.get().index);
   const [view, setView] = useState<View>(FIT);
   const [status, setStatus] = useState<"loading" | "ready" | "failed">("loading");
-  const [downloading, setDownloading] = useState(false);
+  const [busy, setBusy] = useState<"download" | "share" | null>(null);
   const present = useIsPresent();
   const reduced = useReducedMotion();
   const root = useRef<HTMLDivElement>(null);
@@ -165,10 +167,10 @@ function Viewer() {
     if (start.view.scale === 1 && many && Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1);
   };
 
-  const download = async () => {
-    if (!image || downloading) return;
-    setDownloading(true);
-    try { await downloadImage(image); } catch (cause) { toastError(cause); } finally { setDownloading(false); }
+  const run = async (action: "download" | "share") => {
+    if (!image || busy) return;
+    setBusy(action);
+    try { await (action === "download" ? downloadAsset(image) : openInOtherApp(image)); } catch (cause) { toastError(cause); } finally { setBusy(null); }
   };
 
   if (!image) return null;
@@ -211,10 +213,15 @@ function Viewer() {
       <button type="button" className="image-preview-button" onClick={() => setView(FIT)} disabled={view.scale === 1}
         aria-label={t("ImagePreview.fit")} title={t("ImagePreview.fit")}><Maximize size={18} /></button>
       <span className="image-preview-divider" aria-hidden="true" />
-      <button type="button" className="image-preview-button" onClick={() => void download()} disabled={downloading}
+      <button type="button" className="image-preview-button" onClick={() => void run("download")} disabled={Boolean(busy)}
         aria-label={t("ImagePreview.download")} title={t("ImagePreview.download")}>
-        {downloading ? <LoaderCircle size={18} className="spin" /> : <Download size={18} />}
+        {busy === "download" ? <LoaderCircle size={18} className="spin" /> : <Download size={18} />}
       </button>
+      {/* Every image type is shareable where file sharing exists, so a PNG probe stands in until the file is fetched. */}
+      {canShareFile(image.fileName, "image/png") ? <button type="button" className="image-preview-button" onClick={() => void run("share")}
+        disabled={Boolean(busy)} aria-label={t("ImagePreview.share")} title={t("ImagePreview.share")}>
+        {busy === "share" ? <LoaderCircle size={18} className="spin" /> : <Share size={18} />}
+      </button> : null}
       <a className="image-preview-button" href={original} target="_blank" rel="noopener noreferrer"
         aria-label={t("ImagePreview.open_original")} title={t("ImagePreview.open_original")}><ExternalLink size={18} /></a>
     </footer>

@@ -4,10 +4,11 @@ import { offlineStore } from "../../lib/offline-history";
 import { useStore } from "../../lib/store";
 /** Small shared pieces of the conversation surface. */
 import type { ReactNode } from "react";
-import { Download, FileText } from "lucide-react";
+import { Download, FileText, Share } from "lucide-react";
 import type { AgentSummaryDto, FileAssetDto, ImageAssetDto } from "@llm-chat/contracts";
 import { toast, toastError } from "../../lib/app-state";
-import { downloadImage, openImagePreview } from "../../lib/image-preview";
+import { openImagePreview } from "../../lib/image-preview";
+import { canShareFile, downloadAsset, shareAsset, type AssetSource } from "../../lib/asset-file";
 import { formatBytes } from "../../lib/format";
 import { assetUrl, thumbnailUrl } from "../../lib/server-channel";
 
@@ -45,6 +46,15 @@ export function OfflineAwareImage({ src, alt, ...props }: React.ComponentProps<"
   return <img {...props} src={assetUrl(src)} alt={alt} onLoad={() => setFailed(false)} onError={() => setFailed(true)} />;
 }
 
+/** Opens an asset through the share sheet; a tap that expired while fetching asks for one more. */
+export async function openInOtherApp(asset: AssetSource): Promise<void> {
+  try {
+    if (await shareAsset(asset) === "retry") toast("info", localized("ImagePreview.share_ready"));
+  } catch (error) {
+    toastError(error);
+  }
+}
+
 /** Images open in the app's viewer through the server-issued URL, never a data: blob. */
 export function ImageGallery({ assets, downloadable = false }: { assets: ImageAssetDto[]; downloadable?: boolean }) {
   useLocale();
@@ -62,11 +72,16 @@ export function ImageGallery({ assets, downloadable = false }: { assets: ImageAs
           >
             <OfflineAwareImage src={thumbnailUrl(asset.url)} alt={asset.fileName} loading="lazy" decoding="async" />
           </button>
-          {downloadable ? <button type="button" className="image-tile-download"
-            onClick={() => void downloadImage(asset).catch(toastError)}
-            aria-label={t("ImagePreview.download_named", { value1: asset.fileName })} title={t("ImagePreview.download")}>
-            <Download size={15} />
-          </button> : null}
+          {downloadable ? <div className="image-tile-actions">
+            {canShareFile(asset.fileName, asset.mimeType) ? <button type="button" onClick={() => void openInOtherApp(asset)}
+              aria-label={t("ImagePreview.share_named", { value1: asset.fileName })} title={t("ImagePreview.share")}>
+              <Share size={15} />
+            </button> : null}
+            <button type="button" onClick={() => void downloadAsset(asset).catch(toastError)}
+              aria-label={t("ImagePreview.download_named", { value1: asset.fileName })} title={t("ImagePreview.download")}>
+              <Download size={15} />
+            </button>
+          </div> : null}
         </div>
       ))}
     </div>
@@ -83,11 +98,18 @@ export function AssetGallery({ assets }: { assets: FileAssetDto[] }) {
       {files.length ? (
         <div className="message-files">
           {files.map((asset) => (
-            <a key={asset.id} className="message-file" href={assetUrl(asset.url)} download={asset.fileName}>
-              <FileText size={18} aria-hidden="true" />
-              <span><strong>{asset.fileName}</strong><small>{formatBytes(asset.byteSize)}</small></span>
-              <Download size={16} aria-hidden="true" />
-            </a>
+            <div key={asset.id} className="message-file-row">
+              <a className="message-file" href={assetUrl(asset.url)} download={asset.fileName}>
+                <FileText size={18} aria-hidden="true" />
+                <span><strong>{asset.fileName}</strong><small>{formatBytes(asset.byteSize)}</small></span>
+                <Download size={16} aria-hidden="true" />
+              </a>
+              {canShareFile(asset.fileName, asset.mimeType) ? <button type="button" className="message-file-share"
+                onClick={() => void openInOtherApp(asset)}
+                aria-label={t("ImagePreview.share_named", { value1: asset.fileName })} title={t("ImagePreview.share")}>
+                <Share size={16} />
+              </button> : null}
+            </div>
           ))}
         </div>
       ) : null}
