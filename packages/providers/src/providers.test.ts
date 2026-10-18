@@ -250,6 +250,40 @@ describe("provider adapters", () => {
     expect(events).toContainEqual({ type: "tool-call", call: { id: "toolu_1", name: "get_time_info", arguments: "{\"zone\":\"UTC\"}" } });
   });
 
+  it.each([
+    ["an empty input_json_delta", [namedFrame("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: "" } })]],
+    ["no input_json_delta", []]
+  ])("treats an Anthropic tool_use with %s as empty arguments", async (_label, deltas) => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      namedFrame("content_block_start", { index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "get_time_info", input: {} } }),
+      ...deltas,
+      namedFrame("content_block_stop", { index: 0 }),
+      namedFrame("message_delta", { delta: { stop_reason: "tool_use" }, usage: {} }),
+      namedFrame("message_stop", {})
+    ])));
+    const events = await collect(new AnthropicAdapter().stream(request("anthropic-messages")));
+    expect(events).toContainEqual({ type: "tool-call", call: { id: "toolu_1", name: "get_time_info", arguments: "{}" } });
+  });
+
+  it("still rejects malformed Anthropic tool_use JSON", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      namedFrame("content_block_start", { index: 0, content_block: { type: "tool_use", id: "toolu_1", name: "get_time_info", input: {} } }),
+      namedFrame("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: "{bad" } }),
+      namedFrame("content_block_stop", { index: 0 }),
+      namedFrame("message_stop", {})
+    ])));
+    await expect(collect(new AnthropicAdapter().stream(request("anthropic-messages")))).rejects.toMatchObject({ code: "provider_tool_call_invalid" });
+  });
+
+  it("treats empty Chat Completions tool arguments as an empty object", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
+      frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "get_time_info", arguments: "" } }] }, finish_reason: "tool_calls" }] }),
+      "data: [DONE]\n\n"
+    ])));
+    const events = await collect(new OpenAiChatAdapter().stream(request("openai-chat")));
+    expect(events).toContainEqual({ type: "tool-call", call: { id: "call_1", name: "get_time_info", arguments: "{}" } });
+  });
+
   it("normalizes Chat Completions text, reasoning, usage, and stop reason", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => streamResponse([
       frame({ choices: [{ delta: { reasoning_content: "想" } }] }),

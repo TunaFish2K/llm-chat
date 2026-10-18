@@ -159,7 +159,9 @@ export class AnthropicAdapter implements ProviderAdapter {
         const index = number(event.index) ?? 0;
         const block = blocks.get(index);
         if (block?.type === "tool_use" && block.id && block.name) {
-          const call = { id: block.id, name: block.name, arguments: block.partialJson ?? JSON.stringify(block.input ?? {}) };
+          // Argument-less tools may stream an empty input_json_delta; fall back to the start block's input.
+          const json = block.partialJson?.trim() ? block.partialJson : JSON.stringify(block.input ?? {});
+          const call = { id: block.id, name: block.name, arguments: json };
           validateToolCall(call);
           block.input = JSON.parse(call.arguments);
           delete block.partialJson;

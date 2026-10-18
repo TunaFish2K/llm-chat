@@ -149,7 +149,11 @@ export class OpenAiChatAdapter implements ProviderAdapter {
         yield { type: "usage", usage };
       }
     }
-    for (const call of toolCalls.values()) validateToolCall(call);
+    for (const call of toolCalls.values()) {
+      // Some compatible upstreams send empty arguments for argument-less tools.
+      if (!call.arguments.trim()) call.arguments = "{}";
+      validateToolCall(call);
+    }
     assertStreamComplete(ended, Boolean(text.trim() || refusal.trim() || toolCalls.size));
     if (reasoning) yield { type: "block", index: 0, blockType: "reasoning", content: reasoning, complete: true };
     if (reasoning) {
