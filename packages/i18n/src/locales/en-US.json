@@ -1324,7 +1324,7 @@
   "catalog.workspace_shell.label": "Run shell command",
   "catalog.workspace_shell.description": "Run a shell command in the conversation workspace with user approval by default. Prefer workspace_shell_readonly for local reading, searching and analysis. This tool runs without the read-only sandbox. Use workspace-relative paths and . for the workspace root.",
   "catalog.workspace_publish_image.label": "Publish image",
-  "catalog.workspace_publish_image.description": "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. Use this before showing a machine-local image to the user.",
+  "catalog.workspace_publish_image.description": "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. The published image is also shown to the model.",
   "catalog.workspace_publish_file.label": "Publish file",
   "catalog.workspace_publish_file.description": "Import a file from the selected workspace into immutable llm-chat storage and return a permanent Markdown link. Publishing requires approval because it exposes machine-local data to the user.",
   "catalog.use_skill.label": "Load Skill",

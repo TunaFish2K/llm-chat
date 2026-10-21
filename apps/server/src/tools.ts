@@ -252,12 +252,12 @@ export async function buildServerTools(
         requiredString(input, "command"), resolve(inside, relative(root, cwd)),
         optionalInteger(input, "timeout", 30, 1, 120) * 1000, signal);
     }, Boolean(workspace || attachments)),
-    tool("workspace_publish_image", "发布图片", "workspace", "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. Use this before showing a machine-local image to the user.", {
+    tool("workspace_publish_image", "发布图片", "workspace", "Import an image from the conversation workspace into immutable llm-chat storage and return a permanent Markdown image link. The published image is also shown to you on your next step, so use this to look at any image you only know by path, such as an uploaded image attachment (workspace=\"attachments\", path from <attached_files>). Use this before showing a machine-local image to the user.", {
       ...workspaceProperty, path: workspacePathProperty("Image file to publish"),
       alt: stringProperty("Short alternative text for the image")
     }, false, async (input, _signal, context) => {
       if (!dependencies.imageService || !context) throw new Error("Image service and tool context are required");
-      const asset = await dependencies.imageService.importWorkspaceImage(rootFor(input), requiredString(input, "path"));
+      const asset = await dependencies.imageService.importWorkspaceImage(rootFor(input), normalizeWorkspaceInput(requiredString(input, "path")));
       store.attachImageToToolCall(context.toolCallId, asset.id);
       const alt = (optionalString(input, "alt") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "image";
       return JSON.stringify({ asset, markdown: `![${alt}](${asset.url})` });
@@ -270,7 +270,7 @@ export async function buildServerTools(
     }, true, async (input, _signal, context) => {
       if (!dependencies.imageService || !context) throw new Error("File service and tool context are required");
       const asset = await dependencies.imageService.importWorkspaceFile(
-        rootFor(input), requiredString(input, "path"), optionalString(input, "mime_type") ?? "application/octet-stream"
+        rootFor(input), normalizeWorkspaceInput(requiredString(input, "path")), optionalString(input, "mime_type") ?? "application/octet-stream"
       );
       store.attachFileToToolCall(context.toolCallId, asset.id);
       const label = (optionalString(input, "label") ?? asset.fileName).replace(/[\[\]]/g, "").trim() || "file";
@@ -340,7 +340,7 @@ const TOOL_UI_DESCRIPTIONS: Record<string, string> = {
   workspace_grep: "按文本或正则表达式搜索沙箱工作区文件。",
   workspace_shell: "在工作目录中运行未隔离的 Shell 命令，默认需要审批；本地读取和分析优先使用只读命令。",
   workspace_shell_readonly: "在只读沙箱中读取、搜索和分析当前工作目录及附件；不联网，临时文件在调用结束后销毁。默认免审批。",
-  workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
+  workspace_publish_image: "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接；发布后的图片也会交给模型查看。",
   workspace_publish_file: "把工作区文件导入为不可变应用资产，并返回永久下载链接。发布前需要批准。",
   use_skill: "按需加载服务端 Skills 目录中的专用说明。"
 };

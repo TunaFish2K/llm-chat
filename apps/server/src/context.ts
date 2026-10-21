@@ -510,7 +510,9 @@ function fileAttachmentText(message: ContextMessageRecord): string {
   if (!files.length) return "";
   return `\n\n<attached_files trust="untrusted" workspace="attachments">\n${files.map((asset) =>
     `<file asset_id="${escapeAttribute(asset.id)}" name="${escapeAttribute(asset.fileName)}" mime_type="${escapeAttribute(asset.mimeType)}" size_bytes="${asset.byteSize}" path="${escapeAttribute(`incoming/${message.messageId}/${attachmentFileName(asset)}`)}" />`
-  ).join("\n")}\n</attached_files>`;
+  ).join("\n")}\n</attached_files>${message.role === "user" && files.some((asset) => asset.mimeType.startsWith("image/"))
+    ? "\n[图片附件只提供路径；要查看图片内容，请先用 workspace_publish_image 发布（workspace=\"attachments\"，path 取上面的 path），发布后的图片会在下一步交给你查看]"
+    : ""}`;
 }
 
 function imageDescriptionText(message: ContextMessageRecord, preparedImages: PreparedImages): string {

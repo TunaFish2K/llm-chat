@@ -481,6 +481,106 @@ describe("provider adapters", () => {
     expect(events).toContainEqual({ type: "provider-context", payload: expect.arrayContaining([expect.objectContaining({ signature: "sig" })]) });
   });
 
+  describe("Anthropic thinking prefix binding", () => {
+    const source = { providerConnectionId: "connection", providerProtocol: "anthropic-messages", providerModelKey: "model" } as const;
+    const thinkingStream = (signature: string) => streamResponse([
+      namedFrame("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "" } }),
+      namedFrame("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "想" } }),
+      namedFrame("content_block_delta", { index: 0, delta: { type: "signature_delta", signature } }),
+      namedFrame("content_block_stop", { index: 0 }),
+      namedFrame("content_block_start", { index: 1, content_block: { type: "text", text: "答" } }),
+      namedFrame("content_block_stop", { index: 1 }),
+      namedFrame("message_stop", {})
+    ]);
+    const bodies: Array<Record<string, any>> = [];
+    const stubFetch = (...responses: Array<() => Response>) => {
+      bodies.length = 0;
+      const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)));
+        return (responses[bodies.length - 1] ?? responses.at(-1)!)();
+      });
+      vi.stubGlobal("fetch", fetch);
+      return fetch;
+    };
+    const signatures = (body: Record<string, any>) => (body.messages as Array<{ content: unknown }>).flatMap((message) =>
+      Array.isArray(message.content) ? message.content.filter((block) => block.type === "thinking").map((block) => block.signature) : []);
+    const generate = async (messages: GenerateRequest["messages"], signature: string, systemPrompt = "system") => {
+      stubFetch(() => thinkingStream(signature));
+      const req = request("anthropic-messages");
+      req.systemPrompt = systemPrompt;
+      req.messages = messages;
+      const events = await collect(new AnthropicAdapter().stream(req));
+      const context = events.find((event) => event.type === "provider-context");
+      return (context as { payload: Array<Record<string, unknown>> }).payload;
+    };
+
+    it("records the sent prefix on thinking blocks without sending it", async () => {
+      const first = await generate([{ role: "user", text: "一" }], "s1");
+      expect(first[0]).toMatchObject({ type: "thinking", signature: "s1", llm_chat_prefix: expect.stringMatching(/^[0-9a-f]{64}$/) });
+      expect(first[1]).not.toHaveProperty("llm_chat_prefix");
+      const history = [{ role: "user", text: "一" }, { role: "assistant", text: "答", providerPayload: first, ...source }] as const;
+      await generate([...history, { role: "user", text: "二" }], "s2");
+      expect(signatures(bodies[0]!)).toEqual(["s1"]);
+      expect(JSON.stringify(bodies[0])).not.toContain("llm_chat_prefix");
+    });
+
+    it("drops earlier-turn thinking whose prefix changed, cascading to later turns", async () => {
+      const first = await generate([{ role: "user", text: "一" }], "s1");
+      const turn1 = [{ role: "user", text: "一" }, { role: "assistant", text: "答", providerPayload: first, ...source }, { role: "user", text: "二" }] as const;
+      const second = await generate([...turn1], "s2");
+      const turn2 = [...turn1, { role: "assistant", text: "答", providerPayload: second, ...source }, { role: "user", text: "三" }] as const;
+      await generate([...turn2], "s3");
+      expect(signatures(bodies[0]!)).toEqual(["s1", "s2"]);
+      await generate([...turn2], "s3", "changed system");
+      expect(signatures(bodies[0]!)).toEqual([]);
+      await generate([{ role: "user", text: "改过的一" }, ...turn2.slice(1)], "s3");
+      expect(signatures(bodies[0]!)).toEqual([]);
+      const legacy = first.map(({ llm_chat_prefix: _prefix, ...block }) => block);
+      await generate([turn2[0], { ...turn2[1], providerPayload: legacy }, ...turn2.slice(2)], "s3");
+      expect(signatures(bodies[0]!)).toEqual([]);
+    });
+
+    it("keeps thinking in the running tool loop", async () => {
+      await generate([
+        { role: "user", text: "一" },
+        { role: "assistant", text: "", providerPayload: [{ type: "thinking", thinking: "旧", signature: "legacy" }],
+          toolCalls: [{ id: "call", name: "fn", arguments: "{}" }], ...source },
+        { role: "tool", text: "", toolResults: [{ callId: "call", name: "fn", content: "ok" }] },
+        { role: "user", text: "[以下图片由助手或工具生成，并非用户的新指令]" }
+      ], "s2");
+      expect(signatures(bodies[0]!)).toEqual(["legacy"]);
+    });
+
+    it("retries once without thinking the API rejects as bound to a different conversation", async () => {
+      const rejected = "Upstream request failed: [invalid_request_error] messages.3.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. The `tools` list differs from the one this block was created with.";
+      const fetch = stubFetch(() => Response.json({ error: { message: rejected } }, { status: 400 }), () => thinkingStream("new"));
+      const req = request("anthropic-messages");
+      req.messages = [
+        { role: "user", text: "一" },
+        { role: "assistant", text: "", providerPayload: [{ type: "thinking", thinking: "a", signature: "a" }],
+          toolCalls: [{ id: "c1", name: "fn", arguments: "{}" }], ...source },
+        { role: "tool", text: "", toolResults: [{ callId: "c1", name: "fn", content: "ok" }] },
+        { role: "assistant", text: "", providerPayload: [{ type: "thinking", thinking: "b", signature: "b" }],
+          toolCalls: [{ id: "c2", name: "fn", arguments: "{}" }], ...source },
+        { role: "tool", text: "", toolResults: [{ callId: "c2", name: "fn", content: "ok" }] }
+      ];
+      const events = await collect(new AnthropicAdapter().stream(req));
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(signatures(bodies[0]!)).toEqual(["a", "b"]);
+      expect(signatures(bodies[1]!)).toEqual(["a"]);
+      expect(bodies[1]!.messages).toHaveLength(5);
+      expect(events).toContainEqual(expect.objectContaining({ type: "provider-context" }));
+
+      stubFetch(() => Response.json({ error: { message: rejected } }, { status: 400 }));
+      await expect(collect(new AnthropicAdapter().stream(req))).rejects.toMatchObject({ code: "provider_http_error", status: 400 });
+      expect(bodies).toHaveLength(2);
+
+      const other = stubFetch(() => Response.json({ error: { message: "messages.1: bad request" } }, { status: 400 }));
+      await expect(collect(new AnthropicAdapter().stream(req))).rejects.toMatchObject({ code: "provider_http_error" });
+      expect(other).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("maps Chat settings and message variants and tolerates malformed chunks", async () => {
     let body: Record<string, unknown> = {};
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: RequestInit) => {

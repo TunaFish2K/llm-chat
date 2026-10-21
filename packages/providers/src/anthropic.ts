@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { providerReasoningEffort } from "@llm-chat/contracts";
 import { withMessage } from "@llm-chat/i18n";
 import { prepareMessages, assertStreamComplete, validateToolCall } from "./messages";
@@ -19,6 +20,19 @@ interface AnthropicBlock {
   [key: string]: unknown;
 }
 
+interface AnthropicMessage {
+  role: "user" | "assistant";
+  content: unknown;
+}
+
+/**
+ * Thinking blocks are only valid while the request prefix before them (system,
+ * tools, earlier messages) is unchanged. Each stored block records a hash of the
+ * prefix it was created after, so replay can drop blocks whose prefix changed,
+ * e.g. after a fork, a memory update or a tool list change.
+ */
+const PREFIX_KEY = "llm_chat_prefix";
+
 export class AnthropicAdapter implements ProviderAdapter {
   readonly protocol = "anthropic-messages" as const;
 
@@ -28,7 +42,10 @@ export class AnthropicAdapter implements ProviderAdapter {
     const { common } = request.settings;
     const effort = providerReasoningEffort(request.settings);
     const capabilities = request.capabilities;
-    const messages = prepareMessages(request).map((message) => {
+    const prepared = prepareMessages(request);
+    // Assistant steps after the latest user turn belong to the running tool loop and keep their thinking.
+    const turnStart = prepared.findLastIndex((message, index) => message.role === "user" && prepared[index - 1]?.role !== "tool");
+    const messages = prepared.map((message): AnthropicMessage => {
       if (message.role === "tool") {
         return {
           role: "user",
@@ -73,7 +90,6 @@ export class AnthropicAdapter implements ProviderAdapter {
     const body: Record<string, unknown> = {
       model: request.modelKey,
       system: [request.systemPrompt, request.postHistoryInstructions].filter(Boolean).join("\n\n") || undefined,
-      messages,
       max_tokens: common.maxOutputTokens,
       stream: true
     };
@@ -84,6 +100,9 @@ export class AnthropicAdapter implements ProviderAdapter {
         input_schema: tool.inputSchema
       }));
     }
+    const head = hash(JSON.stringify({ system: body.system, tools: body.tools }));
+    let sent = bindThinking(head, messages, (index) => index > turnStart ? "keep" : "check");
+    body.messages = sent.messages;
     if (common.temperature !== undefined) body.temperature = common.temperature;
     if (common.topP !== undefined) body.top_p = common.topP;
     if (common.stopSequences.length) body.stop_sequences = common.stopSequences;
@@ -114,13 +133,27 @@ export class AnthropicAdapter implements ProviderAdapter {
       }
     }
 
-    const response = await providerFetch(endpoint(request.connection.baseUrl, "messages"), {
-      method: "POST",
-      headers: headers(request.connection, request.requestContext),
-      body: JSON.stringify(body),
-      signal: request.signal
-    });
-    await ensureOk(response);
+    const send = async () => {
+      const response = await providerFetch(endpoint(request.connection.baseUrl, "messages"), {
+        method: "POST",
+        headers: headers(request.connection, request.requestContext),
+        body: JSON.stringify(body),
+        signal: request.signal
+      });
+      await ensureOk(response);
+      return response;
+    };
+    let response: Response;
+    try {
+      response = await send();
+    } catch (error) {
+      const index = unboundThinkingIndex(error);
+      if (index === undefined) throw error;
+      // A prefix change the fingerprints could not predict; retry once without the rejected thinking.
+      sent = bindThinking(head, sent.messages, (position) => position < index ? "keep" : "drop");
+      body.messages = sent.messages;
+      response = await send();
+    }
 
     const blocks = new Map<number, AnthropicBlock>();
     let usageSnapshot: Record<string, unknown> = {};
@@ -186,7 +219,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     assertStreamComplete(ended, hasOutput || [...blocks.values()].some((block) => block.type === "text" && Boolean(block.text?.trim())));
     const providerPayload = [...blocks.entries()]
       .sort(([a], [b]) => a - b)
-      .map(([, block]) => block);
+      .map(([, block]) => isThinking(block) ? { ...block, [PREFIX_KEY]: sent.prefix } : block);
     if (providerPayload.length) yield { type: "provider-context", payload: providerPayload };
     yield { type: "complete", stopReason };
   }
@@ -211,6 +244,53 @@ function blockEvent(index: number, block: AnthropicBlock, complete: boolean): Pr
     complete,
     providerPayload: block
   };
+}
+
+function isThinking(block: unknown): block is Record<string, unknown> {
+  const type = (block as Record<string, unknown> | null)?.type;
+  return type === "thinking" || type === "redacted_thinking";
+}
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Resolve the thinking blocks of each assistant message and return the hash of
+ * the whole sent prefix. Hashes chain message by message, so a dropped block
+ * also invalidates every later block bound to it.
+ */
+function bindThinking(
+  head: string,
+  messages: AnthropicMessage[],
+  policy: (index: number) => "keep" | "check" | "drop"
+): { messages: AnthropicMessage[]; prefix: string } {
+  let prefix = head;
+  const sent: AnthropicMessage[] = [];
+  for (const [index, message] of messages.entries()) {
+    let next = message;
+    if (message.role === "assistant" && Array.isArray(message.content)) {
+      const mode = policy(index);
+      const content = message.content.flatMap((block) => {
+        if (!isThinking(block)) return [block];
+        const { [PREFIX_KEY]: bound, ...rest } = block;
+        return mode === "keep" || (mode === "check" && bound === prefix) ? [rest] : [];
+      });
+      // Consecutive user turns are merged upstream, so a thinking-only step can disappear.
+      if (!content.length) continue;
+      next = { ...message, content };
+    }
+    sent.push(next);
+    prefix = hash(prefix + JSON.stringify(next));
+  }
+  return { messages: sent, prefix };
+}
+
+/** The message index of a thinking block the API rejected for a changed prefix. */
+function unboundThinkingIndex(error: unknown): number | undefined {
+  if (!(error instanceof ProviderError) || error.status !== 400 || !error.message.includes("bound to a different conversation")) return undefined;
+  const match = /messages\.(\d+)\.content\.\d+: Invalid `?signature`? in `?thinking`? block/.exec(error.message);
+  return match ? Number(match[1]) : 0;
 }
 
 function parseArguments(value: string): unknown {

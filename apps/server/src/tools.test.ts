@@ -172,6 +172,17 @@ describe("workspace tools", () => {
     expect(result.markdown).toBe(`![machine screen](${result.asset.url})`);
     expect(result.asset.url).toMatch(/^\/api\/images\/[0-9a-f-]+\?v=[a-f0-9]{64}$/);
     expect(store.getToolCall(call.id)?.artifacts).toEqual([expect.objectContaining({ id: result.asset.id })]);
+    const sandboxPath = JSON.parse(await tool(tools, "workspace_publish_image").execute(
+      { path: "/workdir/screen.png" },
+      signal(),
+      {
+        conversationId: conversation.id,
+        generationId: created.generationId,
+        toolCallId: call.id,
+        snapshot: store.getGenerationRecord(created.generationId)!.agentSnapshot
+      }
+    ));
+    expect(sandboxPath.asset.url).toMatch(/^\/api\/images\/[0-9a-f-]+\?v=[a-f0-9]{64}$/);
     await expect(tool(tools, "workspace_publish_image").execute(
       { path: "../outside.png" },
       signal(),

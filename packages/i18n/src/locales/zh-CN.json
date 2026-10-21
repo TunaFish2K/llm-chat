@@ -1318,7 +1318,7 @@
   "catalog.workspace_shell.label": "运行命令",
   "catalog.workspace_shell.description": "在工作目录中运行未隔离的 Shell 命令，默认需要审批；本地读取和分析优先使用只读命令。",
   "catalog.workspace_publish_image.label": "发布图片",
-  "catalog.workspace_publish_image.description": "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接。",
+  "catalog.workspace_publish_image.description": "把工作区图片导入为不可变应用资产，并返回可在回复中使用的永久 Markdown 链接；发布后的图片也会交给模型查看。",
   "catalog.workspace_publish_file.label": "发布文件",
   "catalog.workspace_publish_file.description": "把工作区文件导入为不可变应用资产，并返回永久下载链接。发布前需要批准。",
   "catalog.use_skill.label": "加载 Skill",

@@ -91,7 +91,31 @@ describe("context builder", () => {
     expect(text).toContain('name="notes &amp; instructions.txt"');
     expect(text).toContain(`path="incoming/${latest.userMessageId}/${asset.id}-notes &amp; instructions.txt"`);
     expect(text).not.toContain("not-read-by-context");
+    expect(text).not.toContain("workspace_publish_image");
     expect(built.messages.at(-1)?.images).toBeUndefined();
+    store.close();
+  });
+
+  it("points image file attachments at workspace_publish_image", async () => {
+    const store = createStore();
+    const seeded = seedModel(store);
+    const asset = store.createFileAsset({
+      sha256: "b".repeat(64),
+      fileName: "proof.jpg",
+      mimeType: "image/jpeg",
+      kind: "file",
+      byteSize: 17,
+      storageKey: "not-read-by-context"
+    });
+    const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+    const latest = store.createMessageGeneration(conversation.id, "解释一下", [asset.id]);
+    const built = await buildContext(
+      store, store.getGenerationRecord(latest.generationId)!, seeded.model,
+      store.getConnection(seeded.connection.id)!, new AbortController().signal
+    );
+    const text = built.messages.at(-1)?.text ?? "";
+    expect(text).toContain(`path="incoming/${latest.userMessageId}/${asset.id}-proof.jpg"`);
+    expect(text).toMatch(/<\/attached_files>\n\[图片附件只提供路径；.*workspace_publish_image/);
     store.close();
   });
 
