@@ -11,7 +11,7 @@ import { constants } from "node:fs";
 import { access, glob, mkdir, readFile, realpath, readdir, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { imageGenerationInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
+import { imageGenerationInputSchema, memoryInputSchema, type AgentSearchConfig, type ToolCatalogItemDto } from "@llm-chat/contracts";
 import { describeNetworkError, providerFetch, readBoundedBytes, type ProviderToolDefinition } from "@llm-chat/providers";
 import type { Store } from "./database";
 import type { AgentSnapshot } from "./generation-types";
@@ -662,9 +662,15 @@ function htmlToText(html: string): string {
 
 async function memoryAction(store: Store, input: JsonObject): Promise<string> {
   const action = requiredString(input, "action");
-  if (action === "create") return JSON.stringify(store.createMemory(requiredString(input, "content")));
+  if (action === "create") {
+    const { content } = memoryInputSchema.parse({ content: requiredString(input, "content") });
+    return JSON.stringify(store.createMemory(content));
+  }
   const id = optionalInteger(input, "id", 0, 1, Number.MAX_SAFE_INTEGER);
-  if (action === "edit") return JSON.stringify(store.updateMemory(id, requiredString(input, "content")));
+  if (action === "edit") {
+    const { content } = memoryInputSchema.parse({ content: requiredString(input, "content") });
+    return JSON.stringify(store.updateMemory(id, content));
+  }
   if (action === "delete") { store.deleteMemory(id); return JSON.stringify({ success: true, id }); }
   throw new Error(`Unknown memory action: ${action}`);
 }

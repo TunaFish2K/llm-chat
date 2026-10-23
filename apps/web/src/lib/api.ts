@@ -42,6 +42,8 @@ import type {
   McpServerDto,
   McpServerInput,
   McpServerPatch,
+  MemoryDto,
+  MemoryInput,
   MessageDto,
   ModelDto,
   ModelInput,
@@ -141,13 +143,6 @@ export interface TaskOutputDto {
   screen: string | null;
 }
 
-export interface MemoryDto {
-  id: number;
-  content: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
 export interface McpTestResult {
   ok: boolean;
   tools?: number;
@@ -229,6 +224,9 @@ export const endpoints = {
   removeSkill: (id: string) => api.delete<undefined>(`/api/skills/${id}`),
 
   memories: () => api.get<MemoryDto[]>("/api/memories"),
+  createMemory: (input: MemoryInput) => api.post<MemoryDto>("/api/memories", input),
+  updateMemory: (id: number, input: MemoryInput) => api.patch<MemoryDto>(`/api/memories/${id}`, input),
+  deleteMemory: (id: number) => api.delete<undefined>(`/api/memories/${id}`),
 
   mcpServers: () => api.get<McpServerDto[]>("/api/mcp/servers"),
   createMcpServer: (input: McpServerInput) => api.post<McpServerDto>("/api/mcp/servers", input),

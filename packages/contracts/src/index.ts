@@ -1510,7 +1510,7 @@ export type AppEvent =
   | { id: number; type: "skill"; skillId: string; state: SkillDto["state"]; message?: string }
   | { id: number; type: "image-generation"; jobId: string; conversationId: string; job: ImageGenerationJobDto }
   | { id: number; type: "image-session-generation"; jobId: string; imageSessionId: string; imageNodeId: string; job: ImageGenerationJobDto }
-  | { id: number; type: "resource-changed"; resource: "container-resources" | "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools"; resourceId?: string };
+  | { id: number; type: "resource-changed"; resource: "container-resources" | "agents" | "conversations" | "settings" | "connections" | "models" | "mcp" | "skills" | "plugins" | "tools" | "memories"; resourceId?: string };
 
 const mcpServerFields = {
   name: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9]+$/, "名称只能包含英文字母和数字"),
@@ -1536,6 +1536,17 @@ export interface McpServerDto {
   headerNames: string[];
   enabled: boolean;
   lastError: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const memoryInputSchema = z.object({ content: z.string().trim().min(1).max(20_000) });
+export type MemoryInput = z.infer<typeof memoryInputSchema>;
+export const memoryIdParamsSchema = z.object({ id: z.coerce.number().int().positive() });
+
+export interface MemoryDto {
+  id: number;
+  content: string;
   createdAt: number;
   updatedAt: number;
 }

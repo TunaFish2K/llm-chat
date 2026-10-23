@@ -167,20 +167,43 @@ describe("SettingsView", () => {
     );
   });
 
-  it("lists memories read-only", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
-        if (url === "/api/memories") {
-          return Promise.resolve(
-            json([{ id: 1, content: "主人喜欢咖啡", createdAt: 1, updatedAt: 2 }])
-          );
-        }
-        return Promise.resolve(json({}, 200));
-      })
-    );
+  it("adds, edits and deletes memories", async () => {
+    const user = userEvent.setup();
+    const memory = { id: 1, content: "主人喜欢咖啡", createdAt: 1, updatedAt: 2 };
+    const list = vi.spyOn(endpoints, "memories").mockResolvedValue([memory]);
+    const create = vi.spyOn(endpoints, "createMemory").mockResolvedValue({ ...memory, id: 2, content: "喜欢猫" });
+    const update = vi.spyOn(endpoints, "updateMemory").mockResolvedValue({ ...memory, content: "主人喜欢茶" });
+    const remove = vi.spyOn(endpoints, "deleteMemory").mockResolvedValue(undefined);
     render(<SettingsView section="memories" />);
     expect(await screen.findByText("主人喜欢咖啡")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "添加记忆" }));
+    const dialog = await screen.findByRole("dialog");
+    const save = within(dialog).getByRole("button", { name: "保存" });
+    expect(save).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("内容"), "   ");
+    expect(save).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("内容"), "喜欢猫  ");
+    await user.click(save);
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ content: "喜欢猫" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const loadsAfterCreate = list.mock.calls.length;
+    expect(loadsAfterCreate).toBeGreaterThan(1);
+
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+    const editor = await screen.findByRole("dialog");
+    const field = within(editor).getByLabelText("内容");
+    expect(field).toHaveValue("主人喜欢咖啡");
+    await user.clear(field);
+    await user.type(field, "主人喜欢茶");
+    await user.click(within(editor).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith(1, { content: "主人喜欢茶" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "删除" }));
+    const confirm = await screen.findByRole("dialog");
+    await user.click(within(confirm).getByRole("button", { name: "删除" }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(1));
   });
 
   it("opens complete tool and environment details from compact summaries", async () => {

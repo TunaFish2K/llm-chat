@@ -11,6 +11,7 @@ import { AuthManager } from "./auth";
 import { offlineSourceId } from "./offline-history";
 import type { InjectOptions } from "fastify";
 import { mcpManager } from "./mcp";
+import { toolSystemPrompt } from "./tools";
 import { LocalContainerEngine } from "./container-engine";
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from "./generation-policy";
 import { ImageService } from "./images";
@@ -1236,6 +1237,33 @@ describe("server API", () => {
     expect((await app.inject({ method: "DELETE", url: `/api/mcp/servers/${first.id}` })).statusCode).toBe(204);
     expect((await app.inject({ method: "DELETE", url: `/api/mcp/servers/${first.id}` })).statusCode).toBe(404);
     expect((await app.inject({ method: "GET", url: "/api/mcp/servers" })).json()).toEqual([expect.objectContaining({ id: second.id })]);
+  });
+
+  it("lets users create, edit and delete memories that reach the model prompt", async () => {
+    const app = await testApp();
+    const created = await app.inject({ method: "POST", url: "/api/memories", payload: { content: "  Prefers tea  " } });
+    expect(created.statusCode).toBe(201);
+    const memory = created.json() as { id: number; content: string };
+    expect(memory.content).toBe("Prefers tea");
+    expect(toolSystemPrompt(app.store)).toContain(`<memory id="${memory.id}">Prefers tea</memory>`);
+
+    const updated = await app.inject({ method: "PATCH", url: `/api/memories/${memory.id}`, payload: { content: "Prefers coffee" } });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({ id: memory.id, content: "Prefers coffee" });
+    expect((await app.inject({ method: "GET", url: "/api/memories" })).json()).toEqual([expect.objectContaining({ id: memory.id, content: "Prefers coffee" })]);
+
+    expect((await app.inject({ method: "POST", url: "/api/memories", payload: { content: "   " } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "POST", url: "/api/memories", payload: { content: "x".repeat(20_001) } })).statusCode).toBe(400);
+    expect((await app.inject({ method: "PATCH", url: "/api/memories/abc", payload: { content: "x" } })).statusCode).toBe(400);
+    const missing = await app.inject({ method: "PATCH", url: "/api/memories/999999", payload: { content: "x" } });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ error: { code: "memory_not_found" } });
+    expect((await app.inject({ method: "POST", url: "/api/memories", headers: { "x-llm-chat-request": "" }, payload: { content: "x" } })).statusCode).toBe(403);
+
+    expect((await app.inject({ method: "DELETE", url: `/api/memories/${memory.id}` })).statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `/api/memories/${memory.id}` })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: "/api/memories" })).json()).toEqual([]);
+    expect(toolSystemPrompt(app.store)).not.toContain("Prefers coffee");
   });
 
   it("folds large buffered blocks into one SSE snapshot and closes terminal streams", async () => {

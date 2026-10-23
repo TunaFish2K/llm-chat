@@ -15,18 +15,19 @@ import { NotificationSettings } from "../components/NotificationSettings";
 import { stopNotificationSession } from "../lib/notifications";
 import { clearOfflineHistory } from "../lib/offline-history";
 import { saveRequestRetries, useRequestPreferences } from "../lib/request-preferences";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Maximize2 } from "lucide-react";
 import type {
   AppSettings,
   McpServerDto,
+  MemoryDto as MemoryItem,
   PluginDto,
   SkillDto,
   ToolCatalogItemDto,
   ToolSettingsDto
 } from "@llm-chat/contracts";
 import { DEFAULT_MAX_IMAGE_UPLOAD_MIB, MAX_IMAGE_UPLOAD_MIB } from "@llm-chat/contracts";
-import { endpoints, type MemoryDto as MemoryItem } from "../lib/api";
+import { endpoints } from "../lib/api";
 import { ChatTypographySettings } from "../components/ChatTypographySettings";
 import { AccentPicker } from "../components/AccentPicker";
 import {
@@ -1257,11 +1258,14 @@ function McpEditor({
 
 function MemoriesSection() {
   useLocale();
-  const { data: memories, setData: setMemories, error, reload: load } = useResource("memories", endpoints.memories);
+  const { data: memories, error, reload: load } = useResource("memories", endpoints.memories);
+  const [editing, setEditing] = useState<MemoryItem | "new" | null>(null);
+  const [removing, setRemoving] = useState<MemoryItem | null>(null);
 
   useEffect(() => {
     void load();
   }, [load]);
+  useResourceEvents(["memories"], load);
 
   if (error && !memories) return <ErrorState message={error} onRetry={() => void load()} />;
   if (!memories) return <LoadingState />;
@@ -1269,19 +1273,106 @@ function MemoriesSection() {
   return (
     <div className="card">
       {error ? <ErrorState message={error} onRetry={() => void load()} /> : null}
-      <h3>{t("SettingsView.long_term_memory")}</h3>
+      <h3 className="section-heading-actions">{t("SettingsView.long_term_memory")}<button className="btn small primary" onClick={() => setEditing("new")}>{t("SettingsView.add_memory")}</button>
+      </h3>
+      <p className="sub">{t("SettingsView.memories_hint")}</p>
       {memories.length === 0 ? (
         <EmptyState title={t("SettingsView.no_memories_yet")} />
       ) : (
         memories.map((memory) => (
           <div className="list-row" key={memory.id}>
-            <div className="grow">
+            <div className="list-row-content">
               <div style={{ whiteSpace: "pre-wrap" }}>{memory.content}</div>
               <div className="sub">{t("SettingsView.updated", { value1: (formatTime(memory.updatedAt)) })}</div>
+            </div>
+            <div className="list-row-actions">
+              <button className="btn small" onClick={() => setEditing(memory)}>{t("SettingsView.edit")}</button>
+              <button className="btn small danger" onClick={() => setRemoving(memory)}>{t("WorkspaceSidebar.delete_2")}</button>
             </div>
           </div>
         ))
       )}
+      <Presence>{editing ? (
+        <MemoryEditor key={editing === "new" ? "new" : editing.id} memory={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={load} />
+      ) : null}</Presence>
+      <Presence>{removing ? (
+        <ConfirmModal
+          title={t("SettingsView.delete_memory")}
+          message={t("SettingsView.delete_memory_confirm")}
+          confirmLabel={t("WorkspaceSidebar.delete_2")}
+          danger
+          onClose={() => setRemoving(null)}
+          onConfirm={() => {
+            const target = removing;
+            setRemoving(null);
+            endpoints
+              .deleteMemory(target.id)
+              .then(load)
+              .catch(toastError);
+          }}
+        />
+      ) : null}</Presence>
     </div>
+  );
+}
+
+function MemoryEditor({
+  memory,
+  onClose,
+  onSaved
+}: {
+  memory: MemoryItem | null;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  useLocale();
+  const contentId = useId();
+  const [content, setContent] = useState(memory?.content ?? "");
+  const [error, setError] = useErrorState(null);
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (memory) await endpoints.updateMemory(memory.id, { content: content.trim() });
+      else await endpoints.createMemory({ content: content.trim() });
+      void onSaved().catch(toastError);
+      toast("success", localized("SettingsView.memory_saved"));
+      onClose();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : t("SettingsView.could_not_save"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={memory ? t("SettingsView.edit_memory") : t("SettingsView.add_memory")}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>{t("WorkspaceSidebar.cancel")}</button>
+          <button className="btn primary" disabled={busy || !content.trim()} onClick={() => void save()}>{t("WorkspaceSidebar.save")}</button>
+        </>
+      }
+    >
+      {error ? (
+        <p role="alert" className="text-danger">
+          {error}
+        </p>
+      ) : null}
+      <Field label={t("SettingsView.memory_content")} htmlFor={contentId}>
+        <textarea
+          id={contentId}
+          className="textarea"
+          rows={8}
+          maxLength={20_000}
+          value={content}
+          onChange={(event) => setContent(event.target.value)}
+        />
+      </Field>
+    </Modal>
   );
 }

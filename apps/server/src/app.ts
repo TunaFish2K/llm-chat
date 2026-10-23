@@ -39,6 +39,8 @@ import {
   imageUploadSchema,
   mcpServerInputSchema,
   mcpServerPatchSchema,
+  memoryIdParamsSchema,
+  memoryInputSchema,
   modelInputSchema,
   patchConversationSchema,
   retryGenerationSchema,
@@ -594,6 +596,25 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     return { path: await userOperation("workspace_invalid", () => canonicalWorkspace(value.path)) };
   });
   app.get("/api/memories", async () => store.listMemories());
+  app.post("/api/memories", async (request, reply) => {
+    const { content } = memoryInputSchema.parse(request.body);
+    const memory = store.createMemory(content);
+    eventHub.emit({ type: "resource-changed", resource: "memories" });
+    return reply.code(201).send(memory);
+  });
+  app.patch<{ Params: { id: string } }>("/api/memories/:id", async (request) => {
+    const { id } = memoryIdParamsSchema.parse(request.params);
+    const { content } = memoryInputSchema.parse(request.body);
+    const memory = store.updateMemory(id, content);
+    eventHub.emit({ type: "resource-changed", resource: "memories" });
+    return memory;
+  });
+  app.delete<{ Params: { id: string } }>("/api/memories/:id", async (request, reply) => {
+    const { id } = memoryIdParamsSchema.parse(request.params);
+    store.deleteMemory(id);
+    eventHub.emit({ type: "resource-changed", resource: "memories" });
+    return reply.code(204).send();
+  });
   app.get("/api/mcp/servers", async () => store.listMcpServers());
   app.post("/api/mcp/servers", async (request, reply) => {
     const value = mcpServerInputSchema.parse(request.body);
