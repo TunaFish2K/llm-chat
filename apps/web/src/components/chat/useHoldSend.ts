@@ -28,6 +28,8 @@ export function useHoldSend(send: (steer: boolean) => void, identity?: string) {
   }, [identity]);
   return {
     start(pointer = false) { if (state.current.active) return; state.current = { active: true, held: false, timer: setTimeout(() => { state.current.held = true; suppressClick.current = pointer; callback.current(true); }, 450) }; },
+    /** True between press and the hold threshold, while Escape can still abort the send. */
+    pending() { return state.current.active && !state.current.held; },
     finish() { const tap = state.current.active && !state.current.held; cancel(); if (tap) callback.current(false); },
     cancel
   };

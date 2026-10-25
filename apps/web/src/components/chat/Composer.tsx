@@ -1,5 +1,6 @@
 import { readSubmission, saveSubmission, submissionStore, waitForSubmission, type Submission, type SubmissionActions } from "../../lib/submission";
 import { PopoverLayer, Presence } from "../../lib/motion";
+import { useEscapeAction } from "../../lib/mobile-navigation";
 import { effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
 import { errorDisplayMessage, useErrorState } from "../../lib/error-display";
 import { t, useLocale, localized } from "../../lib/i18n";
@@ -38,7 +39,7 @@ import { DirectoryPicker } from "../DirectoryPicker";
 import { AgentSwitchDialog, ExecutionOverridesDialog } from "./dialogs";
 import { createComposerMessageSelector, type ComposerMessageState, EMPTY_MESSAGES, INHERIT, NO_MODEL, greetingOptions, prettyJson } from "./model";
 import { ChatTypographySettings } from "../ChatTypographySettings";
-import { CancelGenerationButton } from "./CancelGenerationButton";
+import { CancelGenerationButton, useCancelGeneration } from "./CancelGenerationButton";
 import { ModelPicker } from "./ModelPicker";
 import { AgentPicker } from "./AgentPicker";
 import { AttachmentMenu, AttachmentList, useAttachments } from "./AttachmentEditor";
@@ -207,6 +208,8 @@ export const Composer = memo(function Composer({
   }, [isNew, effectiveAgent?.id, greetingIndex, greetings.length]);
 
   const generating = Boolean(active && active.status !== "waiting-approval");
+  const stopGeneration = useCancelGeneration(conversation?.id ?? "", active?.id ?? "");
+  useEscapeAction(generating, () => void stopGeneration.cancel());
   useEffect(() => {
     if (conversation && !active) { void reloadQueue().catch(toastError); }
   }, [conversation?.id, active?.id, reloadQueue]);
@@ -546,6 +549,11 @@ export const Composer = memo(function Composer({
   const holdSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const keyHoldSend = useHoldSend((steer) => void sendMessage(undefined, steer), conversation?.id);
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape" && !event.repeat && !event.nativeEvent.isComposing) {
+      if (keyHoldSend.pending()) { event.preventDefault(); keyHoldSend.cancel(); }
+      else if (generating) { event.preventDefault(); void stopGeneration.cancel(); }
+      return;
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       if (!event.repeat) keyHoldSend.start();
@@ -618,7 +626,7 @@ export const Composer = memo(function Composer({
                 }}
               />
 
-              {generating && active ? <CancelGenerationButton conversationId={conversation!.id} generationId={active.id} className="composer-stop-button" /> : null}
+              {generating && active ? <CancelGenerationButton conversationId={conversation!.id} generationId={active.id} className="composer-stop-button" control={stopGeneration} shortcut /> : null}
               </div>
 
               <AttachmentList uploadScope={uploadScope} attachments={attachments} setAttachments={setAttachments} disabled={false} />

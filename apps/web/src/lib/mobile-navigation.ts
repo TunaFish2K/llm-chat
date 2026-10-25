@@ -31,6 +31,38 @@ export function dismissBackLayer(): boolean {
   return true;
 }
 
+const escapeActions: Array<{ run: () => void; priority: number }> = [];
+/** Runs on Escape only when no overlay claimed the key and focus is outside editable fields. */
+export function useEscapeAction(enabled: boolean, action: () => void, priority = 0): void {
+  const callback = useRef(action);
+  callback.current = action;
+  useEffect(() => {
+    if (!enabled) return;
+    const entry = { run: () => callback.current(), priority };
+    escapeActions.push(entry);
+    return () => { const index = escapeActions.indexOf(entry); if (index >= 0) escapeActions.splice(index, 1); };
+  }, [enabled, priority]);
+}
+
+/** Desktop Escape closes the topmost back layer, then falls back to registered page actions. */
+export function useEscapeKey(): void {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (dismissBackLayer()) { event.preventDefault(); return; }
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]")) return;
+      const action = escapeActions.reduce<(typeof escapeActions)[number] | undefined>((top, next) =>
+        !top || next.priority >= top.priority ? next : top, undefined);
+      if (!action) return;
+      event.preventDefault();
+      action.run();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+}
+
 export function requestMobileBack(): void {
   window.dispatchEvent(new Event("llm-chat:back"));
 }

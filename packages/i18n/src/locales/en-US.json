@@ -988,6 +988,7 @@
   "CancelGenerationButton.cancellation_did_not_take_effect_try_again": "Cancellation did not take effect. Try again.",
   "CancelGenerationButton.canceling": "Canceling",
   "CancelGenerationButton.stop_generation": "Stop generation",
+  "CancelGenerationButton.stop_generation_esc": "Stop generation (Esc)",
   "AttachmentEditor.attach_up_to_8_files_per_message": "Attach up to 8 files per message",
   "AttachmentEditor.exceeds_mib": "{{value1}} exceeds {{value2}} MiB",
   "AttachmentEditor.attach_up_to_4_images_per_message_with_a_total": "Attach up to 4 images per message, with a total size of {{size}} or less",

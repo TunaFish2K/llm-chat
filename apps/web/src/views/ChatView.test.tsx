@@ -660,6 +660,25 @@ describe("ChatView", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("无法回答该问题");
   });
 
+  it("stops the running generation with Escape in the composer, after cancelling a pending hold-send", async () => {
+    const generation = makeGeneration({ id: "gen-live", status: "running", blocks: [] });
+    const messages = [makeMessage({ id: "m-live", activeGenerationId: generation.id, generations: [generation] })];
+    seedStore(messages); vi.stubGlobal("fetch", messageFetch(messages));
+    const stop = vi.spyOn(endpoints, "cancelGeneration").mockResolvedValue({ ok: true, status: "stopping" });
+    const enqueue = vi.spyOn(endpoints, "enqueueMessage");
+    render(<ChatView conversationId="conv-1" />);
+    const input = screen.getByLabelText("输入消息");
+    expect(await screen.findByRole("button", { name: "停止生成" })).toHaveAttribute("aria-keyshortcuts", "Escape");
+    fireEvent.change(input, { target: { value: "not yet" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Escape" });
+    fireEvent.keyUp(input, { key: "Enter" });
+    expect(enqueue).not.toHaveBeenCalled(); expect(stop).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Escape" });
+    await waitFor(() => expect(stop).toHaveBeenCalledExactlyOnceWith("conv-1", "gen-live"));
+    expect(screen.getByRole("button", { name: "正在取消" })).toBeDisabled();
+  });
+
   it("shows first-token feedback and preserves reading position during streaming", async () => {
     const generation = makeGeneration({ id: "gen-live", status: "running", blocks: [] });
     const messages = [makeMessage({ id: "m-live", activeGenerationId: generation.id, generations: [generation] })];

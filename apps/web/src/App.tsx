@@ -8,7 +8,7 @@ import { initOfflineHistory, isOffline } from "./lib/offline-history";
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { ArrowLeft } from "lucide-react";
-import { dismissBackLayer, parentRoute, requestMobileBack, useMobileBackGesture } from "./lib/mobile-navigation";
+import { dismissBackLayer, parentRoute, requestMobileBack, useEscapeKey, useMobileBackGesture } from "./lib/mobile-navigation";
 import { endpoints } from "./lib/api";
 import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents, stopAppEvents, toast } from "./lib/app-state";
 import type { InspectionTarget } from "./lib/inspection";
@@ -92,6 +92,7 @@ export function App() {
     else setNavDrawer(true);
   };
   const backOffset = useMobileBackGesture(mobile && auth !== "required", back);
+  useEscapeKey();
   useEffect(() => {
     if (!mobile) return;
     window.addEventListener("llm-chat:back", back);

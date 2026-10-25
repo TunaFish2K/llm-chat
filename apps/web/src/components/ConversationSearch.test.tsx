@@ -22,3 +22,15 @@ it("keeps old search results visible but cannot select them after a new query fa
   fireEvent.click(old); fireEvent.keyDown(input, { key: "Enter" });
   expect(select).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
 });
+
+it("clears the query on the first Escape and closes on the next", async () => {
+  vi.spyOn(endpoints, "searchConversations").mockResolvedValue([]);
+  const close = vi.fn();
+  render(<ConversationSearch onClose={close} />);
+  const input = screen.getByRole("searchbox");
+  fireEvent.change(input, { target: { value: "draft" } });
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(input).toHaveValue(""); expect(close).not.toHaveBeenCalled();
+  fireEvent.keyDown(input, { key: "Escape" });
+  await waitFor(() => expect(close).toHaveBeenCalledOnce());
+});

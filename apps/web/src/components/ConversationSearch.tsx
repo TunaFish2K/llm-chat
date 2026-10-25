@@ -56,6 +56,7 @@ export function ConversationSearch({ onClose, onNavigate = navigate }: { onClose
       <input ref={input} className="input" type="search" aria-label={t("ConversationSearch.search_conversation_titles_and_messages")} placeholder={t("ConversationSearch.search_titles_or_message_content")} maxLength={200} value={query}
         onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
           if (event.nativeEvent.isComposing) return;
+          if (event.key === "Escape" && query) { event.preventDefault(); setQuery(""); return; }
           if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setSelected((n) => Math.max(0, Math.min(items.length - 1, n + (event.key === "ArrowDown" ? 1 : -1)))); }
           if (event.key === "Enter" && items[selected]) { event.preventDefault(); void open(items[selected]!.conversationId); }
         }} />

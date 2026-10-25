@@ -24,3 +24,10 @@ it("blocks the synthetic click after a hold even if layout moves another button 
   expect(send).toHaveBeenCalledExactlyOnceWith(true); expect(unintended).not.toHaveBeenCalled();
   document.dispatchEvent(new Event("pointerdown")); target.click(); expect(unintended).toHaveBeenCalledOnce(); target.remove();
 });
+it("reports a press as pending only until the hold threshold", () => {
+  vi.useFakeTimers(); const send = vi.fn(); const { result } = renderHook(() => useHoldSend(send));
+  expect(result.current.pending()).toBe(false);
+  act(() => result.current.start()); expect(result.current.pending()).toBe(true);
+  act(() => vi.advanceTimersByTime(450)); expect(result.current.pending()).toBe(false);
+  act(() => result.current.finish());
+});

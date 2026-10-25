@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { dismissBackLayer, parentRoute, requestMobileBack, useBackLayer, useMobileBackGesture } from "./mobile-navigation";
+import { dismissBackLayer, parentRoute, requestMobileBack, useBackLayer, useEscapeAction, useEscapeKey, useMobileBackGesture } from "./mobile-navigation";
 
 function touch(type: string, points: Array<[number, number, number?]>, target: EventTarget = document.body, cancelable = true) {
   const event = new Event(type, { bubbles: true, cancelable });
@@ -117,4 +117,28 @@ describe("mobile edge gesture", () => {
     expect(back).not.toHaveBeenCalled();
     const layer = renderHook(() => useBackLayer(false, back)); layer.unmount();
   });
+});
+
+it("lets Escape close the topmost layer before running page actions, leaving fields and modals alone", () => {
+  const layer = vi.fn(); const action = vi.fn();
+  const escape = (target: EventTarget = document.body) => {
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    act(() => { target.dispatchEvent(event); });
+    return event;
+  };
+  renderHook(() => useEscapeKey());
+  renderHook(() => useEscapeAction(true, action));
+  const { rerender } = renderHook(({ open }) => useBackLayer(open, layer, 30), { initialProps: { open: true } });
+  expect(escape().defaultPrevented).toBe(true);
+  expect(layer).toHaveBeenCalledOnce(); expect(action).not.toHaveBeenCalled();
+  rerender({ open: false });
+  const input = document.body.appendChild(document.createElement("input"));
+  expect(escape(input).defaultPrevented).toBe(false);
+  const dialog = document.body.appendChild(Object.assign(document.createElement("div"), { role: "dialog" }));
+  dialog.setAttribute("role", "dialog"); dialog.setAttribute("aria-modal", "true");
+  escape();
+  expect(action).not.toHaveBeenCalled();
+  dialog.remove(); input.remove();
+  expect(escape().defaultPrevented).toBe(true);
+  expect(action).toHaveBeenCalledOnce(); expect(layer).toHaveBeenCalledOnce();
 });

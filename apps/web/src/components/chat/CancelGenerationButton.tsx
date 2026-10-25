@@ -4,11 +4,11 @@ import { LoaderCircle, Square } from "lucide-react";
 import { endpoints } from "../../lib/api";
 import { isGenerationActive, loadMessages, toastError } from "../../lib/app-state";
 
-export function CancelGenerationButton({ conversationId, generationId, className = "act" }: { conversationId: string; generationId: string; className?: string }) {
-  useLocale();
+export function useCancelGeneration(conversationId: string, generationId: string) {
   const [stopping, setStopping] = useState(false);
   useEffect(() => setStopping(false), [generationId]);
   const cancel = async () => {
+    if (stopping) return;
     setStopping(true);
     try {
       const result = await endpoints.cancelGeneration(conversationId, generationId);
@@ -20,8 +20,19 @@ export function CancelGenerationButton({ conversationId, generationId, className
     }
     catch (error) { setStopping(false); toastError(error); }
   };
+  return { stopping, cancel };
+}
+
+export function CancelGenerationButton({ conversationId, generationId, className = "act", control, shortcut }: {
+  conversationId: string; generationId: string; className?: string;
+  control?: ReturnType<typeof useCancelGeneration>; shortcut?: boolean;
+}) {
+  useLocale();
+  const own = useCancelGeneration(conversationId, generationId);
+  const { stopping, cancel } = control ?? own;
+  const label = stopping ? t("CancelGenerationButton.canceling") : t("CancelGenerationButton.stop_generation");
   return <button type="button" className={className} disabled={stopping} onClick={() => void cancel()}
-    aria-label={stopping ? t("CancelGenerationButton.canceling") : t("CancelGenerationButton.stop_generation")} title={stopping ? t("CancelGenerationButton.canceling") : t("CancelGenerationButton.stop_generation")}>
+    aria-label={label} title={shortcut && !stopping ? t("CancelGenerationButton.stop_generation_esc") : label} aria-keyshortcuts={shortcut ? "Escape" : undefined}>
     {stopping ? <LoaderCircle size={17} className="spin" /> : <Square size={17} fill="currentColor" />}
   </button>;
 }

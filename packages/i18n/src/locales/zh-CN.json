@@ -988,6 +988,7 @@
   "CancelGenerationButton.cancellation_did_not_take_effect_try_again": "取消未生效，请重试",
   "CancelGenerationButton.canceling": "正在取消",
   "CancelGenerationButton.stop_generation": "停止生成",
+  "CancelGenerationButton.stop_generation_esc": "停止生成 (Esc)",
   "AttachmentEditor.attach_up_to_8_files_per_message": "每条消息最多附加 8 个文件",
   "AttachmentEditor.exceeds_mib": "{{value1}} 超过 {{value2}} MiB",
   "AttachmentEditor.attach_up_to_4_images_per_message_with_a_total": "每条消息最多附加 4 张图片，图片总大小不超过 {{size}}",

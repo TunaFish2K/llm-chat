@@ -273,17 +273,6 @@ export function MobileDrawer({
     return () => { active = false; animation.current?.stop(); };
   }, [present, reduced, side, safeToRemove, width, x, enter, exit]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.repeat || event.isComposing || event.defaultPrevented) return;
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
-      event.preventDefault();
-      close();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
-
   const cancel = () => {
     if (!gesture.current) return;
     gesture.current = null;
