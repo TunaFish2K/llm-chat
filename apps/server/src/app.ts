@@ -47,6 +47,7 @@ import {
   roleplayScriptExecutionSchema,
   roleplayPresetImportSchema,
   sendMessageSchema,
+  steerQueueSchema,
   startConversationSchema,
   toolApprovalInputSchema,
   toolSettingsInputSchema,
@@ -948,6 +949,13 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.get<{ Params: { id: string } }>("/api/conversations/:id/queue", async (request) => ({
     items: store.listQueuedMessages(request.params.id), paused: store.isQueuePaused(request.params.id)
   }));
+  app.post<{ Params: { id: string } }>("/api/conversations/:id/queue/steer", async (request) => {
+    const { scope } = steerQueueSchema.parse(request.body);
+    store.steerQueuedMessages(request.params.id, scope);
+    queue.changed(request.params.id);
+    queue.kick(request.params.id);
+    return { items: store.listQueuedMessages(request.params.id), paused: store.isQueuePaused(request.params.id) };
+  });
   app.post<{ Params: { id: string } }>("/api/conversations/:id/queue/resume", async (request) => {
     store.resumeQueue(request.params.id);
     queue.changed(request.params.id);

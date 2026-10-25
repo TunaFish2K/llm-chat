@@ -165,6 +165,7 @@ export const endpoints = {
   serviceSettings: () => api.get<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services"),
   updateServiceSettings: (input: import("@llm-chat/contracts").ServiceSettingsInput) => api.patch<import("@llm-chat/contracts").ServiceSettingsDto>("/api/tools/services", input),
   queueState: (id: string) => api.get<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue`, { conversationId: id }),
+  steerQueue: (id: string, scope: "first" | "all") => api.post<import("@llm-chat/contracts").MessageQueueStateDto>(`/api/conversations/${id}/queue/steer`, { scope }, { conversationId: id }),
   resumeQueue: (id: string) => api.post<{ ok: true }>(`/api/conversations/${id}/queue/resume`, {}, { conversationId: id }),
   queuedMessages: (id: string) => api.get<import("@llm-chat/contracts").QueuedMessageDto[]>(`/api/conversations/${id}/queued-messages`, { conversationId: id }),
   enqueueMessage: (id: string, text: string, assetIds: string[], mode: "queue" | "steer" = "queue", clientSubmissionId?: string, signal?: AbortSignal) => api.post<import("@llm-chat/contracts").QueuedMessageDto>(`/api/conversations/${id}/queued-messages`, { text, assetIds, mode, clientSubmissionId }, { conversationId: id, allowOffline: true, ...(signal ? { signal } : {}) }),

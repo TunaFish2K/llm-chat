@@ -1,8 +1,8 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { QueuedMessageDto, MessageQueueStateDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
-import { useMessageQueue } from "./MessageQueueList";
+import { MessageQueueList, useMessageQueue } from "./MessageQueueList";
 
 vi.mock("../../lib/app-state", () => ({ refreshMessages: vi.fn(), toastError: vi.fn() }));
 afterEach(() => vi.restoreAllMocks());
@@ -27,4 +27,19 @@ it("discards a stale response after switching conversations", async () => {
   await act(async () => resolve({ items: [{ id: "old-item" }] as QueuedMessageDto[], paused: true }));
   expect(result.current.items).toEqual([]);
   expect(result.current.paused).toBe(false);
+});
+
+it("sends the first or all queued messages at the next tool return", async () => {
+  const steer = vi.spyOn(endpoints, "steerQueue").mockResolvedValue({ items: [], paused: false });
+  const reload = vi.fn().mockResolvedValue(undefined);
+  const items = [{ id: "a", text: "first", mode: "queue", status: "pending", attachments: [] }, { id: "b", text: "second", mode: "queue", status: "pending", attachments: [] }] as unknown as QueuedMessageDto[];
+  const { rerender } = render(<MessageQueueList conversationId="conversation" items={items} reload={reload} />);
+  fireEvent.click(screen.getByRole("button", { name: "在下一次工具返回时发送第一条" }));
+  await waitFor(() => expect(steer).toHaveBeenLastCalledWith("conversation", "first"));
+  await waitFor(() => expect(screen.getByRole("button", { name: "合并全部消息，在下一次工具返回时发送" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "合并全部消息，在下一次工具返回时发送" }));
+  await waitFor(() => expect(steer).toHaveBeenLastCalledWith("conversation", "all"));
+  expect(reload).toHaveBeenCalledTimes(2);
+  rerender(<MessageQueueList conversationId="conversation" items={[{ ...items[0]!, mode: "steer" }]} reload={reload} />);
+  expect(screen.queryByRole("button", { name: "在下一次工具返回时发送第一条" })).toBeNull();
 });

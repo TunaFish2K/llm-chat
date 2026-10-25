@@ -61,6 +61,25 @@ describe("GenerationRunner lifecycle", () => {
     expect(store.listQueuedMessages(generation.conversationId).some((item) => item.text === "ordinary" && item.status === "pending")).toBe(true);
   });
 
+  it("hands off at the next tool return to queued messages promoted while running, merged into one turn", async () => {
+    const store = createStore(); const generation = seedGeneration(store);
+    const gate = deferred<void>();
+    const execute = vi.fn(async () => { await gate.promise; return "finished tool"; });
+    const stream = vi.fn(() => events([toolCall("call", "work", "{}"), { type: "complete", stopReason: "tool_calls" }]));
+    const runner = makeRunner(store, { buildTools: async () => [serverTool("work", execute)], stream });
+    runner.start(generation.generationId);
+    await until(() => execute.mock.calls.length > 0);
+    store.enqueueMessage(generation.conversationId, "first", []);
+    store.enqueueMessage(generation.conversationId, "second", []);
+    store.steerQueuedMessages(generation.conversationId, "all");
+    gate.resolve();
+    expect(await terminal(store, generation.generationId)).toMatchObject({ status: "completed", stopReason: "steered" });
+    expect(stream).toHaveBeenCalledTimes(1);
+    const next = store.dispatchQueuedMessage(generation.conversationId, () => {});
+    expect(store.listMessages(generation.conversationId).find((message) => message.id === next?.userMessageId)?.text).toBe("first\n\nsecond");
+    expect(store.listQueuedMessages(generation.conversationId)).toMatchObject([{ status: "dispatching" }]);
+  });
+
   it("guards unknown and terminal generations and starts an active generation only once", async () => {
     const store = createStore();
     const first = seedGeneration(store);

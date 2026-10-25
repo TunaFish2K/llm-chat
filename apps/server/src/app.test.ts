@@ -514,6 +514,21 @@ describe("server API", () => {
     expect((await app.inject({ method: "GET", url: "/api/conversations/missing/queue" })).statusCode).toBe(404);
   });
 
+  it("steers queued messages to the next tool return through the API", async () => {
+    const app = await testApp(); const model = await createApiModel(app);
+    const started = app.store.startConversation({ text: "original", modelId: model.id, contextPolicy: "full" });
+    const id = started.conversation.id;
+    app.store.setGenerationWaitingApproval(started.generation.generationId);
+    const first = app.store.enqueueMessage(id, "one", []);
+    app.store.enqueueMessage(id, "two", []);
+    app.store.enqueueMessage(id, "three", []);
+    const steer = (scope: unknown, conversationId = id) => app.inject({ method: "POST", url: `/api/conversations/${conversationId}/queue/steer`, payload: { scope } });
+    expect((await steer("first")).json()).toMatchObject({ paused: false, items: [{ id: first.id, mode: "steer" }, { text: "two", mode: "queue" }, { text: "three" }] });
+    expect((await steer("all")).json()).toEqual({ paused: false, items: [expect.objectContaining({ id: first.id, text: "one\n\ntwo\n\nthree", mode: "steer" })] });
+    expect((await steer("everything")).statusCode).toBe(400);
+    expect((await steer("all", "missing")).statusCode).toBe(404);
+  });
+
   it("persists queued attachments and supports scoped deletion while a generation is waiting", async () => {
     const app = await testApp();
     const model = await createApiModel(app);

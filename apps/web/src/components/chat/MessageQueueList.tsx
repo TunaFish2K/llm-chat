@@ -3,7 +3,7 @@ import { t, useLocale } from "../../lib/i18n";
 import { RefreshScheduler } from "../../lib/refresh-scheduler";
 import { conversationDeleted } from "../../lib/conversation-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoaderCircle, Trash2, X } from "lucide-react";
+import { CornerDownRight, ListEnd, LoaderCircle, Trash2, X } from "lucide-react";
 import type { QueuedMessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { refreshMessages, toastError } from "../../lib/app-state";
@@ -61,6 +61,13 @@ export function MessageQueueList({ conversationId, items, reload, paused = false
     try { await endpoints.deleteQueuedMessage(conversationId, id); void reload().catch(toastError); }
     catch (error) { toastError(error); } finally { setPending(null); }
   };
+  const steer = async (scope: "first" | "all") => {
+    if (pending) return;
+    setPending(`steer-${scope}`);
+    try { await endpoints.steerQueue(conversationId, scope); void reload().catch(toastError); }
+    catch (error) { toastError(error); } finally { setPending(null); }
+  };
+  const steerable = items.some((item) => item.status === "pending" && item.mode !== "steer");
   const resume = async () => {
     if (pending) return;
     setPending("resume");
@@ -69,7 +76,12 @@ export function MessageQueueList({ conversationId, items, reload, paused = false
   };
   return <section className="message-queue" aria-label={t("MessageQueueList.queued_messages")} aria-busy={Boolean(pending)}>
     {paused ? <div className="row"><span>{t("MessageQueueList.queue_paused")}</span><button className="btn small" disabled={Boolean(pending)} onClick={() => void resume()}>{pending === "resume" ? <LoaderCircle size={15} className="spin" /> : null}{t("MessageQueueList.resume_sending")}</button></div> : null}
-    <header><span>{t("MessageQueueList.queued", { value1: (items.length) })}</span><button type="button" className="icon-button" disabled={Boolean(pending)} aria-label={t("MessageQueueList.clear_queued_messages")} onClick={() => void remove()}>{pending === "all" ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}</button></header>
+    <header><span>{t("MessageQueueList.queued", { value1: (items.length) })}</span><div className="message-queue-actions">
+      {steerable ? <>
+        <button type="button" className="icon-button" disabled={Boolean(pending)} aria-label={t("MessageQueueList.send_first_at_next_tool_return")} title={t("MessageQueueList.send_first_at_next_tool_return")} onClick={() => void steer("first")}>{pending === "steer-first" ? <LoaderCircle size={15} className="spin" /> : <CornerDownRight size={15} />}</button>
+        <button type="button" className="icon-button" disabled={Boolean(pending)} aria-label={t("MessageQueueList.send_all_at_next_tool_return")} title={t("MessageQueueList.send_all_at_next_tool_return")} onClick={() => void steer("all")}>{pending === "steer-all" ? <LoaderCircle size={15} className="spin" /> : <ListEnd size={15} />}</button>
+      </> : null}
+      <button type="button" className="icon-button" disabled={Boolean(pending)} aria-label={t("MessageQueueList.clear_queued_messages")} onClick={() => void remove()}>{pending === "all" ? <LoaderCircle size={15} className="spin" /> : <Trash2 size={15} />}</button></div></header>
     <ol>{items.map((item) => <li key={item.id}>
       <div><p>{item.mode === "steer" ? <span className="tag accent">{t("MessageQueueList.steer_next_request")}</span> : null}{item.text || t("MessageQueueList.message_with_attachments")}</p>{item.attachments.length ? <small>{t("MessageQueueList.attachments", { count: Number((item.attachments.length)), value1: (item.attachments.length) })}</small> : null}
         {item.status === "dispatching" ? <small>{t("MessageQueueList.sending")}</small> : item.error ? <small role="alert">{displayError({ message: item.error, ...(item.errorI18n ? { i18n: item.errorI18n } : {}) })}</small> : null}</div>

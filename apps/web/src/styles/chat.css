@@ -1655,6 +1655,7 @@
 .attachment-menu { width: 180px; }
 .message-queue { border: 1px solid var(--border); border-radius: var(--radius-md); margin-top: 8px; padding: 6px 10px; font-size: var(--text-sm); }
 .message-queue header, .message-queue li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.message-queue-actions { display: flex; align-items: center; gap: 2px; }
 .message-queue ol { margin: 0; padding: 0; max-height: 180px; overflow: auto; counter-reset: queued; }
 .message-queue li { counter-increment: queued; border-top: 1px solid var(--border); padding-block: 4px; }
 .message-queue li::before { content: counter(queued); color: var(--text-muted); }

@@ -3289,6 +3289,31 @@ export class Store {
       .run(conversationId, id ?? null, id ?? null);
   }
 
+  /** Promotes pending queue items to the steer slot; "all" merges them so one turn carries every message. */
+  steerQueuedMessages(conversationId: string, scope: "first" | "all"): void {
+    this.transaction(() => {
+      const pending = this.listQueuedMessages(conversationId).filter((item) => item.status === "pending");
+      const queued = pending.filter((item) => item.mode !== "steer");
+      const selected = scope === "first" ? queued.slice(0, 1) : queued;
+      if (!selected.length) return;
+      const [target, ...merged] = [...pending.filter((item) => item.mode === "steer").slice(0, 1), ...selected];
+      if (merged.length) {
+        const items = [target!, ...merged];
+        const text = items.map((item) => item.text).filter(Boolean).join("\n\n");
+        if (text.length > 1_000_000) throw withMessage(new StoreError("queue_merge_too_long", "合并后的消息过长"), "error.the_merged_message_is_too_long");
+        const assetIds = [...new Set(items.flatMap((item) => item.attachments.map((asset) => asset.id)))];
+        this.validateAttachments(assetIds);
+        this.sqlite.prepare("UPDATE queued_messages SET text = ? WHERE id = ?").run(text, target!.id);
+        this.sqlite.prepare("DELETE FROM queued_message_assets WHERE queue_id = ?").run(target!.id);
+        const insert = this.sqlite.prepare("INSERT INTO queued_message_assets(queue_id, asset_id, asset_index) VALUES (?, ?, ?)");
+        assetIds.forEach((assetId, index) => insert.run(target!.id, assetId, index));
+        const remove = this.sqlite.prepare("DELETE FROM queued_messages WHERE id = ?");
+        for (const item of merged) remove.run(item.id);
+      }
+      this.sqlite.prepare("UPDATE queued_messages SET mode = 'steer' WHERE id = ?").run(target!.id);
+    });
+  }
+
   hasPendingSteer(conversationId: string): boolean {
     return Boolean(this.sqlite.prepare(`SELECT 1 FROM queued_messages q JOIN conversations c ON c.id = q.conversation_id
       WHERE q.conversation_id = ? AND q.mode = 'steer' AND q.status = 'pending' AND c.queue_paused = 0 LIMIT 1`).get(conversationId));

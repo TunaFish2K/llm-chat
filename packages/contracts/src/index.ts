@@ -1169,6 +1169,9 @@ export const sendMessageSchema = z.object({
   message: "Message text or at least one attachment is required"
 });
 
+export const steerQueueSchema = z.object({ scope: z.enum(["first", "all"]) });
+export type SteerQueueInput = z.infer<typeof steerQueueSchema>;
+
 export const startConversationSchema = sendMessageSchema.extend({
   agentId: z.string().uuid(),
   greetingIndex: z.number().int().nonnegative().max(100).default(0),

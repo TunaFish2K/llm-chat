@@ -124,3 +124,37 @@ it("cancels a dispatch during attachment preparation without starting it later",
   expect(store.listQueuedMessages(conversationId)).toEqual([]);
   await queue.close(); await runner.close();
 });
+
+it("promotes the first or all pending queue items into a single steer message", () => {
+  const { store, conversationId } = setup();
+  const asset = (n: string, kind: "file" | "image" = "file") => store.createFileAsset({ sha256: n.repeat(64), fileName: `${n}.txt`, mimeType: kind === "image" ? "image/png" : "text/plain", kind, byteSize: 2, storageKey: n });
+  const [x, y] = [asset("a"), asset("b")];
+  store.steerQueuedMessages(conversationId, "all");
+  const a = store.enqueueMessage(conversationId, "a", [x.id]);
+  store.enqueueMessage(conversationId, "", [y.id]);
+  store.enqueueMessage(conversationId, "c", [x.id]);
+  store.steerQueuedMessages(conversationId, "first");
+  expect(store.listQueuedMessages(conversationId).map((item) => [item.text, item.mode])).toEqual([["a", "steer"], ["", "queue"], ["c", "queue"]]);
+  store.steerQueuedMessages(conversationId, "first");
+  expect(store.listQueuedMessages(conversationId).map((item) => [item.id, item.text, item.mode, item.attachments.map((file) => file.id)]))
+    .toEqual([[a.id, "a", "steer", [x.id, y.id]], [expect.any(String), "c", "queue", [x.id]]]);
+  store.steerQueuedMessages(conversationId, "all");
+  expect(store.listQueuedMessages(conversationId)).toMatchObject([{ id: a.id, text: "a\n\nc", mode: "steer", attachments: [{ id: x.id }, { id: y.id }] }]);
+  store.enqueueMessage(conversationId, "too many", Array.from({ length: 7 }, (_, index) => asset(String.fromCharCode(99 + index)).id));
+  expect(() => store.steerQueuedMessages(conversationId, "all")).toThrow("8");
+  expect(store.listQueuedMessages(conversationId).map((item) => item.mode)).toEqual(["steer", "queue"]);
+});
+
+it("leaves dispatching and failed items untouched when steering", () => {
+  const { store, conversationId, first } = setup();
+  store.finishGeneration(first.generationId, "completed", {});
+  store.enqueueMessage(conversationId, "bad", []);
+  store.dispatchQueuedMessage(conversationId, () => { throw new Error("broken"); });
+  store.enqueueMessage(conversationId, "sending", []);
+  store.dispatchQueuedMessage(conversationId, () => {});
+  const later = store.enqueueMessage(conversationId, "later", []);
+  store.steerQueuedMessages(conversationId, "all");
+  expect(store.listQueuedMessages(conversationId).map((item) => [item.text, item.status, item.mode]))
+    .toEqual([["later", "pending", "steer"], ["bad", "failed", "queue"], ["sending", "dispatching", "queue"]]);
+  expect(store.listQueuedMessages(conversationId)[0]!.id).toBe(later.id);
+});
