@@ -23,7 +23,7 @@ export interface StickToBottom {
  */
 export function useStickToBottom(
   deps: readonly unknown[], enabled: boolean,
-  { initialFollowing = true, preservePosition = false }: { initialFollowing?: boolean; preservePosition?: boolean } = {}
+  { initialFollowing = true, preservePosition = false, paused = false }: { initialFollowing?: boolean; preservePosition?: boolean; paused?: boolean } = {}
 ): StickToBottom {
   const ref = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -35,6 +35,17 @@ export function useStickToBottom(
   const frame = useRef<number | null>(null);
   const previousScrollTop = useRef<number | null>(null);
   const [detached, setDetached] = useState(!initialFollowing);
+
+  useLayoutEffect(() => {
+    if (!paused) return;
+    following.current = false;
+    awaitingUpwardScroll.current = true;
+    smooth.current = false;
+    previousScrollTop.current = null;
+    jumpFrames.current = 0;
+    setDetached(true);
+  }, [paused]);
+  enabled = enabled && !paused;
 
   const reset = useCallback(() => {
     following.current = true;

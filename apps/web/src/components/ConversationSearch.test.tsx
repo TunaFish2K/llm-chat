@@ -10,9 +10,9 @@ it("keeps old search results visible but cannot select them after a new query fa
   const select = vi.spyOn(endpoints, "selectConversationBranch");
   const close = vi.fn();
   render(<ConversationSearch onClose={close} />);
-  const input = screen.getByRole("searchbox");
+  const input = screen.getByRole("combobox");
   fireEvent.change(input, { target: { value: "previous" } });
-  const old = await screen.findByRole("button", { name: /原结果/ });
+  const old = await screen.findByRole("option", { name: /原结果/ });
   const previousSignal = search.mock.calls[0]![1]!;
   fireEvent.change(input, { target: { value: "new" } });
   expect(previousSignal.aborted).toBe(true);
@@ -23,14 +23,11 @@ it("keeps old search results visible but cannot select them after a new query fa
   expect(select).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
 });
 
-it("clears the query on the first Escape and closes on the next", async () => {
+it("closes on Escape even while a query is present", async () => {
   vi.spyOn(endpoints, "searchConversations").mockResolvedValue([]);
   const close = vi.fn();
   render(<ConversationSearch onClose={close} />);
-  const input = screen.getByRole("searchbox");
-  fireEvent.change(input, { target: { value: "draft" } });
-  fireEvent.keyDown(input, { key: "Escape" });
-  expect(input).toHaveValue(""); expect(close).not.toHaveBeenCalled();
-  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "draft" } });
+  fireEvent.keyDown(screen.getByRole("combobox"), { key: "Escape" });
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
 });

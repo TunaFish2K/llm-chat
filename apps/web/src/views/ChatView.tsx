@@ -45,6 +45,9 @@ const noop = () => undefined;
 const EMPTY_BRANCH_GROUPS: ReturnType<typeof conversationBranchGroups> = [];
 
 interface ChatViewProps {
+  reading?: boolean;
+  onEnterReading?: () => void;
+  onExitReading?: () => void;
   conversationId: string | null;
   view?: ConversationView;
   taskId?: string | null;
@@ -64,6 +67,9 @@ interface ChatViewProps {
  * `components/chat`.
  */
 export function ChatView({
+  reading = false,
+  onEnterReading = noop,
+  onExitReading = noop,
   conversationId,
   view = "chat",
   taskId = null,
@@ -102,7 +108,7 @@ export function ChatView({
   const [previewAgentId, setPreviewAgentId] = useState<string | null>(() => readComposerDraft(conversationId ?? null)?.agentId ?? null);
   const [roleplayOpen, setRoleplayOpen] = useState(false);
   const [roleplaySession, setRoleplaySession] = useState<{ agent: AgentDto; state: ConversationRoleplayState } | null>(null);
-  const scroller = useStickToBottom([messages], view === "chat");
+  const scroller = useStickToBottom([messages], view === "chat", { paused: reading });
   const enteringMessages = useMessageEntrance(conversationId, messages, !scroller.detached);
 
   const busy = Boolean(
@@ -275,6 +281,8 @@ export function ChatView({
   return (
     <div className="chat-workspace" data-conversation-id={conversationId ?? "new"} data-roleplay-background={background ? true : undefined} style={roleplayStyle}>
       <ConversationHeader
+        onEnterReading={onEnterReading}
+        reading={reading}
         conversation={conversation}
         view={view}
         mobile={mobile}
@@ -287,9 +295,15 @@ export function ChatView({
         actionsRef={actionsNode}
       />
 
+      {reading ? <>
+        <span className="sr-only" id="reading-instructions" role="status">{t("Reading.instructions")}</span>
+        <button className="sr-only reading-exit" type="button" onClick={onExitReading}>{t("Reading.exit")}</button>
+      </> : null}
       <div className="chat-scroll-shell">
             <div
               className="chat-scroll"
+              tabIndex={-1}
+              aria-describedby={reading ? "reading-instructions" : undefined}
               ref={scroller.ref}
               onScroll={scroller.onScroll}
               data-following-bottom={!scroller.detached || undefined}
@@ -352,6 +366,7 @@ export function ChatView({
             ) : null}
       </div>
       <Composer
+        reading={reading}
         key={conversationId ?? "new"}
         conversationId={conversationId}
         submissionActions={submissionActions}

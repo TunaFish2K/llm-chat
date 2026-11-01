@@ -1,3 +1,4 @@
+import { useReadingMode } from "./lib/reading-mode";
 import { Presence } from "./lib/motion";
 import { useAnimationDuration } from "./lib/animation-preferences";
 import { HistoryRendering } from "./lib/history-rendering";
@@ -10,9 +11,9 @@ import { flushSync } from "react-dom";
 import { ArrowLeft } from "lucide-react";
 import { dismissBackLayer, parentRoute, requestMobileBack, useEscapeKey, useMobileBackGesture } from "./lib/mobile-navigation";
 import { endpoints } from "./lib/api";
-import { appStore, bootstrap, initAuthGate, refreshTaskCounts, startAppEvents, stopAppEvents, toast } from "./lib/app-state";
+import { appStore, bootstrap, dismissToast, presentToasts, initAuthGate, refreshTaskCounts, startAppEvents, stopAppEvents, toast } from "./lib/app-state";
 import type { InspectionTarget } from "./lib/inspection";
-import { applyUpdate, getPwaState, initPwa, promptInstall, subscribePwa } from "./lib/pwa";
+import { applyUpdate, getPwaState, initPwa, subscribePwa } from "./lib/pwa";
 import { navigate, navigateAfterPaint, replaceRoute, routes, useRoute, type Route } from "./lib/router";
 import { useStore } from "./lib/store";
 import { useChatTypography } from "./lib/chat-typography";
@@ -61,6 +62,8 @@ export function App() {
   const agents = useStore(appStore, (state) => state.agents);
   const toasts = useStore(appStore, (state) => state.toasts);
   const route = useRoute();
+  const { reading, enter: enterReading, exit: exitReading } = useReadingMode(
+    route.name === "chat" && route.view === "chat" && route.conversationId ? `${sourceId}:${route.conversationId}` : null);
   const initialConversation = useRef(route.name === "chat" ? route.conversationId ?? undefined : undefined);
   const mobile = useMediaQuery("(max-width: 767px)");
   const [navDrawer, setNavDrawer] = useState(false);
@@ -155,17 +158,17 @@ export function App() {
       ? conversations.find((item) => item.id === route.conversationId) ?? null
       : null;
   const showInspector = route.name === "chat" && Boolean(conversation) && inspectorOpen;
-  const leftTrack = mobile ? 0 : sidebarCollapsed ? RAIL_WIDTH : leftWidth;
-  const rightTrack = mobile || !showInspector ? 0 : rightWidth;
+  const leftTrack = mobile || reading ? 0 : sidebarCollapsed ? RAIL_WIDTH : leftWidth;
+  const rightTrack = mobile || reading || !showInspector ? 0 : rightWidth;
 
   if (auth === "required") return <LoginView />;
 
   const inspector = (
-    <InspectorPanel conversation={conversation} target={inspection} onClose={() => setInspectorOpen(false)} />
+    <InspectorPanel hidden={reading} conversation={conversation} target={inspection} onClose={() => setInspectorOpen(false)} />
   );
 
   return (
-    <AppFrame key={shell.current.key}
+    <AppFrame key={shell.current.key} reading={reading}
       left={leftTrack}
       right={rightTrack}
       sidebarCollapsed={sidebarCollapsed}
@@ -173,14 +176,13 @@ export function App() {
     >
       {!mobile ? (
         <WorkspaceSidebar
+          hidden={reading}
           route={route}
           compact={sidebarCollapsed}
           onToggleCompact={() => setSidebarCollapsed((value) => !value)}
-          pwa={pwa}
-          onInstall={() => void promptInstall()}
         />
       ) : null}
-      {!mobile && !sidebarCollapsed ? (
+      {!mobile && !reading && !sidebarCollapsed ? (
         <ResizeHandle
           side="left"
           position={leftTrack}
@@ -192,6 +194,10 @@ export function App() {
       ) : null}
 
       <main className="workspace-main">
+        <ToastStack toasts={toasts} onDismiss={dismissToast} onPresentationChange={presentToasts}
+          suspended={reading || (mobile && (navDrawer || showInspector))}
+          updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
+          updating={["checking", "downloading", "applying", "repairing"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
         {route.name !== "chat" ? (
           <MobileAppBar
             title={routeTitle(route, conversations, agents)}
@@ -203,6 +209,9 @@ export function App() {
         <Suspense fallback={<LoadingState label={t("App.loading_the_interface")} />}>
           <HistoryRendering value={historyPause === 0}><RouteView
             route={route}
+            reading={reading}
+            onEnterReading={enterReading}
+            onExitReading={exitReading}
             mobile={mobile}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={toggleSidebar}
@@ -215,49 +224,48 @@ export function App() {
 
       {!mobile && showInspector ? (
         <>
-          <ResizeHandle
+          {!reading ? <ResizeHandle
             side="right"
             position={rightWidth}
             value={rightWidth}
             min={RIGHT_MIN}
             max={RIGHT_MAX}
             onChange={setRightWidth}
-          />
+          /> : null}
           {inspector}
         </>
       ) : null}
 
-      {mobile ? <Presence onExitComplete={finishDrawerExit}>{navDrawer ? (
+      {mobile && !reading ? <Presence onExitComplete={finishDrawerExit}>{navDrawer ? (
         <MobileDrawer side="left" closeLabel={t("App.close_navigation")} onClose={() => setNavDrawer(false)}>
           <WorkspaceSidebar
             route={route}
             onClose={() => setNavDrawer(false)}
             onNavigate={navigateFromDrawer}
             compact={false}
-            pwa={pwa}
-            onInstall={() => void promptInstall()}
           />
         </MobileDrawer>
       ) : null}</Presence> : null}
-      {mobile ? <Presence>{showInspector ? (
+      {mobile && !reading ? <Presence>{showInspector ? (
         <MobileDrawer side="right" closeLabel={t("App.close_inspector")} onClose={() => setInspectorOpen(false)}>
           {inspector}
         </MobileDrawer>
       ) : null}</Presence> : null}
 
-      {mobile ? <div className="mobile-back-feedback" aria-hidden="true" data-active={backOffset > 0 || undefined}
+      {mobile && !reading ? <div className="mobile-back-feedback" aria-hidden="true" data-active={backOffset > 0 || undefined}
         data-ready={backOffset >= 64 || undefined} style={{ transform: `translateX(${backOffset - 44}px)` }}><ArrowLeft size={20} /></div> : null}
       <GlobalFileUploads />
       <QuickTour />
       <ImagePreview />
-      <ToastStack toasts={toasts} updateAvailable={pwa.updateAvailable} onApplyUpdate={applyUpdate}
-        updating={["checking", "downloading", "applying", "repairing"].includes(pwa.updateStatus)} updateError={pwa.updateError} />
     </AppFrame>
   );
 }
 
 const RouteView = memo(function RouteView({
   route,
+  reading,
+  onEnterReading,
+  onExitReading,
   mobile,
   sidebarCollapsed,
   inspectorOpen,
@@ -266,6 +274,9 @@ const RouteView = memo(function RouteView({
   onInspect
 }: {
   route: Route;
+  reading: boolean;
+  onEnterReading: () => void;
+  onExitReading: () => void;
   mobile: boolean;
   sidebarCollapsed: boolean;
   inspectorOpen: boolean;
@@ -294,6 +305,9 @@ const RouteView = memo(function RouteView({
   if (route.name === "tasks") return <LegacyTaskRedirect taskId={route.taskId} />;
   return (
     <ChatView
+      reading={reading}
+      onEnterReading={onEnterReading}
+      onExitReading={onExitReading}
       key={route.conversationId ?? "new"}
       conversationId={route.conversationId}
       view={route.view}

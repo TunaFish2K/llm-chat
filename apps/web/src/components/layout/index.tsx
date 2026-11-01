@@ -1,6 +1,5 @@
-import { animate, drawerEase, m, Presence, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
+import { animate, drawerEase, m, useMotionValue, usePresence, useReducedMotion, useTransform } from "../../lib/motion";
 import { useAnimationDuration } from "../../lib/animation-preferences";
-import { displayError } from "../../lib/error-display";
 import { t, useLocale } from "../../lib/i18n";
 /**
  * The application shell: the three-column frame, its resize affordances, the
@@ -9,12 +8,11 @@ import { t, useLocale } from "../../lib/i18n";
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useBackLayer } from "../../lib/mobile-navigation";
-import { ArrowLeft, Menu, PanelRightOpen, RefreshCw } from "lucide-react";
+import { ArrowLeft, Menu, PanelRightOpen } from "lucide-react";
 import type { ConversationDto } from "@llm-chat/contracts";
-import type { Toast } from "../../lib/app-state";
 import { resolveConversationRoot } from "../../lib/conversation-tree";
 import type { Route } from "../../lib/router";
-import { Button, ErrorState, IconButton, LoadingState } from "../ui";
+import { ErrorState, IconButton, LoadingState } from "../ui";
 import { AnimatedFrame } from "./AnimatedFrame";
 
 /* Geometry ---------------------------------------------------------------- */
@@ -83,12 +81,14 @@ export function BootScreen({ error, onRetry }: { error: string | null; onRetry: 
 }
 
 export function AppFrame({
+  reading = false,
   left,
   right,
   sidebarCollapsed,
   inspectorOpen,
   children
 }: {
+  reading?: boolean;
   left: number;
   right: number;
   sidebarCollapsed: boolean;
@@ -98,8 +98,8 @@ export function AppFrame({
   useLocale();
   const sidebarDuration = useAnimationDuration("sidebar");
   const inspectorDuration = useAnimationDuration("inspector");
-  return <AnimatedFrame left={left} right={right} sidebarCollapsed={sidebarCollapsed} inspectorOpen={inspectorOpen}
-    sidebarDuration={sidebarDuration} inspectorDuration={inspectorDuration}>{children}</AnimatedFrame>;
+  return <AnimatedFrame reading={reading} left={left} right={right} sidebarCollapsed={sidebarCollapsed} inspectorOpen={inspectorOpen}
+    sidebarDuration={reading ? 0 : sidebarDuration} inspectorDuration={reading ? 0 : inspectorDuration}>{children}</AnimatedFrame>;
 }
 
 /**
@@ -177,7 +177,7 @@ export function MobileAppBar({
 }) {
   useLocale();
   return (
-    <header className="mobile-appbar">
+    <header className="mobile-appbar" data-toast-boundary>
       <IconButton label={onBack ? t("index.go_back") : t("index.open_navigation")} onClick={onBack ?? onOpenNav}>
         {onBack ? <ArrowLeft size={20} /> : <Menu size={20} />}
       </IconButton>
@@ -337,48 +337,7 @@ export function MobileDrawer({
 
 /* Notifications ----------------------------------------------------------- */
 
-export function ToastStack({
-  toasts,
-  updateAvailable,
-  onApplyUpdate,
-  updating = false,
-  updateError
-}: {
-  toasts: Toast[];
-  updateAvailable: boolean;
-  onApplyUpdate: () => void;
-  updating?: boolean;
-  updateError?: string | null;
-}) {
-  useLocale();
-  const enter = useAnimationDuration("toast") / 1_000;
-  const exit = useAnimationDuration("toast", "exit") / 1_000;
-  const reduced = useReducedMotion();
-  return (
-    <div className="toast-stack" aria-live="polite">
-      {updateAvailable ? (
-        <div className="toast info">
-          <RefreshCw size={16} aria-hidden="true" />
-          <span role={updateError ? "alert" : "status"}>{updateError ?? (updating ? t("SettingsView.applying_the_new_version") : t("index.new_version_ready"))}</span>
-          <Button variant="primary" size="sm" onClick={onApplyUpdate} disabled={updating}>{t("SettingsView.update_and_refresh")}</Button>
-        </div>
-      ) : null}
-      <Presence>{toasts.map((item) => (
-        <m.div
-          key={item.id}
-          className={`toast ${item.kind}`}
-          role={item.kind === "error" ? "alert" : "status"}
-          initial={{ opacity: reduced || !enter ? 1 : 0, y: reduced || !enter ? 0 : 4 }}
-          animate={{ opacity: 1, y: 0, transition: { duration: reduced ? 0 : enter } }}
-          exit={{ opacity: 0, y: reduced || !exit ? 0 : 4, transition: { duration: reduced ? 0 : exit } }}
-          style={{ animation: "none" }}
-        >
-          {displayError({ message: item.text, ...(item.i18n ? { i18n: item.i18n } : {}) })}
-        </m.div>
-      ))}</Presence>
-    </div>
-  );
-}
+export { ToastStack } from "./ToastStack";
 
 /* Titles ------------------------------------------------------------------ */
 

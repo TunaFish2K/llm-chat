@@ -351,21 +351,40 @@
 
 /* Toasts ---------------------------------------------------------------- */
 
+:root { --toast-safe-top: env(safe-area-inset-top, 0px); }
+
 .toast-stack {
-  position: fixed;
-  right: var(--space-4);
-  bottom: var(--space-4);
-  z-index: 80;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-width: min(380px, calc(100vw - 32px));
+  width: min(420px, calc(100% - max(12px, env(safe-area-inset-left)) - max(12px, env(safe-area-inset-right))));
+  max-height: 35dvh;
+  min-height: 0;
   pointer-events: none;
 }
+.toast-stack[hidden] { display: none; }
+.toast-list { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; border-radius: var(--radius-md); }
+.toast-list:empty { display: none; }
+.toast-body { flex: 1; min-width: 0; }
+.toast-message { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+.toast-message[data-expanded] { display: block; overflow: visible; }
+.toast-count { display: inline-block; margin-right: 8px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.toast-details, .toast-more { border: 0; color: var(--text); cursor: pointer; font: inherit; font-size: var(--text-sm); }
+.toast-details { padding: 4px 0 0; background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+.toast-more { align-self: center; flex-shrink: 0; padding: 6px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-pill); background: var(--surface-2); box-shadow: var(--shadow-1); pointer-events: auto; }
+.toast-update { flex-shrink: 0; flex-wrap: wrap; }
+.toast-update > span { flex: 1; min-width: 80px; }
+.toast-update > svg { flex-shrink: 0; }
+.toast-update .btn { flex-shrink: 0; }
 
 .toast {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-shrink: 0;
   gap: var(--space-2);
   padding: 10px var(--space-3);
   border: 1px solid var(--border-strong);
@@ -374,8 +393,8 @@
   box-shadow: var(--shadow-2);
   font-size: var(--text-sm);
   pointer-events: auto;
-  animation: fade-rise var(--motion-toast-enter, 140ms) var(--ease);
 }
+.toast > .icon-button { flex-shrink: 0; width: 28px; height: 28px; margin-block: -4px; }
 
 .toast.success { border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .toast.error { border-color: color-mix(in srgb, var(--err) 45%, transparent); }

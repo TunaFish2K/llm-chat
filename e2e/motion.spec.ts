@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { test, expect } from "./fixtures";
 import { api, APP_URL, agentInput } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -54,7 +55,7 @@ test("历史消息不入场，流式新消息只入场一次，手动展开恢�
   const provider = await startMockProvider({ responseText: "动画测试回复" });
   try {
     const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "motion", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-    const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+    const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
     await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`motion-chat-${Date.now()}`, model.id));
     const first = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "历史消息" });

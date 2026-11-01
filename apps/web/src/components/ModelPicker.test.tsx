@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { makeConnection, makeModel } from "../../test/fixtures";
@@ -20,7 +20,7 @@ describe("shared ModelPicker", () => {
     const user = userEvent.setup();
     render(<ModelPicker {...props()} />);
     await user.click(screen.getByRole("button", { name: "默认模型" }));
-    await user.type(screen.getByRole("searchbox"), query.replaceAll("[", "[["));
+    await user.type(screen.getByRole("combobox"), query.replaceAll("[", "[["));
     const panel = screen.getByRole("dialog");
     expect([...panel.querySelectorAll(selector)].map(mark => mark.textContent)).toEqual(matches);
     expect(panel.querySelectorAll(".model-group .model-option")).toHaveLength(query === "PRIMARY" ? 2 : 1);
@@ -34,13 +34,13 @@ describe("shared ModelPicker", () => {
       { ...vision, id: "disabled", enabled: false }, { ...vision, id: "orphan", connectionId: "missing" }]} />);
     await user.click(screen.getByRole("button", { name: "默认模型" }));
     expect(screen.getByRole("dialog").querySelectorAll(".model-group .model-option")).toHaveLength(1);
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Vision/ }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("option", { name: /Vision/ }));
     expect(input.onChange).toHaveBeenCalledWith("vision");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "默认模型" }));
-    await user.type(screen.getByRole("searchbox"), "not found");
+    await user.type(screen.getByRole("combobox"), "not found");
     expect(screen.getByText("没有匹配的可用模型")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "无默认模型" }));
+    await user.click(screen.getByRole("option", { name: "无默认模型" }));
     expect(input.emptyOption.onSelect).toHaveBeenCalledOnce();
   });
 
@@ -60,23 +60,59 @@ describe("shared ModelPicker", () => {
     const { rerender } = render(<><ModelPicker {...input} /><button>Outside</button></>);
     for (const close of ["escape", "button", "outside", "back", "selection"]) {
       await user.click(screen.getByRole("button", { name: "默认模型" }));
-      expect(screen.getByRole("searchbox")).toHaveValue("");
-      await user.type(screen.getByRole("searchbox"), "alpha");
+      expect(screen.getByRole("combobox")).toHaveValue("");
+      await user.type(screen.getByRole("combobox"), "alpha");
       if (close === "escape") await user.keyboard("{Escape}");
       if (close === "button") await user.click(screen.getByRole("button", { name: "关闭模型选择" }));
       if (close === "outside") await user.click(screen.getByRole("button", { name: "Outside" }));
       if (close === "back") act(() => { expect(dismissBackLayer()).toBe(true); });
-      if (close === "selection") await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Alpha alpha/ }));
+      if (close === "selection") await user.click(within(screen.getByRole("dialog")).getByRole("option", { name: /Alpha alpha/ }));
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
       if (close !== "outside") await waitFor(() => expect(screen.getByRole("button", { name: "默认模型" })).toHaveFocus());
     }
     await user.click(screen.getByRole("button", { name: "默认模型" }));
-    await user.type(screen.getByRole("searchbox"), "alpha");
+    await user.type(screen.getByRole("combobox"), "alpha");
     rerender(<ModelPicker {...input} disabled />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "默认模型" })).toBeDisabled();
     rerender(<ModelPicker {...input} />);
     await user.click(screen.getByRole("button", { name: "默认模型" }));
-    expect(screen.getByRole("searchbox")).toHaveValue("");
+    expect(screen.getByRole("combobox")).toHaveValue("");
   });
+});
+
+it("navigates filtered groups without moving input focus or committing composition", async () => {
+  const user = userEvent.setup();
+  const input = props();
+  render(<ModelPicker {...input} />);
+  await user.click(screen.getByRole("button", { name: "默认模型" }));
+  const search = screen.getByRole("combobox");
+  await user.keyboard("{ArrowDown}");
+  expect(search).toHaveFocus();
+  const other = screen.getByRole("option", { name: /Other/ });
+  expect(search).toHaveAttribute("aria-activedescendant", other.id);
+  await user.keyboard("{ArrowDown}");
+  expect(search).toHaveAttribute("aria-activedescendant", other.id);
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(input.onChange).not.toHaveBeenCalled();
+  await user.keyboard("{Enter}");
+  expect(input.onChange).toHaveBeenCalledWith("other");
+  expect(screen.getByRole("button", { name: "默认模型" })).toHaveFocus();
+});
+
+it("Enter chooses a search match rather than the unconfigured option, and does nothing for no matches", async () => {
+  const user = userEvent.setup();
+  const input = props();
+  render(<ModelPicker {...input} />);
+  await user.click(screen.getByRole("button", { name: "默认模型" }));
+  await user.type(screen.getByRole("combobox"), "Other");
+  await user.keyboard("{Enter}");
+  expect(input.onChange).toHaveBeenCalledExactlyOnceWith("other");
+  expect(input.emptyOption.onSelect).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "默认模型" }));
+  await user.type(screen.getByRole("combobox"), "absent");
+  await user.keyboard("{ArrowDown}{Enter}");
+  expect(input.onChange).toHaveBeenCalledOnce();
+  expect(input.emptyOption.onSelect).not.toHaveBeenCalled();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
 });

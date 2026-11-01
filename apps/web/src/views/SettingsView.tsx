@@ -10,6 +10,7 @@ import { useErrorState, displayError } from "../lib/error-display";
 import { LanguagePicker } from "../components/LanguagePicker";
 import { t, useLocale, localized } from "../lib/i18n";
 import { OfflineHistorySettings } from "../components/OfflineHistorySettings";
+import { PwaInstallSettings } from "../components/PwaInstallSettings";
 import { ServerChannelSettings } from "../components/ServerChannelSettings";
 import { NotificationSettings } from "../components/NotificationSettings";
 import { stopNotificationSession } from "../lib/notifications";
@@ -91,7 +92,7 @@ export function SettingsView({ section }: { section: string }) {
       <div className="page-header mobile-redundant-title settings-page-title">
         <h2>{t("WorkspaceSidebar.settings")}</h2>
       </div>
-      <div className="tabs" role="tablist" aria-label={t("SettingsView.settings_sections")}>
+      <div className="tabs" data-toast-boundary role="tablist" aria-label={t("SettingsView.settings_sections")}>
         {getSECTIONS().map(([key, label]) => (
           <a
             key={key}
@@ -297,7 +298,7 @@ function GeneralSection() {
   const [pickingWorkspace, setPickingWorkspace] = useState(false);
 
   // Channels stay reachable while settings cannot load, so a wrong channel can be left.
-  if (!settings) return <div className="settings-panels"><RequestSettings /><ServerChannelSettings /><LoadingState /></div>;
+  if (!settings) return <div className="settings-panels"><RequestSettings /><ServerChannelSettings /><PwaInstallSettings /><LoadingState /></div>;
 
   const patch = (value: Omit<Partial<AppSettings>, "theme" | "uiPreferences">) => {
     void updateSettingsImmediately(value).then(() => toast("success", localized("SettingsView.settings_saved"))).catch(toastError);
@@ -310,6 +311,7 @@ function GeneralSection() {
       <ServerChannelSettings />
       <OfflineHistorySettings />
       <AppUpdateCard />
+      <PwaInstallSettings />
       <div className="card"><h3>{t("SettingsView.quick_tour")}</h3>
         <button className="btn" onClick={() => window.dispatchEvent(new Event("llm-chat:quick-tour"))}>{t("SettingsView.replay_quick_tour")}</button></div>
 

@@ -56,6 +56,7 @@ import { requestBudget } from "../../lib/http-client";
  * approval gate and messages queued for subsequent turns.
  */
 export const Composer = memo(function Composer({
+  reading = false,
   actionsHost = null,
   mobile = false,
   conversation,
@@ -75,6 +76,7 @@ export const Composer = memo(function Composer({
   onRoleplayStateChange = () => undefined,
   onOpenRoleplay = () => undefined
 }: {
+  reading?: boolean;
   actionsHost?: HTMLDivElement | null;
   mobile?: boolean;
   conversation: ConversationDto | null;
@@ -569,7 +571,7 @@ export const Composer = memo(function Composer({
     (attachments.some((asset) => asset.kind === "image") && !imageConfigured);
 
   return (
-    <div className="composer">
+    <div className="composer" hidden={reading} inert={reading || undefined}>
       <div className="composer-inner">
         {isNew && recoveredDraftIds().length > 0 && <button type="button" className="btn small" onClick={() => {
           const draft = swapRecoveredDraft();

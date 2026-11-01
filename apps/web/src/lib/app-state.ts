@@ -31,13 +31,8 @@ import { resetRequestSession } from "./http-client";
 import { clearStartupCache, readStartupCache, scheduleStartupCache, setStartupAuthRequired, startupAuthRequired, type StartupSnapshot } from "./startup-cache";
 import { subscribeAppEvents, subscribeGeneration, type Subscription } from "./sse";
 import { refreshImageSessions, resetImageStudioState } from "./image-studio-state";
-
-export interface Toast {
-  id: number;
-  kind: "info" | "success" | "error";
-  text: string;
-  i18n?: DisplayMessage["i18n"];
-}
+import { createToastController, type Toast } from "./toast-state";
+export type { Toast } from "./toast-state";
 
 export type EventsConnectionState = "connecting" | "connected" | "reconnecting";
 
@@ -103,16 +98,12 @@ function stableItems<T extends { id: string }>(previous: T[], next: T[]): T[] {
   return merged.length === previous.length && merged.every((item, index) => item === previous[index]) ? previous : merged;
 }
 
-let toastSeq = 0;
+const toastController = createToastController(() => appStore.get().toasts, toasts => appStore.set({ toasts }));
+export const dismissToast = toastController.dismiss;
+export const presentToasts = toastController.present;
 
 export function toast(kind: Toast["kind"], value: string | DisplayMessage): void {
-  const text = typeof value === "string" ? value : value.message;
-  const i18n = typeof value === "string" ? undefined : value.i18n;
-  const id = ++toastSeq;
-  appStore.set((state) => ({ toasts: [...state.toasts.slice(-4), { id, kind, text, ...(i18n ? { i18n } : {}) }] }));
-  setTimeout(() => {
-    appStore.set((state) => ({ toasts: state.toasts.filter((item) => item.id !== id) }));
-  }, 5_000);
+  toastController.push(kind, value);
 }
 
 export function toastError(error: unknown): void {

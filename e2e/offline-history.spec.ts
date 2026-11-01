@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL, AUTH_URL, initialPassword, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -6,7 +7,7 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
   const image = await api(request, APP_URL, "POST", "/api/images", { fileName: "offline.png", dataBase64: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEUlEQVR4nGP4z8DwH4QZYAwAR8oH+WdZbrcAAAAASUVORK5CYII=" });
   const provider = await startMockProvider({ responseText: `离线测试正文\n\n![离线图片](${image.url})` });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Offline", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("离线助手", model.id));
   const first = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "离线记录甲" });
   const wait = (id: string) => expect.poll(async () => (await api(request, APP_URL, "GET", `/api/generations/${id}`)).status).toBe("completed");
@@ -41,8 +42,8 @@ test("离线冷启动可搜索未打开的会话、查看图片及版本，恢�
     await expect(cold.locator('.msg[data-role="assistant"]').last().getByRole("button", { name: "重试", exact: true })).toBeEnabled();
     await openDrawerIfNeeded(cold);
     await cold.getByRole("button", { name: "搜索会话", exact: true }).click();
-    await cold.getByRole("searchbox").fill("未打开的离线记录乙");
-    await cold.getByRole("dialog").getByRole("button").filter({ hasText: "未打开的离线记录乙" }).first().click();
+    await cold.getByRole("combobox").fill("未打开的离线记录乙");
+    await cold.getByRole("dialog").getByRole("option").filter({ hasText: "未打开的离线记录乙" }).first().click();
     await expect(cold).toHaveURL(new RegExp(`${second.conversation.id}|${fork.conversation.id}`));
     await expect(cold.locator('.msg[data-role="user"]')).toContainText("未打开的离线记录乙");
     await cold.goto(`${APP_URL}/c/${fork.conversation.id}`);

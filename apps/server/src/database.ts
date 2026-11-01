@@ -2150,7 +2150,7 @@ export class Store {
   ): { model: ModelDto; status: "created" | "updated" | "skipped" } {
     const current = this.listModels(input.connectionId).find((model) => model.modelKey === input.modelKey);
     if (!current) {
-      return { model: this.createModel(input, "discovered", catalogMetadata, true, input.detectedProtocol ?? null, input.detectedReasoningEfforts ?? null), status: "created" };
+      return { model: this.createModel({ ...input, enabled: false }, "discovered", catalogMetadata, true, input.detectedProtocol ?? null, input.detectedReasoningEfforts ?? null), status: "created" };
     }
     const reasoningChanged = input.detectedReasoningEfforts != null && json(input.detectedReasoningEfforts) !== json(current.detectedReasoningEfforts);
     if (reasoningChanged) this.sqlite.prepare("UPDATE models SET detected_reasoning_efforts_json = ?, updated_at = ? WHERE id = ?")
@@ -2227,6 +2227,16 @@ export class Store {
       this.sqlite.prepare("UPDATE app_settings SET default_model_id = NULL WHERE default_model_id = ?").run(id);
     }
     return this.getModel(id);
+  }
+
+  setModelsEnabled(modelIds: string[], enabled: boolean): ModelDto[] {
+    return this.transaction(() => {
+      const ids = [...new Set(modelIds)];
+      if (ids.some(id => !this.getModel(id))) {
+        throw withMessage(new StoreError("model_not_found", "模型不存在"), "error.model_not_found");
+      }
+      return ids.map(id => this.updateModel(id, { enabled })!);
+    });
   }
 
   deleteModel(id: string): boolean {

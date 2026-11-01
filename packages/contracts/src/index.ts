@@ -356,6 +356,12 @@ export const modelInputSchema = z.object({
   defaultSettings: modelSettingsSchema,
   enabled: z.boolean().default(true)
 });
+export const modelBatchEnableSchema = z.object({
+  modelIds: z.array(z.string().uuid()).min(1).max(10_000),
+  enabled: z.boolean()
+});
+export type ModelBatchEnableInput = z.infer<typeof modelBatchEnableSchema>;
+
 export type ModelInput = z.infer<typeof modelInputSchema>;
 
 export const modelCatalogPricingSchema = z.object({

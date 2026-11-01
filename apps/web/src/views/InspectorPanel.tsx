@@ -15,10 +15,12 @@ import { EmptyState, ErrorState, StatusTag } from "../lib/ui";
 const EMPTY_MESSAGES: MessageDto[] = [];
 
 export function InspectorPanel({
+  hidden = false,
   conversation,
   target,
   onClose
 }: {
+  hidden?: boolean;
   conversation: ConversationDto | null;
   target: InspectionTarget | null;
   onClose: () => void;
@@ -44,7 +46,7 @@ export function InspectorPanel({
   const model = conversation ? models.find((item) => item.id === conversation.modelId) : undefined;
 
   return (
-    <aside className="inspector-panel" aria-label={t("InspectorPanel.inspector")}>
+    <aside className="inspector-panel" hidden={hidden} inert={hidden || undefined} aria-label={t("InspectorPanel.inspector")}>
       <header className="inspector-header">
         <div>
           <strong>{tool ? tool.name : generation ? t("TrajectoryView.generation_v", { value1: (generation.version) }) : task ? t("TrajectoryView.background_tasks") : t("InspectorPanel.conversation_inspector")}</strong>

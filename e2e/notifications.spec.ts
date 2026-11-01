@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test, type APIRequestContext, type Page } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -49,7 +50,7 @@ async function fixture(request: APIRequestContext, tool = false) {
   const connection = await api(request, APP_URL, "POST", "/api/connections", {
     name: `notifications-${Date.now()}`, protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {}
   });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const input = agentInput(`notifications-${Date.now()}`, model.id);
   if (tool) input.execution.tools.approvalOverrides = { get_time_info: "always" };
   const agent = await api(request, APP_URL, "POST", "/api/agents", input);

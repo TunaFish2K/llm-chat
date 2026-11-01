@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -9,7 +10,7 @@ for (const locale of ["zh-CN", "en-US"] as const) {
    const provider = await startMockProvider();
    const connection = await api(request, APP_URL, "POST", "/api/connections", { name: `Protocol ${locale}`, providerId: "opencode-go", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
    try {
-    const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+    const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
     expect(model.catalogManaged).toBe(true);
     await page.goto("/settings/connections");
     const card = page.locator(".card").filter({ has: page.locator("h3 strong").filter({ hasText: connection.name }) });

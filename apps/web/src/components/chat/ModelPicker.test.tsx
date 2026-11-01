@@ -38,7 +38,7 @@ describe("ModelPicker", () => {
     render(picker());
 
     await user.click(screen.getByRole("button", { name: "选择模型" }));
-    expect(await screen.findByRole("searchbox", { name: "搜索模型" })).toHaveFocus();
+    expect(await screen.findByRole("combobox", { name: "搜索模型" })).toHaveFocus();
   });
 
   it("does not focus search when opened on a touch layout", async () => {
@@ -47,6 +47,6 @@ describe("ModelPicker", () => {
     render(picker());
 
     await user.click(screen.getByRole("button", { name: "选择模型" }));
-    expect(await screen.findByRole("searchbox", { name: "搜索模型" })).not.toHaveFocus();
+    expect(await screen.findByRole("combobox", { name: "搜索模型" })).not.toHaveFocus();
   });
 });

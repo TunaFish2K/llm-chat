@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -71,7 +72,7 @@ test("搜索标题和正文并高亮，通过菜单管理会话", async ({ page,
   let id: string | undefined; let agentId: string | undefined;
   try {
     const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "search fixture", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-    const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+    const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
     await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("搜索测试", model.id)); agentId = agent.id;
     const result = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId, text: "搜索测试标题" }); id = result.conversation.id;
@@ -79,7 +80,7 @@ test("搜索标题和正文并高亮，通过菜单管理会话", async ({ page,
     await page.goto(APP_URL); await openDrawerIfNeeded(page);
     await page.getByRole("button", { name: "搜索会话", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "搜索会话" });
-    await dialog.getByRole("searchbox").fill("灯塔");
+    await dialog.getByRole("combobox").fill("灯塔");
     await expect(dialog.locator("mark")).toHaveText("灯塔");
     const searchButton = page.getByRole("button", { name: "搜索会话", exact: true });
     const sidebarScroll = page.locator(".conversation-scroll:visible");
@@ -92,7 +93,7 @@ test("搜索标题和正文并高亮，通过菜单管理会话", async ({ page,
     await expect(searchButton).toBeVisible();
     expect(await sidebarScroll.evaluate(element => element.scrollTop)).toBe(previousScroll);
     await searchButton.click();
-    await dialog.getByRole("searchbox").fill("灯塔");
+    await dialog.getByRole("combobox").fill("灯塔");
     await expect(dialog.locator("mark")).toHaveText("灯塔");
     await dialog.locator(".conversation-search-result").focus();
     await page.keyboard.press("Escape");
@@ -105,7 +106,7 @@ test("搜索标题和正文并高亮，通过菜单管理会话", async ({ page,
       await openDrawerIfNeeded(page);
     }
     await searchButton.click();
-    await dialog.getByRole("searchbox").fill("灯塔");
+    await dialog.getByRole("combobox").fill("灯塔");
     await dialog.locator(".conversation-search-result").click();
     await expect(page).toHaveURL(new RegExp(`/c/${id}$`));
     await openDrawerIfNeeded(page);
@@ -128,7 +129,7 @@ test("长按 Enter 或发送按钮生成一次 Steer，释放不重复发送", a
   let generationId: string | undefined;
   try {
     const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "steer fixture", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-    const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+    const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
     await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("Steer测试", model.id));
     const result = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "start" }); id = result.conversation.id; generationId = result.generation.generationId;

@@ -16,8 +16,6 @@ describe("WorkspaceSidebar", () => {
       <WorkspaceSidebar
         route={{ name: "chat", conversationId: "conv-1", view: "tasks", taskId: null }}
         compact={false}
-        pwa={{ supported: false, updateAvailable: false, installAvailable: false, offlineReady: false, updateStatus: "idle", updateError: null }}
-        onInstall={vi.fn()}
       />
     );
 
@@ -34,8 +32,6 @@ describe("WorkspaceSidebar", () => {
       <WorkspaceSidebar
         route={{ name: "chat", conversationId: null, view: "chat", taskId: null }}
         compact={false}
-        pwa={{ supported: false, updateAvailable: false, installAvailable: false, offlineReady: false, updateStatus: "idle", updateError: null }}
-        onInstall={vi.fn()}
       />
     );
 
@@ -67,8 +63,6 @@ describe("WorkspaceSidebar", () => {
       <WorkspaceSidebar
         route={{ name: "chat", conversationId: branch.id, view: "chat", taskId: null }}
         compact={false}
-        pwa={{ supported: false, updateAvailable: false, installAvailable: false, offlineReady: false, updateStatus: "idle", updateError: null }}
-        onInstall={vi.fn()}
       />
     );
 
@@ -91,8 +85,6 @@ describe("WorkspaceSidebar", () => {
         route={{ name: "agents", agentId: null }}
         compact
         onToggleCompact={onToggleCompact}
-        pwa={{ supported: true, updateAvailable: false, installAvailable: true, offlineReady: false, updateStatus: "idle", updateError: null }}
-        onInstall={vi.fn()}
       />
     );
 
@@ -103,7 +95,7 @@ describe("WorkspaceSidebar", () => {
     expect(screen.getByRole("link", { name: "聊天" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Agent" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "设置" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "安装到设备" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "安装到设备" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("事件流已连接")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "展开会话栏" }));
@@ -119,8 +111,6 @@ describe("WorkspaceSidebar", () => {
         route={{ name: "settings", section: "general" }}
         compact={false}
         onToggleCompact={onToggleCompact}
-        pwa={{ supported: false, updateAvailable: false, installAvailable: false, offlineReady: false, updateStatus: "idle", updateError: null }}
-        onInstall={vi.fn()}
       />
     );
 

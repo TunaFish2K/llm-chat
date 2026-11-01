@@ -45,6 +45,7 @@ describe("SettingsView", () => {
     expect(screen.queryByLabelText("默认系统提示")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "编辑此 Agent" })).toHaveAttribute("href", "/agents/agent-1");
     expect(screen.getByRole("button", { name: "刷新页面" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "安装PWA" })).toBeInTheDocument();
   });
 
   it("requires an explicit click to apply a prepared application update", async () => {

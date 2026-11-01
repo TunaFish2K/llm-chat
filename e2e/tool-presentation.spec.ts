@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { resolve } from "node:path";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
@@ -8,7 +9,7 @@ test(`${plugin ? "插件" : "内置工具"}展示缩略、详细 Markdown 和原
   if (plugin) await api(request, APP_URL, "POST", "/api/plugins/install", { sourcePath: resolve("examples/tool-markdown-plugin") });
   const provider = await startMockProvider({ toolCall: { name: plugin ? "plugin__markdown-example__echo" : "get_time_info", arguments: plugin ? JSON.stringify({ text: "echo input" }) : "{}" }, responseText: "工具已完成" });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Presentation", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("工具展示", model.id));
   const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "现在几点" });
   try {

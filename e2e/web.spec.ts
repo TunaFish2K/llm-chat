@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test, type Page } from "./fixtures";
 import { reasoningModel, agentInput, api, APP_URL, AUTH_URL, gotoPath, initialPassword, openDrawerIfNeeded, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -319,7 +320,7 @@ test.describe("会话与流式生成", () => {
         baseUrl: provider.baseUrl,
         secretHeaders: {}
       });
-      const discovery = await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`);
+      const discovery = await discoverEnabledModels(request, APP_URL, connection.id);
       expect(discovery.discovered).toBe(1);
       const model = discovery.created[0];
       // trim 上下文策略要求模型声明上下文窗口。
@@ -330,7 +331,7 @@ test.describe("会话与流式生成", () => {
       await page.goto(APP_URL);
       // Pick the dedicated agent in the composer.
       await page.getByLabel("选择 Agent", { exact: true }).click();
-      await page.getByRole("button", { name: agent.name, exact: true }).click();
+      await page.getByRole("option", { name: agent.name, exact: true }).click();
       await expect(page.getByLabel("选择 Agent", { exact: true })).toHaveAttribute("title", agent.name);
       await page.getByLabel("输入消息").fill("你好，测试一下");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -357,7 +358,7 @@ test.describe("会话与流式生成", () => {
           overflow: getComputedStyle(element).overflowX
         }))).toEqual({ fits: true, overflow: "auto" });
         await page.getByRole("button", { name: "选择模型" }).click();
-        const modelSearch = page.getByRole("searchbox", { name: "搜索模型" });
+        const modelSearch = page.getByRole("combobox", { name: "搜索模型" });
         await expect(modelSearch).toBeVisible();
         expect(await modelSearch.evaluate((element) => element === document.activeElement)).toBe(false);
         await page.getByRole("button", { name: "关闭模型选择" }).click();
@@ -546,7 +547,7 @@ test.describe("会话与流式生成", () => {
     try {
       await page.goto(APP_URL);
       await page.getByLabel("选择 Agent", { exact: true }).click();
-      await page.getByRole("button", { name: agent.name, exact: true }).click();
+      await page.getByRole("option", { name: agent.name, exact: true }).click();
       await expect(page.getByLabel("选择 Agent", { exact: true })).toHaveAttribute("title", agent.name);
       await expect(page.getByLabel("输入消息")).toHaveAttribute("placeholder", "请先选择模型");
       await page.getByLabel("输入消息").fill("没有模型会怎样");
@@ -599,7 +600,7 @@ test.describe("Agent 管理", () => {
       const connection = await api(request, APP_URL, "POST", "/api/connections", {
         name: `table-${unique()}`, protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {}
       });
-      const discovery = await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`);
+      const discovery = await discoverEnabledModels(request, APP_URL, connection.id);
       const model = discovery.created[0];
       await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
       const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`表格-${unique()}`, model.id));
@@ -607,7 +608,7 @@ test.describe("Agent 管理", () => {
 
       await page.goto(APP_URL);
       await page.getByLabel("选择 Agent", { exact: true }).click();
-      await page.getByRole("button", { name: agent.name, exact: true }).click();
+      await page.getByRole("option", { name: agent.name, exact: true }).click();
       await page.getByLabel("输入消息").fill("输出表格");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const table = page.locator(".markdown table").last();

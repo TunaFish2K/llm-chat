@@ -8,7 +8,7 @@ import { t, useLocale } from "../lib/i18n";
 function UploadRow({ scopeId, task }: { scopeId: string; task: UploadTask }) {
   const input = useRef<HTMLInputElement>(null);
   const retryable = ["needs-file", "failed"].includes(task.status);
-  const canRetry = Boolean(task.file || (task.created && task.offset === task.byteSize));
+  const canRetry = Boolean(task.file || task.cached || (task.created && task.offset === task.byteSize));
   const done = task.status === "hashing" ? task.hashedBytes : task.offset;
   return <div className="file-upload-row">
     <div className="file-upload-name"><span>{task.fileName}</span>
@@ -17,6 +17,7 @@ function UploadRow({ scopeId, task }: { scopeId: string; task: UploadTask }) {
     <progress max={task.byteSize} value={done} aria-label={t("uploads.progress", { name: task.fileName })} />
     <small>{t(`uploads.${task.status}`)} · {formatBytes(done)} / {formatBytes(task.byteSize)}</small>
     {task.error && <small className="error-text" role="alert">{task.error}</small>}
+    {task.cacheWarning && <small role="status">{t("uploads.cache_unavailable")}</small>}
     {retryable && <>
       <input ref={input} type="file" hidden aria-label={`${t("uploads.select_file")}: ${task.fileName}`} onChange={(event) => {
         const file = event.target.files?.[0]; event.target.value = "";

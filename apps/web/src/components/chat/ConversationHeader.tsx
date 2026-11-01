@@ -3,6 +3,7 @@ import { requestMobileBack } from "../../lib/mobile-navigation";
 import { useEffect, useState, type Ref } from "react";
 import {
   ArrowLeft,
+  BookOpen,
   ListTree,
   Menu,
   PanelLeftClose,
@@ -21,6 +22,8 @@ export type ConversationView = "chat" | "trajectory" | "tasks";
 
 /** The single app bar for a conversation and its temporary projections. */
 export function ConversationHeader({
+  reading = false,
+  onEnterReading,
   conversation,
   view,
   mobile,
@@ -32,6 +35,8 @@ export function ConversationHeader({
   onViewChange,
   actionsRef
 }: {
+  reading?: boolean;
+  onEnterReading?: () => void;
   conversation: ConversationDto | null;
   view: ConversationView;
   mobile: boolean;
@@ -70,7 +75,7 @@ export function ConversationHeader({
   };
 
   return (
-    <header className="conversation-header">
+    <header className="conversation-header" data-toast-boundary hidden={reading} inert={reading || undefined}>
       {mobile ? <button
         type="button"
         className="icon-button shell-control"
@@ -147,6 +152,8 @@ export function ConversationHeader({
       >
         {inspectorOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
       </button>
+      {conversation && view === "chat" && onEnterReading ? <button type="button" className="icon-button" aria-label={t("Reading.enter")}
+        title={t("Reading.instructions")} onClick={onEnterReading}><BookOpen size={18} aria-hidden="true" /></button> : null}
       <div className="conversation-action-slot" data-reserved={conversation ? true : undefined} ref={actionsRef} />
     </header>
   );

@@ -44,7 +44,7 @@ beforeEach(() => {
   vi.spyOn(document, "addEventListener").mockImplementation(() => {});
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 async function boot(registered = true) {
   const pwa = await import("./pwa");
@@ -53,6 +53,47 @@ async function boot(registered = true) {
   if (registered) options.onRegisteredSW?.("/sw.js", current as unknown as ServiceWorkerRegistration);
   return pwa;
 }
+
+function dispatchWindow(type: string, event = new Event(type)) {
+  const listener = vi.mocked(window.addEventListener).mock.calls.find(([name]) => name === type)?.[1] as EventListener;
+  expect(listener).toBeTypeOf("function");
+  listener(event);
+}
+
+it("consumes a cancelled install prompt once and waits for appinstalled before reporting installation", async () => {
+  const pwa = await boot();
+  const prompt = vi.fn().mockResolvedValue(undefined);
+  const event = Object.assign(new Event("beforeinstallprompt", { cancelable: true }), {
+    prompt, userChoice: Promise.resolve({ outcome: "dismissed" })
+  });
+  dispatchWindow("beforeinstallprompt", event);
+  expect(event.defaultPrevented).toBe(true);
+  expect(pwa.getPwaState()).toMatchObject({ installAvailable: true, installed: false });
+  await Promise.all([pwa.promptInstall(), pwa.promptInstall()]);
+  expect(prompt).toHaveBeenCalledOnce();
+  expect(pwa.getPwaState()).toMatchObject({ installAvailable: false, installed: false });
+  dispatchWindow("appinstalled");
+  expect(pwa.getPwaState()).toMatchObject({ installAvailable: false, installed: true });
+});
+
+it("discards failed installation prompts and accepts a fresh browser prompt", async () => {
+  const pwa = await boot();
+  const prompt = vi.fn().mockRejectedValue(new Error("browser error"));
+  dispatchWindow("beforeinstallprompt", Object.assign(new Event("beforeinstallprompt"), { prompt }));
+  await expect(pwa.promptInstall()).rejects.toThrow("无法打开安装提示");
+  await pwa.promptInstall();
+  expect(prompt).toHaveBeenCalledOnce();
+  expect(pwa.getPwaState().installAvailable).toBe(false);
+  dispatchWindow("beforeinstallprompt", Object.assign(new Event("beforeinstallprompt"), { prompt: vi.fn().mockResolvedValue(undefined) }));
+  expect(pwa.getPwaState().installAvailable).toBe(true);
+});
+
+it.each(["standalone", "ios"])("recognizes installed apps using %s detection", async (mode) => {
+  if (mode === "standalone") Object.assign(window, { matchMedia: () => ({ matches: true, addEventListener: vi.fn() }) });
+  else Object.assign(online, { standalone: true });
+  const pwa = await boot();
+  expect(pwa.getPwaState()).toMatchObject({ installed: true, installAvailable: false });
+});
 
 it("shares a pending check and lets manual checks bypass the automatic throttle", async () => {
   const pwa = await boot();
@@ -257,6 +298,18 @@ it("checks the active channel for updates even when the page origin is unreachab
   expect(fetch).toHaveBeenCalledWith("http://localhost:4000/app-shell.json", expect.objectContaining({ mode: "cors", credentials: "omit" }));
   expect(current.active!.postMessage).toHaveBeenCalledWith({ type: "INSTALL_SHELL", base: "http://localhost:4000", force: true }, expect.any(Array));
   expect(reload).toHaveBeenCalledOnce();
+});
+
+it("keeps preview updates and repair on the page origin when another API channel is active", async () => {
+  vi.stubEnv("VITE_FRONTEND_PREVIEW", "1");
+  localStorage.setItem("llm-chat.server-channels.v1", JSON.stringify({ channels: ["http://localhost:4000"], active: "http://localhost:4000", boundServerId: null }));
+  const pwa = await boot();
+  await pwa.checkForUpdates();
+  expect(current.active!.postMessage).toHaveBeenCalledWith({ type: "INSTALL_SHELL", base: location.origin }, expect.any(Array));
+  container.register.mockResolvedValue(current);
+  await pwa.forceUpdate();
+  expect(fetch).toHaveBeenCalledWith(`${location.origin}/app-shell.json`, expect.objectContaining({ mode: "cors", credentials: "omit" }));
+  expect(current.active!.postMessage).toHaveBeenCalledWith({ type: "INSTALL_SHELL", base: location.origin, force: true }, expect.any(Array));
 });
 
 function prepareRepair() {

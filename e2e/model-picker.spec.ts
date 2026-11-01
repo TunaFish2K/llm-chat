@@ -23,7 +23,7 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
     const visionLabel = cn ? "备用识图模型" : "Fallback vision model";
     const panel = page.locator('.model-picker-popover[data-state="open"]');
     const rows = panel.locator(".model-group").filter({ has: page.getByRole("heading", { name: connection.name, exact: true }) }).locator(".model-option");
-    const search = panel.getByRole("searchbox");
+    const search = panel.getByRole("combobox");
     const save = async () => {
       await page.getByRole("button", { name: cn ? "保存修改" : "Save changes", exact: true }).click();
       await expect(page.getByRole("button", { name: cn ? "已保存" : "Saved", exact: true })).toBeDisabled();
@@ -73,9 +73,9 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
       await expect(visionTrigger).toContainText(vision.displayName);
       await defaultTrigger.click();
       await search.fill("absent");
-      await panel.getByRole("button", { name: cn ? "（不设默认模型）" : "(no default model)", exact: true }).click();
+      await panel.getByRole("option", { name: cn ? "（不设默认模型）" : "(no default model)", exact: true }).click();
       await visionTrigger.click();
-      await panel.getByRole("button", { name: cn ? "（未配置）" : "(not configured)", exact: true }).click();
+      await panel.getByRole("option", { name: cn ? "（未配置）" : "(not configured)", exact: true }).click();
       await save();
       const cleared = await api(request, APP_URL, "GET", `/api/agents/${agent.id}`);
       expect(cleared.execution.modelId).toBeNull();
@@ -98,7 +98,7 @@ for (const locale of ["zh-CN", "en-US"] as const) test.describe(locale, () => {
       await expect(panel).toHaveCount(0);
       await page.getByRole("button", { name: cn ? "选择模型" : "Select model", exact: true }).click();
       await expect(search).toHaveValue("");
-      await panel.getByRole("button", { name: cn ? /跟随 Agent/ : /Follow Agent/ }).click();
+      await panel.getByRole("option", { name: cn ? /跟随 Agent/ : /Follow Agent/ }).click();
       await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/conversations/${conversation.id}`)).executionOverrides.modelId).toBeUndefined();
     } finally {
       await page.goto("about:blank");

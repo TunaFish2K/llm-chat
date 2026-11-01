@@ -10,6 +10,71 @@ function mockResponse(status: number, body: unknown): Response {
 }
 
 describe("api client", () => {
+  it("uses the transactional batch endpoint on a current backend", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(200, [{ id: "one", enabled: true }]));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(endpoints.setModelsEnabled({ modelIds: ["one"], enabled: true })).resolves.toEqual([{ id: "one", enabled: true }]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]![0]).toBe("/api/models/batch-enable");
+  });
+
+  it("falls back to deduplicated serial writes when the old backend has no batch route", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockResponse(404, { error: { code: "not_found" } }))
+      .mockResolvedValueOnce(mockResponse(200, { id: "one", enabled: false }))
+      .mockResolvedValueOnce(mockResponse(200, { id: "two", enabled: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(endpoints.setModelsEnabled({ modelIds: ["one", "one", "two"], enabled: false })).resolves.toEqual([
+      { id: "one", enabled: false }, { id: "two", enabled: false }
+    ]);
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/models/batch-enable", "POST"], ["/api/models/one", "PATCH"], ["/api/models/two", "PATCH"]
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ enabled: false });
+  });
+
+  it.each([[401, "authentication_required"], [404, "model_not_found"], [500, "internal_error"]])(
+    "does not retry a batch error %s/%s as individual writes", async (status, code) => {
+      const fetchMock = vi.fn().mockResolvedValue(mockResponse(status as number, { error: { code } }));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(endpoints.setModelsEnabled({ modelIds: ["one"], enabled: true })).rejects.toMatchObject({ status, code });
+      expect(fetchMock).toHaveBeenCalledOnce();
+    }
+  );
+
+  it("stops legacy writes on failure and reports it instead of claiming batch success", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockResponse(404, { error: { code: "not_found" } }))
+      .mockResolvedValueOnce(mockResponse(200, { id: "one", enabled: false }))
+      .mockResolvedValueOnce(mockResponse(404, { error: { code: "model_not_found" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(endpoints.setModelsEnabled({ modelIds: ["one", "two", "three"], enabled: false })).rejects.toMatchObject({ code: "model_not_found" });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("disables only newly discovered enabled models on an old backend", async () => {
+    const result = { discovered: 3, created: [{ id: "new", enabled: true }, { id: "disabled", enabled: false }],
+      updated: [{ id: "existing", enabled: true }], skipped: 0, unmatched: 0, warnings: [] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(mockResponse(200, result))
+      .mockResolvedValueOnce(mockResponse(404, { error: { code: "not_found" } }))
+      .mockResolvedValueOnce(mockResponse(200, { id: "new", enabled: false }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(endpoints.discoverModels("provider")).resolves.toMatchObject({
+      created: [{ id: "new", enabled: false }, { id: "disabled", enabled: false }], updated: result.updated
+    });
+    expect(JSON.parse(fetchMock.mock.calls[1]![1].body)).toEqual({ modelIds: ["new"], enabled: false });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("makes no extra writes when discovery already defaults to disabled", async () => {
+    const result = { discovered: 1, created: [{ id: "new", enabled: false }], updated: [], skipped: 0, unmatched: 0, warnings: [] };
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(200, result));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(endpoints.discoverModels("provider")).resolves.toEqual(result);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("attempts reads and writes even when both connection telemetry sources say offline", async () => {
     offlineStore.set({ offline: true });
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
@@ -149,7 +214,7 @@ describe("api client", () => {
   });
 
   it("keeps every endpoint wrapper wired to the request client", async () => {
-    const fetchMock = vi.fn(async () => mockResponse(200, {}));
+    const fetchMock = vi.fn(async () => mockResponse(200, { created: [] }));
     vi.stubGlobal("fetch", fetchMock);
     const value = {} as never;
     const calls = [

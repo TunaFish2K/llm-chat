@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { test, expect } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -16,7 +17,7 @@ for (const size of [50, 500, 2_000]) {
     let releaseMessages: (() => void) | undefined;
     try {
       const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Performance", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-      const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+      const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
       const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("性能测量", model.id));
       const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "历史消息" });
       await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/generations/${started.generation.generationId}`)).status).toBe("completed");
@@ -222,7 +223,7 @@ test("新会话先显示提交状态，通知确认后跳转，HTTP 未返回仍
   const gate = new Promise<void>(resolve => { release = resolve; });
   try {
     const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Acceptance", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-    const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+    const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("即时确认", model.id));
     await api(request, APP_URL, "PATCH", "/api/settings", { defaultAgentId: agent.id, lastAgentId: agent.id });
     let responseReturned = false;

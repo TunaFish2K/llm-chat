@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -87,7 +88,7 @@ test("离开新会话后返回，迟到的确认不跳转或覆盖当前草稿",
   const gate = new Promise<void>(resolve => { release = resolve; });
   try {
     const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Late acceptance", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-    const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+    const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
     const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("迟到确认助手", model.id));
     const old = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id, title: "已有会话" });
     await api(request, APP_URL, "PATCH", "/api/settings", { lastAgentId: agent.id });

@@ -23,6 +23,10 @@ export function useBackLayer(open: boolean, close: () => void, priority = 20): v
   }, [open, priority]);
 }
 
+export function hasBackLayerAbove(priority: number): boolean {
+  return layers.some(layer => layer.priority > priority);
+}
+
 export function dismissBackLayer(): boolean {
   const layer = layers.reduce<(typeof layers)[number] | undefined>((top, next) =>
     !top || next.priority >= top.priority ? next : top, undefined);

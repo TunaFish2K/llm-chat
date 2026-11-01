@@ -34,7 +34,10 @@ it("sends the first or all queued messages at the next tool return", async () =>
   const reload = vi.fn().mockResolvedValue(undefined);
   const items = [{ id: "a", text: "first", mode: "queue", status: "pending", attachments: [] }, { id: "b", text: "second", mode: "queue", status: "pending", attachments: [] }] as unknown as QueuedMessageDto[];
   const { rerender } = render(<MessageQueueList conversationId="conversation" items={items} reload={reload} />);
-  fireEvent.click(screen.getByRole("button", { name: "在下一次工具返回时发送第一条" }));
+  const first = screen.getByRole("button", { name: "在下一次工具返回时发送第一条" });
+  expect(first.closest("li")).toHaveTextContent("first");
+  expect(screen.getByRole("button", { name: "合并全部消息，在下一次工具返回时发送" }).closest("header")).not.toBeNull();
+  fireEvent.click(first);
   await waitFor(() => expect(steer).toHaveBeenLastCalledWith("conversation", "first"));
   await waitFor(() => expect(screen.getByRole("button", { name: "合并全部消息，在下一次工具返回时发送" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "合并全部消息，在下一次工具返回时发送" }));

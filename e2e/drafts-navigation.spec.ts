@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { test, expect, type Page } from "./fixtures";
 import { agentInput, api, APP_URL, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -44,7 +45,7 @@ test("选模型后未发送也跨浏览器记忆，发送后草稿清除", async
   const provider = await startMockProvider();
   const original = await api(request, APP_URL, "GET", "/api/settings");
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "model-memory", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { displayName: "Memory test model", contextWindow: 128000 });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`memory-${Date.now()}`));
   const secondContext = await browser.newContext({ storageState: await page.context().storageState() });
@@ -52,7 +53,7 @@ test("选模型后未发送也跨浏览器记忆，发送后草稿清除", async
     await api(request, APP_URL, "PATCH", "/api/settings", { lastAgentId: agent.id });
     await page.goto(APP_URL!);
     await page.getByRole("button", { name: "选择模型", exact: true }).click();
-    await page.getByRole("button", { name: /Memory test model/ }).click();
+    await page.getByRole("option", { name: /Memory test model/ }).click();
     await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/agents/${agent.id}`)).lastSelectedModelId).toBe(model.id);
     await secondContext.addInitScript(() => localStorage.setItem("llm-chat.quick-tour.v1", "seen"));
     const secondPage = await secondContext.newPage();

@@ -1,3 +1,4 @@
+import { useSearchNavigation } from "../useSearchNavigation";
 import { PopoverLayer } from "../../lib/motion";
 import { t, useLocale } from "../../lib/i18n";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -30,6 +31,8 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
     const normalized = query.trim().toLocaleLowerCase();
     return agents.filter((agent) => `${agent.name}\n${agent.description}`.toLocaleLowerCase().includes(normalized));
   }, [agents, query]);
+  const navigation = useSearchNavigation({ ids: matches.map(agent => agent.id), query, open,
+    selectedId: value, onSelect: id => { setOpen(false); if (id !== value) onChange(id); } });
   useEffect(() => { setOpen(false); }, [value, disabled]);
   return <Popover.Root open={open} onOpenChange={(next) => { setOpen(next); if (next) setQuery(""); }}>
     <Popover.Trigger asChild>
@@ -49,10 +52,10 @@ export function AgentPicker({ agents, value, disabled, onChange, menuItem = fals
         <button type="button" className="icon-button" aria-label={t("AgentPicker.close_agent_picker")} onClick={() => { setOpen(false); }}><X size={15} /></button>
       </header>
       <label className="search-field"><Search size={15} aria-hidden="true" />
-        <input ref={search} type="search" aria-label={t("AgentPicker.search_agents")} placeholder={t("AgentPicker.search_names_or_descriptions")} value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input {...navigation.inputProps} ref={search} type="search" aria-label={t("AgentPicker.search_agents")} placeholder={t("AgentPicker.search_names_or_descriptions")} value={query} onChange={(event) => setQuery(event.target.value)} />
       </label>
-      <div className="picker-list">
-        {matches.map((agent) => <button type="button" className="model-option agent-option" key={agent.id}
+      <div className="picker-list" id={navigation.listId} role="listbox" aria-label={t("AgentPicker.agent_selection")}>
+        {matches.map((agent) => <button {...navigation.optionProps(agent.id)} aria-selected={agent.id === value} type="button" className="model-option agent-option" key={agent.id}
           aria-label={agent.name} aria-pressed={agent.id === value} data-selected={agent.id === value || undefined}
           onClick={() => { setOpen(false); if (agent.id !== value) onChange(agent.id); }}>
           <AgentAvatar agent={agent} /><span><strong>{agent.name}</strong>{agent.description ? <small>{agent.description}</small> : null}</span>

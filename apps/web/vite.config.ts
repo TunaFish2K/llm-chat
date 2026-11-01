@@ -3,10 +3,15 @@ import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
 const apiTarget = process.env.LLM_CHAT_DEV_API ?? "http://127.0.0.1:3000";
+const frontendPreview = process.env.VITE_FRONTEND_PREVIEW === "1";
 
 export default defineConfig({
   plugins: [
     react(),
+    {
+      name: "preview-title",
+      transformIndexHtml: (html) => frontendPreview ? html.replace("<title>Chat</title>", "<title>Chat Preview</title>") : html
+    },
     VitePWA({
       strategies: "injectManifest",
       srcDir: "src",
@@ -15,8 +20,8 @@ export default defineConfig({
       injectRegister: false,
       manifest: {
         id: "/",
-        name: "Chat",
-        short_name: "Chat",
+        name: frontendPreview ? "Chat Preview" : "Chat",
+        short_name: frontendPreview ? "Chat Preview" : "Chat",
         description: "Chat 是用于日常对话和轻任务的个人 AI 助手。",
         lang: "zh-CN",
         theme_color: "#000000",

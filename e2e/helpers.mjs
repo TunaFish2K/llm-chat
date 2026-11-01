@@ -101,3 +101,11 @@ export async function reasoningModel(request) {
     capabilities: { reasoning: true }, defaultSettings: { common: { maxOutputTokens: 4096, stopSequences: [] }, protocol: {} }, enabled: true
   });
 }
+
+/** Test setup explicitly enables discovered models needed for generation. */
+export async function discoverEnabledModels(request, baseUrl, connectionId) {
+  const result = await api(request, baseUrl, "POST", `/api/connections/${connectionId}/models/discover`);
+  result.created = await Promise.all(result.created.map(model => model.enabled ? model
+    : api(request, baseUrl, "PATCH", `/api/models/${model.id}`, { enabled: true })));
+  return result;
+}

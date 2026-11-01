@@ -1,6 +1,6 @@
 import { Component, createRef, type ReactNode } from "react";
 
-interface Props { left: number; right: number; sidebarCollapsed: boolean; inspectorOpen: boolean; children: ReactNode; sidebarDuration?: number; inspectorDuration?: number }
+interface Props { reading?: boolean; left: number; right: number; sidebarCollapsed: boolean; inspectorOpen: boolean; children: ReactNode; sidebarDuration?: number; inspectorDuration?: number }
 interface Snapshot { positions: Map<Element, DOMRect>; exits: Array<{ element: HTMLElement; before: DOMRect }>; mainDuration: number }
 const REGIONS = ".workspace-sidebar, .workspace-main, .inspector-panel";
 
@@ -19,6 +19,7 @@ export class AnimatedFrame extends Component<Props, Record<string, never>, Snaps
     this.animations = []; this.ghosts = [];
   }
   override getSnapshotBeforeUpdate(previous: Props): Snapshot | null {
+    if (previous.reading !== this.props.reading) return null;
     const mainDuration = Math.max(previous.sidebarCollapsed !== this.props.sidebarCollapsed ? this.props.sidebarDuration ?? 140 : 0,
       previous.inspectorOpen !== this.props.inspectorOpen ? this.props.inspectorDuration ?? 200 : 0);
     if (!mainDuration || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return null;
@@ -73,7 +74,7 @@ export class AnimatedFrame extends Component<Props, Record<string, never>, Snaps
   override componentWillUnmount() { this.stop(); }
   override render() {
     const { left, right, sidebarCollapsed, inspectorOpen, children } = this.props;
-    return <div ref={this.frame} className="app-frame"
+    return <div ref={this.frame} className="app-frame" data-reading={this.props.reading || undefined}
       style={{ gridTemplateColumns: `${left}px minmax(0, 1fr) ${right}px` }}
       data-sidebar-collapsed={sidebarCollapsed || undefined} data-inspector-open={inspectorOpen || undefined}>{children}</div>;
   }

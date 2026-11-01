@@ -29,6 +29,20 @@ afterEach(async () => {
 });
 
 describe("server API", () => {
+  it("updates model enablement atomically through the batch endpoint", async () => {
+    const app = await testApp();
+    const { model } = seedStoreModel(app.store);
+    const post = (payload: Record<string, unknown>) => app.inject({ method: "POST", url: "/api/models/batch-enable", payload });
+    expect((await post({ modelIds: [], enabled: false })).statusCode).toBe(400);
+    expect((await post({ modelIds: [model.id], enabled: "false" })).statusCode).toBe(400);
+    expect((await post({ modelIds: [model.id, randomUUID()], enabled: false })).statusCode).toBe(404);
+    expect(app.store.getModel(model.id)?.enabled).toBe(true);
+    const disabled = await post({ modelIds: [model.id, model.id], enabled: false });
+    expect(disabled.statusCode).toBe(200);
+    expect(disabled.json()).toEqual([expect.objectContaining({ id: model.id, enabled: false })]);
+    expect((await post({ modelIds: [model.id], enabled: true })).json()[0].enabled).toBe(true);
+  });
+
   it("upgrades existing proxy password cookies without accepting OIDC tokens in a legacy cookie", async () => {
     const dir = mkdtempSync(join(tmpdir(), "llm-chat-oidc-cookie-")); dirs.push(dir);
     let password = "";

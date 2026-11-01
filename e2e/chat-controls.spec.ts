@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test, type APIRequestContext, type Page } from "./fixtures";
 import { agentInput, api, APP_URL, openMessageActions } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -6,7 +7,7 @@ async function setup(request: APIRequestContext, baseUrl: string) {
   const connection = await api(request, APP_URL, "POST", "/api/connections", {
     name: `controls-${Date.now()}`, protocol: "openai-chat", baseUrl, secretHeaders: {}
   });
-  const discovery = await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`);
+  const discovery = await discoverEnabledModels(request, APP_URL, connection.id);
   const model = discovery.created[0];
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`controls-${Date.now()}`, model.id));
@@ -97,7 +98,7 @@ for (const failedRead of ["messages", "conversations"] as const) {
     try {
       await page.goto(APP_URL);
       await page.getByLabel("选择 Agent", { exact: true }).click();
-      await page.getByRole("button", { name: fixture.agent.name, exact: true }).click();
+      await page.getByRole("option", { name: fixture.agent.name, exact: true }).click();
       await page.route(failedRead === "messages" ? /\/api\/conversations\/[^/]+\/messages$/ : /\/api\/conversations$/, async (route) => {
         if (blockReads && route.request().method() === "GET") {
           failedReads++;
@@ -154,8 +155,8 @@ test("工具栏大图标在宽窄屏和生成中保持分组与间距，品牌�
       await expect(page.locator(".composer-tools").getByRole("button", { name: "选择 Agent", exact: true })).toHaveCount(0);
       await page.getByRole("button", { name: "低频设置" }).click();
       await page.getByRole("button", { name: "选择 Agent", exact: true }).click();
-      await page.getByRole("searchbox", { name: "搜索 Agent" }).fill(fixture.agent.name);
-      await page.getByRole("button", { name: fixture.agent.name, exact: true }).click();
+      await page.getByRole("combobox", { name: "搜索 Agent" }).fill(fixture.agent.name);
+      await page.getByRole("option", { name: fixture.agent.name, exact: true }).click();
       await expect(page.locator(".agent-popover")).toHaveCount(0);
       await page.keyboard.press("Escape");
       await expect(page.locator(".composer-settings-popover")).toHaveCount(0);
@@ -274,7 +275,7 @@ test("附件菜单、灯泡滑条与历史附件编辑分叉", async ({ page, re
     const agentBox = await agentMenu.boundingBox();
     expect(agentBox!.x).toBeGreaterThanOrEqual(0);
     expect(agentBox!.x + agentBox!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-    if (test.info().project.name === "mobile-chromium") await expect(page.getByRole("searchbox", { name: "搜索 Agent" })).not.toBeFocused();
+    if (test.info().project.name === "mobile-chromium") await expect(page.getByRole("combobox", { name: "搜索 Agent" })).not.toBeFocused();
     await agentMenu.locator(".agent-option[aria-pressed=true]").click();
     await expect(agentMenu).toHaveCount(0);
     await page.getByRole("button", { name: /^推理档位：/ }).click();

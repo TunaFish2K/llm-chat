@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -7,7 +8,7 @@ const response = "示例：\n\n```python\nfirst = 1\nsecond = 2\n```\n\n| 名称
 test("code blocks keep their lines and both blocks put quiet icon actions in a header", async ({ page, request }) => {
   const provider = await startMockProvider({ responseText: response, reasoningChunks: [] });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Markdown blocks", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000, protocol: "openai-chat" });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("代码块助手", model.id));
   const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "展示代码和表格" });

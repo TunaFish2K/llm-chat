@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import type { MessageDto } from "@llm-chat/contracts";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL, openMessageActions } from "./helpers.mjs";
@@ -8,7 +9,7 @@ test.use({ serviceWorkers: "block" });
 test("回复密度、常驻操作和推理展开在宽窄屏保持稳定", async ({ page, request }, testInfo) => {
   const provider = await startMockProvider({ responseText: "你好！有需要尽管说。", cachedInputTokens: 8 });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Reply layout", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   await api(request, APP_URL, "PATCH", `/api/models/${model.id}`, { contextWindow: 128000 });
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("回复布局助手", model.id));
   const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "你好" });
@@ -70,7 +71,7 @@ test("回复密度、常驻操作和推理展开在宽窄屏保持稳定", async
 test("用户消息重试对应历史回答，防止重复提交并保留草稿", async ({ page, request }) => {
   const provider = await startMockProvider({ responseText: "重试测试回答" });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "User retry", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("重试助手", model.id));
   const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "第一轮" });
   const id = started.conversation.id;

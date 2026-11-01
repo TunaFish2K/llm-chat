@@ -47,8 +47,8 @@ function setup() {
     disconnect = disconnect;
   });
   let scroll!: StickToBottom;
-  function Harness({ version = 0 }: { version?: number }) {
-    scroll = useStickToBottom([version], true);
+  function Harness({ version = 0, paused = false }: { version?: number; paused?: boolean }) {
+    scroll = useStickToBottom([version], true, { paused });
     return <div ref={scroll.ref} onScroll={scroll.onScroll}><div ref={scroll.contentRef}>content</div></div>;
   }
   const view = render(<Harness />);
@@ -64,7 +64,7 @@ function setup() {
   act(() => { fireEvent.scroll(element); vi.advanceTimersByTime(20); });
 
   return {
-    view, element, scrollTo, disconnect, update() { view.rerender(<Harness version={1} />); }, get scroll() { return scroll; },
+    view, element, scrollTo, disconnect, pause(paused: boolean) { view.rerender(<Harness paused={paused} />); }, update() { view.rerender(<Harness version={1} />); }, get scroll() { return scroll; },
     queueResize() { act(() => resize([], {} as ResizeObserver)); },
     resize() { act(() => { resize([], {} as ResizeObserver); vi.advanceTimersByTime(20); }); }
   };
@@ -253,4 +253,21 @@ it("coalesces message and resize updates into one layout pass outside the render
   act(() => vi.advanceTimersByTime(20));
   expect(measure).toHaveBeenCalledOnce();
   expect(state.element.scrollTop).toBe(1000);
+});
+
+it("keeps a reading viewport detached through streaming and restores explicit bottom navigation", () => {
+  const state = setup();
+  state.pause(true);
+  expect(state.scroll.detached).toBe(true);
+  state.element.scrollTop = 200;
+  Object.defineProperty(state.element, "scrollHeight", { value: 1600 });
+  fireEvent.scroll(state.element);
+  act(() => vi.advanceTimersByTime(40));
+  expect(state.element.scrollTop).toBe(200);
+  state.pause(false);
+  act(() => vi.advanceTimersByTime(40));
+  expect(state.element.scrollTop).toBe(200);
+  expect(state.scroll.detached).toBe(true);
+  act(() => state.scroll.toBottom());
+  expect(state.element.scrollTop).toBe(1200);
 });

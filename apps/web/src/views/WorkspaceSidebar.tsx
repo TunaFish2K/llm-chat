@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { ConversationDto, ImageSessionSummaryDto } from "@llm-chat/contracts";
 import {
   Bot,
-  Download,
   Images,
   MessageSquare,
   MoreHorizontal,
@@ -30,18 +29,16 @@ import { ConfirmModal, Modal } from "../lib/ui";
 import { Popover } from "radix-ui";
 import { ConversationSearch } from "../components/ConversationSearch";
 import { ConversationList } from "../components/ConversationList";
-import type { PwaState } from "../lib/pwa";
 import { imageStudioStore, refreshImageSessions } from "../lib/image-studio-state";
 import { assetUrl } from "../lib/server-channel";
 
 interface WorkspaceSidebarProps {
+  hidden?: boolean;
   route: Route;
   compact: boolean;
   onClose?: () => void;
   onNavigate?: (path: string) => void;
   onToggleCompact?: () => void;
-  pwa: PwaState;
-  onInstall: () => void;
 }
 
 export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
@@ -49,13 +46,12 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
 }
 
 function ConversationWorkspaceSidebar({
+  hidden = false,
   route,
   compact,
   onClose,
   onNavigate,
-  onToggleCompact,
-  pwa,
-  onInstall
+  onToggleCompact
 }: WorkspaceSidebarProps) {
   useLocale();
   const open = (path: string) => {
@@ -117,7 +113,7 @@ function ConversationWorkspaceSidebar({
   };
 
   return (
-    <aside className="workspace-sidebar" data-compact={compact || undefined} aria-label={t("WorkspaceSidebar.main_navigation_and_conversations")}>
+    <aside className="workspace-sidebar" hidden={hidden} inert={hidden || undefined} data-compact={compact || undefined} aria-label={t("WorkspaceSidebar.main_navigation_and_conversations")}>
       <header className="sidebar-brand">
         {compact ? (
           <button className="sidebar-brand-button" onClick={onToggleCompact} aria-label={t("WorkspaceSidebar.expand_conversation_sidebar")} title={t("WorkspaceSidebar.expand_conversation_sidebar")}>
@@ -154,9 +150,6 @@ function ConversationWorkspaceSidebar({
           <div className="sidebar-rail-spacer" />
           <div className="sidebar-rail-utilities">
             <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label={t("WorkspaceSidebar.settings")} compact />
-            {pwa.installAvailable ? (
-              <button className="sidebar-rail-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={18} /></button>
-            ) : null}
           </div>
         </>
       ) : null}
@@ -197,11 +190,6 @@ function ConversationWorkspaceSidebar({
             <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={17} />} label={t("WorkspaceSidebar.settings")} compact={compact} />
           </nav>
 
-          {pwa.installAvailable ? <footer className="sidebar-status">
-            {pwa.installAvailable ? (
-              <button className="icon-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={15} /></button>
-            ) : null}
-          </footer> : null}
         </div>
       <Presence>{searchOpen ? <ConversationSearch onClose={() => setSearchOpen(false)} onNavigate={open} /> : null}</Presence>
       <Presence>{renaming ? (
@@ -220,7 +208,7 @@ function ConversationWorkspaceSidebar({
   );
 }
 
-function ImageWorkspaceSidebar({ route, compact, onClose, onNavigate, onToggleCompact, pwa, onInstall }: WorkspaceSidebarProps) {
+function ImageWorkspaceSidebar({ route, compact, onClose, onNavigate, onToggleCompact }: WorkspaceSidebarProps) {
   useLocale();
   const sessions = useStore(imageStudioStore, (state) => state.sessions);
   const loading = useStore(imageStudioStore, (state) => state.loading);
@@ -282,7 +270,6 @@ function ImageWorkspaceSidebar({ route, compact, onClose, onNavigate, onToggleCo
       <div className="sidebar-rail-spacer" />
       <div className="sidebar-rail-utilities">
         <SidebarLink onNavigate={open} active={route.name === "settings"} href={routes.settings()} icon={<Settings size={18} />} label={t("WorkspaceSidebar.settings")} compact />
-        {pwa.installAvailable ? <button className="sidebar-rail-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={18} /></button> : null}
       </div>
     </> : <div className="sidebar-expanded">
       <div className="sidebar-primary-actions"><button className="button primary" onClick={() => open(routes.images())}><Plus size={17} /><span>{t("ImageStudio.new_session")}</span></button></div>
@@ -307,7 +294,6 @@ function ImageWorkspaceSidebar({ route, compact, onClose, onNavigate, onToggleCo
         <SidebarLink onNavigate={open} active={false} href={routes.agents()} icon={<Bot size={17} />} label="Agent" compact={false} />
         <SidebarLink onNavigate={open} active={false} href={routes.settings()} icon={<Settings size={17} />} label={t("WorkspaceSidebar.settings")} compact={false} />
       </nav>
-      {pwa.installAvailable ? <footer className="sidebar-status"><button className="icon-button" onClick={onInstall} aria-label={t("WorkspaceSidebar.install_on_this_device")} title={t("WorkspaceSidebar.install_on_this_device")}><Download size={15} /></button></footer> : null}
     </div>}
 
     <Presence>{renaming ? <Modal title={t("ImageStudio.rename_session")} onClose={() => setRenaming(null)} footer={<><button className="button secondary" onClick={() => setRenaming(null)}>{t("WorkspaceSidebar.cancel")}</button><button className="button primary" disabled={busy || !renameValue.trim()} onClick={() => void rename()}>{t("WorkspaceSidebar.save")}</button></>}>

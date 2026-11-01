@@ -42,6 +42,7 @@ import {
   memoryIdParamsSchema,
   memoryInputSchema,
   modelInputSchema,
+  modelBatchEnableSchema,
   patchConversationSchema,
   retryGenerationSchema,
   roleplayScriptExecutionSchema,
@@ -716,6 +717,16 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     const value = modelInputSchema.parse(request.body);
     if (!store.getConnection(value.connectionId)) throw withMessage(new StoreError("connection_not_found", "连接不存在"), "error.connection_not_found");
     return reply.code(201).send(store.createModel(value));
+  });
+  app.post("/api/models/batch-enable", async (request) => {
+    const { modelIds, enabled } = modelBatchEnableSchema.parse(request.body);
+    const result = store.setModelsEnabled(modelIds, enabled);
+    eventHub.emit({ type: "resource-changed", resource: "models" });
+    if (!enabled) {
+      eventHub.emit({ type: "resource-changed", resource: "settings" });
+      eventHub.emit({ type: "resource-changed", resource: "conversations" });
+    }
+    return result;
   });
   app.patch<{ Params: { id: string } }>("/api/models/:id", async (request) => {
     const value = modelInputSchema.partial().parse(request.body);

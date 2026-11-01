@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -9,7 +10,7 @@ const response = '<p style="color: #ffbb00">❤️ 💛 <span title="单独爱�
 test("HTML 脚本和 SVG 在隔离预览中运行，emoji 保留原色，离线可重新打开", async ({ page, request, context }, info) => {
   const provider = await startMockProvider({ responseText: response, firstResponseDelayMs: 300 });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Rich preview", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("预览助手", model.id));
   const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "展示预览" });
   try {

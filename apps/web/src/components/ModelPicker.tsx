@@ -1,3 +1,4 @@
+import { useSearchNavigation } from "./useSearchNavigation";
 import { PopoverLayer } from "../lib/motion";
 import { t, useLocale, getLocale } from "../lib/i18n";
 import { useEffect, useMemo, useState } from "react";
@@ -59,6 +60,15 @@ export function ModelPicker({
       .filter((group) => group.models.length);
   }, [models, connections, query, imageInputOnly, imageOutputOnly]);
 
+  const choose = (id: string) => {
+    if (id === "empty") emptyOption?.onSelect(); else onChange(id);
+    changeOpen(false);
+  };
+  const navigation = useSearchNavigation({
+    ids: [...(emptyOption && !query.trim() ? ["empty"] : []), ...groups.flatMap(group => group.models.map(model => model.id))],
+    query, open, selectedId: emptyOption?.selected ? "empty" : value, onSelect: choose
+  });
+
   useEffect(() => {
     if (!open) return;
     for (const connection of connections) {
@@ -118,6 +128,7 @@ export function ModelPicker({
           <label className="search-field">
             <Search size={15} aria-hidden="true" />
             <input
+              {...navigation.inputProps}
               autoFocus={!touchLayout}
               type="search"
               value={query}
@@ -126,9 +137,12 @@ export function ModelPicker({
               aria-label={t("ModelPicker.search_models")}
             />
           </label>
-          <div className="picker-list">
-            {emptyOption ? <button
+          <div className="picker-list" id={navigation.listId} role="listbox" aria-label={label}>
+            {emptyOption && (!query.trim() || !groups.length) ? <button
               type="button"
+              {...navigation.optionProps("empty")}
+              tabIndex={query.trim() ? 0 : -1}
+              aria-selected={emptyOption.selected}
               className="model-option"
               data-selected={emptyOption.selected || undefined}
               onClick={() => {
@@ -152,6 +166,8 @@ export function ModelPicker({
                 {items.map((model) => (
                   <button
                     type="button"
+                    {...navigation.optionProps(model.id)}
+                    aria-selected={value === model.id}
                     className="model-option"
                     key={model.id}
                     data-selected={value === model.id || undefined}

@@ -11,6 +11,7 @@ export interface PwaState {
   supported: boolean;
   updateAvailable: boolean;
   installAvailable: boolean;
+  installed: boolean;
   offlineReady: boolean;
   updateStatus: "idle" | "checking" | "downloading" | "current" | "ready" | "applying" | "repairing" | "error";
   updateError: string | null;
@@ -18,12 +19,13 @@ export interface PwaState {
 }
 
 type PwaListener = (state: PwaState) => void;
-type InstallPrompt = Event & { prompt(): Promise<void> };
+type InstallPrompt = Event & { prompt(): Promise<unknown>; userChoice?: Promise<{ outcome: "accepted" | "dismissed" }> };
 
 let state: PwaState = {
   supported: typeof navigator !== "undefined" && "serviceWorker" in navigator,
   updateAvailable: false,
   installAvailable: false,
+  installed: false,
   offlineReady: false,
   updateStatus: "idle",
   updateError: null
@@ -43,9 +45,9 @@ let stagedShell: string | null = null;
 const UPDATE_TIMEOUT = 30_000;
 const SHELL_TIMEOUT = 120_000;
 
-/** Updates come from the active server channel; the page origin is only one of them. */
+/** Preview assets stay on the preview origin even when API traffic changes channels. */
 function updateBase(): string {
-  return apiBase() || location.origin;
+  return import.meta.env.VITE_FRONTEND_PREVIEW === "1" ? location.origin : apiBase() || location.origin;
 }
 
 type ShellCommand = { type: "INSTALL_SHELL"; base: string; force?: boolean } | { type: "ACTIVATE_SHELL"; id: string };
@@ -186,14 +188,24 @@ export function initPwa(): void {
   if (initialized) return;
   initialized = true;
 
+  const standalone = window.matchMedia?.("(display-mode: standalone)");
+  const detectInstalled = () => {
+    if (standalone?.matches || (navigator as Navigator & { standalone?: boolean }).standalone) {
+      deferredInstall = null;
+      emit({ installed: true, installAvailable: false });
+    }
+  };
+  detectInstalled();
+  standalone?.addEventListener("change", detectInstalled);
+
   window.addEventListener("beforeinstallprompt", (event) => {
     event.preventDefault();
     deferredInstall = event as InstallPrompt;
-    emit({ installAvailable: true });
+    emit({ installAvailable: true, installed: false });
   });
   window.addEventListener("appinstalled", () => {
     deferredInstall = null;
-    emit({ installAvailable: false });
+    emit({ installAvailable: false, installed: true });
   });
 
   if (!state.supported) return;
@@ -240,9 +252,16 @@ function registerServiceWorker(): void {
 
 export async function promptInstall(): Promise<void> {
   if (!deferredInstall) return;
-  await deferredInstall.prompt();
+  const prompt = deferredInstall;
+  // Each browser prompt can be used only once, including cancellation or failure.
   deferredInstall = null;
   emit({ installAvailable: false });
+  try {
+    await prompt.prompt();
+    await prompt.userChoice;
+  } catch {
+    throw localizedError("pwa.install_failed");
+  }
 }
 
 async function activateWorker(worker: ServiceWorker): Promise<void> {

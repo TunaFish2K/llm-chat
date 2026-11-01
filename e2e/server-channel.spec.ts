@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { createHash } from "node:crypto";
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -38,7 +39,7 @@ async function channelProxy(target: string): Promise<Proxy> {
 
 async function setup(request: APIRequestContext, baseUrl: string) {
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: `channel-${Date.now()}`, baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`channel-${Date.now()}`, model.id));
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
   return { conversation };

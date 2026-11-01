@@ -129,3 +129,12 @@ export function updateDraftAttachments(scopeId: string, attachments: FileAssetDt
     if (draft?.uploadScopeId === scopeId) writeComposerDraft(id, { ...draft, attachments });
   }
 }
+
+export function draftAttachmentsForScope(scopeId: string): FileAssetDto[] | undefined {
+  for (const key of draftKeys()) {
+    const id = key.slice(prefix.length) === "new" ? null : key.slice(prefix.length);
+    const draft = readComposerDraft(id);
+    if (draft?.uploadScopeId === scopeId) return draft.attachments;
+  }
+  return undefined;
+}

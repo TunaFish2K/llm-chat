@@ -1204,3 +1204,26 @@ button.trajectory-step {
 .container-resources progress { width: min(100%, 24rem); }
 .container-resource-files { padding-inline-start: 1.25rem; }
 .container-resource-files li, .container-resources .hint { overflow-wrap: anywhere; }
+
+/* Selection is independent from each model's enabled state. */
+.connection-actions { flex-wrap: wrap; }
+.connection-filter { width: auto; max-width: 240px; }
+.model-batch-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.model-select-all { display: inline-flex; align-items: center; gap: 8px; font-size: var(--text-sm); }
+.model-batch-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.selection-checkbox { width: 16px; height: 16px; flex: 0 0 16px; accent-color: var(--accent); cursor: pointer; }
+.connection-model-table .model-selection-cell { width: 36px; padding-inline: 10px; }
+.connection-model-table tbody tr[data-selected] td, .connection-model-table tbody tr[data-selected]:hover td { background: var(--accent-soft); }
+@media (max-width: 767px) {
+  .connection-actions .connection-search { order: -1; flex-basis: 100%; max-width: none; }
+  .connection-filter { flex: 1; min-width: 0; }
+  .model-batch-actions { width: 100%; margin-left: 0; }
+  .connection-model-table tbody tr { grid-template-columns: 44px minmax(0, 1fr) auto; }
+  .connection-model-table .model-selection-cell { grid-column: 1; grid-row: 1; width: auto; padding: 0; }
+  .connection-model-table .connection-model-summary { grid-column: 2 / -1; grid-row: 1; }
+  .connection-model-table .connection-model-meta { grid-column: 1 / 3; }
+  .connection-model-table .connection-model-enabled { grid-column: 3; }
+}
+
+.selection-hit-area { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; cursor: pointer; flex-shrink: 0; }
+@media (pointer: coarse), (max-width: 767px) { .selection-hit-area { min-width: 44px; min-height: 44px; } }

@@ -247,7 +247,7 @@ describe("ChatView", () => {
     const user = userEvent.setup(); render(<ChatView conversationId="conv-1" />);
     fireEvent.change(screen.getByLabelText("输入消息"), { target: { value: "next turn" } });
     await user.click(screen.getByRole("button", { name: "选择模型" }));
-    await user.click(screen.getByRole("button", { name: /Second/ }));
+    await user.click(screen.getByRole("option", { name: /Second/ }));
     expect(screen.getByRole("button", { name: /^发送$/ })).toBeEnabled();
     expect(screen.getByRole("button", { name: "选择模型" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: /^发送$/ }));
@@ -557,17 +557,17 @@ describe("ChatView", () => {
     render(<ChatView conversationId="conv-1" />);
     const trigger = screen.getByRole("button", { name: "选择 Agent" });
     await user.click(trigger);
-    await user.click(screen.getByRole("button", { name: "测试助手" }));
+    await user.click(screen.getByRole("option", { name: "测试助手" }));
     expect(screen.queryByRole("dialog", { name: "切换 Agent" })).not.toBeInTheDocument();
     expect(patch).not.toHaveBeenCalled();
     await user.click(trigger);
-    await user.click(screen.getByRole("button", { name: "第二助手" }));
+    await user.click(screen.getByRole("option", { name: "第二助手" }));
     expect(screen.getByRole("dialog", { name: "切换 Agent" })).toHaveTextContent("覆盖将全部清除");
     await user.click(screen.getByRole("button", { name: "取消" }));
     expect(trigger).toHaveAttribute("title", "测试助手");
     expect(patch).not.toHaveBeenCalled();
     await user.click(trigger);
-    await user.click(screen.getByRole("button", { name: "第二助手" }));
+    await user.click(screen.getByRole("option", { name: "第二助手" }));
     await user.click(screen.getByRole("button", { name: "切换" }));
     await waitFor(() => expect(trigger).toHaveAttribute("title", "第二助手"));
     expect(patch).toHaveBeenCalledExactlyOnceWith({ agentId: "second" });
@@ -1199,7 +1199,7 @@ describe("ChatView", () => {
     render(<ChatView conversationId="conv-1" />);
 
     await user.click(screen.getByRole("button", { name: "选择模型" }));
-    await user.click(await screen.findByRole("button", { name: /Claude 测试/ }));
+    await user.click(await screen.findByRole("option", { name: /Claude 测试/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/conversations/conv-1",
       expect.objectContaining({ method: "PATCH", body: JSON.stringify({ modelId: "model-2" }) })
@@ -1221,7 +1221,7 @@ describe("ChatView", () => {
     render(<ChatView conversationId={null} />);
 
     await user.click(screen.getByRole("button", { name: "选择模型" }));
-    await user.click(await screen.findByRole("button", { name: /Claude 测试/ }));
+    await user.click(await screen.findByRole("option", { name: /Claude 测试/ }));
     await user.click(screen.getByRole("button", { name: /^推理档位：/ }));
     await user.click(screen.getByRole("button", { name: "high" }));
     await user.keyboard("{Escape}");

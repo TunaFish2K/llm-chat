@@ -1659,7 +1659,7 @@
 .message-queue ol { margin: 0; padding: 0; max-height: 180px; overflow: auto; counter-reset: queued; }
 .message-queue li { counter-increment: queued; border-top: 1px solid var(--border); padding-block: 4px; }
 .message-queue li::before { content: counter(queued); color: var(--text-muted); }
-.message-queue li > div { min-width: 0; flex: 1; }
+.message-queue li > .message-queue-content { min-width: 0; flex: 1; }
 .message-queue p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .message-queue small { display: block; color: var(--text-muted); }
 .message-queue small[role=alert], .tool-error-summary { color: var(--err); }
@@ -1767,3 +1767,21 @@
 .global-file-uploads { position: fixed; z-index: 45; right: 16px; top: calc(64px + env(safe-area-inset-top)); max-width: min(360px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 10px; background: var(--surface-1); box-shadow: 0 4px 16px #0002; }
 .global-file-uploads > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 12px; }
 .global-file-upload-content { padding: 0 12px 8px; max-height: 50vh; overflow: auto; }
+
+.message-queue-actions { flex-shrink: 0; }
+.model-option[data-active], .conversation-search-result[data-active] {
+  background: var(--accent-soft); outline: 1px solid var(--accent); outline-offset: -1px;
+}
+
+/* Reading mode has no visual chrome or reserved composer space. */
+.app-frame[data-reading] .workspace-main { grid-column: 2; }
+.app-frame[data-reading] :is(.workspace-sidebar, .inspector-panel, .image-tile-actions, .message-file-share, .chat-thread .act, .conversation-header, .composer, .jump-to-latest,
+  .root-branch-controls, .stream-actions, .version-switch, .branch-switcher, .branch-switchers,
+  .usage-summary, .reply-timestamp, .roleplay-expression, .global-file-uploads, .toast-stack,
+  .markdown-table-header, .code-toolbar, .code-actions, .code-block-actions) { display: none !important; }
+.app-frame[data-reading] .chat-thread { padding-block: 12px; padding-block-end: calc(12px + var(--reading-tail, 0px)); }
+.app-frame[data-reading] .chat-scroll { outline: none; }
+.app-frame[data-reading] [data-streamdown="code-block-actions"] { display: none !important; }
+@media (max-width: 767px) {
+  .app-frame[data-reading] .chat-thread { padding-inline: 12px; }
+}

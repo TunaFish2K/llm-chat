@@ -1,3 +1,5 @@
+import { SelectionCheckbox } from "../components/SelectionCheckbox";
+import { useModelSelection } from "../components/useModelSelection";
 import { Presence } from "../lib/motion";
 import { useErrorState } from "../lib/error-display";
 import { t, useLocale, localized } from "../lib/i18n";
@@ -16,7 +18,7 @@ import type {
 } from "@llm-chat/contracts";
 import { httpHeaderNameSchema, httpHeaderValueSchema, providerPreset, providerPresetDefinitions, resolveModelProtocol } from "@llm-chat/contracts";
 import { endpoints } from "../lib/api";
-import { appStore, refreshConnectionsAndModels, toast, toastError } from "../lib/app-state";
+import { appStore, refreshConnectionsAndModels, refreshConversations, refreshSettings, toast, toastError } from "../lib/app-state";
 import { formatTime, formatTokens } from "../lib/format";
 import { useStore } from "../lib/store";
 import { ConfirmModal, EmptyState, Field, Modal, Switch } from "../lib/ui";
@@ -43,6 +45,8 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [query, setQuery] = useState("");
+  const [connectionFilter, setConnectionFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const expand = (id: string) => setExpanded((current) => current.has(id) ? current : new Set(current).add(id));
   const toggle = (id: string) => setExpanded((current) => {
     const next = new Set(current);
@@ -51,13 +55,38 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
   });
   const pattern = literalSearchPattern(query);
   const visible = useMemo(() => connections.flatMap((connection) => {
+    if (connectionFilter && connectionFilter !== connection.id) return [];
     const all = models.filter((model) => model.connectionId === connection.id);
-    if (!pattern) return [{ connection, all, models: all }];
-    const connectionHit = [connection.name, providerPreset(connection.providerId).label].some((text) => text.search(pattern) >= 0);
-    const hits = connectionHit ? all : all.filter((model) =>
-      [model.displayName, model.modelKey, resolveModelProtocol(model, connection)].some((text) => text.search(pattern) >= 0));
-    return connectionHit || hits.length ? [{ connection, all, models: hits }] : [];
-  }), [connections, models, pattern]);
+    const connectionHit = !pattern || [connection.name, providerPreset(connection.providerId).label].some((text) => text.search(pattern) >= 0);
+    const hits = all.filter(model => (statusFilter === "all" || model.enabled === (statusFilter === "enabled")) &&
+      (connectionHit || [model.displayName, model.modelKey, resolveModelProtocol(model, connection)].some(text => text.search(pattern!) >= 0)));
+    return hits.length || (statusFilter === "all" && connectionHit) ? [{ connection, all, models: hits }] : [];
+  }), [connections, models, pattern, connectionFilter, statusFilter]);
+  const filtering = Boolean(pattern) || statusFilter !== "all" || Boolean(connectionFilter);
+  const matching = visible.flatMap(group => group.models);
+  const matchingIds = matching.map(model => model.id);
+  const displayedIds = visible.filter(group => filtering || expanded.has(group.connection.id)).flatMap(group => group.models.map(model => model.id));
+  const selection = useModelSelection(JSON.stringify([query, connectionFilter, statusFilter]), matchingIds, displayedIds);
+  const selectedModels = matching.filter(model => selection.selected.has(model.id));
+  const enableCount = selectedModels.filter(model => !model.enabled).length;
+  const disableCount = selectedModels.filter(model => model.enabled).length;
+  const batchEnable = async (enabled: boolean) => {
+    if (busy) return;
+    const modelIds = selectedModels.filter(model => model.enabled !== enabled).map(model => model.id);
+    if (!modelIds.length) return;
+    setBusy(true);
+    try {
+      const updated = await endpoints.setModelsEnabled({ modelIds, enabled });
+      appStore.set(current => ({ models: current.models.map(model => updated.find(next => next.id === model.id) ?? model) }));
+      selection.clear();
+      toast("success", localized(enabled ? "Models.enabled_count" : "Models.disabled_count", { count: updated.length }));
+    } catch (error) { toastError(error); }
+    finally {
+      // The legacy API can partially apply a batch before a request fails.
+      await Promise.all([refreshConnectionsAndModels(), refreshConversations(), refreshSettings()]).catch(toastError);
+      setBusy(false);
+    }
+  };
 
   const loadBalance = useCallback(async (connection: ConnectionDto, refresh = false) => {
     setBalances((current) => ({ ...current, [connection.id]: { loading: true } }));
@@ -100,10 +129,9 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     expand(connection.id);
     try {
       const result = await endpoints.discoverModels(connection.id);
-      void refreshConnectionsAndModels().catch(toastError);
       const details = [
         t("ConnectionsView.found", { value1: (result.discovered) }),
-        t("ConnectionsView.added", { value1: (result.created.length) }),
+        t("Models.discovered_disabled", { count: result.created.length }),
         t("ConnectionsView.updated", { value1: (result.updated.length) }),
         t("ConnectionsView.kept_manual_settings_for", { value1: (result.skipped) }),
         t("ConnectionsView.unmatched_in_catalog", { value1: (result.unmatched) })
@@ -112,24 +140,37 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
     } catch (error) {
       toastError(error);
     } finally {
+      await refreshConnectionsAndModels().catch(toastError);
       setBusy(false);
     }
   };
 
   const actions = (
-    <div className={embedded ? "connection-actions" : "actions"}>
-      <button className="btn primary" onClick={() => setEditingConnection("new")}>
+    <div className={embedded ? "connection-actions" : "actions connection-actions"}>
+      <button className="btn primary" disabled={busy} onClick={() => setEditingConnection("new")}>
         <Plus size={15} aria-hidden="true" />{t("ConnectionsView.new_connection")}</button>
       {connections.length > 0 ? <label className="search-field compact connection-search">
         <Search size={15} aria-hidden="true" />
         <input
           type="search"
+          disabled={busy}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t("ModelPicker.search_models_connections_or_protocols")}
           aria-label={t("ModelPicker.search_models")}
         />
       </label> : null}
+      {connections.length > 0 ? <>
+        <select className="select connection-filter" aria-label={t("Models.connection_filter")} value={connectionFilter} disabled={busy} onChange={event => setConnectionFilter(event.target.value)}>
+          <option value="">{t("Models.all_connections")}</option>
+          {connections.map(connection => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
+        </select>
+        <select className="select connection-filter" aria-label={t("Models.status_filter")} value={statusFilter} disabled={busy} onChange={event => setStatusFilter(event.target.value)}>
+          <option value="all">{t("Models.all_statuses")}</option>
+          <option value="enabled">{t("Models.enabled")}</option>
+          <option value="disabled">{t("Models.disabled")}</option>
+        </select>
+      </> : null}
     </div>
   );
 
@@ -142,6 +183,21 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
       <div className="panel-scroll">
         <div className="panel-inner settings-panels">
           {embedded ? actions : null}
+          {connections.length > 0 ? <div className="model-batch-toolbar" aria-label={t("Models.batch_actions")} aria-busy={busy}>
+            <div className="model-select-all">
+              <SelectionCheckbox label={t("Models.select_filtered")} checked={matchingIds.length > 0 && selection.selected.size === matchingIds.length}
+                mixed={selection.selected.size > 0 && selection.selected.size < matchingIds.length} disabled={busy || !matchingIds.length}
+                onToggle={() => selection.selectGroup(matchingIds)} />
+              <span>{t("Models.select_filtered")}</span>
+            </div>
+            <button className="btn small ghost" disabled={busy || !matchingIds.length} onClick={selection.invert}>{t("Models.invert")}</button>
+            <span className="small muted" role="status">{t("Models.selected_count", { selected: selection.selected.size, count: matchingIds.length })}</span>
+            <div className="model-batch-actions">
+              <button className="btn small primary" disabled={busy || !enableCount} onClick={() => void batchEnable(true)}>{t("Models.enable_count", { count: enableCount })}</button>
+              <button className="btn small" disabled={busy || !disableCount} onClick={() => void batchEnable(false)}>{t("Models.disable_count", { count: disableCount })}</button>
+              <button className="btn small ghost" disabled={busy || !selection.selected.size} onClick={selection.clear}>{t("Models.clear_selection")}</button>
+            </div>
+          </div> : null}
           {connections.length === 0 ? (
             <EmptyState title={t("ConnectionsView.no_connections_yet")} />
           ) : visible.length === 0 ? (
@@ -149,16 +205,22 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
           ) : (
             visible.map(({ connection, all, models: connectionModels }) => {
               const balance = balances[connection.id];
-              const open = Boolean(pattern) || expanded.has(connection.id);
+              const open = filtering || expanded.has(connection.id);
+              const groupIds = connectionModels.map(model => model.id);
+              const groupSelected = groupIds.filter(id => selection.selected.has(id)).length;
               return (
                 <div className="card connection-card" key={connection.id} data-open={open || undefined}>
                   <header className="management-card-header">
                     <h3 className="list-row-title">
+                      <SelectionCheckbox label={t("Models.select_connection", { name: connection.name })}
+                        checked={groupIds.length > 0 && groupSelected === groupIds.length} mixed={groupSelected > 0 && groupSelected < groupIds.length}
+                        disabled={busy || !groupIds.length} onToggle={() => selection.selectGroup(groupIds)} />
                       <button
                         type="button"
                         className="connection-toggle"
+                        disabled={busy}
                         aria-expanded={open}
-                        onClick={() => { if (!pattern) toggle(connection.id); }}
+                        onClick={() => { if (!filtering) toggle(connection.id); }}
                       >
                         <ChevronRight size={16} aria-hidden="true" />
                         <strong>{connection.name}</strong>
@@ -170,13 +232,13 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                     <div className="list-row-actions">
                       <button className="btn small" disabled={busy} onClick={() => void discover(connection)}>
                         <RefreshCw size={13} aria-hidden="true" />{t("ConnectionsView.discover_models")}</button>
-                      <IconButton label={t("ConnectionsView.add_model_manually")} onClick={() => { expand(connection.id); setNewModelConnection(connection.id); setEditingModel("new"); }}>
+                      <IconButton disabled={busy} label={t("ConnectionsView.add_model_manually")} onClick={() => { expand(connection.id); setNewModelConnection(connection.id); setEditingModel("new"); }}>
                         <Plus size={15} /></IconButton>
                       <IconButton label={t("ConnectionsView.test_connection")} disabled={busy} onClick={() => void testConnection(connection)}>
                         <Plug size={15} /></IconButton>
-                      <IconButton label={t("SettingsView.edit")} onClick={() => setEditingConnection(connection)}>
+                      <IconButton disabled={busy} label={t("SettingsView.edit")} onClick={() => setEditingConnection(connection)}>
                         <Pencil size={15} /></IconButton>
-                      <IconButton label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeletingConnection(connection)}>
+                      <IconButton disabled={busy} label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeletingConnection(connection)}>
                         <Trash2 size={15} /></IconButton>
                     </div>
                   </header>
@@ -210,6 +272,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                     <table className="table connection-model-table">
                       <thead>
                         <tr>
+                          <th className="model-selection-cell"><span className="sr-only">{t("Models.selection")}</span></th>
                           <th>{t("InspectorPanel.model")}</th>
                           <th>{t("InspectorPanel.context")}</th>
                           <th>{t("SettingsView.source")}</th>
@@ -219,7 +282,11 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                       </thead>
                       <tbody>
                         {connectionModels.map((model) => (
-                          <tr key={model.id}>
+                          <tr key={model.id} data-selected={selection.selected.has(model.id) || undefined}>
+                            <td className="model-selection-cell">
+                              <SelectionCheckbox label={t("Models.select_model", { name: model.displayName })} checked={selection.selected.has(model.id)} disabled={busy}
+                                onToggle={range => selection.toggle(model.id, range)} />
+                            </td>
                             <td className="connection-model-summary" data-label={t("InspectorPanel.model")}>
                               <div className="list-row-title">
                                 <ModelBrandIcon model={model} connection={connection} />
@@ -237,6 +304,7 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                               <Switch
                                 label={t("ConnectionsView.enable", { value1: (model.displayName) })}
                                 hideLabel
+                                disabled={busy}
                                 checked={model.enabled}
                                 onChange={(checked) => {
                                   endpoints
@@ -248,8 +316,8 @@ export function ConnectionsView({ embedded = false }: { embedded?: boolean } = {
                             </td>
                             <td className="connection-model-actions" data-label={t("TasksView.actions")}>
                               <span className="row-actions-quiet">
-                                <IconButton label={t("SettingsView.edit")} onClick={() => setEditingModel(model)}><Pencil size={15} /></IconButton>
-                                <IconButton label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeletingModel(model)}><Trash2 size={15} /></IconButton>
+                                <IconButton disabled={busy} label={t("SettingsView.edit")} onClick={() => setEditingModel(model)}><Pencil size={15} /></IconButton>
+                                <IconButton disabled={busy} label={t("WorkspaceSidebar.delete_2")} danger onClick={() => setDeletingModel(model)}><Trash2 size={15} /></IconButton>
                               </span>
                             </td>
                           </tr>

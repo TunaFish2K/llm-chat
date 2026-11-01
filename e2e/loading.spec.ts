@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL, openDrawerIfNeeded } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -55,7 +56,7 @@ test("完整历史同步关闭时仍先恢复模型与提供商，连接未完�
 async function chat(request: import("@playwright/test").APIRequestContext) {
   const provider = await startMockProvider({ responseText: "加载回归回复" });
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Loading", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("加载回归助手", model.id));
   const started = await api(request, APP_URL, "POST", "/api/conversations/start", { agentId: agent.id, text: "已保存的历史消息" });
   await expect.poll(async () => (await api(request, APP_URL, "GET", `/api/generations/${started.generation.generationId}`)).status).toBe("completed");

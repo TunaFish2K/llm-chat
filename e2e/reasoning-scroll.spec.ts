@@ -1,3 +1,4 @@
+import { discoverEnabledModels } from "./helpers.mjs";
 import { expect, test } from "./fixtures";
 import { agentInput, api, APP_URL } from "./helpers.mjs";
 import { startMockProvider } from "./mock-provider.mjs";
@@ -23,7 +24,7 @@ test("长推理展开后内外层跟随，手动上翻暂停并能恢复", async
   });
   const original = await api(request, APP_URL, "GET", "/api/settings");
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Scroll test", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("滚动测试", model.id));
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
   try {
@@ -137,7 +138,7 @@ test("自动收起推理后仍跟随正文，完成后展开也保持页面底�
   });
   const original = await api(request, APP_URL, "GET", "/api/settings");
   const connection = await api(request, APP_URL, "POST", "/api/connections", { name: "Collapse test", protocol: "openai-chat", baseUrl: provider.baseUrl, secretHeaders: {} });
-  const model = (await api(request, APP_URL, "POST", `/api/connections/${connection.id}/models/discover`)).created[0];
+  const model = (await discoverEnabledModels(request, APP_URL, connection.id)).created[0];
   const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput("自动收起测试", model.id));
   const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
   try {

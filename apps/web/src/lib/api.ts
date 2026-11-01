@@ -118,6 +118,44 @@ export const api = {
   delete: <T>(path: string, context?: RequestContext) => request<T>("DELETE", path, undefined, context)
 };
 
+async function setModelsEnabled(input: import("@llm-chat/contracts").ModelBatchEnableInput): Promise<ModelDto[]> {
+  try {
+    return await api.post<ModelDto[]>("/api/models/batch-enable", input);
+  } catch (error) {
+    // Frontend previews can run against the previous backend. Only a missing
+    // route permits fallback: validation/auth/model errors must stay errors.
+    if (!(error instanceof ApiRequestError) || error.status !== 404 || error.code !== "not_found") throw error;
+  }
+  const updated: ModelDto[] = [];
+  // Serial writes stop on failure; the view refreshes authoritative state even
+  // when this older, non-transactional API has completed only part of a batch.
+  for (const id of new Set(input.modelIds)) {
+    updated.push(await api.patch<ModelDto>(`/api/models/${encodeURIComponent(id)}`, { enabled: input.enabled }));
+  }
+  return updated;
+}
+
+interface ModelDiscoveryResult {
+  discovered: number;
+  created: ModelDto[];
+  updated: ModelDto[];
+  skipped: number;
+  unmatched: number;
+  warnings: string[];
+}
+
+async function discoverModels(id: string): Promise<ModelDiscoveryResult> {
+  const result = await api.post<ModelDiscoveryResult>(`/api/connections/${id}/models/discover`);
+  // Older backends create enabled entries. Normalize only newly created rows;
+  // existing choices must survive discovery. New backends need no extra write.
+  const enabled = result.created.filter(model => model.enabled).map(model => model.id);
+  if (enabled.length) {
+    const disabled = new Map((await setModelsEnabled({ modelIds: enabled, enabled: false })).map(model => [model.id, model]));
+    result.created = result.created.map(model => disabled.get(model.id) ?? model);
+  }
+  return result;
+}
+
 export interface BootstrapDto {
   sourceId?: string;
   settings: AppSettings;
@@ -243,19 +281,12 @@ export const endpoints = {
   connectionBalance: (id: string, refresh = false) =>
     api.get<ConnectionBalanceDto>(`/api/connections/${id}/balance${refresh ? "?refresh=1" : ""}`),
   testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`),
-  discoverModels: (id: string) =>
-    api.post<{
-      discovered: number;
-      created: ModelDto[];
-      updated: ModelDto[];
-      skipped: number;
-      unmatched: number;
-      warnings: string[];
-    }>(`/api/connections/${id}/models/discover`),
+  discoverModels,
 
   models: (connectionId?: string) =>
     api.get<ModelDto[]>(`/api/models${connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : ""}`),
   createModel: (input: ModelInput) => api.post<ModelDto>("/api/models", input),
+  setModelsEnabled,
   updateModel: (id: string, patch: Partial<ModelInput>) => api.patch<ModelDto>(`/api/models/${id}`, patch),
   deleteModel: (id: string) => api.delete<undefined>(`/api/models/${id}`),
   restoreModelCatalog: (id: string) => api.post<ModelDto>(`/api/models/${id}/catalog/restore`, {}),
