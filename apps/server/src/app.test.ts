@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { request as httpRequest } from "node:http";
 import { providerReasoningEffort } from "@llm-chat/contracts";
 import { seedModel as seedStoreModel } from "./test-helpers";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -644,6 +645,43 @@ describe("server API", () => {
     expect((await app.inject({ method: "POST", url: "/api/file-uploads", payload: big })).statusCode).toBe(201);
     const oversized = await app.inject({ method: "PATCH", url: `/api/file-uploads/${big.id}?offset=0`, headers: { "content-type": "application/octet-stream" }, payload: Buffer.alloc(4 * 1024 ** 2 + 1) });
     expect(oversized.statusCode).toBe(413);
+  });
+
+  it.each([false, true])("completes JSON upload requests over real HTTP (chunked: %s)", async (chunked) => {
+    const app = await testApp();
+    const origin = await app.listen();
+    const bytes = Buffer.from("complete through a proxy");
+    const input = { id: randomUUID(), fileName: "proxy.txt", mimeType: "text/plain", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+    expect((await app.inject({ method: "POST", url: "/api/file-uploads", payload: input })).statusCode).toBe(201);
+    expect((await app.inject({ method: "PATCH", url: `/api/file-uploads/${input.id}?offset=0`, headers: { "content-type": "application/octet-stream" }, payload: bytes })).statusCode).toBe(200);
+    const complete = (body?: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const request = httpRequest(`${origin}/api/file-uploads/${input.id}/complete`, {
+        method: "POST", headers: {
+          cookie: app.cookie, "x-llm-chat-request": "1",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+          ...(chunked ? { "transfer-encoding": "chunked" } : { "content-length": String(Buffer.byteLength(body ?? "")) })
+        }
+      }, (response) => {
+        let text = "";
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => { text += chunk; });
+        response.on("error", reject);
+        response.on("end", () => resolve({ status: response.statusCode!, body: text }));
+      });
+      request.on("error", reject);
+      request.setTimeout(5_000, () => request.destroy(new Error("Completion request timed out")));
+      request.end(body);
+    });
+    if (chunked) {
+      const legacy = await complete();
+      expect(legacy.status).toBe(415);
+      expect(JSON.parse(legacy.body)).toMatchObject({ error: { code: "unsupported_media_type", i18n: { key: "error.validation" } } });
+      expect((await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).json()).toMatchObject({ state: "uploading", offset: bytes.length });
+    }
+    const completed = await complete("{}");
+    expect(completed.status).toBe(200);
+    expect(JSON.parse(completed.body)).toMatchObject({ state: "completed", asset: { id: input.id } });
+    expect(await complete("{}")).toEqual(completed);
   });
 
   it("uploads arbitrary files and serves immutable, ranged downloads without trusting their MIME type", async () => {
@@ -1585,7 +1623,8 @@ async function testApp(existing?: { dir: string; password: string }) {
   expect(login.statusCode).toBe(200);
   const cookie = login.cookies.map(({ name, value }) => `${name}=${value}`).join("; ");
   return {
-    store: app.store, runner: app.runner, webRoot, password, dir, close: () => app.close(),
+    store: app.store, runner: app.runner, webRoot, password, dir, cookie,
+    listen: () => app.listen({ port: 0, host: "127.0.0.1" }), close: () => app.close(),
     inject: (options: InjectOptions) => app.inject({ ...options, headers: { cookie, "x-llm-chat-request": "1", ...options.headers } })
   };
 }

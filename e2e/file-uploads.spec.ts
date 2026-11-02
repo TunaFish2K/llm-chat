@@ -1,11 +1,109 @@
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createServer, request as httpRequest } from "node:http";
 import { test, expect } from "./fixtures";
 import { agentInput, api, APP_URL, openDrawerIfNeeded } from "./helpers.mjs";
 
 // Network interception must reach the page request rather than a service worker fetch.
 test.use({ serviceWorkers: "block" });
+
+// Reproduce a proxy forwarding completion POSTs without a content length.
+async function chunkedCompletionProxy() {
+  const target = new URL(APP_URL);
+  const completions: Array<{ contentType?: string; body: string; status?: number }> = [];
+  const proxy = { origin: "", failComplete: false, patches: 0, completions, close: async () => {} };
+  const server = createServer((incoming, outgoing) => {
+    const isComplete = incoming.method === "POST" && /^\/api\/file-uploads\/[^/]+\/complete$/.test(incoming.url!);
+    const completion = isComplete ? { contentType: incoming.headers["content-type"], body: "", status: undefined as number | undefined } : undefined;
+    if (completion) {
+      completions.push(completion);
+      incoming.setEncoding("utf8");
+      incoming.on("data", (chunk) => { completion.body += chunk; });
+      if (proxy.failComplete) {
+        incoming.on("end", () => {
+          completion.status = 503;
+          outgoing.writeHead(503, { "content-type": "application/json" });
+          outgoing.end(JSON.stringify({ error: { code: "unavailable", message: "try again" } }));
+        });
+        return;
+      }
+    }
+    if (incoming.method === "PATCH" && incoming.url!.startsWith("/api/file-uploads/")) proxy.patches++;
+    const headers = { ...incoming.headers };
+    if (isComplete) {
+      delete headers["content-length"];
+      headers["transfer-encoding"] = "chunked";
+    }
+    const forwarded = httpRequest({ hostname: target.hostname, port: target.port, path: incoming.url, method: incoming.method, headers }, (response) => {
+      if (completion) completion.status = response.statusCode;
+      outgoing.writeHead(response.statusCode ?? 502, response.headers);
+      response.pipe(outgoing);
+    });
+    forwarded.on("error", () => {
+      if (!outgoing.headersSent) outgoing.writeHead(502);
+      outgoing.end();
+    });
+    outgoing.on("close", () => forwarded.destroy());
+    incoming.pipe(forwarded);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Upload proxy did not bind");
+  proxy.origin = `http://127.0.0.1:${address.port}`;
+  proxy.close = async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  };
+  return proxy;
+}
+
+for (const kind of ["image", "file"] as const) {
+  for (const retry of [false, true]) {
+    test(`${kind === "image" ? "图片" : "小文件"}经分块反代${retry ? "完成失败后重试且不重复传输数据" : "正常完成上传"}`, async ({ page, request }) => {
+      await page.addInitScript(() => localStorage.setItem("llm-chat.requests.v1", JSON.stringify({ maxRetries: 0 })));
+      const proxy = await chunkedCompletionProxy();
+      proxy.failComplete = retry;
+      const agent = await api(request, APP_URL, "POST", "/api/agents", agentInput(`chunked-${Date.now()}`));
+      const conversation = await api(request, APP_URL, "POST", "/api/conversations", { agentId: agent.id });
+      try {
+        await page.goto(`${proxy.origin}/c/${conversation.id}`);
+        const name = kind === "image" ? "proxy.png" : "proxy.txt";
+        const buffer = kind === "image" ? Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64") : Buffer.from("complete through a chunked proxy");
+        const storedCount = () => page.evaluate(() => new Promise<number>((resolve, reject) => {
+          const request = indexedDB.open("llm-chat-uploads");
+          request.onsuccess = () => {
+            const db = request.result; const count = db.transaction("files").objectStore("files").count();
+            count.onsuccess = () => { resolve(count.result); db.close(); }; count.onerror = () => reject(count.error);
+          };
+          request.onerror = () => reject(request.error);
+        }));
+        await page.getByLabel(kind === "image" ? "上传图片" : "上传文件", { exact: true }).setInputFiles({ name, mimeType: kind === "image" ? "image/png" : "text/plain", buffer });
+        if (retry) {
+          const button = page.locator(".composer .file-upload-row").getByRole("button", { name: "重试", exact: true });
+          await expect(button).toBeVisible();
+          await expect.poll(storedCount).toBe(1);
+          expect(proxy.patches).toBe(1);
+          proxy.failComplete = false;
+          await button.click();
+        }
+        await expect(page.getByLabel("待发送附件")).toContainText(name);
+        expect(proxy.patches).toBe(1);
+        expect(proxy.completions).toHaveLength(retry ? 2 : 1);
+        for (const completion of proxy.completions) {
+          expect(completion.contentType).toBe("application/json");
+          expect(completion.body).toBe("{}");
+        }
+        expect(proxy.completions.at(-1)!.status).toBe(200);
+        await expect.poll(storedCount).toBe(0);
+      } finally {
+        await proxy.close();
+        await api(request, APP_URL, "DELETE", `/api/conversations/${conversation.id}`);
+        await api(request, APP_URL, "DELETE", `/api/agents/${agent.id}`);
+      }
+    });
+  }
+}
 
 for (const kind of ["image", "file"] as const) {
   test(`${kind === "image" ? "图片" : "小文件"}上传失败后可直接重试并清理本地暂存`, async ({ page, request }) => {

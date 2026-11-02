@@ -9,7 +9,7 @@ async function request(method: string, path: string, signal: AbortSignal, body?:
 export const fileUploadHttp = {
   create: (input: FileUploadInput, signal: AbortSignal) => request("POST", "/api/file-uploads", signal, input),
   get: (id: string, signal: AbortSignal) => request("GET", `/api/file-uploads/${id}`, signal),
-  complete: (id: string, signal: AbortSignal) => request("POST", `/api/file-uploads/${id}/complete`, signal),
+  complete: (id: string, signal: AbortSignal) => request("POST", `/api/file-uploads/${id}/complete`, signal, {}),
   cancel: async (id: string, signal: AbortSignal): Promise<void> => { await request("DELETE", `/api/file-uploads/${id}`, signal); },
   async append(id: string, offset: number, bytes: Blob, signal: AbortSignal): Promise<FileUploadDto> {
     let response: Response;

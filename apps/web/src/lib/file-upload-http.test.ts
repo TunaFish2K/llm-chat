@@ -8,10 +8,25 @@ describe("resumable upload HTTP", () => {
     const signal = new AbortController().signal;
     await expect(fileUploadHttp.create({ id: "id", fileName: "x", mimeType: "text/plain", byteSize: 3, sha256: "a".repeat(64) }, signal)).resolves.toEqual(value);
     await fileUploadHttp.get("id", signal); await fileUploadHttp.complete("id", signal);
+    expect(fetch).toHaveBeenLastCalledWith("/api/file-uploads/id/complete", expect.objectContaining({
+      method: "POST", body: "{}", credentials: "same-origin",
+      headers: expect.objectContaining({ "content-type": "application/json", "x-llm-chat-request": "1" })
+    }));
     const blob = new Blob(["abc"]); await expect(fileUploadHttp.append("id", 0, blob, signal)).resolves.toEqual(value);
     expect(fetch).toHaveBeenLastCalledWith("/api/file-uploads/id?offset=0", expect.objectContaining({ method: "PATCH", body: blob, signal, credentials: "same-origin", headers: { "content-type": "application/octet-stream", "x-llm-chat-request": "1" } }));
     fetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
     await expect(fileUploadHttp.cancel("id", signal)).resolves.toBeUndefined();
+  });
+  it("cancels a pending completion request through its caller's signal", async () => {
+    const fetch = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetch);
+    const controller = new AbortController();
+    const pending = fileUploadHttp.complete("id", controller.signal);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ status: 0, code: "request_cancelled" });
+    expect(fetch.mock.calls[0]![1].signal!.aborted).toBe(true);
   });
   it("maps network, authentication, proxy, and application failures", async () => {
     const append = () => fileUploadHttp.append("id", 0, new Blob(["x"]), new AbortController().signal);

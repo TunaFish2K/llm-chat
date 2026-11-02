@@ -224,6 +224,9 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if ((error as { code?: string }).code === "FST_ERR_CTP_BODY_TOO_LARGE") {
       return reply.code(413).send({ error: { code: "file_too_large", message: "Request exceeds the size limit", i18n: { key: "uploads.request_limit" } } });
     }
+    if ((error as { code?: string }).code === "FST_ERR_CTP_INVALID_MEDIA_TYPE") {
+      return reply.code(415).send({ error: { code: "unsupported_media_type", message: "Unsupported Media Type", i18n: { key: "error.validation" } } });
+    }
     if (error instanceof ZodError) {
       return reply.code(400).send({
         error: { code: "validation_error", i18n: { key: "error.validation" }, message: "请求参数无效", details: z.treeifyError(error) }
