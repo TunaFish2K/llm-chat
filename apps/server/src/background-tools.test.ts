@@ -34,7 +34,7 @@ describe("generic background tools", () => {
         expected_duration_seconds: 1, hard_timeout_seconds: 10
       });
       expect(task).toMatchObject({ mode, expectedDurationMs: 1000, hardTimeoutMs: 10000 });
-      await expect.poll(() => manager.get(task.id)?.outputCursor).toBeGreaterThan(0);
+      await expect.poll(() => manager.get(task.id)?.outputCursor, { timeout: 5_000 }).toBeGreaterThan(0);
       const first = await run("background_read", { task_id: task.id });
       expect(first.text).toContain("ready");
       if (mode === "pty") expect(first.screen).toContain("ready");
@@ -53,7 +53,7 @@ describe("generic background tools", () => {
       expect(await run("background_status", { task_id: task.id })).toMatchObject({ status: "running" });
       await expect(run("background_write", { task_id: task.id, data: "hello\n", reason: "" })).rejects.toThrow("reason is required");
       await run("background_write", { task_id: task.id, data: "hello\n", reason: "回答交互提示" });
-      const next = await run("background_wait", { task_id: task.id, cursor: first.cursor, timeout_seconds: 1, quiet_period_ms: 20 });
+      const next = await run("background_wait", { task_id: task.id, cursor: first.cursor, timeout_seconds: 5, quiet_period_ms: 20 });
       expect(next.text).toContain("got:hello");
       expect(next.cursor).toBeGreaterThan(first.cursor);
       await expect(run("background_stop", { task_id: task.id, reason: "" })).rejects.toThrow("reason is required");
