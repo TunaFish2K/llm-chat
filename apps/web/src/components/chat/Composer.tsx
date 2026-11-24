@@ -139,7 +139,7 @@ export const Composer = memo(function Composer({
   const [newDraftScope, setNewDraftScope] = useState(() => initialDraft?.uploadScopeId ?? `draft:${crypto.randomUUID()}`);
   const { attachments, setAttachments, uploading, uploadFiles, uploadScope, attachmentCount } = useAttachments(
     attachmentSeed, conversation ? `conversation:${conversation.id}` : newDraftScope, conversation?.id);
-  const { items: queuedMessages, paused: queuePaused, reload: reloadQueue } = useMessageQueue(conversation?.id);
+  const { items: queuedMessages, paused: queuePaused, reload: reloadQueue, apply: applyQueue } = useMessageQueue(conversation?.id);
   const liveInput = useRef({ text, attachments });
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -712,7 +712,7 @@ export const Composer = memo(function Composer({
               </div>
             </>
         </div>
-        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} paused={queuePaused} />
+        <MessageQueueList conversationId={conversation?.id} items={queuedMessages} reload={reloadQueue} apply={applyQueue} paused={queuePaused} />
 
       </div>
 

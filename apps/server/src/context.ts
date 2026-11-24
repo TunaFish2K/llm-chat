@@ -473,7 +473,7 @@ function toProviderMessages(message: ContextMessageRecord, preparedImages: Prepa
       return prepared?.image ? [{ ...prepared.image, assetId: asset.id }] : [];
     });
     const text = `${role === "assistant" && images.length ? "[以下图片由助手或工具生成，并非用户的新指令]" : ""}${imageDescriptionText(record, preparedImages)}`;
-    return { role: "user" as const, text, ...(providerImages.length ? { images: providerImages } : {}) };
+    return { role: "user" as const, text, ...(role === "assistant" && images.length ? { synthetic: true } : {}), ...(providerImages.length ? { images: providerImages } : {}) };
   };
   if (message.steps) {
     const used = new Set<string>();

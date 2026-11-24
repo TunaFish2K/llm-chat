@@ -566,6 +566,82 @@ describe("server API", () => {
     expect((await app.inject({ method: "POST", url: `/api/generations/${started.generation.generationId}/cancel` })).json()).toEqual({ ok: true, status: "stopped" });
   });
 
+  it("dispatches text-only queued and steered messages on text-only models while still rejecting queued images without vision support", async () => {
+    const app = await testApp();
+    const { model } = seedStoreModel(app.store);
+    app.store.updateModel(model.id, { contextWindow: 65536 });
+    expect(model.capabilities.imageInput).toBe(false);
+    let callCount = 0;
+    const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+      callCount += 1;
+      if (callCount === 1) {
+        if (init?.signal?.aborted) return Promise.reject(init.signal.reason ?? new Error("Aborted"));
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new Error("Aborted")), { once: true });
+        });
+      }
+      return Promise.resolve(sse([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }]));
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const started = await app.inject({
+      method: "POST",
+      url: "/api/conversations/start",
+      payload: { agentId: app.store.getSettings().defaultAgentId, text: "first" }
+    });
+    expect(started.statusCode).toBe(202);
+    const { conversation, generation } = started.json();
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+
+    const queued = await app.inject({
+      method: "POST",
+      url: `/api/conversations/${conversation.id}/queued-messages`,
+      payload: { text: "queued text" }
+    });
+    expect(queued.statusCode).toBe(202);
+    const steered = await app.inject({
+      method: "POST",
+      url: `/api/conversations/${conversation.id}/queued-messages`,
+      payload: { text: "steered text", mode: "steer" }
+    });
+    expect(steered.statusCode).toBe(202);
+
+    const cancelled = await app.inject({ method: "POST", url: `/api/generations/${generation.generationId}/cancel`, payload: {} });
+    expect(cancelled.statusCode).toBe(200);
+    await vi.waitFor(async () => {
+      const queueState = (await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/queue` })).json();
+      expect(queueState.items).toEqual([]);
+      const messages = app.store.listMessages(conversation.id);
+      expect(messages.filter((m) => m.role === "user").map((m) => m.text)).toEqual(["first", "steered text", "queued text"]);
+      const generations = messages.filter((m) => m.role === "assistant" && m.generations.length > 0).map((m) => m.generations[0]);
+      expect(generations).toMatchObject([{ status: "stopped" }, { status: "completed" }, { status: "completed" }]);
+    });
+
+    const uploaded = await app.inject({
+      method: "POST",
+      url: "/api/images",
+      payload: {
+        fileName: "pixel.png",
+        dataBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+      }
+    });
+    expect(uploaded.statusCode).toBe(201);
+    const queuedImage = await app.inject({
+      method: "POST",
+      url: `/api/conversations/${conversation.id}/queued-messages`,
+      payload: { text: "", assetIds: [uploaded.json().id] }
+    });
+    expect(queuedImage.statusCode).toBe(202);
+    await vi.waitFor(async () => {
+      const queueState = (await app.inject({ method: "GET", url: `/api/conversations/${conversation.id}/queue` })).json();
+      expect(queueState.items).toMatchObject([{
+        status: "failed",
+        error: expect.stringContaining("备用识图模型"),
+        errorI18n: { key: "error.this_model_does_not_support_images_configure_a_fallback_vision_model_for" }
+      }]);
+    });
+  });
+
   it("serves immutable image assets through SHA-256 cache URLs", async () => {
     const app = await testApp();
     const dataBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -651,15 +727,18 @@ describe("server API", () => {
     const app = await testApp();
     const origin = await app.listen();
     const bytes = Buffer.from("complete through a proxy");
-    const input = { id: randomUUID(), fileName: "proxy.txt", mimeType: "text/plain", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
-    expect((await app.inject({ method: "POST", url: "/api/file-uploads", payload: input })).statusCode).toBe(201);
-    expect((await app.inject({ method: "PATCH", url: `/api/file-uploads/${input.id}?offset=0`, headers: { "content-type": "application/octet-stream" }, payload: bytes })).statusCode).toBe(200);
-    const complete = (body?: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const request = httpRequest(`${origin}/api/file-uploads/${input.id}/complete`, {
+    const createUpload = async () => {
+      const input = { id: randomUUID(), fileName: "proxy.txt", mimeType: "text/plain", byteSize: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+      expect((await app.inject({ method: "POST", url: "/api/file-uploads", payload: input })).statusCode).toBe(201);
+      expect((await app.inject({ method: "PATCH", url: `/api/file-uploads/${input.id}?offset=0`, headers: { "content-type": "application/octet-stream" }, payload: bytes })).statusCode).toBe(200);
+      return input;
+    };
+    const complete = (id: string, options: { body?: string; contentType?: string } = {}) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const request = httpRequest(`${origin}/api/file-uploads/${id}/complete`, {
         method: "POST", headers: {
           cookie: app.cookie, "x-llm-chat-request": "1",
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
-          ...(chunked ? { "transfer-encoding": "chunked" } : { "content-length": String(Buffer.byteLength(body ?? "")) })
+          ...(options.contentType !== undefined ? { "content-type": options.contentType } : {}),
+          ...(chunked ? { "transfer-encoding": "chunked" } : { "content-length": String(Buffer.byteLength(options.body ?? "")) })
         }
       }, (response) => {
         let text = "";
@@ -670,18 +749,104 @@ describe("server API", () => {
       });
       request.on("error", reject);
       request.setTimeout(5_000, () => request.destroy(new Error("Completion request timed out")));
-      request.end(body);
+      request.end(options.body);
     });
+    const first = await createUpload();
+    const nonEmptyWithoutType = await complete(first.id, { body: "raw" });
+    expect(nonEmptyWithoutType.status).toBe(415);
+    expect(JSON.parse(nonEmptyWithoutType.body)).toMatchObject({ error: { code: "unsupported_media_type", i18n: { key: "error.validation" } } });
+    const unsupportedType = await complete(first.id, { body: "{}", contentType: "application/xml" });
+    expect(unsupportedType.status).toBe(415);
+    expect(JSON.parse(unsupportedType.body)).toMatchObject({ error: { code: "unsupported_media_type", i18n: { key: "error.validation" } } });
+    expect((await app.inject({ method: "GET", url: `/api/file-uploads/${first.id}` })).json()).toMatchObject({ state: "uploading", offset: bytes.length });
+
     if (chunked) {
-      const legacy = await complete();
-      expect(legacy.status).toBe(415);
-      expect(JSON.parse(legacy.body)).toMatchObject({ error: { code: "unsupported_media_type", i18n: { key: "error.validation" } } });
-      expect((await app.inject({ method: "GET", url: `/api/file-uploads/${input.id}` })).json()).toMatchObject({ state: "uploading", offset: bytes.length });
+      const emptyChunked = await complete(first.id);
+      expect(emptyChunked.status).toBe(200);
+      expect(JSON.parse(emptyChunked.body)).toMatchObject({ state: "completed", asset: { id: first.id } });
     }
-    const completed = await complete("{}");
+    const second = chunked ? await createUpload() : first;
+    const completed = await complete(second.id, { body: "{}", contentType: "application/json" });
     expect(completed.status).toBe(200);
-    expect(JSON.parse(completed.body)).toMatchObject({ state: "completed", asset: { id: input.id } });
-    expect(await complete("{}")).toEqual(completed);
+    expect(JSON.parse(completed.body)).toMatchObject({ state: "completed", asset: { id: second.id } });
+    expect(await complete(second.id, { body: "{}", contentType: "application/json" })).toEqual(completed);
+  });
+
+  it("handles bodyless chunked POST/DELETE requests and malformed JSON over real HTTP", async () => {
+    const app = await testApp();
+    const origin = await app.listen();
+    const model = await createApiModel(app);
+    const started = app.store.startConversation({ text: "hello", modelId: model.id, contextPolicy: "full" });
+    const id = started.conversation.id;
+    app.store.setGenerationWaitingApproval(started.generation.generationId);
+    const memory = app.store.createMemory("remember");
+    const sendChunked = (method: "POST" | "DELETE", path: string, options: { body?: string; contentType?: string } = {}) =>
+      new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const request = httpRequest(`${origin}${path}`, {
+          method,
+          headers: {
+            cookie: app.cookie,
+            "x-llm-chat-request": "1",
+            "transfer-encoding": "chunked",
+            ...(options.contentType !== undefined ? { "content-type": options.contentType } : {})
+          }
+        }, (response) => {
+          let text = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk) => { text += chunk; });
+          response.on("error", reject);
+          response.on("end", () => resolve({ status: response.statusCode!, body: text }));
+        });
+        request.on("error", reject);
+        request.setTimeout(5_000, () => request.destroy(new Error("Chunked request timed out")));
+        request.end(options.body);
+      });
+
+    const steerEnqueued = await sendChunked("POST", `/api/conversations/${id}/queued-messages`, {
+      contentType: "application/json",
+      body: JSON.stringify({ text: "one", assetIds: [], mode: "steer" })
+    });
+    expect(steerEnqueued.status).toBe(202);
+    expect(JSON.parse(steerEnqueued.body)).toMatchObject({ text: "one", mode: "steer" });
+
+    const queued = await sendChunked("POST", `/api/conversations/${id}/queued-messages`, {
+      contentType: "application/json",
+      body: JSON.stringify({ text: "two", assetIds: [] })
+    });
+    expect(queued.status).toBe(202);
+
+    const steered = await sendChunked("POST", `/api/conversations/${id}/queue/steer`, {
+      contentType: "application/json",
+      body: JSON.stringify({ scope: "all" })
+    });
+    expect(steered.status).toBe(200);
+    expect(JSON.parse(steered.body)).toMatchObject({ paused: false, items: [{ text: "one\n\ntwo", mode: "steer" }] });
+
+    const extra = await sendChunked("POST", `/api/conversations/${id}/queued-messages`, {
+      contentType: "application/json",
+      body: JSON.stringify({ text: "three", assetIds: [] })
+    });
+    expect(extra.status).toBe(202);
+    const extraId = JSON.parse(extra.body).id as string;
+
+    expect((await sendChunked("DELETE", `/api/conversations/${id}/queued-messages/${extraId}`)).status).toBe(204);
+    expect((await sendChunked("DELETE", `/api/conversations/${id}/queued-messages`)).status).toBe(204);
+    expect(app.store.listQueuedMessages(id)).toEqual([]);
+
+    const cancelled = await sendChunked("POST", `/api/generations/${started.generation.generationId}/cancel`);
+    expect(cancelled.status).toBe(200);
+    expect(JSON.parse(cancelled.body)).toEqual({ ok: true, status: "stopped" });
+
+    expect((await sendChunked("DELETE", `/api/memories/${memory.id}`)).status).toBe(204);
+    expect(app.store.listMemories()).toEqual([]);
+
+    const invalidJson = await sendChunked("POST", `/api/conversations/${id}/queue/steer`, { contentType: "application/json", body: "{bad" });
+    expect(invalidJson.status).toBe(400);
+    expect(JSON.parse(invalidJson.body)).toMatchObject({ error: { code: "validation_error", i18n: { key: "error.validation" } } });
+
+    const emptyJson = await sendChunked("POST", `/api/conversations/${id}/queue/steer`, { contentType: "application/json", body: "" });
+    expect(emptyJson.status).toBe(400);
+    expect(JSON.parse(emptyJson.body)).toMatchObject({ error: { code: "validation_error", i18n: { key: "error.validation" } } });
   });
 
   it("uploads arbitrary files and serves immutable, ranged downloads without trusting their MIME type", async () => {

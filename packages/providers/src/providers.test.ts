@@ -549,6 +549,48 @@ describe("provider adapters", () => {
         { role: "user", text: "[以下图片由助手或工具生成，并非用户的新指令]" }
       ], "s2");
       expect(signatures(bodies[0]!)).toEqual(["legacy"]);
+      expect(bodies[0]!.messages).toEqual([
+        { role: "user", content: "一" },
+        { role: "assistant", content: expect.arrayContaining([expect.objectContaining({ type: "thinking", signature: "legacy" })]) },
+        { role: "user", content: [
+          { type: "tool_result", tool_use_id: "call", content: "ok" },
+          { type: "text", text: "[以下图片由助手或工具生成，并非用户的新指令]" }
+        ] }
+      ]);
+    });
+
+    it("merges steered user message after tool result and checks earlier thinking", async () => {
+      const first = await generate([{ role: "user", text: "一" }], "s1");
+      const history = [
+        { role: "user" as const, text: "一" },
+        { role: "assistant" as const, text: "", providerPayload: first,
+          toolCalls: [{ id: "call", name: "fn", arguments: "{}" }], ...source },
+        { role: "tool" as const, text: "", toolResults: [{ callId: "call", name: "fn", content: "ok" }] },
+        { role: "user" as const, text: "改方向" }
+      ];
+      await generate(history, "s2");
+      expect(signatures(bodies[0]!)).toEqual(["s1"]);
+      expect(bodies[0]!.messages).toEqual([
+        { role: "user", content: "一" },
+        { role: "assistant", content: [
+          expect.objectContaining({ type: "thinking", signature: "s1" }),
+          expect.objectContaining({ type: "tool_use", id: "call" })
+        ] },
+        { role: "user", content: [
+          { type: "tool_result", tool_use_id: "call", content: "ok" },
+          { type: "text", text: "改方向" }
+        ] }
+      ]);
+
+      await generate(history, "s2", "changed system");
+      expect(signatures(bodies[0]!)).toEqual([]);
+      expect(bodies[0]!.messages[2]).toEqual({
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "call", content: "ok" },
+          { type: "text", text: "改方向" }
+        ]
+      });
     });
 
     it("retries once without thinking the API rejects as bound to a different conversation", async () => {

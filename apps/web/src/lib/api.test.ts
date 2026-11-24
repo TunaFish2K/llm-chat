@@ -371,3 +371,37 @@ it("sends resource download settings and cache actions with the request header",
   expect(JSON.parse(writes[0]![1].body)).toEqual({ node: "tuna" });
   expect(JSON.parse(writes[1]![1].body)).toEqual({ ids: ["plugin:software:extra"] });
 });
+
+it("sends explicit empty JSON objects for bodyless POST endpoints while keeping DELETE bodyless", async () => {
+  const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mockResponse(200, { ok: true, created: [] })));
+  vi.stubGlobal("fetch", fetchMock);
+  const postCalls = [
+    () => endpoints.cancelGeneration("conversation", "generation"),
+    () => endpoints.discoverModels("connection"),
+    () => endpoints.logoutIdentityProvider(),
+    () => endpoints.cancelContainerResourceJob("job"),
+    () => endpoints.logout(),
+    () => endpoints.reloadPlugin("plugin"),
+    () => endpoints.unloadPlugin("plugin"),
+    () => endpoints.discoverSkills(),
+    () => endpoints.reloadSkill("skill"),
+    () => endpoints.testMcpServer("mcp"),
+    () => endpoints.testConnection("connection")
+  ];
+  for (const call of postCalls) await call();
+  expect(fetchMock).toHaveBeenCalledTimes(postCalls.length);
+  for (const [url, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+    expect(init.method, url).toBe("POST");
+    expect(init.body, url).toBe("{}");
+    expect(init.headers, url).toMatchObject({ "content-type": "application/json", "x-llm-chat-request": "1" });
+  }
+
+  fetchMock.mockClear();
+  await endpoints.deleteQueuedMessage("conversation", "item");
+  await endpoints.deleteMemory(4);
+  for (const [url, init] of fetchMock.mock.calls as Array<[string, RequestInit]>) {
+    expect(init.method, url).toBe("DELETE");
+    expect(init.body, url).toBeNull();
+    expect(init.headers as Record<string, string>, url).not.toHaveProperty("content-type");
+  }
+});

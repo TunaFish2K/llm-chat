@@ -126,6 +126,43 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     parseAs: "buffer",
     bodyLimit: 64 * 1024 * 1024
   }, (_request, body, done) => done(null, body));
+  app.addContentTypeParser("*", (request, payload, done) => {
+    if (request.headers["content-type"] !== undefined) {
+      done(unsupportedMediaTypeError());
+      return;
+    }
+    let settled = false;
+    const cleanup = () => {
+      payload.off("data", onData);
+      payload.off("end", onEnd);
+      payload.off("error", onError);
+    };
+    const onData = (chunk: Buffer | string) => {
+      if (settled) return;
+      const nonEmpty = Buffer.isBuffer(chunk) ? chunk.byteLength > 0 : chunk.length > 0;
+      if (!nonEmpty) return;
+      settled = true;
+      cleanup();
+      payload.pause();
+      done(unsupportedMediaTypeError());
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      done(null, undefined);
+    };
+    const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      done(error);
+    };
+    payload.on("data", onData);
+    payload.on("end", onEnd);
+    payload.on("error", onError);
+    payload.resume();
+  });
   // Server channels are other network entrances of this same server. The page
   // may call any of them, so fetch targets follow the requested host's site.
   await app.register(fastifyHelmet, {
@@ -205,10 +242,11 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     imageService
   });
   const queue = new MessageQueue(store, runner, imageService, eventHub, (conversationId, assets) => {
+    const imageAssets = assets.filter((id) => store.getFileAsset(id)?.kind === "image");
+    if (!imageAssets.length) return;
     const conversation = store.getConversation(conversationId)!;
     const resolved = store.resolveGeneration(conversation);
-    assertImageConfiguration(store, resolved.agent.id, resolved.model.id,
-      assets.filter((id) => store.getFileAsset(id)?.kind === "image"));
+    assertImageConfiguration(store, resolved.agent.id, resolved.model.id, imageAssets);
   });
   queue.initialize();
   const serviceSettings = new ServiceSettings(store);
@@ -216,18 +254,45 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
   app.decorate("runner", runner);
   app.decorateRequest("authIdentity", null);
 
-  app.setErrorHandler((rawError, _request, reply) => {
+  app.setErrorHandler((rawError, request, reply) => {
     const error = describeNetworkError(rawError) ?? rawError;
+    const code = (error as { code?: string }).code;
     if (error instanceof UploadError) {
       return reply.code(error.statusCode).send({ error: { code: error.code, message: error.message, i18n: errorI18n(error) } });
     }
-    if ((error as { code?: string }).code === "FST_ERR_CTP_BODY_TOO_LARGE") {
+    if (code === "FST_ERR_CTP_BODY_TOO_LARGE") {
       return reply.code(413).send({ error: { code: "file_too_large", message: "Request exceeds the size limit", i18n: { key: "uploads.request_limit" } } });
     }
-    if ((error as { code?: string }).code === "FST_ERR_CTP_INVALID_MEDIA_TYPE") {
+    if (code === "FST_ERR_CTP_INVALID_MEDIA_TYPE") {
+      request.log.warn({
+        code,
+        method: request.method,
+        url: request.url.split("?", 1)[0],
+        contentType: request.headers["content-type"],
+        contentLength: request.headers["content-length"],
+        transferEncoding: request.headers["transfer-encoding"]
+      }, "Unsupported media type");
       return reply.code(415).send({ error: { code: "unsupported_media_type", message: "Unsupported Media Type", i18n: { key: "error.validation" } } });
     }
+    if (code === "FST_ERR_CTP_EMPTY_JSON_BODY" || code === "FST_ERR_CTP_INVALID_JSON_BODY" || code === "FST_ERR_CTP_INVALID_CONTENT_LENGTH") {
+      request.log.warn({
+        code,
+        method: request.method,
+        url: request.url.split("?", 1)[0],
+        contentType: request.headers["content-type"],
+        contentLength: request.headers["content-length"],
+        transferEncoding: request.headers["transfer-encoding"]
+      }, "Malformed request body");
+      return reply.code(400).send({
+        error: { code: "validation_error", i18n: { key: "error.validation" }, message: "请求参数无效" }
+      });
+    }
     if (error instanceof ZodError) {
+      request.log.warn({
+        method: request.method,
+        url: request.url.split("?", 1)[0],
+        issues: error.issues.map((issue) => ({ path: issue.path, code: issue.code }))
+      }, "Request validation failed");
       return reply.code(400).send({
         error: { code: "validation_error", i18n: { key: "error.validation" }, message: "请求参数无效", details: z.treeifyError(error) }
       });
@@ -1573,6 +1638,13 @@ async function registerWeb(app: FastifyInstance, root: string): Promise<void> {
       return reply.code(404).type("text/plain; charset=utf-8").send("Asset not found");
     }
     return reply.header("cache-control", "no-cache").sendFile("index.html");
+  });
+}
+
+function unsupportedMediaTypeError(): Error & { code: string; statusCode: number } {
+  return Object.assign(new Error("Unsupported Media Type"), {
+    code: "FST_ERR_CTP_INVALID_MEDIA_TYPE",
+    statusCode: 415
   });
 }
 

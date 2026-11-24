@@ -145,7 +145,7 @@ interface ModelDiscoveryResult {
 }
 
 async function discoverModels(id: string): Promise<ModelDiscoveryResult> {
-  const result = await api.post<ModelDiscoveryResult>(`/api/connections/${id}/models/discover`);
+  const result = await api.post<ModelDiscoveryResult>(`/api/connections/${id}/models/discover`, {});
   // Older backends create enabled entries. Normalize only newly created rows;
   // existing choices must survive discovery. New backends need no extra write.
   const enabled = result.created.filter(model => model.enabled).map(model => model.id);
@@ -190,12 +190,12 @@ export interface McpTestResult {
 export const endpoints = {
   authenticationMethods: () => api.get<AuthenticationMethodsDto>("/api/auth/methods"),
   authenticationSession: () => api.get<AuthenticationSessionDto>("/api/auth/session"),
-  logoutIdentityProvider: () => api.post<{ url: string | null }>("/api/auth/oidc/logout"),
+  logoutIdentityProvider: () => api.post<{ url: string | null }>("/api/auth/oidc/logout", {}),
   submission: (id: string, conversationId: string | null = null, kind: "start" | "send" | "queue" = "start") => api.get<import("@llm-chat/contracts").SubmissionAcceptedDto>(`/api/submissions/${encodeURIComponent(id)}?kind=${kind}${conversationId ? `&conversationId=${encodeURIComponent(conversationId)}` : ""}`, { networkOnly: true }),
   containerResources: () => request<ContainerResourceCatalog>("GET", "/api/container-resources"),
   setContainerResourceNode: (node: ContainerResourceNode) => request("PUT", "/api/container-resources/settings", { node }),
   downloadContainerResources: (ids: string[]) => request<ContainerResourceJob>("POST", "/api/container-resources/download", { ids }),
-  cancelContainerResourceJob: (id: string) => request("POST", `/api/container-resources/jobs/${id}/cancel`),
+  cancelContainerResourceJob: (id: string) => request("POST", `/api/container-resources/jobs/${id}/cancel`, {}),
   clearContainerResourceCache: () => request("DELETE", "/api/container-resources/cache"),
   containerEngines: () => request<ContainerEngineDto[]>("GET", "/api/container-engines"),
   conversationEnvironments: (id: string) => request<ConversationEnvironmentDto[]>("GET", `/api/conversations/${id}/environments`),
@@ -210,7 +210,7 @@ export const endpoints = {
   searchConversations: (query: string, signal?: AbortSignal) => api.get<Array<{ conversationId: string; title: string; snippet: string; updatedAt: number }>>(`/api/conversations/search?query=${encodeURIComponent(query)}`, signal ? { signal } : {}),
   deleteQueuedMessage: (id: string, itemId?: string) => api.delete<void>(`/api/conversations/${id}/queued-messages${itemId ? `/${itemId}` : ""}`, { conversationId: id }),
   login: (password: string) => api.post<{ ok: true }>("/api/auth/login", { password }),
-  logout: () => api.post<undefined>("/api/auth/logout"),
+  logout: () => api.post<undefined>("/api/auth/logout", {}),
   changePassword: (password: string) =>
     api.put<{ ok: true; sessionsRevoked: number }>("/api/auth/password", { password }),
 
@@ -252,14 +252,14 @@ export const endpoints = {
   installPlugin: (sourcePath: string) => api.post<PluginDto>("/api/plugins/install", { sourcePath }),
   configurePlugin: (id: string, config: Record<string, unknown>, secrets: Record<string, unknown>) =>
     api.patch<PluginDto>(`/api/plugins/${id}/config`, { config, secrets }),
-  reloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/reload`),
-  unloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/unload`),
+  reloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/reload`, {}),
+  unloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/unload`, {}),
   removePlugin: (id: string) => api.delete<undefined>(`/api/plugins/${id}`),
 
   skills: () => api.get<SkillDto[]>("/api/skills"),
-  discoverSkills: () => api.post<SkillDiscoverySummary>("/api/skills/discover"),
+  discoverSkills: () => api.post<SkillDiscoverySummary>("/api/skills/discover", {}),
   installSkill: (sourcePath: string) => api.post<SkillDto>("/api/skills/install", { sourcePath }),
-  reloadSkill: (id: string) => api.post<SkillDto>(`/api/skills/${id}/reload`),
+  reloadSkill: (id: string) => api.post<SkillDto>(`/api/skills/${id}/reload`, {}),
   removeSkill: (id: string) => api.delete<undefined>(`/api/skills/${id}`),
 
   memories: () => api.get<MemoryDto[]>("/api/memories"),
@@ -271,7 +271,7 @@ export const endpoints = {
   createMcpServer: (input: McpServerInput) => api.post<McpServerDto>("/api/mcp/servers", input),
   updateMcpServer: (id: string, patch: McpServerPatch) => api.patch<McpServerDto>(`/api/mcp/servers/${id}`, patch),
   deleteMcpServer: (id: string) => api.delete<undefined>(`/api/mcp/servers/${id}`),
-  testMcpServer: (id: string) => api.post<McpTestResult>(`/api/mcp/servers/${id}/test`),
+  testMcpServer: (id: string) => api.post<McpTestResult>(`/api/mcp/servers/${id}/test`, {}),
 
   connections: () => api.get<ConnectionDto[]>("/api/connections"),
   createConnection: (input: ConnectionInput) => api.post<ConnectionDto>("/api/connections", input),
@@ -280,7 +280,7 @@ export const endpoints = {
   deleteConnection: (id: string) => api.delete<undefined>(`/api/connections/${id}`),
   connectionBalance: (id: string, refresh = false) =>
     api.get<ConnectionBalanceDto>(`/api/connections/${id}/balance${refresh ? "?refresh=1" : ""}`),
-  testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`),
+  testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`, {}),
   discoverModels,
 
   models: (connectionId?: string) =>
@@ -368,7 +368,7 @@ export const endpoints = {
   selectGeneration: (conversationId: string, messageId: string, generationId: string) =>
     api.patch<{ ok: true }>(`/api/messages/${messageId}/active-generation`, { generationId }, { conversationId }),
   cancelGeneration: (conversationId: string, generationId: string) =>
-    api.post<{ ok: boolean; status: GenerationDto["status"] | "stopping" }>(`/api/generations/${generationId}/cancel`, undefined, { conversationId }),
+    api.post<{ ok: boolean; status: GenerationDto["status"] | "stopping" }>(`/api/generations/${generationId}/cancel`, {}, { conversationId }),
   generation: (conversationId: string, id: string) => api.get<GenerationDto>(`/api/generations/${id}`, { conversationId }),
   resolveToolCall: (conversationId: string, toolCallId: string, approved: boolean, reason?: string) =>
     api.post<{ toolCall: unknown; generationId: string; resumed: boolean }>(

@@ -3303,10 +3303,12 @@ export class Store {
   steerQueuedMessages(conversationId: string, scope: "first" | "all"): void {
     this.transaction(() => {
       const pending = this.listQueuedMessages(conversationId).filter((item) => item.status === "pending");
+      const existingSteer = pending.filter((item) => item.mode === "steer");
       const queued = pending.filter((item) => item.mode !== "steer");
       const selected = scope === "first" ? queued.slice(0, 1) : queued;
-      if (!selected.length) return;
-      const [target, ...merged] = [...pending.filter((item) => item.mode === "steer").slice(0, 1), ...selected];
+      const extraSteer = scope === "all" ? existingSteer.slice(1) : [];
+      if (!selected.length && !extraSteer.length) return;
+      const [target, ...merged] = [...existingSteer.slice(0, 1), ...extraSteer, ...selected];
       if (merged.length) {
         const items = [target!, ...merged];
         const text = items.map((item) => item.text).filter(Boolean).join("\n\n");

@@ -158,3 +158,20 @@ it("leaves dispatching and failed items untouched when steering", () => {
     .toEqual([["later", "pending", "steer"], ["bad", "failed", "queue"], ["sending", "dispatching", "queue"]]);
   expect(store.listQueuedMessages(conversationId)[0]!.id).toBe(later.id);
 });
+
+it("merges multiple pending steer items together when steering all", () => {
+  const { store, conversationId } = setup();
+  const s1 = store.enqueueMessage(conversationId, "steer one", [], "steer");
+  store.enqueueMessage(conversationId, "steer two", [], "steer");
+  store.enqueueMessage(conversationId, "queued three", [], "queue");
+  store.steerQueuedMessages(conversationId, "all");
+  expect(store.listQueuedMessages(conversationId)).toMatchObject([
+    { id: s1.id, mode: "steer", status: "pending", text: "steer one\n\nsteer two\n\nqueued three" }
+  ]);
+  const sOnly1 = store.enqueueMessage(conversationId, "extra steer", [], "steer");
+  expect(sOnly1.mode).toBe("steer");
+  store.steerQueuedMessages(conversationId, "all");
+  expect(store.listQueuedMessages(conversationId)).toMatchObject([
+    { id: s1.id, mode: "steer", status: "pending", text: "steer one\n\nsteer two\n\nqueued three\n\nextra steer" }
+  ]);
+});

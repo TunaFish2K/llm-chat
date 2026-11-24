@@ -29,6 +29,7 @@ export interface ProviderRequestContext {
 export interface ProviderMessage {
   role: "user" | "assistant" | "tool";
   text: string;
+  synthetic?: boolean;
   images?: ProviderImage[];
   toolCalls?: ProviderToolCall[];
   toolResults?: ProviderToolResult[];

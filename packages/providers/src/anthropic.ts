@@ -5,7 +5,7 @@ import { prepareMessages, assertStreamComplete, validateToolCall } from "./messa
 import type { UsageDto } from "@llm-chat/contracts";
 import { endpoint, ensureOk, headers, listModelEndpoint, readSse } from "./http";
 import { providerFetch } from "./network-error";
-import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent } from "./types";
+import { ProviderError, type GenerateRequest, type ProviderAdapter, type ProviderEvent, type ProviderMessage } from "./types";
 
 interface AnthropicBlock {
   type: string;
@@ -44,49 +44,18 @@ export class AnthropicAdapter implements ProviderAdapter {
     const capabilities = request.capabilities;
     const prepared = prepareMessages(request);
     // Assistant steps after the latest user turn belong to the running tool loop and keep their thinking.
-    const turnStart = prepared.findLastIndex((message, index) => message.role === "user" && prepared[index - 1]?.role !== "tool");
-    const messages = prepared.map((message): AnthropicMessage => {
-      if (message.role === "tool") {
-        return {
-          role: "user",
-          content: (message.toolResults ?? []).map((result) => ({
-            type: "tool_result",
-            tool_use_id: result.callId,
-            content: result.content,
-            ...(result.isError ? { is_error: true } : {})
-          }))
-        };
-      }
-      if (message.role === "assistant") {
-        const content: unknown[] = message.providerConnectionId === request.connection.id && Array.isArray(message.providerPayload)
-          ? [...message.providerPayload]
-          : [];
-        if (message.text) content.push({ type: "text", text: message.text });
-        const existingIds = new Set(content.flatMap((block) => {
-          const value = block as Record<string, unknown>;
-          return value.type === "tool_use" && typeof value.id === "string" ? [value.id] : [];
-        }));
-        for (const call of message.toolCalls ?? []) {
-          if (!existingIds.has(call.id)) {
-            content.push({ type: "tool_use", id: call.id, name: call.name, input: parseArguments(call.arguments) });
-          }
-        }
-        return { role: "assistant", content };
-      }
-      if (message.images?.length) {
-        return {
-          role: "user",
-          content: [
-            ...message.images.map((image) => ({
-              type: "image",
-              source: { type: "base64", media_type: image.mimeType, data: image.dataBase64 }
-            })),
-            ...(message.text ? [{ type: "text", text: message.text }] : [])
-          ]
-        };
-      }
-      return { role: "user", content: message.text };
-    });
+    // A real steered user message right after a tool result starts a new turn; only synthetic tool continuations stay in the previous loop.
+    const turnStart = prepared.findLastIndex(
+      (message, index) =>
+        message.role === "user" &&
+        !(prepared[index - 1]?.role === "tool" && isToolContinuation(message))
+    );
+    const mapped = mergeAdjacentUsers(
+      prepared.map((message, index): AnthropicEntry => ({
+        keepThinking: index > turnStart,
+        message: toAnthropicMessage(message, request.connection.id)
+      }))
+    );
     const body: Record<string, unknown> = {
       model: request.modelKey,
       system: [request.systemPrompt, request.postHistoryInstructions].filter(Boolean).join("\n\n") || undefined,
@@ -101,7 +70,11 @@ export class AnthropicAdapter implements ProviderAdapter {
       }));
     }
     const head = hash(JSON.stringify({ system: body.system, tools: body.tools }));
-    let sent = bindThinking(head, messages, (index) => index > turnStart ? "keep" : "check");
+    let sent = bindThinking(
+      head,
+      mapped.map((entry) => entry.message),
+      (index) => mapped[index]!.keepThinking ? "keep" : "check"
+    );
     body.messages = sent.messages;
     if (common.temperature !== undefined) body.temperature = common.temperature;
     if (common.topP !== undefined) body.top_p = common.topP;
@@ -255,6 +228,81 @@ function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+interface AnthropicEntry {
+  message: AnthropicMessage;
+  keepThinking: boolean;
+}
+
+function isToolContinuation(message: ProviderMessage): boolean {
+  return message.synthetic === true || message.text.startsWith("[以下图片由助手或工具生成，并非用户的新指令]");
+}
+
+function toAnthropicMessage(message: ProviderMessage, connectionId: string): AnthropicMessage {
+  if (message.role === "tool") {
+    return {
+      role: "user",
+      content: (message.toolResults ?? []).map((result) => ({
+        type: "tool_result",
+        tool_use_id: result.callId,
+        content: result.content,
+        ...(result.isError ? { is_error: true } : {})
+      }))
+    };
+  }
+  if (message.role === "assistant") {
+    const content: unknown[] = message.providerConnectionId === connectionId && Array.isArray(message.providerPayload)
+      ? [...message.providerPayload]
+      : [];
+    if (message.text) content.push({ type: "text", text: message.text });
+    const existingIds = new Set(content.flatMap((block) => {
+      const value = block as Record<string, unknown>;
+      return value.type === "tool_use" && typeof value.id === "string" ? [value.id] : [];
+    }));
+    for (const call of message.toolCalls ?? []) {
+      if (!existingIds.has(call.id)) {
+        content.push({ type: "tool_use", id: call.id, name: call.name, input: parseArguments(call.arguments) });
+      }
+    }
+    return { role: "assistant", content };
+  }
+  if (message.images?.length) {
+    return {
+      role: "user",
+      content: [
+        ...message.images.map((image) => ({
+          type: "image",
+          source: { type: "base64", media_type: image.mimeType, data: image.dataBase64 }
+        })),
+        ...(message.text ? [{ type: "text", text: message.text }] : [])
+      ]
+    };
+  }
+  return { role: "user", content: message.text };
+}
+
+function toContentBlocks(content: unknown): unknown[] {
+  if (Array.isArray(content)) return content;
+  if (typeof content === "string" && content) return [{ type: "text", text: content }];
+  return [];
+}
+
+function mergeUserMessages(left: AnthropicMessage, right: AnthropicMessage): AnthropicMessage {
+  return { role: "user", content: [...toContentBlocks(left.content), ...toContentBlocks(right.content)] };
+}
+
+function mergeAdjacentUsers(entries: AnthropicEntry[]): AnthropicEntry[] {
+  const merged: AnthropicEntry[] = [];
+  for (const entry of entries) {
+    const previous = merged.at(-1);
+    if (previous && previous.message.role === "user" && entry.message.role === "user") {
+      previous.message = mergeUserMessages(previous.message, entry.message);
+      continue;
+    }
+    merged.push(entry);
+  }
+  return merged;
+}
+
 /**
  * Resolve the thinking blocks of each assistant message and return the hash of
  * the whole sent prefix. Hashes chain message by message, so a dropped block
@@ -266,6 +314,7 @@ function bindThinking(
   policy: (index: number) => "keep" | "check" | "drop"
 ): { messages: AnthropicMessage[]; prefix: string } {
   let prefix = head;
+  let prefixBeforeLast = head;
   const sent: AnthropicMessage[] = [];
   for (const [index, message] of messages.entries()) {
     let next = message;
@@ -276,10 +325,16 @@ function bindThinking(
         const { [PREFIX_KEY]: bound, ...rest } = block;
         return mode === "keep" || (mode === "check" && bound === prefix) ? [rest] : [];
       });
-      // Consecutive user turns are merged upstream, so a thinking-only step can disappear.
+      // Consecutive user turns are merged below when a thinking-only step disappears.
       if (!content.length) continue;
       next = { ...message, content };
     }
+    if (next.role === "user" && sent.at(-1)?.role === "user") {
+      sent[sent.length - 1] = mergeUserMessages(sent.at(-1)!, next);
+      prefix = hash(prefixBeforeLast + JSON.stringify(sent.at(-1)));
+      continue;
+    }
+    prefixBeforeLast = prefix;
     sent.push(next);
     prefix = hash(prefix + JSON.stringify(next));
   }

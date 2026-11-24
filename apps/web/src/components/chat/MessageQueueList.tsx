@@ -4,7 +4,7 @@ import { RefreshScheduler } from "../../lib/refresh-scheduler";
 import { conversationDeleted } from "../../lib/conversation-lifecycle";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoaderCircle, Trash2, Triangle, X } from "lucide-react";
-import type { QueuedMessageDto } from "@llm-chat/contracts";
+import type { MessageQueueStateDto, QueuedMessageDto } from "@llm-chat/contracts";
 import { endpoints } from "../../lib/api";
 import { refreshMessages, toastError } from "../../lib/app-state";
 import { returningFromPicker } from "../../lib/picker-return";
@@ -16,6 +16,12 @@ export function useMessageQueue(conversationId?: string) {
   const current = useRef(conversationId);
   current.current = conversationId;
   const revision = useRef(0);
+  const apply = useCallback((next: MessageQueueStateDto) => {
+    const id = ++revision.current;
+    if (!conversationId || conversationDeleted(conversationId)) { setItems([]); setPaused(false); return; }
+    if (!Array.isArray(next.items) || typeof next.paused !== "boolean") throw new Error(t("MessageQueueList.invalid_message_queue_response"));
+    if (!conversationDeleted(conversationId) && current.current === conversationId && revision.current === id) { setItems(next.items); setPaused(next.paused); }
+  }, [conversationId]);
   const reload = useCallback(async () => {
     const id = ++revision.current;
     if (!conversationId || conversationDeleted(conversationId)) { setItems([]); setPaused(false); return; }
@@ -46,11 +52,11 @@ export function useMessageQueue(conversationId?: string) {
     const timer = window.setInterval(() => { if (document.visibilityState === "visible") void reload().catch(toastError); }, 5000);
     return () => window.clearInterval(timer);
   }, [items.length, reload]);
-  return { items, paused, reload };
+  return { items, paused, reload, apply };
 }
 
-export function MessageQueueList({ conversationId, items, reload, paused = false }: {
-  conversationId: string | undefined; items: QueuedMessageDto[]; reload: () => Promise<void>; paused?: boolean;
+export function MessageQueueList({ conversationId, items, reload, apply, paused = false }: {
+  conversationId: string | undefined; items: QueuedMessageDto[]; reload: () => Promise<void>; apply?: (state: MessageQueueStateDto) => void; paused?: boolean;
 }) {
   useLocale();
   const [pending, setPending] = useState<string | null>(null);
@@ -58,20 +64,24 @@ export function MessageQueueList({ conversationId, items, reload, paused = false
   const remove = async (id?: string) => {
     if (pending) return;
     setPending(id ?? "all");
-    try { await endpoints.deleteQueuedMessage(conversationId, id); void reload().catch(toastError); }
+    try { await endpoints.deleteQueuedMessage(conversationId, id); await reload(); }
     catch (error) { toastError(error); } finally { setPending(null); }
   };
   const steer = async (scope: "first" | "all") => {
     if (pending) return;
     setPending(`steer-${scope}`);
-    try { await endpoints.steerQueue(conversationId, scope); void reload().catch(toastError); }
+    try {
+      const next = await endpoints.steerQueue(conversationId, scope);
+      if (apply) apply(next);
+      else await reload();
+    }
     catch (error) { toastError(error); } finally { setPending(null); }
   };
   const firstSteerable = items.find((item) => item.status === "pending" && item.mode !== "steer");
   const resume = async () => {
     if (pending) return;
     setPending("resume");
-    try { await endpoints.resumeQueue(conversationId); void reload().catch(toastError); }
+    try { await endpoints.resumeQueue(conversationId); await reload(); }
     catch (error) { toastError(error); } finally { setPending(null); }
   };
   return <section className="message-queue" aria-label={t("MessageQueueList.queued_messages")} aria-busy={Boolean(pending)}>
