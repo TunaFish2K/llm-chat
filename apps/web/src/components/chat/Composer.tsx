@@ -1,7 +1,7 @@
 import { readSubmission, saveSubmission, submissionStore, waitForSubmission, type Submission, type SubmissionActions } from "../../lib/submission";
 import { PopoverLayer, Presence } from "../../lib/motion";
 import { useEscapeAction } from "../../lib/mobile-navigation";
-import { effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
+import { MAX_ATTACHMENTS_PER_MESSAGE, effectiveReasoningSelection, legacyReasoningSelection, type ReasoningSelection } from "@llm-chat/contracts";
 import { errorDisplayMessage, useErrorState } from "../../lib/error-display";
 import { t, useLocale, localized } from "../../lib/i18n";
 import { offlineStore } from "../../lib/offline-history";
@@ -691,7 +691,7 @@ export const Composer = memo(function Composer({
 
                 </div>
                 <div className="composer-action-group">
-                  <AttachmentMenu uploadFiles={uploadFiles} disabled={attachmentCount >= 8} uploading={uploading} />
+                  <AttachmentMenu uploadFiles={uploadFiles} disabled={attachmentCount >= MAX_ATTACHMENTS_PER_MESSAGE} uploading={uploading} />
 
                   <button
                     type="button"

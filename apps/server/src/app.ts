@@ -740,7 +740,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (connection.providerId === "stability") return { ok: true, modelsFound: 0 };
     const models = await listConnectionModels(
       connection,
-      AbortSignal.timeout(15_000),
+      AbortSignal.timeout(60_000),
       providerRequestContextForConversation(connection.id, "models")
     );
     return { ok: true, modelsFound: models.length };
@@ -753,7 +753,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     }
     const discovered = await listConnectionModels(
       connection,
-      AbortSignal.timeout(15_000),
+      AbortSignal.timeout(60_000),
       providerRequestContextForConversation(connection.id, "models")
     );
     const enrichment = await modelCatalog.enrich(connection, discovered);
@@ -1233,7 +1233,7 @@ export async function buildApp(options: AppOptions): Promise<FastifyInstance> {
     if (!taskManager.get(request.params.id)) throw withMessage(new StoreError("background_task_not_found", "后台任务不存在"), "error.background_task_not_found");
     const query = z.object({
       cursor: z.coerce.number().int().nonnegative().default(0),
-      limit: z.coerce.number().int().positive().max(32 * 1024).default(32 * 1024)
+      limit: z.coerce.number().int().positive().max(128 * 1024).default(128 * 1024)
     }).parse(request.query);
     return taskManager.read(request.params.id, query.cursor, query.limit);
   });

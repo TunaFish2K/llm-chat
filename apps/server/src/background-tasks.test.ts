@@ -143,7 +143,7 @@ it("rotates large logs, reports cursor gaps and enforces bounded reads", async (
       command: `node -e 'process.stdout.write("x".repeat(2300000))'`, mode: "pipe", expectedDurationMs: null, hardTimeoutMs: 5000 });
     await until(() => manager.get(task.id)?.status === "completed");
     const result = await manager.read(task.id, 0, 1000000);
-    expect(result.gap).toBe(true); expect(result.earliestCursor).toBeGreaterThan(0); expect(result.text).toHaveLength(32 * 1024);
+    expect(result.gap).toBe(true); expect(result.earliestCursor).toBeGreaterThan(0); expect(result.text).toHaveLength(128 * 1024);
     expect((await manager.read(task.id, result.cursor, 0)).raw).toBe("x");
     expect((await manager.read(task.id, 2300000)).raw).toBe("");
   } finally { await manager.close(); }

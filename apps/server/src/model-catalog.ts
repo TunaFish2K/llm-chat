@@ -12,6 +12,7 @@ const CATALOG_URL = "https://models.dev/api.json";
 const CATALOG_TTL_MS = 60 * 60 * 1000;
 const FAILURE_TTL_MS = 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
+const DEFAULT_FALLBACK_MAX_OUTPUT_TOKENS = 16_384;
 
 
 type JsonRecord = Record<string, unknown>;
@@ -53,7 +54,7 @@ export function fallbackModel(
     displayName,
     contextWindow: null,
     maxInputTokens: null,
-    maxOutputTokens: 4096,
+    maxOutputTokens: DEFAULT_FALLBACK_MAX_OUTPUT_TOKENS,
     capabilities: {
       imageInput: false,
       tools: true,
@@ -64,7 +65,7 @@ export function fallbackModel(
       adaptiveThinking: anthropic,
       manualThinking: anthropic
     },
-    defaultSettings: { common: { maxOutputTokens: 4096, stopSequences: [] }, protocol: {} },
+    defaultSettings: { common: { maxOutputTokens: DEFAULT_FALLBACK_MAX_OUTPUT_TOKENS, stopSequences: [] }, protocol: {} },
     enabled: true
   };
 }
@@ -216,7 +217,10 @@ function applyCatalogEntry(
     manualThinking: reasoning && fallback.capabilities.manualThinking
   };
   const validLimits = context !== undefined && output !== undefined;
+  const contextWindow = validLimits ? context : fallback.contextWindow;
+  const maxInputTokens = validLimits ? input ?? null : fallback.maxInputTokens;
   const maxOutputTokens = validLimits ? output : fallback.maxOutputTokens;
+  const defaultMaxOutputTokens = defaultCatalogMaxOutputTokens(contextWindow, maxInputTokens, maxOutputTokens);
   const providerName = discovered.displayName.trim();
   const catalogName = typeof meta.name === "string" ? meta.name.trim() : "";
   return {
@@ -224,16 +228,30 @@ function applyCatalogEntry(
     displayName: providerName && normalizeModelId(providerName) !== normalizeModelId(discovered.id)
       ? providerName
       : catalogName || providerName || discovered.id,
-    contextWindow: validLimits ? context : fallback.contextWindow,
-    maxInputTokens: validLimits ? input ?? null : fallback.maxInputTokens,
+    contextWindow,
+    maxInputTokens,
     maxOutputTokens,
     imageProtocol: outputModalities.includes("image") ? inferImageProtocol(providerId, discovered.id) : null,
     capabilities,
     defaultSettings: {
-      common: { maxOutputTokens: Math.min(4096, maxOutputTokens), stopSequences: [] },
+      common: { maxOutputTokens: defaultMaxOutputTokens, stopSequences: [] },
       protocol: {}
     }
   };
+}
+
+function defaultCatalogMaxOutputTokens(
+  contextWindow: number | null | undefined,
+  maxInputTokens: number | null | undefined,
+  maxOutputTokens: number
+): number {
+  if (contextWindow != null) {
+    const halfWindow = Math.max(1, Math.floor(contextWindow / 2));
+    if (maxOutputTokens > halfWindow && (maxInputTokens == null || contextWindow - maxOutputTokens < 256)) {
+      return halfWindow;
+    }
+  }
+  return maxOutputTokens;
 }
 
 function inferImageProtocol(providerId: ConnectionDto["providerId"], modelKey: string): ModelInput["imageProtocol"] {

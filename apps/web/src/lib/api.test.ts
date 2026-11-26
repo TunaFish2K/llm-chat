@@ -405,3 +405,20 @@ it("sends explicit empty JSON objects for bodyless POST endpoints while keeping 
     expect(init.headers as Record<string, string>, url).not.toHaveProperty("content-type");
   }
 });
+
+it("disables automatic retries for long-running endpoints", async () => {
+  const calls = [
+    () => endpoints.compactContext("conversation"),
+    () => endpoints.installPlugin("/plugin"),
+    () => endpoints.reloadPlugin("plugin"),
+    () => endpoints.discoverModels("connection"),
+    () => endpoints.testConnection("connection"),
+    () => endpoints.testMcpServer("mcp")
+  ];
+  for (const call of calls) {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(503, { error: { code: "upstream_busy", message: "busy" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(call()).rejects.toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledOnce();
+  }
+});

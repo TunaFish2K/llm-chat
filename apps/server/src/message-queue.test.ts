@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENTS_PER_MESSAGE } from "@llm-chat/contracts";
 import { afterEach, expect, it, vi } from "vitest";
 import { join } from "node:path";
 import { Store } from "./database";
@@ -127,7 +128,7 @@ it("cancels a dispatch during attachment preparation without starting it later",
 
 it("promotes the first or all pending queue items into a single steer message", () => {
   const { store, conversationId } = setup();
-  const asset = (n: string, kind: "file" | "image" = "file") => store.createFileAsset({ sha256: n.repeat(64), fileName: `${n}.txt`, mimeType: kind === "image" ? "image/png" : "text/plain", kind, byteSize: 2, storageKey: n });
+  const asset = (n: string, kind: "file" | "image" = "file") => store.createFileAsset({ sha256: n.length === 64 ? n : n.repeat(64), fileName: `${n}.txt`, mimeType: kind === "image" ? "image/png" : "text/plain", kind, byteSize: 2, storageKey: n });
   const [x, y] = [asset("a"), asset("b")];
   store.steerQueuedMessages(conversationId, "all");
   const a = store.enqueueMessage(conversationId, "a", [x.id]);
@@ -140,8 +141,8 @@ it("promotes the first or all pending queue items into a single steer message", 
     .toEqual([[a.id, "a", "steer", [x.id, y.id]], [expect.any(String), "c", "queue", [x.id]]]);
   store.steerQueuedMessages(conversationId, "all");
   expect(store.listQueuedMessages(conversationId)).toMatchObject([{ id: a.id, text: "a\n\nc", mode: "steer", attachments: [{ id: x.id }, { id: y.id }] }]);
-  store.enqueueMessage(conversationId, "too many", Array.from({ length: 7 }, (_, index) => asset(String.fromCharCode(99 + index)).id));
-  expect(() => store.steerQueuedMessages(conversationId, "all")).toThrow("8");
+  store.enqueueMessage(conversationId, "too many", Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE - 1 }, (_, index) => asset((index + 1).toString(16).padStart(64, "0")).id));
+  expect(() => store.steerQueuedMessages(conversationId, "all")).toThrow(String(MAX_ATTACHMENTS_PER_MESSAGE));
   expect(store.listQueuedMessages(conversationId).map((item) => item.mode)).toEqual(["steer", "queue"]);
 });
 

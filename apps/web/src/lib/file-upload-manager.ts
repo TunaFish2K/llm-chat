@@ -1,5 +1,5 @@
 import { errorI18n } from "@llm-chat/i18n";
-import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_ATTACHMENT_BYTES, imageUploadLimits, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
+import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_ATTACHMENT_BYTES, imageUploadLimits, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
 import { fileUploadHttp, type FileUploadHttp } from "./file-upload-http";
 import { hashFileInWorker } from "./file-hash-client";
 import { formatBytes } from "./format";
@@ -79,7 +79,7 @@ export class FileUploadManager {
         for (const scope of saved.scopes as UploadScope[]) {
           if (typeof scope.id !== "string" || !Array.isArray(scope.tasks) || !Array.isArray(scope.attachments)) continue;
           scope.tasks = scope.tasks.filter((task) => typeof task.id === "string" && typeof task.fileName === "string" && task.byteSize > 0 && task.byteSize <= MAX_ATTACHMENT_FILE_BYTES)
-            .slice(0, 8).map((task) => ({ ...task, cached: false, file: undefined, controller: undefined, verified: false, status: "needs-file" }));
+            .slice(0, MAX_ATTACHMENTS_PER_MESSAGE).map((task) => ({ ...task, cached: false, file: undefined, controller: undefined, verified: false, status: "needs-file" }));
           this.scopes.set(scope.id, scope);
         }
       }
@@ -239,14 +239,14 @@ export class FileUploadManager {
       const pending = scope.tasks.map((task) => ({ byteSize: task.byteSize, kind: task.image ? "image" : "file" }));
       const all = [...scope.attachments, ...pending];
       const image = intent ? intent === "image" : IMAGE_TYPES.has(file.type);
-      if (all.length >= 8) { errors.push(t("AttachmentEditor.attach_up_to_8_files_per_message")); break; }
+      if (all.length >= MAX_ATTACHMENTS_PER_MESSAGE) { errors.push(t("AttachmentEditor.attach_up_to_8_files_per_message", { count: MAX_ATTACHMENTS_PER_MESSAGE })); break; }
       if (image && !IMAGE_TYPES.has(file.type)) { errors.push(t("uploads.image_type")); continue; }
       if (!file.size || file.size > (image ? limits.image : MAX_ATTACHMENT_FILE_BYTES)) {
         errors.push(image ? t("uploads.image_limit_size", { size: formatBytes(limits.image) }) : t("uploads.file_limit")); continue;
       }
       const images = all.filter((asset) => asset.kind === "image");
       if (image && (images.length >= MAX_IMAGES_PER_MESSAGE || images.reduce((sum, asset) => sum + asset.byteSize, 0) + file.size > limits.message)) {
-        errors.push(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total", { size: formatBytes(limits.message) })); continue;
+        errors.push(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total", { count: MAX_IMAGES_PER_MESSAGE, size: formatBytes(limits.message) })); continue;
       }
       if (all.reduce((sum, asset) => sum + asset.byteSize, 0) + file.size > MAX_MESSAGE_ATTACHMENT_BYTES) { errors.push(t("uploads.message_limit")); continue; }
       const task: UploadTask = { id: crypto.randomUUID(), fileName: file.name || "file", mimeType: file.type || "application/octet-stream", byteSize: file.size,
@@ -434,7 +434,7 @@ export class FileUploadManager {
         const pending = scope.tasks.filter((item) => item !== task && item.image);
         const limit = this.deps.imageLimits().message;
         if (images.length + pending.length >= MAX_IMAGES_PER_MESSAGE || [...images, ...pending].reduce((sum, item) => sum + item.byteSize, 0) + asset.byteSize > limit) {
-          throw new Error(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total", { size: formatBytes(limit) }));
+          throw new Error(t("AttachmentEditor.attach_up_to_4_images_per_message_with_a_total", { count: MAX_IMAGES_PER_MESSAGE, size: formatBytes(limit) }));
         }
       }
       scope.tasks = scope.tasks.filter((item) => item !== task);

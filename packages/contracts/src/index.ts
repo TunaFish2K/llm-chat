@@ -799,11 +799,14 @@ export type ConversationExecutionOverrides = z.infer<typeof conversationExecutio
 
 export const DEFAULT_MAX_IMAGE_UPLOAD_MIB = 100;
 export const MAX_IMAGE_UPLOAD_MIB = 1024;
-export const MAX_IMAGES_PER_MESSAGE = 4;
+export const MAX_IMAGES_PER_MESSAGE = 100;
+export const MAX_ATTACHMENTS_PER_MESSAGE = 100;
+export const MAX_ATTACHMENT_FILE_BYTES = 2 * 1024 ** 3;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 4 * 1024 ** 3;
 /** Byte limits for images that enter the model context; attachments use the file limits. */
 export function imageUploadLimits(maxImageUploadMiB = DEFAULT_MAX_IMAGE_UPLOAD_MIB): { image: number; message: number } {
   const image = maxImageUploadMiB * 1024 ** 2;
-  return { image, message: image * MAX_IMAGES_PER_MESSAGE };
+  return { image, message: Math.max(image, MAX_MESSAGE_ATTACHMENT_BYTES) };
 }
 
 export const appSettingsSchema = z.object({
@@ -1163,8 +1166,8 @@ export interface QueuedMessageDto {
 }
 
 const messageTextSchema = z.string().trim().max(1_000_000).default("");
-const imageAssetIdsSchema = z.array(z.string().uuid()).max(4).default([]);
-const fileAssetIdsSchema = z.array(z.string().uuid()).max(8);
+const imageAssetIdsSchema = z.array(z.string().uuid()).max(MAX_IMAGES_PER_MESSAGE).default([]);
+const fileAssetIdsSchema = z.array(z.string().uuid()).max(MAX_ATTACHMENTS_PER_MESSAGE);
 
 export const sendMessageSchema = z.object({
   clientSubmissionId: z.string().uuid().optional(),
@@ -1231,8 +1234,6 @@ export const fileUploadMetadataSchema = z.object({
 });
 export type FileUploadMetadata = z.infer<typeof fileUploadMetadataSchema>;
 
-export const MAX_ATTACHMENT_FILE_BYTES = 2 * 1024 ** 3;
-export const MAX_MESSAGE_ATTACHMENT_BYTES = 4 * 1024 ** 3;
 export const FILE_UPLOAD_CHUNK_BYTES = 4 * 1024 ** 2;
 export const fileUploadInputSchema = fileUploadMetadataSchema.extend({
   id: z.string().uuid(),

@@ -74,10 +74,17 @@ it("keeps native reasoning only for the same connection, protocol and model", ()
 });
 it("includes tool arguments, results, definitions and opaque content in estimates", () => {
   const large = "x".repeat(100_000);
-  expect(estimateMessageTokens("", [{ role: "tool", text: "", toolResults: [{ callId: "call", name: "read", content: large }] }])).toBeGreaterThan(30_000);
-  expect(estimateMessageTokens("", [{ role: "assistant", text: "", toolCalls: [{ id: "call", name: "write", arguments: JSON.stringify({ text: large }) }] }])).toBeGreaterThan(30_000);
-  expect(estimateMessageTokens("", [], [{ name: "tool", description: large, inputSchema: {} }])).toBeGreaterThan(30_000);
-  expect(estimateMessageTokens("", [{ role: "assistant", text: "", providerPayload: [{ encrypted_content: large }] }])).toBeGreaterThan(30_000);
+  expect(estimateMessageTokens("", [{ role: "tool", text: "", toolResults: [{ callId: "call", name: "read", content: large }] }])).toBeGreaterThan(24_000);
+  expect(estimateMessageTokens("", [{ role: "assistant", text: "", toolCalls: [{ id: "call", name: "write", arguments: JSON.stringify({ text: large }) }] }])).toBeGreaterThan(24_000);
+  expect(estimateMessageTokens("", [], [{ name: "tool", description: large, inputSchema: {} }])).toBeGreaterThan(24_000);
+  expect(estimateMessageTokens("", [{ role: "assistant", text: "", providerPayload: [{ encrypted_content: large }] }])).toBeGreaterThan(24_000);
+});
+
+it("estimates ASCII and CJK token counts without UTF-8 inflation", () => {
+  expect(estimateMessageTokens("", [])).toBe(12);
+  expect(estimateMessageTokens("a".repeat(4_000), [])).toBe(1_012);
+  expect(estimateMessageTokens("汉".repeat(1_000), [])).toBe(712);
+  expect(estimateMessageTokens("😀".repeat(100), [])).toBe(82);
 });
 
 it("accepts an explicit Responses output limit and preserves its reason", async () => {

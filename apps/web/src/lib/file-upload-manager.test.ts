@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveRequestRetries } from "./request-preferences";
-import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
+import { FILE_UPLOAD_CHUNK_BYTES, MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENTS_PER_MESSAGE, MAX_IMAGES_PER_MESSAGE, type FileAssetDto, type FileUploadDto } from "@llm-chat/contracts";
 import type { FileUploadHttp } from "./file-upload-http";
 import type { hashFileInWorker } from "./file-hash-client";
 import { FileUploadManager, uploadDelay } from "./file-upload-manager";
@@ -108,10 +108,10 @@ describe("upload queue", () => {
     const big = new File(["x"], "big.bin"); Object.defineProperty(big, "size", { value: MAX_ATTACHMENT_FILE_BYTES });
     expect(x.manager.enqueue(x.scope.id, [big, big, x.file])).toEqual([expect.stringContaining("4 GiB")]);
     const other = x.manager.ensure("other", []);
-    expect(x.manager.enqueue(other.id, Array(9).fill(x.file))).toEqual([expect.stringContaining("8")]);
+    expect(x.manager.enqueue(other.id, Array(MAX_ATTACHMENTS_PER_MESSAGE + 1).fill(x.file))).toEqual([expect.stringContaining(String(MAX_ATTACHMENTS_PER_MESSAGE))]);
     const images = x.manager.ensure("images", []);
     const png = new File(["image"], "p.png", { type: "image/png" });
-    expect(x.manager.enqueue(images.id, Array(5).fill(png))).toEqual([expect.stringContaining("4")]);
+    expect(x.manager.enqueue(images.id, Array(MAX_IMAGES_PER_MESSAGE + 1).fill(png))).toEqual([expect.stringContaining(String(MAX_IMAGES_PER_MESSAGE))]);
     const invalid = x.manager.ensure("invalid", []);
     expect(x.manager.enqueue(invalid.id, [new File([], "empty")])).toHaveLength(1);
   });
@@ -160,11 +160,11 @@ it("attempts uploads despite offline telemetry and retries throttling without du
 
 it("rechecks image quotas when an ordinary upload is identified as an image", async () => {
   const x = setup();
-  x.manager.setAttachments(x.scope.id, Array.from({ length: 4 }, (_, i) => ({ ...asset, id: `image-${i}`, kind: "image" })));
+  x.manager.setAttachments(x.scope.id, Array.from({ length: 4 }, (_, i) => ({ ...asset, id: `image-${i}`, kind: "image", byteSize: 5 * 1024 ** 2 })));
   x.http.complete.mockImplementation(async () => x.row = { ...x.row, state: "completed", asset: { ...asset, kind: "image" } });
   x.manager.enqueue(x.scope.id, [x.file]);
   await vi.waitFor(() => expect(x.scope.tasks[0]?.status).toBe("failed"));
-  expect(x.scope.tasks[0]!.error).toContain("4");
+  expect(x.scope.tasks[0]!.error).toContain(String(MAX_IMAGES_PER_MESSAGE));
   expect(x.scope.attachments).toHaveLength(4);
   x.manager.cancel(x.scope.id, x.scope.tasks[0]!.id);
   expect(x.http.cancel).toHaveBeenCalledTimes(1);

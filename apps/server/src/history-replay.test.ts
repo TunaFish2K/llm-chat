@@ -156,23 +156,29 @@ describe("ordered history replay", () => {
       .rejects.toMatchObject({ code: "vision_model_required" });
   });
 
-  it("checks tool growth before the next model call without truncating stored output", async () => {
+  it("forwards large tool growth to the next model step without local rejection or truncation", async () => {
     const f = setup(); const {store,conversation} = f;
     store.updateModel(f.model.id, { contextWindow: 2048 });
     const first = store.createMessageGeneration(conversation.id, "read");
     const result = "x".repeat(20_000);
     const tool: ServerTool = { definition: { name: "lookup", description: "read", inputSchema: { type: "object" } }, label: "lookup", category: "local", available: true,
       requiresApproval: () => false, execute: async () => result };
+    let step = 0;
     const stream = vi.fn(async function* () {
-      yield { type: "tool-call", call: { id: "read", name: "lookup", arguments: "{}" } } as const;
-      yield { type: "complete", stopReason: "tool_calls" } as const;
+      step += 1;
+      if (step === 1) {
+        yield { type: "tool-call", call: { id: "read", name: "lookup", arguments: "{}" } } as const;
+        yield { type: "complete", stopReason: "tool_calls" } as const;
+        return;
+      }
+      yield { type: "block", index: 1, blockType: "text", content: "done", complete: true } as const;
+      yield { type: "complete", stopReason: "stop" } as const;
     });
     const runner = new GenerationRunner(store, { buildTools: async () => [tool], memoryPrompt: () => "", stream });
     runner.start(first.generationId);
-    await vi.waitFor(() => expect(store.getGeneration(first.generationId)?.status).toBe("failed"));
-    expect(store.getGeneration(first.generationId)?.error?.code).toBe("message_too_large");
+    await vi.waitFor(() => expect(store.getGeneration(first.generationId)?.status).toBe("completed"));
     expect(store.getToolCall("read")?.output).toBe(result);
-    expect(stream).toHaveBeenCalledOnce();
+    expect(stream).toHaveBeenCalledTimes(2);
     await runner.close();
   });
 
@@ -187,7 +193,7 @@ describe("ordered history replay", () => {
     store.updateToolCall("summary-tool", { output: "TOOL_RESULT " + "x".repeat(500), approvalState: "completed" });
     complete(store, first.generationId, "AFTER_TOOL", 1001);
     for (let i = 0; i < 2; i++) {
-      const old = store.createMessageGeneration(conversation.id, "q".repeat(600)); complete(store, old.generationId, "a".repeat(600));
+      const old = store.createMessageGeneration(conversation.id, "q".repeat(1_000)); complete(store, old.generationId, "a".repeat(1_000));
     }
     const next = store.createMessageGeneration(conversation.id, "latest");
     const seen: string[] = [];

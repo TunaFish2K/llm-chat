@@ -281,13 +281,13 @@ describe("workspace tools", () => {
     const tools = await buildServerTools(store);
     const workspace = join(store.dataDir, "workspace");
     mkdirSync(join(workspace, "src"), { recursive: true });
-    writeFileSync(join(workspace, "src", "a.ts"), `Alpha\n${"x".repeat(600)} needle\nbeta`);
-    writeFileSync(join(workspace, "src", "big.ts"), Buffer.alloc(1024 * 1024 + 1, 65));
+    writeFileSync(join(workspace, "src", "a.ts"), `Alpha\n${"x".repeat(2_200)} needle\nbeta`);
+    writeFileSync(join(workspace, "src", "big.ts"), Buffer.alloc(8 * 1024 * 1024 + 1, 65));
     expect(JSON.parse(await tool(tools, "workspace_glob").execute({ pattern: "**/*.ts" }, signal())))
       .toEqual(expect.arrayContaining(["src/a.ts", "src/big.ts"]));
     const plain = JSON.parse(await tool(tools, "workspace_grep").execute({ query: "NEEDLE", pattern: "**/*.ts" }, signal()));
     expect(plain).toEqual([expect.objectContaining({ path: "src/a.ts", line: 2 })]);
-    expect(plain[0].text).toHaveLength(500);
+    expect(plain[0].text).toHaveLength(2_000);
     const regex = JSON.parse(await tool(tools, "workspace_grep").execute({ query: "^(alpha|beta)$", regex: true }, signal()));
     expect(regex.map((item: { line: number }) => item.line)).toEqual([1, 3]);
     await expect(tool(tools, "workspace_glob").execute({ pattern: "../*" }, signal())).rejects.toThrow("relative");
@@ -306,9 +306,9 @@ describe("workspace tools", () => {
     const globbed = JSON.parse(await tool(tools, "workspace_glob").execute({ pattern: "many/*.txt" }, signal()));
     expect(listed).toHaveLength(1_000);
     expect(globbed).toHaveLength(1_000);
-    writeFileSync(join(workspace, "lines.txt"), Array(210).fill("match").join("\n"));
+    writeFileSync(join(workspace, "lines.txt"), Array(510).fill("match").join("\n"));
     const grepped = JSON.parse(await tool(tools, "workspace_grep").execute({ query: "match", pattern: "lines.txt" }, signal()));
-    expect(grepped).toHaveLength(200);
+    expect(grepped).toHaveLength(500);
     store.close();
   });
 
@@ -431,8 +431,8 @@ describe("fetch and search tools", () => {
     await expect(fetchTool.execute({ url: "https://93.184.216.34/" }, signal())).rejects.toThrow("larger than 2 MiB");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(2 * 1024 * 1024 + 1))));
     await expect(fetchTool.execute({ url: "https://93.184.216.34/" }, signal())).rejects.toThrow("larger than 2 MiB");
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("x".repeat(40_000), { headers: { "content-type": "text/plain" } })));
-    expect(JSON.parse(await fetchTool.execute({ url: "https://93.184.216.34/" }, signal())).text).toHaveLength(32 * 1024);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("x".repeat(140_000), { headers: { "content-type": "text/plain" } })));
+    expect(JSON.parse(await fetchTool.execute({ url: "https://93.184.216.34/" }, signal())).text).toHaveLength(128 * 1024);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 302 })));
     await expect(fetchTool.execute({ url: "https://93.184.216.34/" }, signal())).rejects.toThrow("Location");
     vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 302, headers: { location: "/again" } })));
@@ -540,30 +540,40 @@ describe("memory, chat, skill, and large-output tools", () => {
     store.close();
   });
 
-  it("persists large output under a sanitized private filename and returns a preview", async () => {
+  it("persists large output under a sanitized private filename and returns a head-and-tail preview", async () => {
     const store = createStore();
-    expect(await persistLargeToolOutput(store, "small", "ok")).toBe("ok");
-    const output = "x".repeat(40_000);
+    expect(await persistLargeToolOutput(store, "small", "x".repeat(40_000))).toHaveLength(40_000);
+    const output = `HEAD_MARKER_${"x".repeat(140_000)}_TAIL_MARKER`;
     const preview = await persistLargeToolOutput(store, "../unsafe call", output);
     const path = join(store.dataDir, "tool_outputs", ".._unsafe_call.txt");
-    expect(preview).toContain("Output truncated: 40000 characters");
+    expect(preview).toContain(`Output truncated: ${output.length} characters`);
     expect(preview).toContain(path);
-    expect(statSync(path).size).toBe(40_000);
+    expect(preview.startsWith("HEAD_MARKER_")).toBe(true);
+    expect(preview.endsWith("_TAIL_MARKER")).toBe(true);
+    expect(statSync(path).size).toBe(output.length);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(statSync(join(store.dataDir, "tool_outputs")).mode & 0o777).toBe(0o700);
     chmodSync(path, 0o600);
     store.close();
   });
 
-  it("keeps large shell failures parseable with exit metadata and the end of stderr", async () => {
+  it("keeps large shell failures parseable with dynamic stdout/stderr budgets and the end of stderr", async () => {
     const store = createStore();
-    const result = JSON.parse(await persistLargeToolOutput(store, "shell-failure", JSON.stringify({
-      exitCode: 23, stdout: "x".repeat(40000), stderr: "y".repeat(40000) + "root cause", timedOut: false, cancelled: false
+    const balanced = JSON.parse(await persistLargeToolOutput(store, "shell-failure", JSON.stringify({
+      exitCode: 23, stdout: "x".repeat(100_000), stderr: "y".repeat(100_000) + "root cause", timedOut: false, cancelled: false
     })));
-    expect(result).toMatchObject({ exitCode: 23, truncated: true, timedOut: false, cancelled: false });
-    expect(result.stderr).toHaveLength(4096);
-    expect(result.stderr).toMatch(/root cause$/);
-    expect(existsSync(result.fullOutputPath)).toBe(true);
+    expect(balanced).toMatchObject({ exitCode: 23, truncated: true, timedOut: false, cancelled: false });
+    expect(balanced.stdout).toHaveLength(64 * 1024);
+    expect(balanced.stderr).toHaveLength(64 * 1024);
+    expect(balanced.stderr).toMatch(/root cause$/);
+    expect(existsSync(balanced.fullOutputPath)).toBe(true);
+
+    const skewed = JSON.parse(await persistLargeToolOutput(store, "shell-skewed", JSON.stringify({
+      exitCode: 1, stdout: "ok", stderr: "z".repeat(150_000) + "tail", timedOut: false, cancelled: false
+    })));
+    expect(skewed.stdout).toBe("ok");
+    expect(skewed.stderr).toHaveLength(128 * 1024 - 2);
+    expect(skewed.stderr).toMatch(/tail$/);
     store.close();
   });
 });
@@ -661,11 +671,11 @@ it("bounds workspace searches and resolves legacy attachment paths without escap
   const attachments = join(store.dataDir, "attachments");
   const tools = await buildServerTools(store, false, { attachmentWorkspacePath: attachments });
   const write = tool(tools, "workspace_write_file");
-  await write.execute({ workspace: "attachments", path: "/attachments/log.txt", text: "needle\n".repeat(250), overwrite: false }, signal());
-  expect(JSON.parse(await tool(tools, "workspace_grep").execute({ workspace: "attachments", query: "needle" }, signal()))).toHaveLength(200);
+  await write.execute({ workspace: "attachments", path: "/attachments/log.txt", text: "needle\n".repeat(550), overwrite: false }, signal());
+  expect(JSON.parse(await tool(tools, "workspace_grep").execute({ workspace: "attachments", query: "needle" }, signal()))).toHaveLength(500);
   expect(JSON.parse(await tool(tools, "workspace_list").execute({ workspace: "attachments", path: "/attachments/" }, signal()))[0].path).toBe("log.txt");
   await tool(tools, "workspace_edit_file").execute({ workspace: "attachments", path: "log.txt", old_text: "needle", replace_all: true }, signal());
-  expect(JSON.parse(await tool(tools, "workspace_read_file").execute({ workspace: "attachments", path: "/attachments/log.txt" }, signal())).text).toBe("\n".repeat(250));
+  expect(JSON.parse(await tool(tools, "workspace_read_file").execute({ workspace: "attachments", path: "/attachments/log.txt" }, signal())).text).toBe("\n".repeat(550));
   symlinkSync(join(attachments, "log.txt"), join(attachments, "link.txt"));
   expect(JSON.parse(await tool(tools, "workspace_list").execute({ workspace: "attachments" }, signal()))).toContainEqual(expect.objectContaining({ path: "link.txt", type: "other" }));
   for (const path of ["/workdir/", "/workspace/"]) {

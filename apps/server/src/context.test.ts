@@ -40,8 +40,8 @@ function summaryAdapter(events: ProviderEvent[]): ProviderAdapter {
 }
 
 describe("context builder", () => {
-  it("uses UTF-8 bytes and fixed message overhead for conservative estimates", () => {
-    expect(estimateTokens("", [])).toBe(14);
+  it("uses character-class estimates and fixed message overhead", () => {
+    expect(estimateTokens("", [])).toBe(12);
     expect(estimateTokens("中文测试", [])).toBeGreaterThan(estimateTokens("test", []));
     expect(estimateTokens("", [{ role: "user", text: "中文测试" }])).toBeGreaterThan(4);
     expect(estimateTokens("", [{ role: "user", text: "a long english sentence" }])).toBeGreaterThan(6);
@@ -163,10 +163,10 @@ describe("context builder", () => {
     const seeded = seedModel(store);
     const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
     const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "trim" });
-    const first = completeTurn(store, conversation.id, "old question".repeat(20), "old answer".repeat(20));
+    const first = completeTurn(store, conversation.id, "old question".repeat(45), "old answer".repeat(45));
     store.upsertToolCall(first.generationId, { id: "call", name: "lookup", arguments: "{}" }, 0, 0, false);
     store.updateToolCall("call", { approvalState: "completed", output: "tool output" });
-    completeTurn(store, conversation.id, "middle question".repeat(20), "middle answer".repeat(20));
+    completeTurn(store, conversation.id, "middle question".repeat(45), "middle answer".repeat(45));
     const latest = store.createMessageGeneration(conversation.id, "latest question");
     const built = await buildContext(
       store, store.getGenerationRecord(latest.generationId)!, model,
@@ -179,11 +179,11 @@ describe("context builder", () => {
     store.close();
   });
 
-  it("reports missing windows, invalid budgets, and an oversized latest message", async () => {
+  it("reports missing windows and invalid budgets, and delegates oversized single turns to upstream", async () => {
     const store = createStore();
     const seeded = seedModel(store);
     const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "trim" });
-    const latest = store.createMessageGeneration(conversation.id, "x".repeat(1_000));
+    const latest = store.createMessageGeneration(conversation.id, "x".repeat(2_000));
     const record = store.getGenerationRecord(latest.generationId)!;
     const connection = store.getConnection(seeded.connection.id)!;
     const missing = store.updateModel(seeded.model.id, { contextWindow: null })!;
@@ -196,8 +196,17 @@ describe("context builder", () => {
     await expect(buildContext(store, record, inputLimited, connection, new AbortController().signal))
       .rejects.toMatchObject({ code: "context_budget_invalid" });
     const small = store.updateModel(seeded.model.id, { contextWindow: 512, maxInputTokens: null })!;
-    await expect(buildContext(store, record, small, connection, new AbortController().signal))
-      .rejects.toMatchObject({ code: "message_too_large" });
+    const trimmed = await buildContext(store, record, small, connection, new AbortController().signal);
+    expect(trimmed.messages).toEqual([{ role: "user", text: "x".repeat(2_000) }]);
+    expect(trimmed.metadata.estimatedInputTokens).toBeGreaterThan(256);
+
+    const fullConversation = store.createConversation({ systemPrompt: "", contextPolicy: "full" });
+    const fullTurn = store.createMessageGeneration(fullConversation.id, "x".repeat(2_000));
+    const fullBuilt = await buildContext(
+      store, store.getGenerationRecord(fullTurn.generationId)!, small, connection, new AbortController().signal
+    );
+    expect(fullBuilt.metadata.policy).toBe("full");
+    expect(fullBuilt.metadata.estimatedInputTokens).toBeGreaterThan(256);
     store.close();
   });
 
@@ -206,8 +215,8 @@ describe("context builder", () => {
     const seeded = seedModel(store);
     const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
     const conversation = store.createConversation({ systemPrompt: "original", contextPolicy: "summarize" });
-    completeTurn(store, conversation.id, "old q".repeat(45), "old a".repeat(45));
-    completeTurn(store, conversation.id, "middle q".repeat(35), "middle a".repeat(35));
+    completeTurn(store, conversation.id, "old q".repeat(90), "old a".repeat(90));
+    completeTurn(store, conversation.id, "middle q".repeat(70), "middle a".repeat(70));
     const latest = store.createMessageGeneration(conversation.id, "latest");
     vi.mocked(adapterFor).mockReturnValue(summaryAdapter([
       { type: "block", index: 1, blockType: "text", content: " compact summary ", complete: true },
@@ -285,8 +294,8 @@ describe("context builder", () => {
       const seeded = seedModel(store);
       const model = store.updateModel(seeded.model.id, { contextWindow: 512 })!;
       const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "summarize" });
-      completeTurn(store, conversation.id, "old".repeat(50), "answer".repeat(30));
-      completeTurn(store, conversation.id, "second".repeat(60), "answer".repeat(30));
+      completeTurn(store, conversation.id, "old".repeat(120), "answer".repeat(70));
+      completeTurn(store, conversation.id, "second".repeat(120), "answer".repeat(70));
       const latest = store.createMessageGeneration(conversation.id, "latest");
       return { store, seeded, model, conversation, latest };
     };
@@ -370,8 +379,8 @@ it("compacts successive chunks, accumulates partial usage and invalidates edited
   const { model } = seedModel(store);
   store.updateModel(model.id, { contextWindow: 4096, capabilities: { ...model.capabilities, temperature: false } });
   const conversation = store.createConversation({ systemPrompt: "", contextPolicy: "auto" });
-  const first = completeTurn(store, conversation.id, "first ".repeat(200), "answer ".repeat(200));
-  completeTurn(store, conversation.id, "second ".repeat(200), "answer ".repeat(200));
+  const first = completeTurn(store, conversation.id, "first ".repeat(400), "answer ".repeat(400));
+  completeTurn(store, conversation.id, "second ".repeat(400), "answer ".repeat(400));
   completeTurn(store, conversation.id, "third", "answer");
   completeTurn(store, conversation.id, "fourth", "answer");
   const requests: Parameters<ProviderAdapter["stream"]>[0][] = [];

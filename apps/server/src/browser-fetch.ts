@@ -4,7 +4,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { firefox, type BrowserContext, type Browser } from "playwright-core";
-import { assertHttpUrl, assertPublicUrl } from "./tools";
+import { assertHttpUrl, assertPublicUrl, MAX_TOOL_OUTPUT } from "./tools";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -121,7 +121,7 @@ export class BrowserFetchManager {
       this.lastError = null;
       this.lastErrorI18n = undefined;
       return JSON.stringify({ url: page.url(), title: await page.title(), status: response?.status(),
-        contentType: response?.headers()["content-type"] ?? "text/html", text: text.slice(0, 32 * 1024), truncated: text.length > 32 * 1024 });
+        contentType: response?.headers()["content-type"] ?? "text/html", text: text.slice(0, MAX_TOOL_OUTPUT), truncated: text.length > MAX_TOOL_OUTPUT });
     } catch (error) {
       if (signal.aborted) throw withMessage(new Error(callerSignal.aborted ? "浏览器抓取已取消" : this.closing ? "浏览器已关闭" : "浏览器抓取超时（30 秒）"), callerSignal.aborted ? "runtime.browser_canceled" : this.closing ? "runtime.browser_closed" : "runtime.browser_timeout");
       this.lastError = resourceError ?? (error instanceof Error ? error.message : "浏览器抓取失败");

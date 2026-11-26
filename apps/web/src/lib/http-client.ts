@@ -88,16 +88,28 @@ export function resetRequestSession(): void {
   requestSession.abort();
   requestSession = new AbortController();
 }
-export function requestBudget(method: string, retries = requestRetries()): number {
-  return (method === "GET" ? 15_000 : 30_000) * (retries + 1) + retries * 10_000 + 1_000;
+const DEFAULT_GET_TIMEOUT_MS = 30_000;
+const DEFAULT_MUTATION_TIMEOUT_MS = 60_000;
+const DEFAULT_FILE_UPLOAD_TIMEOUT_MS = 300_000;
+
+export function requestBudget(method: string, retries = requestRetries(), timeoutMs?: number): number {
+  const attemptTimeout = timeoutMs ?? (method === "GET" ? DEFAULT_GET_TIMEOUT_MS : DEFAULT_MUTATION_TIMEOUT_MS);
+  return attemptTimeout * (retries + 1) + retries * 10_000 + 1_000;
 }
-export function httpRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, options: { retries?: number; requestId?: string } = {}): Promise<HttpResult<T>> {
+export function httpRequest<T>(
+  method: string,
+  path: string,
+  body: unknown,
+  signal: AbortSignal,
+  options: { retries?: number; requestId?: string; timeoutMs?: number } = {}
+): Promise<HttpResult<T>> {
   const maxRetries = options.retries ?? requestRetries();
-  const deadline = AbortSignal.any([signal, requestSession.signal, AbortSignal.timeout(requestBudget(method, maxRetries))]);
+  const attemptTimeout = options.timeoutMs ?? (method === "GET" ? DEFAULT_GET_TIMEOUT_MS : DEFAULT_MUTATION_TIMEOUT_MS);
+  const deadline = AbortSignal.any([signal, requestSession.signal, AbortSignal.timeout(requestBudget(method, maxRetries, attemptTimeout))]);
   const requestId = method === "GET" || method === "HEAD" ? undefined : options.requestId ?? crypto.randomUUID();
   const serialized = body !== undefined ? JSON.stringify(body) : null;
   const action = () => {
-    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(method === "GET" ? 15_000 : 30_000)]);
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(attemptTimeout)]);
     return withRequestSignal(performHttpRequest<T>(method, path, serialized, attempt, requestId), attempt).catch(error => {
       if (error instanceof ApiRequestError) throw error;
       throw networkFailure();
@@ -177,12 +189,17 @@ function retryAfter(value: string | null): number | undefined {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
-export function uploadFileHttp(file: File, signal = new AbortController().signal): Promise<FileAssetDto> {
-  const maxRetries = requestRetries();
-  const deadline = AbortSignal.any([signal, requestSession.signal, AbortSignal.timeout(requestBudget("POST", maxRetries))]);
+export function uploadFileHttp(
+  file: File,
+  signal = new AbortController().signal,
+  options: { retries?: number; timeoutMs?: number } = {}
+): Promise<FileAssetDto> {
+  const maxRetries = options.retries ?? requestRetries();
+  const attemptTimeout = options.timeoutMs ?? DEFAULT_FILE_UPLOAD_TIMEOUT_MS;
+  const deadline = AbortSignal.any([signal, requestSession.signal, AbortSignal.timeout(requestBudget("POST", maxRetries, attemptTimeout))]);
   const requestId = crypto.randomUUID();
   return withRequestSignal(retryRequest(() => {
-    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(30_000)]);
+    const attempt = AbortSignal.any([deadline, AbortSignal.timeout(attemptTimeout)]);
     return withRequestSignal(performFileUpload(file, requestId, attempt), attempt).catch(error => {
       if (error instanceof ApiRequestError) throw error;
       throw new ApiRequestError(0, "network_error", t("http_client.network_request_failed"));

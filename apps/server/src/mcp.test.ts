@@ -115,7 +115,7 @@ describe("MCP manager sessions", () => {
 
     await expect(harness.manager.test(server.id)).resolves.toEqual({ ok: true, tools: 2, serverName: "Fresh MCP" });
     expect(stale.close).toHaveBeenCalledOnce();
-    expect(fresh.listTools).toHaveBeenCalledWith(undefined, { timeout: 15_000, cacheMode: "refresh" });
+    expect(fresh.listTools).toHaveBeenCalledWith(undefined, { timeout: 60_000, cacheMode: "refresh" });
     expect(store.getMcpServer(server.id)?.lastError).toBeNull();
     await harness.manager.close();
   });

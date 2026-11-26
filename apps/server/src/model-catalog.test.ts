@@ -53,7 +53,7 @@ describe("ModelCatalogService", () => {
         maxInputTokens: 1_000_000,
         maxOutputTokens: 50_000,
         capabilities: { imageInput: true, tools: true, temperature: false, reasoning: true },
-        defaultSettings: { common: { maxOutputTokens: 4_096 } }
+        defaultSettings: { common: { maxOutputTokens: 50_000 } }
       },
       catalogMetadata: {
         providerId: "openai",
@@ -64,6 +64,41 @@ describe("ModelCatalogService", () => {
     });
     expect(second.models[0]?.matched).toBe(true);
     expect(chat.models[0]?.input.capabilities.reasoning).toBe(false);
+    expect(chat.models[0]?.input.defaultSettings.common.maxOutputTokens).toBe(16_384);
+  });
+
+  it("caps default maxOutputTokens to half the context window when output would starve input budget", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      openai: {
+        models: {
+          "symmetric-model": {
+            name: "Symmetric",
+            modalities: { input: ["text"], output: ["text"] },
+            limit: { context: 128_000, output: 128_000 }
+          },
+          "explicit-input-full-output": {
+            name: "Explicit Input Full Output",
+            modalities: { input: ["text"], output: ["text"] },
+            limit: { context: 200_000, input: 200_000, output: 200_000 }
+          }
+        }
+      }
+    }))) as unknown as typeof fetch;
+    const service = new ModelCatalogService(fetchImpl);
+    const result = await service.enrich(connection, [
+      { id: "symmetric-model", displayName: "Symmetric" },
+      { id: "explicit-input-full-output", displayName: "Explicit" }
+    ]);
+    expect(result.models[0]?.input).toMatchObject({
+      contextWindow: 128_000,
+      maxOutputTokens: 128_000,
+      defaultSettings: { common: { maxOutputTokens: 64_000 } }
+    });
+    expect(result.models[1]?.input).toMatchObject({
+      contextWindow: 200_000,
+      maxOutputTokens: 200_000,
+      defaultSettings: { common: { maxOutputTokens: 100_000 } }
+    });
   });
 
   it("falls back safely when the directory is unavailable", async () => {
@@ -72,7 +107,12 @@ describe("ModelCatalogService", () => {
     expect(result.warning).toContain("暂时不可用");
     expect(result.models[0]).toMatchObject({
       matched: false,
-      input: { contextWindow: null, maxInputTokens: null, maxOutputTokens: 4_096 }
+      input: {
+        contextWindow: null,
+        maxInputTokens: null,
+        maxOutputTokens: 16_384,
+        defaultSettings: { common: { maxOutputTokens: 16_384 } }
+      }
     });
   });
 });

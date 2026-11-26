@@ -1,7 +1,9 @@
-import { expect, it, vi } from "vitest";
-import { httpRequest, uploadFileHttp } from "./http-client";
+import { afterEach, expect, it, vi } from "vitest";
+import { httpRequest, requestBudget, uploadFileHttp } from "./http-client";
 import { saveRequestRetries } from "./request-preferences";
 import { SERVER_CHANNELS_KEY } from "./server-channel";
+
+afterEach(() => vi.useRealTimers());
 
 it.each(["headers", "body"])("bounds a hung %s phase with the caller's deadline", async phase => {
   const controller = new AbortController();
@@ -54,4 +56,25 @@ it("reports an unreachable channel as a retryable network error", async () => {
   useChannel("server");
   vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
   await expect(httpRequest("GET", "/api/settings", undefined, new AbortController().signal)).rejects.toMatchObject({ status: 0, code: "network_error" });
+});
+
+it("supports custom per-request timeouts and long raw file uploads", async () => {
+  expect(requestBudget("GET", 0)).toBe(31_000);
+  expect(requestBudget("POST", 0)).toBe(61_000);
+  expect(requestBudget("POST", 0, 600_000)).toBe(601_000);
+
+  vi.useFakeTimers();
+  let resolveSlow!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { resolveSlow = resolve; })));
+  const slow = httpRequest("POST", "/api/conversations/c/context/compact", {}, new AbortController().signal, { timeoutMs: 120_000, retries: 0 });
+  await vi.advanceTimersByTimeAsync(90_000);
+  resolveSlow(Response.json({ ok: true }));
+  await expect(slow).resolves.toMatchObject({ data: { ok: true } });
+
+  let resolveUpload!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { resolveUpload = resolve; })));
+  const upload = uploadFileHttp(new File(["img"], "large.png", { type: "image/png" }));
+  await vi.advanceTimersByTimeAsync(120_000);
+  resolveUpload(Response.json({ id: "asset-1" }));
+  await expect(upload).resolves.toMatchObject({ id: "asset-1" });
 });

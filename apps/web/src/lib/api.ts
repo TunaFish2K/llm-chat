@@ -63,6 +63,8 @@ interface RequestContext {
   networkOnly?: boolean;
   allowOffline?: boolean;
   signal?: AbortSignal;
+  timeoutMs?: number;
+  retries?: number;
 }
 
 async function request<T>(method: string, path: string, body?: unknown, context: RequestContext = {}): Promise<T> {
@@ -90,7 +92,11 @@ async function request<T>(method: string, path: string, body?: unknown, context:
 async function performRequest<T>(method: string, path: string, body: unknown, signal: AbortSignal, context: RequestContext = {}): Promise<HttpResult<T>> {
   const offline = async (): Promise<HttpResult<T>> => ({ data: await offlineRequest(path) as T, status: 200 });
   try {
-    const result = await httpRequest<T>(method, path, body, signal);
+    const options = {
+      ...(context.retries !== undefined ? { retries: context.retries } : {}),
+      ...(context.timeoutMs !== undefined ? { timeoutMs: context.timeoutMs } : {})
+    };
+    const result = await httpRequest<T>(method, path, body, signal, options);
     if (offlineStore.get().offline) offlineStore.set({ offline: false });
     return result;
   } catch (error) {
@@ -145,7 +151,7 @@ interface ModelDiscoveryResult {
 }
 
 async function discoverModels(id: string): Promise<ModelDiscoveryResult> {
-  const result = await api.post<ModelDiscoveryResult>(`/api/connections/${id}/models/discover`, {});
+  const result = await api.post<ModelDiscoveryResult>(`/api/connections/${id}/models/discover`, {}, { timeoutMs: 60_000, retries: 0 });
   // Older backends create enabled entries. Normalize only newly created rows;
   // existing choices must survive discovery. New backends need no extra write.
   const enabled = result.created.filter(model => model.enabled).map(model => model.id);
@@ -249,10 +255,10 @@ export const endpoints = {
   ),
 
   plugins: () => api.get<PluginDto[]>("/api/plugins"),
-  installPlugin: (sourcePath: string) => api.post<PluginDto>("/api/plugins/install", { sourcePath }),
+  installPlugin: (sourcePath: string) => api.post<PluginDto>("/api/plugins/install", { sourcePath }, { timeoutMs: 300_000, retries: 0 }),
   configurePlugin: (id: string, config: Record<string, unknown>, secrets: Record<string, unknown>) =>
     api.patch<PluginDto>(`/api/plugins/${id}/config`, { config, secrets }),
-  reloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/reload`, {}),
+  reloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/reload`, {}, { timeoutMs: 300_000, retries: 0 }),
   unloadPlugin: (id: string) => api.post<PluginDto>(`/api/plugins/${id}/unload`, {}),
   removePlugin: (id: string) => api.delete<undefined>(`/api/plugins/${id}`),
 
@@ -271,7 +277,7 @@ export const endpoints = {
   createMcpServer: (input: McpServerInput) => api.post<McpServerDto>("/api/mcp/servers", input),
   updateMcpServer: (id: string, patch: McpServerPatch) => api.patch<McpServerDto>(`/api/mcp/servers/${id}`, patch),
   deleteMcpServer: (id: string) => api.delete<undefined>(`/api/mcp/servers/${id}`),
-  testMcpServer: (id: string) => api.post<McpTestResult>(`/api/mcp/servers/${id}/test`, {}),
+  testMcpServer: (id: string) => api.post<McpTestResult>(`/api/mcp/servers/${id}/test`, {}, { timeoutMs: 60_000, retries: 0 }),
 
   connections: () => api.get<ConnectionDto[]>("/api/connections"),
   createConnection: (input: ConnectionInput) => api.post<ConnectionDto>("/api/connections", input),
@@ -280,7 +286,7 @@ export const endpoints = {
   deleteConnection: (id: string) => api.delete<undefined>(`/api/connections/${id}`),
   connectionBalance: (id: string, refresh = false) =>
     api.get<ConnectionBalanceDto>(`/api/connections/${id}/balance${refresh ? "?refresh=1" : ""}`),
-  testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`, {}),
+  testConnection: (id: string) => api.post<{ ok: true; modelsFound: number }>(`/api/connections/${id}/test`, {}, { timeoutMs: 60_000, retries: 0 }),
   discoverModels,
 
   models: (connectionId?: string) =>
@@ -326,7 +332,7 @@ export const endpoints = {
   forkConversation: (id: string, input: ForkConversationInput) =>
     api.post<ConversationForkDto>(`/api/conversations/${id}/forks`, input, { conversationId: id }),
   contextSummary: (id: string) => api.get<ContextSummaryDto | null>(`/api/conversations/${id}/context/compact`, { conversationId: id }),
-  compactContext: (id: string) => api.post<ContextSummaryDto>(`/api/conversations/${id}/context/compact`, {}, { conversationId: id }),
+  compactContext: (id: string) => api.post<ContextSummaryDto>(`/api/conversations/${id}/context/compact`, {}, { conversationId: id, timeoutMs: 600_000, retries: 0 }),
   messages: (conversationId: string) => api.get<MessageDto[]>(`/api/conversations/${conversationId}/messages`, { conversationId }),
   imageGenerations: (conversationId: string) => api.get<ImageGenerationJobDto[]>(`/api/conversations/${conversationId}/image-generations`, { conversationId }),
   startImageGeneration: (conversationId: string, input: ImageGenerationInput) =>

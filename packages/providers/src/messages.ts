@@ -64,31 +64,36 @@ export function prepareMessages(request: GenerateRequest): ProviderMessage[] {
   return messages;
 }
 
-/** Conservative estimate of transmitted content; image bytes are charged separately. */
-/** UTF-8 length without allocating an encoded copy of a possibly large string. */
-function utf8Length(text: string): number {
-  let bytes = text.length;
+/** Single-pass token estimate without encoding copies: ASCII ~4 chars/token, non-ASCII ~0.7 tokens/char. */
+function estimateTextTokens(text: string): number {
+  let ascii = 0;
+  let nonAscii = 0;
   for (let index = 0; index < text.length; index += 1) {
     const code = text.charCodeAt(index);
-    if (code < 0x80) continue;
-    if (code < 0x800) bytes += 1;
-    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) { bytes += 2; index += 1; }
-    else bytes += 2;
+    if (code < 0x80) {
+      ascii += 1;
+      continue;
+    }
+    nonAscii += 1;
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length) {
+      const next = text.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) index += 1;
+    }
   }
-  return bytes;
+  return ascii / 4 + nonAscii * 0.7;
 }
 
 export function estimateMessageTokens(systemPrompt: string, messages: ProviderMessage[], tools: ProviderToolDefinition[] = []): number {
-  let bytes = utf8Length(systemPrompt);
+  let tokens = estimateTextTokens(systemPrompt);
   for (const message of messages) {
-    bytes += utf8Length(message.text);
+    tokens += estimateTextTokens(message.text);
     for (const value of [message.toolCalls, message.toolResults, message.providerPayload]) {
-      if (value) bytes += utf8Length(JSON.stringify(value));
+      if (value) tokens += estimateTextTokens(JSON.stringify(value));
     }
   }
-  if (tools.length) bytes += utf8Length(JSON.stringify(tools));
+  if (tools.length) tokens += estimateTextTokens(JSON.stringify(tools));
   const images = messages.reduce((sum, message) => sum + (message.images?.length ?? 0), 0);
-  return Math.ceil((bytes / 3 + images * 1600 + messages.length * 6 + 12) * 1.15);
+  return Math.ceil(tokens + images * 1600 + messages.length * 6 + 12);
 }
 
 export function assertStreamComplete(ended: boolean, hasOutput: boolean): void {

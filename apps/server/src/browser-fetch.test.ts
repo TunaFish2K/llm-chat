@@ -104,11 +104,11 @@ it("bounds each resource and honors a pre-aborted request", async () => {
 });
 
 it("uses an isolated headless context, bounds extracted text and closes its browser", async () => {
-  const { browser, context, navigate } = browserFixture("x".repeat(33000));
+  const { browser, context, navigate } = browserFixture("x".repeat(140_000));
   const manager = new BrowserFetchManager();
   const result = JSON.parse(await manager.fetch("https://example.com", new AbortController().signal));
   expect(result).toMatchObject({ title: "Example", status: 200, truncated: true });
-  expect(result.text).toHaveLength(32768);
+  expect(result.text).toHaveLength(128 * 1024);
   expect(mocks.launch).toHaveBeenCalledWith(expect.objectContaining({ headless: true }));
   expect(browser.newContext).toHaveBeenCalledWith({ serviceWorkers: "block", acceptDownloads: false });
   expect(context.routeWebSocket).toHaveBeenCalled();

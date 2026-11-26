@@ -751,13 +751,13 @@ describe("GenerationRunner tools and approval", () => {
   it("stores large tool output out of line", async () => {
     const store = createStore();
     const generation = seedGeneration(store);
-    const tool = serverTool("large", async () => "x".repeat(40_000));
+    const tool = serverTool("large", async () => "x".repeat(140_000));
     const scripts: ProviderEvent[][] = [[toolCall("call-large", "large", "{}")], [{ type: "complete", stopReason: "stop" }]];
     const runner = makeRunner(store, { buildTools: async () => [tool], stream: () => events(scripts.shift()!) });
     runner.start(generation.generationId);
 
     const result = await terminal(store, generation.generationId);
-    expect(result.toolCalls[0]?.output).toContain("[Output truncated: 40000 characters.");
+    expect(result.toolCalls[0]?.output).toContain("[Output truncated: 140000 characters.");
     expect(existsSync(resolve(store.dataDir, "tool_outputs/call-large.txt"))).toBe(true);
   });
 
@@ -785,7 +785,7 @@ describe("GenerationRunner errors and cancellation", () => {
     const store = createStore();
     const generation = seedGeneration(store);
     const shell = serverTool("shell", async () => { throw new ShellError({
-      exitCode: 9, signal: null, stdout: "x".repeat(40000), stderr: "root cause", timedOut: false, cancelled: false, truncated: false
+      exitCode: 9, signal: null, stdout: "x".repeat(140_000), stderr: "root cause", timedOut: false, cancelled: false, truncated: false
     }, "command failed"); });
     let step = 0;
     const runner = makeRunner(store, {

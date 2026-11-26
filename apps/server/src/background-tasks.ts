@@ -15,7 +15,7 @@ import { terminalScreen } from "./terminal-screen";
 
 const TERMINAL_STATES = new Set<BackgroundTaskDto["status"]>(["completed", "failed", "stopped", "timed_out", "interrupted"]);
 const SEGMENT_BYTES = 1024 * 1024;
-const MODEL_READ_LIMIT = 32 * 1024;
+const MODEL_READ_LIMIT = 128 * 1024;
 
 type Row = Record<string, unknown>;
 

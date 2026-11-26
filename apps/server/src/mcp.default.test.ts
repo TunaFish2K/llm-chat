@@ -106,7 +106,7 @@ describe("MCP production dependency defaults", () => {
     });
     expect(sdk.SSEClientTransport).not.toHaveBeenCalled();
     expect(sdk.clients[0]?.connect).toHaveBeenCalledWith(sdk.httpTransports[0]);
-    expect(sdk.clients[0]?.listTools).toHaveBeenCalledWith(undefined, { timeout: 15_000 });
+    expect(sdk.clients[0]?.listTools).toHaveBeenCalledWith(undefined, { timeout: 60_000 });
 
     await manager.close();
     expect(sdk.clients[0]?.close).toHaveBeenCalledOnce();
@@ -138,7 +138,7 @@ describe("MCP production dependency defaults", () => {
     expect(sdk.clients[0]?.connect).toHaveBeenCalledWith(sdk.httpTransports[0]);
     expect(sdk.clients[0]?.close).toHaveBeenCalledOnce();
     expect(sdk.clients[1]?.connect).toHaveBeenCalledWith(sdk.sseTransports[0]);
-    expect(sdk.clients[1]?.listTools).toHaveBeenCalledWith(undefined, { timeout: 15_000 });
+    expect(sdk.clients[1]?.listTools).toHaveBeenCalledWith(undefined, { timeout: 60_000 });
 
     await manager.close();
     expect(sdk.clients[1]?.close).toHaveBeenCalledOnce();

@@ -62,9 +62,6 @@ export async function buildContext(
   let estimated = estimateTokens(countedPrompt, providerMessages, compiled.tools);
 
   if (policy === "full") {
-    if (model.contextWindow && estimated > availableInputBudget(model, record.settings.common.maxOutputTokens)) {
-      throw withMessage(new ContextError("message_too_large", "完整上下文超过模型可用容量，请调整上下文策略或减少输入"), "error.the_full_context_exceeds_the_model_s_capacity_change_the_context_strategy");
-    }
     return {
       systemPrompt: compiled.systemPrompt,
       messages: providerMessages,
@@ -90,7 +87,7 @@ export async function buildContext(
     providerMessages = composeProviderMessages(rawMessages, preparedImages, compiled, []);
     estimated = estimateTokens(countedPrompt, providerMessages, compiled.tools);
   }
-  const targetBudget = policy === "auto" ? Math.floor(budget * 0.8) : budget;
+  const targetBudget = policy === "auto" ? Math.floor(budget * 0.9) : budget;
   if (estimated <= targetBudget) {
     return {
       systemPrompt: compiled.systemPrompt,
@@ -192,7 +189,6 @@ function trimContext(
   }
   const messages = composeProviderMessages(remaining, preparedImages, compiled, []);
   const finalEstimate = estimateTokens(countedPrompt, messages, compiled.tools);
-  if (finalEstimate > budget) throw withMessage(new ContextError("message_too_large", "最新消息超过模型可用上下文容量"), "error.the_latest_message_exceeds_the_model_s_context_capacity");
   return {
     systemPrompt: compiled.systemPrompt,
     messages,
@@ -237,7 +233,7 @@ async function summarizeContext(
 
   while (estimateTokens(countedSystem(), composeProviderMessages(remaining, preparedImages, compiled, []), compiled.tools) > budget) {
     const nextUser = remaining.findIndex((message, index) => index > 0 && message.role === "user");
-    if (nextUser < 0) throw withMessage(new ContextError("message_too_large", "最近一轮对话超过模型可用上下文容量"), "error.the_latest_conversation_turn_exceeds_the_model_s_context_capacity");
+    if (nextUser < 0) break;
     const chunk = remaining.slice(0, nextUser);
     remaining = remaining.slice(nextUser);
     const result = await generateSummary(
@@ -271,7 +267,7 @@ async function summarizeContext(
     postHistoryInstructions: compiled.postHistoryInstructions,
     metadata: {
       policy: record.agentSnapshot.execution.contextPolicy,
-      strategy: "summary",
+      strategy: summaryText ? "summary" : "raw",
       omittedMessages: allMessages.length - remaining.length,
       estimatedInputTokens: estimateTokens(countedSystem(), messages, compiled.tools),
       summaryUsed: Boolean(summaryText),

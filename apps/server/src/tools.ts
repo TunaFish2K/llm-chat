@@ -21,7 +21,7 @@ import type { ImageGenerationManager } from "./image-generation";
 import { mcpManager } from "./mcp";
 import { ServiceSettings } from "./service-settings";
 
-const MAX_TOOL_OUTPUT = 32 * 1024;
+export const MAX_TOOL_OUTPUT = 128 * 1024;
 const MAX_FETCH_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -371,7 +371,7 @@ function backgroundTools(manager: TaskManager, rootFor: (input: JsonObject) => s
       task_id: stringProperty("Background task id")
     }, false, async (input, _signal, context) => JSON.stringify(requireOwnedTask(manager, requiredString(input, "task_id"), context))),
     tool("background_read", "读取后台输出", "background", "Read incremental task output from a byte cursor. PTY tasks also return a terminal screen projection.", {
-      task_id: stringProperty("Background task id"), cursor: integerProperty("Last returned cursor"), limit: integerProperty("Maximum bytes, capped at 32768")
+      task_id: stringProperty("Background task id"), cursor: integerProperty("Last returned cursor"), limit: integerProperty("Maximum bytes, capped at 131072")
     }, false, async (input, _signal, context) => {
       const id = requiredString(input, "task_id");
       requireOwnedTask(manager, id, context);
@@ -431,6 +431,31 @@ export function toolSystemPrompt(store: Store): string {
   return `<memories>\n${memories.map((item) => `  <memory id="${item.id}">${escapeXml(item.content)}</memory>`).join("\n")}\n</memories>`;
 }
 
+export function truncateShellToolOutput(
+  stdout: string,
+  stderr: string,
+  budget = MAX_TOOL_OUTPUT
+): { stdout: string; stderr: string } {
+  if (stdout.length + stderr.length <= budget) return { stdout, stderr };
+  const half = Math.floor(budget / 2);
+  let stdoutBudget: number;
+  let stderrBudget: number;
+  if (stdout.length <= half) {
+    stdoutBudget = stdout.length;
+    stderrBudget = budget - stdout.length;
+  } else if (stderr.length <= half) {
+    stderrBudget = stderr.length;
+    stdoutBudget = budget - stderr.length;
+  } else {
+    stdoutBudget = half;
+    stderrBudget = budget - half;
+  }
+  return {
+    stdout: stdout.length > stdoutBudget ? stdout.slice(-stdoutBudget) : stdout,
+    stderr: stderr.length > stderrBudget ? stderr.slice(-stderrBudget) : stderr
+  };
+}
+
 export async function persistLargeToolOutput(store: Store, callId: string, output: string): Promise<string> {
   if (output.length <= MAX_TOOL_OUTPUT) return output;
   const directory = resolve(store.dataDir, "tool_outputs");
@@ -441,11 +466,19 @@ export async function persistLargeToolOutput(store: Store, callId: string, outpu
   try {
     const result = JSON.parse(output);
     if (typeof result?.stdout === "string" && typeof result?.stderr === "string") {
-      return JSON.stringify({ ...result, stdout: result.stdout.slice(-4096), stderr: result.stderr.slice(-4096),
-        truncated: true, fullOutputPath: path, originalCharacters: output.length });
+      const trimmed = truncateShellToolOutput(result.stdout, result.stderr, MAX_TOOL_OUTPUT);
+      return JSON.stringify({
+        ...result,
+        stdout: trimmed.stdout,
+        stderr: trimmed.stderr,
+        truncated: true,
+        fullOutputPath: path,
+        originalCharacters: output.length
+      });
     }
   } catch { /* Non-JSON tools retain their plain-text preview. */ }
-  return `${output.slice(0, 4096)}\n\n[Output truncated: ${output.length} characters. Full output saved server-side at ${path}]`;
+  const half = Math.floor(MAX_TOOL_OUTPUT / 2);
+  return `${output.slice(0, half)}\n\n[Output truncated: ${output.length} characters. Showing first ${half} and last ${half} characters. Full output saved server-side at ${path}]\n\n${output.slice(-half)}`;
 }
 
 function tool(
@@ -528,8 +561,12 @@ async function runJavascript(code: string, signal: AbortSignal): Promise<string>
     let stdout = "";
     let stderr = "";
     const timer = setTimeout(() => child.kill("SIGKILL"), 2_000);
-    child.stdout.on("data", (chunk) => { stdout += String(chunk).slice(0, MAX_TOOL_OUTPUT); });
-    child.stderr.on("data", (chunk) => { stderr += String(chunk).slice(0, 4_096); });
+    child.stdout.on("data", (chunk) => {
+      if (stdout.length < MAX_TOOL_OUTPUT) stdout += String(chunk).slice(0, MAX_TOOL_OUTPUT - stdout.length);
+    });
+    child.stderr.on("data", (chunk) => {
+      if (stderr.length < MAX_TOOL_OUTPUT) stderr += String(chunk).slice(0, MAX_TOOL_OUTPUT - stderr.length);
+    });
     child.on("error", reject);
     child.on("close", (codeValue) => {
       clearTimeout(timer);
@@ -803,13 +840,13 @@ async function grepWorkspace(root: string, input: JsonObject): Promise<string> {
     const canonicalRoot = await realpath(root);
     if (canonical !== canonicalRoot && !canonical.startsWith(`${canonicalRoot}${sep}`)) continue;
     const info = await stat(path);
-    if (info.size > 1024 * 1024) continue;
+    if (info.size > MAX_FILE_BYTES) continue;
     let text: string;
     try { text = await readFile(path, "utf8"); } catch { continue; }
     for (const [index, line] of text.split(/\r?\n/).entries()) {
       if (matcher ? matcher.test(line) : line.toLocaleLowerCase().includes(query.toLocaleLowerCase())) {
-        results.push({ path: displayWorkspacePath(root, path), line: index + 1, text: line.slice(0, 500) });
-        if (results.length >= 200) return JSON.stringify(results);
+        results.push({ path: displayWorkspacePath(root, path), line: index + 1, text: line.slice(0, 2_000) });
+        if (results.length >= 500) return JSON.stringify(results);
       }
       if (matcher?.global) matcher.lastIndex = 0;
     }

@@ -1,4 +1,4 @@
-import { conversationExecutionOverridesSchema, type ConversationExecutionOverrides, type FileAssetDto } from "@llm-chat/contracts";
+import { MAX_ATTACHMENTS_PER_MESSAGE, conversationExecutionOverridesSchema, type ConversationExecutionOverrides, type FileAssetDto } from "@llm-chat/contracts";
 import { conversationDeleted } from "./conversation-lifecycle";
 
 export interface ComposerDraft {
@@ -66,7 +66,7 @@ export function readComposerDraft(id: string | null): ComposerDraft | null {
     if (!overrides.success) return null;
     const attachments = value.attachments.filter((asset) => asset && typeof asset.id === "string" &&
       typeof asset.url === "string" && typeof asset.fileName === "string" && typeof asset.mimeType === "string" &&
-      typeof asset.byteSize === "number" && (asset.kind === "image" || asset.kind === "file")).slice(0, 8);
+      typeof asset.byteSize === "number" && (asset.kind === "image" || asset.kind === "file")).slice(0, MAX_ATTACHMENTS_PER_MESSAGE);
     return { ...value, attachments, overrides: overrides.data };
   } catch { return fallback.get(key) ?? null; }
 }

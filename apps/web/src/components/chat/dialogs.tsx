@@ -1,5 +1,5 @@
 import { ConversationEnvironments } from "../EnvironmentSettings";
-import { effectiveReasoningSelection, legacyReasoningSelection } from "@llm-chat/contracts";
+import { MAX_ATTACHMENTS_PER_MESSAGE, effectiveReasoningSelection, legacyReasoningSelection } from "@llm-chat/contracts";
 import { ReasoningSelect } from "../ReasoningControl";
 import { toolLabel, toolDescription } from "../../lib/catalog-i18n";
 import { t, useLocale } from "../../lib/i18n";
@@ -65,7 +65,7 @@ export function EditForkDialog({
         />
       </Field>
       <AttachmentList uploadScope={uploadScope} attachments={attachments} setAttachments={setAttachments} disabled={busy} />
-      <AttachmentMenu uploadFiles={uploadFiles} disabled={busy || attachmentCount >= 8} uploading={uploading} />
+      <AttachmentMenu uploadFiles={uploadFiles} disabled={busy || attachmentCount >= MAX_ATTACHMENTS_PER_MESSAGE} uploading={uploading} />
       <p className="small muted">{t("dialogs.saving_immediately_generates_a_reply_in_the_new_branch_the")}</p>
     </Modal>
   );

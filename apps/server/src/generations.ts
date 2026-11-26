@@ -8,7 +8,6 @@ import {
   assertStreamComplete,
   describeNetworkError,
   prepareMessages,
-  estimateMessageTokens,
   ProviderError,
   type GenerateRequest,
   type ProviderConnection,
@@ -19,7 +18,7 @@ import type { Store } from "./database";
 import type { GenerationRecord } from "./generation-types";
 import { StoreError } from "./errors";
 import { createSearchToolsTool, SEARCH_TOOLS_NAME } from "./tool-registry";
-import { buildServerTools, persistLargeToolOutput, toolSystemPrompt, type ServerTool } from "./tools";
+import { buildServerTools, MAX_TOOL_OUTPUT, persistLargeToolOutput, toolSystemPrompt, truncateShellToolOutput, type ServerTool } from "./tools";
 import type { PreparedImage, PreparedImages } from "./vision";
 import { providerRequestContext } from "./provider-context";
 import type { ImageService } from "./images";
@@ -309,10 +308,6 @@ export class GenerationRunner {
           signal: job.controller.signal
         };
         request.messages = prepareMessages(request);
-        const estimated = estimateMessageTokens([request.systemPrompt, request.postHistoryInstructions].filter(Boolean).join("\n\n"), request.messages, tools);
-        if (model.contextWindow && estimated > Math.min(model.contextWindow - record.settings.common.maxOutputTokens, model.maxInputTokens ?? Infinity)) {
-          throw withMessage(new ContextError("message_too_large", "本轮上下文超过模型可用容量，工具结果已保留"), "error.this_turn_exceeds_the_model_s_context_capacity_tool_results_have_been");
-        }
         for await (const event of this.dependencies.stream(record.protocol, request)) {
           job.controller.signal.throwIfAborted();
           if (event.type === "block") {
@@ -489,8 +484,8 @@ export class GenerationRunner {
         const message = shown instanceof Error ? shown.message : "Tool execution failed";
         const rawError = JSON.stringify({ error: message, ...(error instanceof ShellError ? error.result : {}) });
         const output = await this.dependencies.persistToolOutput(this.store, call.id, rawError).catch(() => JSON.stringify({
-          error: message.slice(0, 4096), ...(error instanceof ShellError ? {
-            ...error.result, stdout: error.result.stdout.slice(-4096), stderr: error.result.stderr.slice(-4096), truncated: true
+          error: message.slice(0, MAX_TOOL_OUTPUT), ...(error instanceof ShellError ? {
+            ...error.result, ...truncateShellToolOutput(error.result.stdout, error.result.stderr, MAX_TOOL_OUTPUT), truncated: true
           } : {})
         }));
         if (!this.jobs.has(generationId)) throw error;

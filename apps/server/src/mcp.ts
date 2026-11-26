@@ -52,7 +52,7 @@ export class McpManager {
     for (const server of this.store.listMcpServers().filter((item) => item.enabled)) {
       try {
         const session = await this.session(server.id);
-        const listed = await session.client.listTools(undefined, { timeout: 15_000 });
+        const listed = await session.client.listTools(undefined, { timeout: 60_000 });
         this.store.setMcpServerError(server.id, null);
         for (const remote of listed.tools) {
           const name = `mcp__${server.name}__${normalizeName(remote.name)}`;
@@ -88,7 +88,7 @@ export class McpManager {
   async test(serverId: string): Promise<{ ok: true; tools: number; serverName: string }> {
     this.invalidate(serverId);
     const session = await this.session(serverId);
-    const result = await session.client.listTools(undefined, { timeout: 15_000, cacheMode: "refresh" });
+    const result = await session.client.listTools(undefined, { timeout: 60_000, cacheMode: "refresh" });
     this.store.setMcpServerError(serverId, null);
     return { ok: true, tools: result.tools.length, serverName: session.client.getServerVersion()?.name ?? "MCP" };
   }

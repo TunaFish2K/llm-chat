@@ -6,9 +6,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { MIGRATION_V1, Store } from "./database";
-import { providerReasoningEffort } from "@llm-chat/contracts";
+import { MAX_ATTACHMENTS_PER_MESSAGE, appSettingsUpdateSchema, providerReasoningEffort } from "@llm-chat/contracts";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
-import { appSettingsUpdateSchema } from "@llm-chat/contracts";
 import { defaultRoleplayConfig } from "./roleplay";
 
 const dirs: string[] = [];
@@ -234,7 +233,7 @@ describe("Store", () => {
     const store = createStore();
     seedModel(store);
     const conversation = store.createConversation({ systemPrompt: "" });
-    const files = Array.from({ length: 9 }, (_, index) => store.createFileAsset({
+    const files = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 1 }, (_, index) => store.createFileAsset({
       sha256: index.toString(16).padStart(64, "0"),
       fileName: `file-${index}.bin`,
       mimeType: "application/octet-stream",
@@ -243,7 +242,8 @@ describe("Store", () => {
       storageKey: `blob-${index}`
     }));
     expect(() => store.createMessageGeneration(conversation.id, "too many", files.map((file) => file.id)))
-      .toThrow("最多包含 8 个");
+      .toThrow(`最多包含 ${MAX_ATTACHMENTS_PER_MESSAGE} 个`);
+    expect(() => store.validateAttachments(files.slice(0, MAX_ATTACHMENTS_PER_MESSAGE).map((file) => file.id))).not.toThrow();
     expect(store.listMessages(conversation.id)).toEqual([]);
 
     const created = store.createMessageGeneration(conversation.id, "files", files.slice(0, 2).map((file) => file.id));

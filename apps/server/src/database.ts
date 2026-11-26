@@ -1,4 +1,4 @@
-import { DEFAULT_MAX_IMAGE_UPLOAD_MIB, MAX_MESSAGE_ATTACHMENT_BYTES, imageUploadLimits } from "@llm-chat/contracts";
+import { DEFAULT_MAX_IMAGE_UPLOAD_MIB, MAX_ATTACHMENTS_PER_MESSAGE, MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_ATTACHMENT_BYTES, imageUploadLimits } from "@llm-chat/contracts";
 import { withMessage, errorI18n, type LocalizedMessage } from "@llm-chat/i18n";
 import { StoreError } from "./errors";
 import type { ConnectionRecord, ContextMessageRecord, ContextGenerationStep, GenerationRecord, AgentSnapshot } from "./generation-types";
@@ -2358,15 +2358,15 @@ export class Store {
 
   validateAttachments(assetIds: string[], imageBytesLimit = this.imageLimits().message): void {
     const unique = [...new Set(assetIds)];
-    if (unique.length !== assetIds.length || unique.length > 8) {
-      throw withMessage(new StoreError("file_attachment_invalid", "每条消息最多包含 8 个不重复附件"), "error.each_message_can_contain_up_to_8_unique_attachments");
+    if (unique.length !== assetIds.length || unique.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+      throw withMessage(new StoreError("file_attachment_invalid", `每条消息最多包含 ${MAX_ATTACHMENTS_PER_MESSAGE} 个不重复附件`), "error.each_message_can_contain_up_to_8_unique_attachments", { count: MAX_ATTACHMENTS_PER_MESSAGE });
     }
     const assets = unique.map((id) => this.getFileAsset(id));
     if (assets.some((asset) => !asset)) throw withMessage(new StoreError("file_asset_not_found", "文件资产不存在"), "error.file_asset_not_found");
     const total = assets.reduce((sum, asset) => sum + (asset?.byteSize ?? 0), 0);
     if (total > MAX_MESSAGE_ATTACHMENT_BYTES) throw withMessage(new StoreError("file_attachments_too_large", "每条消息的附件总大小不能超过 4 GiB"), "uploads.message_limit");
     const images = assets.filter((asset): asset is ImageAssetDto => asset?.kind === "image");
-    if (images.length > 4) throw withMessage(new StoreError("image_attachment_invalid", "每条消息最多包含 4 张图片"), "error.each_message_can_contain_up_to_4_images");
+    if (images.length > MAX_IMAGES_PER_MESSAGE) throw withMessage(new StoreError("image_attachment_invalid", `每条消息最多包含 ${MAX_IMAGES_PER_MESSAGE} 张图片`), "error.each_message_can_contain_up_to_4_images", { count: MAX_IMAGES_PER_MESSAGE });
     if (images.reduce((sum, asset) => sum + asset.byteSize, 0) > imageBytesLimit) {
       const size = `${Math.round(imageBytesLimit / 1024 ** 2)} MiB`;
       throw withMessage(new StoreError("image_attachments_too_large", `每条消息的图片总大小不能超过 ${size}`), "error.images_per_message_limit", { size });

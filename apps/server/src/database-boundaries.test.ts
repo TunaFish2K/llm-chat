@@ -1,3 +1,4 @@
+import { MAX_IMAGES_PER_MESSAGE, MAX_MESSAGE_ATTACHMENT_BYTES } from "@llm-chat/contracts";
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
 import { cleanupStores, createStore, seedModel } from "./test-helpers";
@@ -8,15 +9,17 @@ const missing = "00000000-0000-4000-8000-000000000000";
 
 it("rejects stale attachment owners and enforces image count and size atomically", () => {
   const store = createStore(); const { model } = seedModel(store); const agentId = store.getSettings().defaultAgentId;
-  const images = Array.from({ length: 5 }, (_, index) => store.createImageAsset({ sha256: String(index).repeat(64), fileName: `${index}.png`, mimeType: "image/png", byteSize: 5 * 1024 ** 2, storageKey: `images/${index}` }));
+  const images = Array.from({ length: MAX_IMAGES_PER_MESSAGE + 1 }, (_, index) => store.createImageAsset({
+    sha256: index.toString(16).padStart(64, "0"), fileName: `${index}.png`, mimeType: "image/png", byteSize: 5 * 1024 ** 2, storageKey: `images/${index}`
+  }));
   expect(() => store.attachFileToAgent(missing, images[0]!.id)).toThrow("Agent 不存在");
   expect(() => store.attachFileToAgent(agentId, missing)).toThrow("文件资产不存在");
   expect(() => store.attachFileToToolCall(missing, missing)).toThrow("文件资产不存在");
-  expect(() => store.validateAttachments(images.map(item => item.id))).toThrow("最多包含 4 张图片");
-  expect(() => store.validateAttachments(images.slice(0, 4).map(item => item.id))).not.toThrow();
+  expect(() => store.validateAttachments(images.map(item => item.id))).toThrow(`最多包含 ${MAX_IMAGES_PER_MESSAGE} 个`);
+  expect(() => store.validateAttachments(images.slice(0, MAX_IMAGES_PER_MESSAGE).map(item => item.id))).not.toThrow();
   store.updateSettings({ maxImageUploadMiB: 4 });
-  expect(store.imageLimits()).toEqual({ image: 4 * 1024 ** 2, message: 16 * 1024 ** 2 });
-  expect(() => store.validateAttachments(images.slice(0, 4).map(item => item.id))).toThrow("16 MiB");
+  expect(store.imageLimits()).toEqual({ image: 4 * 1024 ** 2, message: MAX_MESSAGE_ATTACHMENT_BYTES });
+  expect(() => store.validateAttachments(images.slice(0, 4).map(item => item.id), 16 * 1024 ** 2)).toThrow("16 MiB");
   expect(() => store.validateAttachments([missing])).toThrow("文件资产不存在");
   expect(() => assertImageConfiguration(store, agentId, model.id, [missing])).toThrow("图片资产不存在");
   expect(() => assertImageConfiguration(store, null, model.id, [])).toThrow("选择可用 Agent");
